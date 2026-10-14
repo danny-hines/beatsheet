@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "beatsheet": {
+      "command": "node",
+      "args": ["packages/engine/src/mcp.ts"]
+    }
+  }
+}

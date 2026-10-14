@@ -114,6 +114,7 @@ export const MusicSection = z.object({
   label: z.string(),
   start: z.number().describe("Seconds into the track"),
   end: z.number().optional(),
+  level: z.enum(["low", "mid", "high"]).optional().describe("Energy, from analysis; sets how fast a montage cuts"),
 });
 export type MusicSection = z.infer<typeof MusicSection>;
 
@@ -135,8 +136,10 @@ export const Asset = z.object({
   path: z.string().describe("Relative to the project's mediaRoot"),
   label: z.string().optional(),
   duration: z.number().optional(),
-  width: z.number().int().optional(),
+  width: z.number().int().optional().describe("As displayed, after rotation"),
   height: z.number().int().optional(),
+  fps: z.number().optional(),
+  capturedAt: z.string().optional().describe("When it was shot, ISO 8601"),
   tags: z.array(z.string()).optional(),
   rating: z.number().int().min(-1).max(5).optional().describe("-1 rejected, 0 unrated, 1-5 stars"),
   moments: z.array(Moment).optional(),

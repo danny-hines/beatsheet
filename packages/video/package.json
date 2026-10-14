@@ -1,0 +1,14 @@
+{
+  "name": "@beatsheet/video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@beatsheet/schema": "*",
+    "react": "^19.3.0",
+    "remotion": "4.0.535"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@beatsheet/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "beatsheet": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@beatsheet/schema": "*",
+    "@beatsheet/video": "*",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@remotion/bundler": "4.0.535",
+    "@remotion/renderer": "4.0.535",
+    "remotion": "4.0.535",
+    "sharp": "^0.35.5",
+    "zod": "^4.6.7"
+  }
+}

@@ -24,6 +24,18 @@ export const FIDELITY_LABEL: Record<Fidelity, string> = { idea: "Idea", board: "
 
 export const assetMap = (p: Project) => new Map<string, Asset>(p.assets.map((a) => [a.id, a]));
 
+/** Thumbnail URLs, served from the project's .cache (missing for projects that were never imported). */
+export const posterUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/poster`;
+export const stripUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/strip`;
+export function shotAsset(shot: Shot): string | undefined {
+  const c = shot.content;
+  return c.kind === "clip" ? c.asset : c.kind === "generated" ? c.take : undefined;
+}
+/** Hides an <img> whose thumbnail doesn't exist, so the colour swatch behind it shows instead. */
+export const hideBroken = (e: { currentTarget: HTMLImageElement }) => {
+  e.currentTarget.style.display = "none";
+};
+
 /** A colour that stands in for a shot's picture until real thumbnails exist. */
 export function shotSwatch(shot: Shot, assets: Map<string, Asset>): string {
   const c = shot.content;

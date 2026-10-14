@@ -10,7 +10,11 @@
   "dependencies": {
     "@beatsheet/schema": "*",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "@beatsheet/engine": "*",
+    "@beatsheet/video": "*",
+    "@remotion/player": "4.0.535",
+    "remotion": "4.0.535"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

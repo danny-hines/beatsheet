@@ -11,7 +11,7 @@ import {
   type Shot,
 } from "@beatsheet/schema";
 import { useMemo, useState, type CSSProperties } from "react";
-import { assetMap, FIDELITY_LABEL, KIND_LABEL, nextId, pictureTrack, shotSummary, shotSwatch, STAGE_LABELS } from "../lib";
+import { assetMap, FIDELITY_LABEL, hideBroken, KIND_LABEL, nextId, pictureTrack, posterUrl, shotAsset, shotSummary, shotSwatch, STAGE_LABELS } from "../lib";
 import { actions, timelineFor, useProject, useStore, useTimeline } from "../store";
 import { Preview, Transport } from "./Preview";
 import { AnchorChip, Empty, FidelityPill, NumberField, Pill, Stars, TextField } from "./ui";
@@ -110,6 +110,7 @@ function usageMap(p: Project) {
 
 export function MaterialView() {
   const p = useProject();
+  const projectId = useStore((s) => s.projectId)!;
   const selection = useStore((s) => s.selection);
   const [filter, setFilter] = useState<"all" | "keepers" | "unrated" | "rejected" | "generated">("all");
   const used = useMemo(() => usageMap(p), [p]);
@@ -140,18 +141,19 @@ export function MaterialView() {
       </div>
       <div className="asset-grid">
         {shown.map((a) => (
-          <AssetCard key={a.id} a={a} used={used.get(a.id) ?? []} selected={selection?.kind === "asset" && selection.id === a.id} onRate={(r) => rate(a.id, r)} />
+          <AssetCard key={a.id} a={a} projectId={projectId} used={used.get(a.id) ?? []} selected={selection?.kind === "asset" && selection.id === a.id} onRate={(r) => rate(a.id, r)} />
         ))}
       </div>
     </div>
   );
 }
 
-function AssetCard({ a, used, selected, onRate }: { a: Asset; used: string[]; selected: boolean; onRate: (r: number) => void }) {
+function AssetCard({ a, projectId, used, selected, onRate }: { a: Asset; projectId: string; used: string[]; selected: boolean; onRate: (r: number) => void }) {
   const portrait = (a.height ?? 0) > (a.width ?? 0);
   return (
     <div className={`asset-card ${selected ? "sel" : ""} ${a.rating === -1 ? "rejected" : ""}`} onClick={() => actions.select({ kind: "asset", id: a.id })}>
       <div className="asset-thumb" style={{ background: a.color ?? "#333" }}>
+        {a.kind !== "music" && <img className="thumb-img" src={posterUrl(projectId, a.id)} loading="lazy" alt="" onError={hideBroken} />}
         <span className="asset-kind">{a.provenance?.source === "generated" ? "generated" : a.kind}</span>
         {a.width && <span className={`orient ${portrait ? "portrait" : ""}`} />}
         {a.duration !== undefined && <span className="asset-dur">{formatTime(a.duration).replace(/^0:/, "")}</span>}
@@ -291,6 +293,7 @@ export function BoardView() {
   const format = useStore((s) => s.format);
   const selection = useStore((s) => s.selection);
   const playhead = useStore((s) => s.playhead);
+  const projectId = useStore((s) => s.projectId)!;
   const assets = useMemo(() => assetMap(p), [p]);
   const pic = pictureTrack(p);
   const fmt = p.formats.find((f) => f.id === format)!;
@@ -336,6 +339,7 @@ export function BoardView() {
               }}
             >
               <div className={`board-frame kind-${s.content.kind}`} style={{ aspectRatio: `${fmt.width} / ${fmt.height}`, "--swatch": shotSwatch(s, assets) } as CSSProperties}>
+                {shotAsset(s) && <img className="thumb-img" src={posterUrl(projectId, shotAsset(s)!)} loading="lazy" alt="" onError={hideBroken} />}
                 <span className="board-kind">{KIND_LABEL[s.content.kind]}</span>
                 {notes > 0 && <span className="shot-notes">{notes}</span>}
               </div>
@@ -599,6 +603,45 @@ export function SoundView() {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+type Job = { id: string; status: "running" | "done" | "error"; progress: number; output?: string; error?: string };
+
+/** Draft renders use the small preview copies and take seconds; final renders read the original footage. */
+function RenderControls({ format, label }: { format: string; label: string }) {
+  const projectId = useStore((s) => s.projectId)!;
+  const [job, setJob] = useState<Job | null>(null);
+  const start = async (quality: "proxy" | "original") => {
+    const res = await fetch(`/api/projects/${projectId}/render`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ format, quality }) });
+    let j = (await res.json()) as Job;
+    setJob(j);
+    while (j.status === "running") {
+      await new Promise((r) => setTimeout(r, 700));
+      j = (await (await fetch(`/api/jobs/${j.id}`)).json()) as Job;
+      setJob(j);
+    }
+  };
+  const file = job?.output?.split("/").pop();
+  return (
+    <div className="render">
+      <div className="row">
+        <button onClick={() => start("proxy")} disabled={job?.status === "running"} title="Fast, from the preview copies">Draft {label}</button>
+        <button className="primary" onClick={() => start("original")} disabled={job?.status === "running"} title="Full quality, from the original footage">
+          Render {label}
+        </button>
+      </div>
+      {job?.status === "running" && (
+        <div className="progress"><div style={{ width: `${Math.round(job.progress * 100)}%` }} /><span>{Math.round(job.progress * 100)}%</span></div>
+      )}
+      {job?.status === "error" && <div className="warn small">{job.error}</div>}
+      {job?.status === "done" && file && (
+        <div className="rendered">
+          <video src={`/media/${projectId}/out/${file}?v=${job.id}`} controls />
+          <div className="mono small dim">{job.output}</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FinishView() {
   const p = useProject();
   const notesLeft = p.notes.filter((n) => n.status === "open" || n.status === "queued" || n.status === "working").length;
@@ -620,7 +663,7 @@ export function FinishView() {
                   {formatTime(tl.duration)} {p.brief.targetLength ? `(target ${formatTime(p.brief.targetLength)})` : ""}
                 </div>
                 {tl.diagnostics.length > 0 && <div className="warn">{tl.diagnostics.length} timing problems</div>}
-                <button disabled title="The engine renders in step 3">Render {f.label}</button>
+                <RenderControls format={f.id} label={f.label} />
               </div>
             </div>
           );
@@ -632,7 +675,7 @@ export function FinishView() {
           <li className={notesLeft ? "todo" : "ok"}>{notesLeft ? `${notesLeft} notes still open or with the agent` : "All notes resolved"}</li>
           <li className={unfinished.length ? "todo" : "ok"}>{unfinished.length ? `${unfinished.length} shots still at idea or board: ${unfinished.map((s) => s.id).join(", ")}` : "Every shot is at least rough"}</li>
           <li className={stagesLeft.length ? "todo" : "ok"}>{stagesLeft.length ? `Stages not done: ${stagesLeft.map((s) => STAGE_LABELS[s].title).join(", ")}` : "Every stage is done or skipped"}</li>
-          <li className="todo">Captions, loudness master and per-platform exports run in the engine (step 3)</li>
+          <li className="todo">Loudness mastering and captions aren't automatic yet</li>
         </ul>
       </div>
     </div>

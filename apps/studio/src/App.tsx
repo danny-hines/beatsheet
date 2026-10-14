@@ -5,7 +5,7 @@ import { SidePanel } from "./components/Side";
 import { Timeline } from "./components/Timeline";
 import { AssembleView, BoardView, BriefView, CraftView, FinishView, MaterialView, SoundView, StructureView } from "./components/views";
 import { isTyping } from "./lib";
-import { actions, getState, setState, timelineFor, useStore } from "./store";
+import { actions, getState, hasPlayer, setState, timelineFor, useStore } from "./store";
 
 const VIEWS: Record<StageId, () => ReactNode> = {
   brief: BriefView,
@@ -33,7 +33,12 @@ export function App() {
       if (id && id !== getState().projectId) actions.open(id);
     };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    const onChanged = (d: { id: string; version: string }) => actions.externalChange(d.id, d.version);
+    import.meta.hot?.on("beatsheet:changed", onChanged);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      import.meta.hot?.off("beatsheet:changed", onChanged);
+    };
   }, []);
   usePlayback();
   useKeys();
@@ -53,6 +58,7 @@ export function App() {
       <TopBar />
       <StageRail />
       <main className="main">
+        <Notice />
         <StageHeader />
         <View />
       </main>
@@ -64,7 +70,18 @@ export function App() {
   );
 }
 
-/** Advances the playhead in real time while playing. */
+function Notice() {
+  const notice = useStore((s) => s.notice);
+  if (!notice) return null;
+  return (
+    <div className="notice">
+      {notice}
+      <button className="link" onClick={actions.dismissNotice}>Dismiss</button>
+    </div>
+  );
+}
+
+/** Advances the playhead in real time while playing, when no live player is on screen. */
 function usePlayback() {
   const playing = useStore((s) => s.playing);
   useEffect(() => {
@@ -73,7 +90,7 @@ function usePlayback() {
     let raf = 0;
     const tick = (now: number) => {
       const s = getState();
-      if (!s.project) return;
+      if (!s.project || hasPlayer()) return; // the live player keeps time while it's on screen
       const end = timelineFor(s.project, s.format).duration;
       const t = s.playhead + (now - last) / 1000;
       last = now;

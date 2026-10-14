@@ -1,6 +1,6 @@
 import { anchorForTime, describeAnchor, formatTime, snapPoints, type Anchor, type SnapPoint } from "@beatsheet/schema";
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { assetMap, noteTime, selectionForTarget, shotSummary, shotSwatch } from "../lib";
+import { assetMap, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline } from "../store";
 
 const PAD = 48;
@@ -16,6 +16,7 @@ export function Timeline() {
   const zoom = useStore((s) => s.zoom);
   const selection = useStore((s) => s.selection);
   const format = useStore((s) => s.format);
+  const projectId = useStore((s) => s.projectId)!;
   const scroller = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -174,11 +175,12 @@ export function Timeline() {
                     const sel = selection?.kind === "shot" && selection.id === r.id;
                     const notes = formatNotes.filter((n) => n.target.kind === "shot" && n.target.shot === r.id && n.status !== "done").length;
                     const endHandle = !!shot.end || shot.duration !== undefined;
+                    const thumb = track.kind === "picture" && shotAsset(shot) ? `url(${posterUrl(projectId, shotAsset(shot)!)})` : undefined;
                     return (
                       <div
                         key={r.id}
                         className={`shot-block kind-${shot.content.kind} fid-${shot.fidelity} ${sel ? "sel" : ""}`}
-                        style={{ left: x(r.start), width: Math.max(3, x(r.end) - x(r.start)), "--swatch": shotSwatch(shot, assets) } as CSSProperties}
+                        style={{ left: x(r.start), width: Math.max(3, x(r.end) - x(r.start)), "--swatch": shotSwatch(shot, assets), "--thumb": thumb } as CSSProperties}
                         title={`${r.id} · ${shot.label ?? ""}\n${formatTime(r.start)} → ${formatTime(r.end)}\n${shotSummary(shot, assets)}`}
                         onPointerDown={(e) => {
                           e.stopPropagation();

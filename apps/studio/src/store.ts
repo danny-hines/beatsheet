@@ -12,12 +12,24 @@ export type Selection =
   | { kind: "cue"; id: string }
   | { kind: "note"; id: string };
 
-export type ProjectSummary = { id: string; title: string; recipe: string };
+export type ProjectSummary = { id: string; title: string; recipe: string; where?: "projects" | "examples" };
+
+/** The live player, when one is on screen. While it exists it is the clock: play, pause and seeks go through it. */
+export type PlayerHandle = { play(): void; pause(): void; toggle(): void; seekTo(frame: number): void; fps: number };
+let player: PlayerHandle | undefined;
+export function registerPlayer(p: PlayerHandle | undefined) {
+  player = p;
+}
+export const hasPlayer = () => !!player;
 
 export type State = {
   list: ProjectSummary[];
   projectId?: string;
   project?: Project;
+  /** Version of the file the open project came from; saves are refused if the file moved on. */
+  version?: string;
+  /** A short message about something that happened behind the user's back, like an agent's edit. */
+  notice?: string;
   loadError?: string[];
   past: Project[];
   future: Project[];
@@ -100,14 +112,19 @@ async function saveNow() {
     const res = await fetch(`/api/projects/${projectId}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(project),
+      body: JSON.stringify({ project, version: state.version }),
     });
+    if (res.status === 409) {
+      await actions.reload("This project changed on disk (probably the agent), so your last edit wasn't saved. Reloaded the latest version.");
+      return;
+    }
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       const msg = body.issues?.map((i: { path: string; message: string }) => `${i.path}: ${i.message}`).join("\n");
       throw new Error(msg || body.error || `save failed (${res.status})`);
     }
-    if (state.project === project) setState({ save: "saved", saveError: undefined });
+    const { version } = (await res.json()) as { version: string };
+    setState(state.project === project ? { save: "saved", saveError: undefined, version } : { version });
   } catch (err) {
     setState({ save: "error", saveError: String(err instanceof Error ? err.message : err) });
   }
@@ -123,7 +140,8 @@ export const actions = {
   async open(id: string) {
     clearTimeout(saveTimer);
     const res = await fetch(`/api/projects/${id}`);
-    const parsed = parseProject(await res.json());
+    const body = (await res.json()) as { project: unknown; version: string };
+    const parsed = parseProject(body.project);
     if (!parsed.ok) {
       setState({ projectId: id, project: undefined, loadError: parsed.issues.map((i) => `${i.path}: ${i.message}`) });
       return;
@@ -133,6 +151,8 @@ export const actions = {
     setState({
       projectId: id,
       project: p,
+      version: body.version,
+      notice: undefined,
       loadError: undefined,
       past: [],
       future: [],
@@ -145,6 +165,32 @@ export const actions = {
       zoom: 0,
     });
     history.replaceState(null, "", `#${id}`);
+  },
+
+  /** Re-reads the open project from disk, keeping the view (format, stage, selection, playhead). */
+  async reload(notice?: string) {
+    const id = state.projectId;
+    if (!id) return;
+    clearTimeout(saveTimer);
+    const res = await fetch(`/api/projects/${id}`);
+    const body = (await res.json()) as { project: unknown; version: string };
+    const parsed = parseProject(body.project);
+    if (!parsed.ok) {
+      setState({ loadError: parsed.issues.map((i) => `${i.path}: ${i.message}`) });
+      return;
+    }
+    const p = parsed.project;
+    const format = p.formats.some((f) => f.id === state.format) ? state.format : p.formats[0]!.id;
+    setState({ project: p, version: body.version, format, past: [], future: [], save: "saved", saveError: undefined, notice });
+  },
+  /** Called when a project file changes on disk; ignores our own saves. */
+  externalChange(id: string, version: string) {
+    if (id !== state.projectId || version === state.version) return;
+    if (state.save === "dirty" || state.save === "saving") return; // our pending save will hit the conflict and reload
+    void actions.reload("Updated from disk: the project was changed outside the studio.");
+  },
+  dismissNotice() {
+    setState({ notice: undefined });
   },
 
   /** The one way to change the project: mutate a copy, keep the old one for undo, save soon. */
@@ -175,11 +221,19 @@ export const actions = {
   seek(t: number) {
     const p = state.project;
     const max = p ? timelineFor(p, state.format).duration : 0;
-    setState({ playhead: Math.max(0, Math.min(Number.isFinite(max) ? max : t, t)) });
+    const playhead = Math.max(0, Math.min(Number.isFinite(max) ? max : t, t));
+    setState({ playhead });
+    player?.seekTo(Math.round(playhead * player.fps));
   },
   togglePlay() {
     const p = state.project;
     if (!p) return;
+    if (player) {
+      const end = timelineFor(p, state.format).duration;
+      if (!state.playing && state.playhead >= end - 0.05) actions.seek(0);
+      player.toggle();
+      return;
+    }
     const end = timelineFor(p, state.format).duration;
     if (!state.playing && state.playhead >= end - 0.01) setState({ playhead: 0 });
     setState({ playing: !state.playing });

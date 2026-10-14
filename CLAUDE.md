@@ -10,6 +10,13 @@ Each video is one `project.json` (format: `packages/schema/src/types.ts`). The s
 - Respect locks. Don't change anything a locked stage owns (a locked `structure` means the script and voice are final).
 - Lines, shots and cues with `only` exist in just those formats. Per-format pauses go in `gaps`.
 
+## Working on a project
+
+- Real projects live in `projects/<id>/` (not in git): `project.json`, the song in `music/`, and a `.cache/` of preview copies, posters and filmstrips. The footage stays in its own folder (`mediaRoot`).
+- Prefer the `beatsheet` MCP tools when they're available: `get_project`, `list_assets`, `look_at_assets`, `log_assets`, `first_cut`, `set_song`, `edit_project`, `get_batch`, `resolve_note`, `frame`, `render`. They validate every write and check versions, so they never clobber the person's edits in the studio. Editing `project.json` by hand works too, but run `node scripts/validate-examples.ts` afterwards for examples.
+- Recipes (how to run each stage for a kind of video) are skills in `.claude/skills/`. Montages: `.claude/skills/montage/SKILL.md`.
+- CLI: `npm run beatsheet -- <import|song|assemble|cache|render|analyze|list>`.
+
 ## Addressing a batch of notes
 
 A batch lists note ids with resolved context: the shot, the line, the time range, and the frame region if one was drawn. For each note:

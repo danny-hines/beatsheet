@@ -314,3 +314,18 @@ ul.plain li { padding: 2px 0; }
 .modal { width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px; gap: 8px; }
 pre.batch { flex: 1; overflow: auto; background: #0e0f12; border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; margin: 0; }
 .modal-actions { display: flex; gap: 8px; }
+.notice { display: flex; gap: 10px; align-items: center; justify-content: space-between; background: #172433; border-bottom: 1px solid #2c4560; color: #b9dcf0; padding: 7px 18px; font-size: 12px; }
+.frame.live { background: #000; cursor: default; }
+.frame-overlay { position: absolute; inset: 0; cursor: crosshair; }
+.now-playing { display: flex; align-items: center; gap: 6px; margin-left: 12px; white-space: nowrap; overflow: hidden; }
+.thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.asset-thumb > span, .asset-thumb > div, .board-frame > span { z-index: 1; }
+.board-frame { overflow: hidden; }
+.shot-block[style*="--thumb"] { background: linear-gradient(180deg, rgba(0,0,0,0.15), rgba(0,0,0,0.65)), var(--thumb) center / cover, var(--swatch); }
+.asset-hero { overflow: hidden; display: flex; align-items: center; }
+.asset-hero img { width: 100%; height: 100%; object-fit: cover; }
+.render { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.progress { position: relative; height: 18px; background: #0f1013; border: 1px solid var(--line-2); border-radius: 9px; overflow: hidden; }
+.progress div { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: 0.5; }
+.progress span { position: relative; font-size: 11px; padding-left: 8px; }
+.rendered video { max-height: 340px; max-width: 100%; border-radius: 6px; background: #000; }

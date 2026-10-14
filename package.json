@@ -9,8 +9,9 @@
   "scripts": {
     "dev": "npm run dev -w @beatsheet/studio",
     "test": "vitest run",
-    "typecheck": "tsc -p packages/schema && tsc -p apps/studio",
-    "check": "npm run typecheck && npm test && node scripts/validate-examples.ts"
+    "typecheck": "tsc -p packages/schema && tsc -p packages/video && tsc -p packages/engine && tsc -p apps/studio",
+    "check": "npm run typecheck && npm test && node scripts/validate-examples.ts",
+    "beatsheet": "node packages/engine/src/cli.ts"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",

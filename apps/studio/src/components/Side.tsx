@@ -1,5 +1,5 @@
 import {
-  describeAnchor,
+  buildBatch,
   describeTarget,
   FIDELITY,
   formatTime,
@@ -10,8 +10,8 @@ import {
   type Timeline,
 } from "@beatsheet/schema";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { assetMap, FIDELITY_LABEL, KIND_LABEL, nextId, noteMatches, noteTime, selectionForTarget, shotSummary, targetFromSelection } from "../lib";
-import { actions, getState, setState, timelineFor, useProject, useStore, useTimeline } from "../store";
+import { assetMap, FIDELITY_LABEL, hideBroken, KIND_LABEL, nextId, noteMatches, noteTime, posterUrl, selectionForTarget, shotSummary, stripUrl, targetFromSelection } from "../lib";
+import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
 import { AnchorChip, Empty, Stars, TextField } from "./ui";
 
 export function SidePanel() {
@@ -38,6 +38,7 @@ function Inspector() {
   const p = useProject();
   const tl = useTimeline();
   const sel = useStore((s) => s.selection);
+  const projectId = useStore((s) => s.projectId)!;
   const assets = useMemo(() => assetMap(p), [p]);
 
   if (sel?.kind === "shot") {
@@ -103,7 +104,9 @@ function Inspector() {
     const usedBy = p.shots.filter((s) => (s.content.kind === "clip" && s.content.asset === a.id) || (s.content.kind === "generated" && s.content.takes?.includes(a.id)));
     return (
       <div className="inspector">
-        <div className="asset-hero" style={{ background: a.color ?? "#333" }} />
+        <div className="asset-hero" style={{ background: a.color ?? "#333" }}>
+          {a.kind !== "music" && <img src={a.kind === "video" ? stripUrl(projectId, a.id) : posterUrl(projectId, a.id)} alt="" onError={hideBroken} />}
+        </div>
         <h3>{a.label ?? a.id}</h3>
         <dl>
           <dt>File</dt>
@@ -409,47 +412,12 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-/** What the agent receives: each note with enough resolved context to act without re-reading the whole project. */
-export function buildBatch(p: Project, projectId: string, notes: Note[], tlFor: (format: string) => Timeline) {
-  const assets = assetMap(p);
-  return {
-    project: { id: p.id, title: p.title, file: `examples/${projectId}/project.json`, recipe: p.recipe, codeRoot: p.codeRoot, mediaRoot: p.mediaRoot },
-    notes: notes.map((n) => {
-      const format = n.format ?? p.formats[0]!.id;
-      const tl = tlFor(format);
-      const ctx: Record<string, unknown> = {};
-      const t = n.target;
-      if (t.kind === "shot") {
-        const s = p.shots.find((x) => x.id === t.shot);
-        const r = tl.shots.find((x) => x.id === t.shot);
-        if (s) {
-          ctx.shot = {
-            id: s.id,
-            label: s.label,
-            kind: s.content.kind,
-            fidelity: s.fidelity,
-            plays: r ? `${formatTime(r.start)}–${formatTime(r.end)}` : undefined,
-            startsOn: s.start ? describeAnchor(s.start, p) : "end of previous shot",
-            content: s.content.kind === "coded" ? s.content.component : shotSummary(s, assets),
-            intent: s.intent,
-          };
-        }
-      }
-      if (t.kind === "line" || t.kind === "word") {
-        const r = tl.lines.find((l) => l.id === t.line);
-        ctx.line = { id: t.line, text: r?.text, plays: r ? `${formatTime(r.start)}–${formatTime(r.end)}` : undefined };
-      }
-      if (n.region) ctx.region = n.region;
-      return { id: n.id, note: n.text, on: describeTarget(t, p), at: n.at !== undefined ? formatTime(n.at) : undefined, format, stage: n.stage, ...ctx };
-    }),
-  };
-}
-
 function BatchDialog({ notes, onClose }: { notes: Note[]; onClose: () => void }) {
   const p = useProject();
   const projectId = useStore((s) => s.projectId)!;
   const [copied, setCopied] = useState(false);
-  const batch = useMemo(() => buildBatch(p, projectId, notes, (f) => timelineFor(p, f)), [p, projectId, notes]);
+  const where = useStore((s) => s.list.find((x) => x.id === projectId)?.where ?? "examples");
+  const batch = useMemo(() => buildBatch(p, notes, { file: `${where}/${projectId}/project.json` }), [p, projectId, notes, where]);
   const prompt = [
     `Address these ${notes.length} beatsheet notes on ${p.title}.`,
     `Edit ${batch.project.file}${p.codeRoot ? ` and the coded shots under ${p.codeRoot}` : ""}. Keep timing as anchors (words, beats, sections, shots), never raw timecodes.`,
@@ -471,8 +439,8 @@ function BatchDialog({ notes, onClose }: { notes: Note[]; onClose: () => void })
         <h3>Send {notes.length} notes to the agent</h3>
         <p className="dim">
           This is exactly what the agent gets: each note with the shot, line or region it points at, already resolved, so it opens only
-          the files it needs. In step 3 this goes straight to your open Claude Code or Codex session over MCP. For now, copy it into a session
-          running in this repo.
+          what it needs. Mark them sent, then in Claude Code or Codex (in the beatsheet folder) say <strong>"handle the beatsheet notes"</strong>:
+          the beatsheet tools hand it this batch. Or copy the text below into any session.
         </p>
         <pre className="batch">{prompt}</pre>
         <div className="modal-actions">

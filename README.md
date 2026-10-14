@@ -8,25 +8,53 @@ The core idea is that **nothing is placed at a fixed time unless it has to be**.
 
 ```bash
 npm install
-npm run dev        # studio at http://localhost:5180
-npm run check      # typecheck, tests, and validate every example project
+npm run dev                      # studio at http://localhost:5180
+npm run check                    # typecheck, tests, validate the examples
 ```
 
-## What's here (milestone 1, steps 1–2)
+Make a project from a folder of footage. Your footage stays where it is; the project gets preview copies and thumbnails, about a minute per 100 files:
+
+```bash
+npm run beatsheet -- import ~/Movies/trip --id trip --title "Trip" --song ~/Music/song.mp3
+npm run beatsheet -- assemble trip          # instant first cut on the beat
+npm run beatsheet -- render trip --draft    # MP4 in projects/trip/out/
+```
+
+Song analysis (tempo, downbeat, sections) runs librosa through `uv`, so there's nothing extra to install.
+
+## Use it with your agent
+
+The agent works on projects through beatsheet's MCP server while you watch and edit in the studio. Every change shows up live, and every write is validated and version-checked so neither side overwrites the other.
+
+- **Claude Code:** open a session in this folder. It picks up `.mcp.json` (approve the `beatsheet` server when asked) and the `montage` skill in `.claude/skills`.
+- **Codex:** add the server to `~/.codex/config.toml`. `AGENTS.md` carries the same conventions.
+
+  ```toml
+  [mcp_servers.beatsheet]
+  command = "node"
+  args = ["/Users/you/beatsheet/packages/engine/src/mcp.ts"]
+  ```
+
+Then ask for things like "log the footage in july-4 and make a better first cut", or, after leaving notes in the studio, "handle my beatsheet notes".
+
+## What's here
 
 | Path | What it is |
 |---|---|
-| `packages/schema` | The project file format (zod), the resolver that turns anchors into times per format, snapping, and descriptions |
-| `apps/studio` | The UI shell: stage views, an anchor-aware timeline, a stand-in preview, notes, and the batch hand-off |
-| `examples/sparkade-social` | Your Sparkade social cut, ported from `~/sparkade-video`: real lines, word timings, music edits and script intents. It resolves to the same times as Sparkade's own builder in both formats |
-| `examples/lisbon-montage` | A stand-in vacation reel with no media yet: beat-synced shots, a clip synced to the drop, a generated shot with two takes, and a placeholder |
-| `scripts/validate-examples.ts` | Checks every example against the format and resolves each format |
-
-The example notes are sample data. The studio saves straight to `examples/*/project.json`, so `git checkout examples` resets them.
+| `packages/schema` | The project format, the anchor resolver, snapping, the deterministic first cut (`autoAssemble`) and the notes batch. Pure TypeScript, shared by everything |
+| `packages/engine` | Import (probe, preview copies, thumbnails, filmstrips), song analysis, versioned project storage, the media/API server, rendering, the MCP server and the CLI |
+| `packages/video` | The Remotion composition behind every project: the studio plays it live and the renderer exports it |
+| `apps/studio` | The UI: stage views, the anchor-aware timeline, the live player, notes and the batch hand-off, render buttons |
+| `projects/` | Your projects (not in git) |
+| `examples/` | Sparkade's social cut ported from `~/sparkade-video`, and a stand-in Lisbon montage with no media |
+| `.claude/skills/montage` | The montage recipe the agent follows |
 
 ## Not built yet
 
-- **Step 3 (engine):** the real player (Remotion), media ingest with low-res proxies, thumbnails and beat detection, rendering, and the MCP server that lets Claude Code and Codex read notes and edit the project.
-- **Later:** recipes as skills (narrated, montage, cinematic), the narrated recipe ported from Sparkade/Muse Cam, services behind API keys (fal, ElevenLabs, Runway, Gemini), the Send button over Channels, packaging as a Claude Code plugin, and Electron.
+- Coded shots (Sparkade's Remotion scenes) play as placeholder cards. The narrated recipe will run them.
+- Loudness mastering, captions, ducking and sound effects.
+- Services behind API keys (fal, ElevenLabs, Runway, Gemini).
+- The Send button pushing straight into an open session through Channels. For now, mark notes sent and tell the agent to handle them.
+- Packaging as a Claude Code plugin, and Electron.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the reasoning.
