@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+# local media, proxies and renders never go in git
+media/
+.beatsheet/
+out/
