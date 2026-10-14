@@ -2,6 +2,7 @@
  * App state: the open project plus everything about the view of it. Every change to the project goes through
  * `edit`, which records undo history and schedules a save, so nothing the user does is lost or unrecoverable.
  */
+import type { Presence } from "@beatsheet/engine";
 import { parseProject, resolveTimeline, type Project, type StageId, type Timeline } from "@beatsheet/schema";
 import { useSyncExternalStore } from "react";
 
@@ -47,6 +48,11 @@ export type State = {
   compose: number;
   /** A note whose text field should open focused. */
   focusNote?: string;
+  /** Muse Code sessions that have beatsheet's tools loaded right now. */
+  agents: Presence[];
+  /** Where the Muse Code CLI is installed, if it is. */
+  muse: string | null;
+  newProjectOpen: boolean;
 };
 
 let state: State = {
@@ -61,6 +67,9 @@ let state: State = {
   zoom: 0,
   side: "notes",
   compose: 0,
+  agents: [],
+  muse: null,
+  newProjectOpen: false,
 };
 const listeners = new Set<() => void>();
 
@@ -132,6 +141,23 @@ async function saveNow() {
 
 // ---- Actions.
 export const actions = {
+  async loadAgents() {
+    const res = await fetch("/api/agents");
+    if (res.ok) setState((await res.json()) as Pick<State, "agents" | "muse">);
+  },
+  setAgents(agents: Presence[]) {
+    setState({ agents });
+  },
+  setNewProjectOpen(open: boolean) {
+    setState({ newProjectOpen: open });
+  },
+  /** Saves now instead of waiting for the debounce, so the server sees every edit before acting on the project. */
+  async flushSave() {
+    if (state.save === "dirty") {
+      clearTimeout(saveTimer);
+      await saveNow();
+    }
+  },
   async loadList() {
     const res = await fetch("/api/projects");
     setState({ list: await res.json() });

@@ -132,6 +132,48 @@ export function selectionForTarget(t: NoteTarget): Selection | undefined {
   return undefined;
 }
 
+export const AGENT_NAME = { muse: "Muse Code", other: "Agent" } as const;
+
+/** The models a new Muse Code session can run on. */
+export const MUSE_MODELS = [
+  { id: "muse-wonder-full-1.0", label: "Muse Wonder Full", hint: "Default · launched this week" },
+  { id: "muse-wonder-1.0", label: "Muse Wonder", hint: "" },
+  { id: "muse-spark-1.3", label: "Muse Spark 1.3", hint: "" },
+  { id: "muse-spark-1.2", label: "Muse Spark 1.2", hint: "" },
+];
+export const modelLabel = (id?: string) => (id ? MUSE_MODELS.find((m) => m.id === id)?.label ?? id : undefined);
+
+const TOOL_WORDS: Record<string, string> = {
+  list_projects: "looking around",
+  get_project: "reading the project",
+  list_assets: "going through footage",
+  look_at_assets: "watching footage",
+  log_assets: "logging footage",
+  first_cut: "making a first cut",
+  set_song: "setting the song",
+  edit_project: "editing",
+  get_batch: "reading your notes",
+  resolve_note: "closing a note",
+  frame: "checking a frame",
+  render: "rendering",
+  "received batch": "got your notes",
+};
+
+/** What an agent last did, in words: "editing july-4". */
+export function agentActivity(a: { activity?: { tool: string; project?: string } }): string {
+  if (!a.activity) return "";
+  const what = TOOL_WORDS[a.activity.tool] ?? a.activity.tool;
+  return a.activity.project ? `${what} ${a.activity.project}` : what;
+}
+
+export function timeAgo(iso: string, now = Date.now()): string {
+  const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  return `${Math.round(s / 3600)}h ago`;
+}
+
 export const isTyping = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);

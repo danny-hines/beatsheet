@@ -1,6 +1,8 @@
+import type { Presence } from "@beatsheet/engine";
 import type { StageId } from "@beatsheet/schema";
 import { useEffect, type ReactNode } from "react";
 import { StageHeader, StageRail, TopBar } from "./components/Chrome";
+import { NewProjectDialog } from "./components/NewProject";
 import { SidePanel } from "./components/Side";
 import { Timeline } from "./components/Timeline";
 import { AssembleView, BoardView, BriefView, CraftView, FinishView, MaterialView, SoundView, StructureView } from "./components/views";
@@ -22,6 +24,7 @@ export function App() {
   const project = useStore((s) => s.project);
   const loadError = useStore((s) => s.loadError);
   const stage = useStore((s) => s.stage);
+  const newProjectOpen = useStore((s) => s.newProjectOpen);
 
   useEffect(() => {
     actions.loadList().then(() => {
@@ -34,10 +37,18 @@ export function App() {
     };
     window.addEventListener("hashchange", onHash);
     const onChanged = (d: { id: string; version: string }) => actions.externalChange(d.id, d.version);
+    const onAgents = (agents: Presence[]) => actions.setAgents(agents);
+    // New projects can appear from the CLI or an agent; pick them up when the window comes back.
+    const onFocus = () => void actions.loadList();
     import.meta.hot?.on("beatsheet:changed", onChanged);
+    import.meta.hot?.on("beatsheet:agents", onAgents);
+    window.addEventListener("focus", onFocus);
+    void actions.loadAgents();
     return () => {
       window.removeEventListener("hashchange", onHash);
+      window.removeEventListener("focus", onFocus);
       import.meta.hot?.off("beatsheet:changed", onChanged);
+      import.meta.hot?.off("beatsheet:agents", onAgents);
     };
   }, []);
   usePlayback();
@@ -51,7 +62,7 @@ export function App() {
       </div>
     );
   }
-  if (!project) return <div className="fatal dim">Loading…</div>;
+  if (!project) return <div className="fatal dim">Loading…{newProjectOpen && <NewProjectDialog />}</div>;
   const View = VIEWS[stage];
   return (
     <div className="app">
@@ -66,6 +77,7 @@ export function App() {
       <aside className="side">
         <SidePanel />
       </aside>
+      {newProjectOpen && <NewProjectDialog />}
     </div>
   );
 }

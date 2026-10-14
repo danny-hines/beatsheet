@@ -10,7 +10,7 @@ import {
   type Timeline,
 } from "@beatsheet/schema";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { assetMap, FIDELITY_LABEL, hideBroken, KIND_LABEL, nextId, noteMatches, noteTime, posterUrl, selectionForTarget, shotSummary, stripUrl, targetFromSelection } from "../lib";
+import { AGENT_NAME, assetMap, FIDELITY_LABEL, hideBroken, KIND_LABEL, nextId, noteMatches, noteTime, posterUrl, selectionForTarget, shotSummary, stripUrl, targetFromSelection } from "../lib";
 import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
 import { AnchorChip, Empty, Stars, TextField } from "./ui";
 
@@ -412,12 +412,19 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+type SendResult = { count: number; delivered: "muse" | "none"; agent?: { kind: "muse" | "other" }; message: string; error?: string };
+
 function BatchDialog({ notes, onClose }: { notes: Note[]; onClose: () => void }) {
   const p = useProject();
   const projectId = useStore((s) => s.projectId)!;
+  const agents = useStore((s) => s.agents);
   const [copied, setCopied] = useState(false);
+  const [result, setResult] = useState<SendResult | null>(null);
+  const [sending, setSending] = useState(false);
   const where = useStore((s) => s.list.find((x) => x.id === projectId)?.where ?? "examples");
   const batch = useMemo(() => buildBatch(p, notes, { file: `${where}/${projectId}/project.json` }), [p, projectId, notes, where]);
+  const target = agents.find((a) => a.kind === "muse" && a.museSession);
+  const someone = target ?? agents[0];
   const prompt = [
     `Address these ${notes.length} beatsheet notes on ${p.title}.`,
     `Edit ${batch.project.file}${p.codeRoot ? ` and the coded shots under ${p.codeRoot}` : ""}. Keep timing as anchors (words, beats, sections, shots), never raw timecodes.`,
@@ -427,37 +434,81 @@ function BatchDialog({ notes, onClose }: { notes: Note[]; onClose: () => void })
     JSON.stringify(batch, null, 2),
     "```",
   ].join("\n");
-  const markSent = () => {
-    const ids = new Set(notes.map((n) => n.id));
-    const batchId = `b${Date.now().toString(36)}`;
-    actions.edit((d) => d.notes.forEach((n) => ids.has(n.id) && ((n.status = "working"), (n.batch = batchId))));
-    onClose();
+  const copy = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
   };
+  const send = async () => {
+    setSending(true);
+    try {
+      await actions.flushSave();
+      const res = await fetch("/api/agents/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: projectId }) });
+      setResult((await res.json()) as SendResult);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (result) {
+    const name = result.agent ? AGENT_NAME[result.agent.kind] : "your agent";
+    return (
+      <div className="modal-back" onClick={onClose}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <h3>{result.delivered === "none" ? "Notes marked as sent" : `Sent to ${name}`}</h3>
+          {result.delivered !== "none" ? (
+            <p>
+              {result.count === 1 ? "It has the note and is working on it." : `It has the ${result.count} notes and is working on them.`} Each one moves to
+              Done with a reply as it's handled.
+            </p>
+          ) : (
+            <>
+              <p>
+                {result.error
+                  ? `${name} couldn't be messaged (it may have been started without session messaging), so tell it:`
+                  : agents.length
+                    ? `${name} can't be messaged from here, so tell it:`
+                    : "Muse Code isn't connected. Connect it from the top right, then tell it:"}{" "}
+                <strong>“handle my beatsheet notes”</strong>. It picks up exactly these notes.
+              </p>
+              <div className="modal-actions">
+                <button onClick={() => copy("handle my beatsheet notes")}>{copied ? "Copied" : "Copy that"}</button>
+              </div>
+            </>
+          )}
+          <div className="modal-actions">
+            <span className="spacer" />
+            <button className="primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="modal-back" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Send {notes.length} notes to the agent</h3>
+        <h3>Send {notes.length} note{notes.length === 1 ? "" : "s"} to {someone ? AGENT_NAME[someone.kind] : "your agent"}</h3>
         <p className="dim">
-          This is exactly what the agent gets: each note with the shot, line or region it points at, already resolved, so it opens only
-          what it needs. Mark them sent, then in Claude Code or Codex (in the beatsheet folder) say <strong>"handle the beatsheet notes"</strong>:
-          the beatsheet tools hand it this batch. Or copy the text below into any session.
+          {target
+            ? `${AGENT_NAME[target.kind]} gets them right away and starts on them.`
+            : someone
+              ? `${AGENT_NAME[someone.kind]} is connected, but this session can't be messaged, so after sending, tell it “handle my beatsheet notes”.`
+              : "Muse Code isn't connected yet. Sending marks the notes as sent; the next session you connect picks them up."}{" "}
+          Each note goes with the shot, line or frame area it points at, so the agent opens only what it needs.
         </p>
-        <pre className="batch">{prompt}</pre>
+        <details>
+          <summary className="small">What the agent gets</summary>
+          <pre className="batch">{prompt}</pre>
+        </details>
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
+          <button onClick={() => copy(prompt)}>{copied ? "Copied" : "Copy as text"}</button>
           <span className="spacer" />
-          <button
-            onClick={async () => {
-              await navigator.clipboard.writeText(prompt);
-              setCopied(true);
-            }}
-          >
-            {copied ? "Copied" : "Copy for Claude Code / Codex"}
+          <button className="primary" onClick={send} disabled={sending}>
+            {sending ? "Sending…" : target ? `Send to ${AGENT_NAME[target.kind]}` : "Mark as sent"}
           </button>
-          <button className="primary" onClick={markSent}>Mark as sent</button>
         </div>
       </div>
     </div>
   );
 }
-

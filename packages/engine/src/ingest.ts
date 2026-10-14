@@ -4,7 +4,7 @@
  */
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
-import { SCHEMA_VERSION, STAGE_IDS, type Asset, type Project } from "@beatsheet/schema";
+import { autoAssemble, formatPreset, SCHEMA_VERSION, STAGE_IDS, type Asset, type Brief, type Format, type Project } from "@beatsheet/schema";
 import { averageColor, makeImageProxy, makePoster, makeStrip, makeVideoProxy, pool } from "./media.ts";
 import { analyzeMusic } from "./music.ts";
 import { assetPath, cachePaths, expandHome, ROOTS } from "./paths.ts";
@@ -12,28 +12,42 @@ import { kindOf, probe } from "./probe.ts";
 import { createProject, loadProject, saveProject } from "./store.ts";
 
 export type ImportOptions = {
-  folder: string;
+  /** Footage folder; a project can also start empty. */
+  folder?: string;
   id: string;
   title?: string;
   song?: string;
+  brief?: Partial<Brief>;
+  /** Format preset ids; default vertical. */
+  formats?: string[];
+  /** Make a first cut as soon as the footage and song are in. */
+  firstCut?: boolean;
   log?: (msg: string) => void;
+  /** Fraction done, 0..1, across reading, the song and the preview copies. */
+  onProgress?: (fraction: number) => void;
 };
 
-const VERTICAL = { id: "vertical", label: "9:16", width: 1080, height: 1920, fps: 30, platforms: ["Instagram Reels", "TikTok", "YouTube Shorts"] };
+/** Photos and videos directly inside a folder (not subfolders), as import sees them. */
+export function scanFolder(folder: string): { files: string[]; videos: number; photos: number } {
+  const dir = resolve(expandHome(folder));
+  const files = readdirSync(dir)
+    .filter((f) => !f.startsWith(".") && kindOf(f) && kindOf(f) !== "audio")
+    .sort();
+  return { files, videos: files.filter((f) => kindOf(f) === "video").length, photos: files.filter((f) => kindOf(f) === "image").length };
+}
 
 export async function importFolder(opts: ImportOptions): Promise<Project> {
   const log = opts.log ?? (() => {});
-  const folder = resolve(expandHome(opts.folder));
-  const files = readdirSync(folder)
-    .filter((f) => !f.startsWith(".") && kindOf(f) && kindOf(f) !== "audio")
-    .sort();
-  if (!files.length) throw new Error(`No photos or videos in ${folder}`);
-  log(`Reading ${files.length} files from ${folder}`);
+  const progress = opts.onProgress ?? (() => {});
+  const folder = opts.folder ? resolve(expandHome(opts.folder)) : undefined;
+  const files = folder ? scanFolder(folder).files : [];
+  if (folder && !files.length) throw new Error(`No photos or videos in ${folder}`);
+  if (folder) log(`Reading ${files.length} files from ${folder}`);
 
   const assets: Asset[] = [];
   const used = new Set<string>();
   await pool(files, 8, async (file) => {
-    const info = await probe(join(folder, file));
+    const info = await probe(join(folder!, file));
     const kind = info.kind === "image" ? "image" : "video";
     assets.push({
       id: assetId(file, kind, info.capturedAt, used),
@@ -50,16 +64,28 @@ export async function importFolder(opts: ImportOptions): Promise<Project> {
     });
   });
   assets.sort((a, b) => (a.capturedAt ?? "").localeCompare(b.capturedAt ?? "") || a.path.localeCompare(b.path));
+  progress(0.08);
 
-  const title = opts.title ?? basename(folder).replace(/^\d{4}[_-]/, "").replace(/[_-]+/g, " ");
+  const title = opts.title ?? (folder ? basename(folder).replace(/^\d{4}[_-]/, "").replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : opts.id);
+  const formats: Format[] = (opts.formats?.length ? opts.formats : ["vertical"]).map((id) => {
+    const f = formatPreset(id);
+    if (!f) throw new Error(`Unknown format "${id}"`);
+    return f;
+  });
   const project: Project = {
     schema: SCHEMA_VERSION,
     id: opts.id,
-    title: title.replace(/\b\w/g, (c) => c.toUpperCase()),
+    title,
     recipe: "montage",
     mediaRoot: folder,
-    brief: { goal: `A short reel of ${title} to share`, platforms: VERTICAL.platforms, targetLength: 30, maxLength: 60 },
-    formats: [VERTICAL],
+    brief: {
+      goal: `A short reel of ${title} to share`,
+      platforms: [...new Set(formats.flatMap((f) => f.platforms ?? []))],
+      targetLength: 30,
+      maxLength: 60,
+      ...Object.fromEntries(Object.entries(opts.brief ?? {}).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && !v.length))),
+    },
+    formats,
     stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])) as Project["stages"],
     spine: "music",
     assets,
@@ -71,13 +97,25 @@ export async function importFolder(opts: ImportOptions): Promise<Project> {
     shots: [],
     notes: [],
   };
-  project.stages.brief = { status: "active" };
-  project.stages.material = { status: "active", summary: `${assets.length} files imported; not logged yet` };
+  project.stages.brief = { status: "done" };
+  project.stages.material = assets.length
+    ? { status: "active", summary: `${assets.length} files imported; not logged yet` }
+    : { status: "todo", summary: "No footage yet" };
   project.stages.board = { status: "skipped", summary: "Montages go straight from music to assembly" };
-  const { dir } = createProject(opts.id, project);
+  createProject(opts.id, project);
 
-  if (opts.song) await addSong(opts.id, opts.song, log);
-  await buildCache(opts.id, log);
+  if (opts.song) {
+    await addSong(opts.id, opts.song, log);
+    progress(0.15);
+  }
+  await buildCache(opts.id, log, (f) => progress(0.15 + f * 0.82));
+  if (opts.firstCut && opts.song && assets.length) {
+    const loaded = loadProject(opts.id);
+    const { project: cut, summary } = autoAssemble(loaded.project);
+    saveProject(opts.id, cut, loaded.version);
+    summary.forEach((line) => log(line));
+  }
+  progress(1);
   return loadProject(opts.id).project;
 }
 
@@ -109,7 +147,7 @@ export async function addSong(id: string, song: string, log: (msg: string) => vo
 }
 
 /** Makes every missing preview copy, poster and filmstrip. Safe to run again; finished files are skipped. */
-export async function buildCache(id: string, log: (msg: string) => void = () => {}): Promise<void> {
+export async function buildCache(id: string, log: (msg: string) => void = () => {}, onProgress?: (fraction: number) => void): Promise<void> {
   const { project, dir } = loadProject(id);
   const media = project.assets.filter((a) => a.kind === "video" || a.kind === "image");
   const colors = new Map<string, string>();
@@ -132,6 +170,7 @@ export async function buildCache(id: string, log: (msg: string) => void = () => 
       colors.set(a.id, await averageColor(c.poster));
     },
     (n) => {
+      onProgress?.(n / media.length);
       if (n % 5 === 0 || n === media.length) log(`  ${n}/${media.length} (${Math.round((Date.now() - started) / 1000)}s)`);
     },
   );

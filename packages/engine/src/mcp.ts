@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 /**
- * beatsheet's MCP server: how Claude Code, Codex or any MCP client works on a project. It reads and writes the same
- * project files as the studio (which reloads when they change), and every write is validated and version-checked.
+ * beatsheet's MCP server: how Muse Code works on a project. It reads and writes the same project files as the studio
+ * (which reloads when they change), and every write is validated and version-checked.
  *
- * Claude Code picks it up from .mcp.json in the repo. Codex: add to ~/.codex/config.toml
- *   [mcp_servers.beatsheet]
- *   command = "node"
- *   args = ["/path/to/beatsheet/packages/engine/src/mcp.ts"]
+ * Muse Code loads it from .mcp.json when the beatsheet folder is trusted; the studio's launcher starts Muse with
+ * --trust-workspace. Any other MCP client can run it with `node packages/engine/src/mcp.ts`.
  */
 import { readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -23,6 +21,7 @@ import {
   type Asset,
   type Project,
 } from "@beatsheet/schema";
+import { presenceFromEnv, removePresence, writePresence, type Presence } from "./agents.ts";
 import { addSong } from "./ingest.ts";
 import { cachePaths } from "./paths.ts";
 import { listProjects, loadProject, saveProject, updateProject } from "./store.ts";
@@ -35,9 +34,36 @@ Rules for edits:
 - Don't change anything a locked stage owns.
 - Every write is validated; a bad edit is refused with the reason, and nothing is written.
 
-Notes: the person pins notes in the studio and sends them as a batch. Call get_batch, handle each note with scoped edits, look at the result with frame when it's visual, then resolve_note with a one-line reply saying what changed.`;
+Notes: the person pins notes in the studio and sends them as a batch. Call get_batch, handle each note with scoped edits, look at the result with frame when it's visual, then resolve_note with a one-line reply saying what changed.
+
+When a message arrives saying the person sent beatsheet notes, they just pressed Send in the studio: call get_batch for that project and handle the notes right away.`;
 
 const server = new McpServer({ name: "beatsheet", version: "0.1.0" }, { instructions: INSTRUCTIONS });
+
+// ---- Presence: tells the studio this session is connected, and what it last did.
+let presence: Presence | undefined;
+server.server.oninitialized = () => {
+  presence = { pid: process.pid, startedAt: new Date().toISOString(), ...presenceFromEnv(server.server.getClientVersion()) };
+  writePresence(presence);
+};
+const track = (tool: string, project?: string) => {
+  if (!presence) return;
+  presence.activity = { tool, project, at: new Date().toISOString() };
+  writePresence(presence);
+};
+const forget = () => removePresence(process.pid);
+process.on("exit", forget);
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => process.exit(0));
+server.server.onclose = () => process.exit(0);
+
+// Every tool call counts as activity.
+const register = server.registerTool.bind(server);
+server.registerTool = ((name: string, config: unknown, cb: (...args: unknown[]) => unknown) =>
+  register(name, config as never, (async (...args: unknown[]) => {
+    track(name, (args[0] as { project?: string } | undefined)?.project);
+    return cb(...args);
+  }) as never)) as unknown as typeof server.registerTool;
+
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const projectArg = z.string().describe("Project id, from list_projects");
 

@@ -1,8 +1,8 @@
 import react from "@vitejs/plugin-react";
-import { watch } from "node:fs";
+import { mkdirSync, watch } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
-import { beatsheetHandler, currentVersion, ROOTS } from "../../packages/engine/src/index.ts";
+import { AGENTS_DIR, beatsheetHandler, currentVersion, listAgents, ROOTS } from "../../packages/engine/src/index.ts";
 
 /**
  * Mounts the engine's project API and media server in the dev server, and tells the page when a project file changes
@@ -17,6 +17,23 @@ function beatsheet(): Plugin {
         if (req.url?.startsWith("/api/") || req.url?.startsWith("/media/")) return void handler(req, res, next);
         next();
       });
+      // Agent sessions come and go; tell the page whenever the list changes.
+      let lastAgents = "";
+      const pushAgents = () => {
+        const agents = listAgents();
+        const json = JSON.stringify(agents);
+        if (json === lastAgents) return;
+        lastAgents = json;
+        server.ws.send({ type: "custom", event: "beatsheet:agents", data: agents });
+      };
+      mkdirSync(AGENTS_DIR, { recursive: true });
+      let agentTimer: ReturnType<typeof setTimeout> | undefined;
+      watch(AGENTS_DIR, () => {
+        clearTimeout(agentTimer);
+        agentTimer = setTimeout(pushAgents, 100);
+      });
+      setInterval(pushAgents, 4000).unref(); // also notices sessions that quit without saying so
+
       const timers = new Map<string, ReturnType<typeof setTimeout>>();
       for (const root of [ROOTS.projects, ROOTS.examples]) {
         try {

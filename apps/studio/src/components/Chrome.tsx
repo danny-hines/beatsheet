@@ -1,6 +1,7 @@
 import { STAGE_IDS, type StageState } from "@beatsheet/schema";
 import { STAGE_LABELS } from "../lib";
 import { actions, useProject, useStore, useTimeline } from "../store";
+import { MuseMenu } from "./MuseMenu";
 
 export function TopBar() {
   const p = useProject();
@@ -20,9 +21,11 @@ export function TopBar() {
           <option key={x.id} value={x.id}>{x.title}</option>
         ))}
       </select>
+      <button onClick={() => actions.setNewProjectOpen(true)} title="Start a new project from a folder of footage">+ New</button>
       <span className="pill pill-recipe">{p.recipe}</span>
       <span className="dim small">spine: {p.spine}</span>
       <span className="spacer" />
+      <MuseMenu />
       {tl.diagnostics.length > 0 && (
         <span className="warn small" title={tl.diagnostics.map((d) => `${d.where}: ${d.message}`).join("\n")}>
           ⚠ {tl.diagnostics.length} timing {tl.diagnostics.length === 1 ? "problem" : "problems"}

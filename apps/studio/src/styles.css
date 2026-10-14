@@ -329,3 +329,52 @@ pre.batch { flex: 1; overflow: auto; background: #0e0f12; border: 1px solid var(
 .progress div { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: 0.5; }
 .progress span { position: relative; font-size: 11px; padding-left: 8px; }
 .rendered video { max-height: 340px; max-width: 100%; border-radius: 6px; background: #000; }
+
+/* ---- New project ----------------------------------------------------------------------------------------------- */
+.modal.new-project { width: min(940px, 94vw); }
+.np-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; overflow: auto; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field-label { color: var(--dim); font-size: 12px; }
+.choice-row { display: flex; gap: 6px; }
+.format-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.format-choice { display: flex; gap: 10px; align-items: center; text-align: left; padding: 8px; }
+.format-choice .format-shape { width: 18px; max-height: 32px; }
+.format-choice span:last-child { display: flex; flex-direction: column; }
+.format-choice.on .format-shape { border-color: var(--accent); }
+.path-row { display: flex; gap: 6px; align-items: center; }
+.path-row input { flex: 1; }
+.path-row code { flex: 1; font-size: 11px; background: #0e0f12; border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; overflow: auto; white-space: nowrap; }
+.form label.check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+pre.job-log { background: #0e0f12; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 11.5px; min-height: 140px; white-space: pre-wrap; margin: 0; }
+
+/* ---- Agent menu ------------------------------------------------------------------------------------------------ */
+.agent-menu { position: relative; }
+.agent-button { display: flex; align-items: center; gap: 7px; max-width: 360px; white-space: nowrap; overflow: hidden; }
+.agent-button .activity { overflow: hidden; text-overflow: ellipsis; }
+.agent-button .caret { color: var(--dim); font-size: 10px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: #4a505b; display: inline-block; flex: none; }
+.dot.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
+.dot.pending { background: var(--accent); animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: 0.3; } }
+.agent-panel { position: absolute; right: 0; top: calc(100% + 6px); width: 380px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px 14px; z-index: 40; box-shadow: 0 12px 40px #0009; }
+.agent-panel h4 { margin-top: 4px; }
+.agent-row { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 3px; }
+.agent-start { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
+.agent-name { width: 96px; font-weight: 600; }
+.install { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; }
+.pending-note { background: #2a2414; border: 1px solid #5a4a20; color: #f2d48a; padding: 7px 9px; border-radius: 7px; }
+.modal details { margin: 4px 0; }
+.modal details pre.batch { max-height: 40vh; }
+
+/* ---- Muse ------------------------------------------------------------------------------------------------------ */
+:root { --muse: #2673e8; }
+.dot.muse { background: var(--muse); box-shadow: 0 0 6px var(--muse); }
+.agent-button.muse:not(.connected) { border-color: #2a4f86; color: #cfe0fb; }
+.model-tag { font-size: 11px; background: #17294a; color: #9cc1ff; border-radius: 9px; padding: 0 7px; margin-left: 2px; }
+.new-session { width: 100%; display: flex; justify-content: space-between; align-items: center; background: #14233b; border-color: #2a4f86; color: #dbe8ff; font-weight: 600; }
+.new-session.on { border-color: var(--muse); color: #dbe8ff; background: #14233b; }
+.model-list { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 4px; }
+.model-option, .resume-option { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; width: 100%; }
+.model-option:hover, .resume-option:hover { border-color: var(--muse); }
+.resume-option { margin-bottom: 4px; }
+.resume-prompt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; font-size: 12px; }

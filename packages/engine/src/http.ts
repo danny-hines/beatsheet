@@ -2,11 +2,18 @@
  * HTTP for the studio and for rendering: the project API and media files (with byte ranges, which video seeking
  * needs). The studio mounts this inside Vite; renders and the MCP server start it standalone.
  */
+import { execFile } from "node:child_process";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
+import { promisify } from "node:util";
+import { slugify, type Brief } from "@beatsheet/schema";
+import { findMuse, launchMuse, listAgents, listMuseSessions, sendBatch } from "./agents.ts";
+import { importFolder, scanFolder } from "./ingest.ts";
+import { assetPath, cachePaths, expandHome, isProjectId, mediaPath } from "./paths.ts";
 import { ConflictError, InvalidProjectError, listProjects, loadProject, readRaw, saveProject } from "./store.ts";
-import { assetPath, cachePaths, expandHome, mediaPath } from "./paths.ts";
+
+const run = promisify(execFile);
 
 type Next = (err?: unknown) => void;
 
@@ -58,8 +65,62 @@ export function sendFile(req: IncomingMessage, res: ServerResponse, file: string
   createReadStream(file).pipe(res);
 }
 
-export type RenderJob = { id: string; project: string; format: string; status: "running" | "done" | "error"; progress: number; output?: string; error?: string };
-const jobs = new Map<string, RenderJob>();
+export type Job = {
+  id: string;
+  kind: "render" | "import";
+  project: string;
+  format?: string;
+  status: "running" | "done" | "error";
+  progress: number;
+  log: string[];
+  output?: string;
+  error?: string;
+};
+/** Kept for older imports. */
+export type RenderJob = Job;
+const jobs = new Map<string, Job>();
+
+function startJob(kind: Job["kind"], project: string, work: (job: Job) => Promise<string | void>, extra: Partial<Job> = {}): Job {
+  const job: Job = { id: `${kind[0]}${Date.now().toString(36)}`, kind, project, status: "running", progress: 0, log: [], ...extra };
+  jobs.set(job.id, job);
+  work(job)
+    .then((out) => Object.assign(job, { status: "done", progress: 1, output: out ?? undefined }))
+    .catch((err) => Object.assign(job, { status: "error", error: err instanceof Error ? err.message : String(err) }));
+  return job;
+}
+
+export type NewProjectRequest = {
+  title: string;
+  id?: string;
+  folder?: string;
+  song?: string;
+  formats?: string[];
+  brief?: Partial<Brief>;
+  firstCut?: boolean;
+};
+
+/** A free project id based on the title: trip, trip-2, trip-3… */
+export function freeId(title: string): string {
+  const base = slugify(title);
+  const taken = new Set(listProjects().map((p) => p.id));
+  let id = base;
+  for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
+  return id;
+}
+
+/** macOS file and folder pickers, so the studio gets real paths. */
+async function pick(kind: "folder" | "audio"): Promise<string | null> {
+  const choose =
+    kind === "folder"
+      ? 'POSIX path of (choose folder with prompt "Choose the folder of photos and videos")'
+      : 'POSIX path of (choose file with prompt "Choose a song" of type {"public.audio"})';
+  try {
+    const { stdout } = await run("osascript", ["-e", "activate", "-e", choose], { timeout: 10 * 60_000 });
+    return stdout.trim().replace(/\/$/, "") || null;
+  } catch {
+    return null; // cancelled
+  }
+}
 
 /** Connect-style handler for /api/* and /media/*; anything else goes to `next`. */
 export function beatsheetHandler() {
@@ -82,6 +143,50 @@ export function beatsheetHandler() {
 async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   const [section, id, action] = parts;
   if (section === "projects" && !id && req.method === "GET") return json(res, 200, listProjects());
+  if (section === "projects" && !id && req.method === "POST") {
+    const body = JSON.parse(await readBody(req)) as NewProjectRequest;
+    if (!body.title?.trim()) return json(res, 400, { error: "A title is required" });
+    const projectId = body.id?.trim() || freeId(body.title);
+    if (!isProjectId(projectId)) return json(res, 400, { error: `"${projectId}" can't be a project id: use letters, numbers and dashes` });
+    if (listProjects().some((p) => p.id === projectId)) return json(res, 409, { error: `There's already a project called ${projectId}` });
+    const job = startJob("import", projectId, async (j) => {
+      await importFolder({
+        id: projectId,
+        title: body.title.trim(),
+        folder: body.folder?.trim() || undefined,
+        song: body.song?.trim() || undefined,
+        formats: body.formats,
+        brief: body.brief,
+        firstCut: body.firstCut,
+        log: (m) => j.log.push(m),
+        onProgress: (f) => (j.progress = f),
+      });
+    });
+    return json(res, 202, job);
+  }
+  if (section === "pick" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { kind?: "folder" | "audio" };
+    return json(res, 200, { path: await pick(body.kind === "audio" ? "audio" : "folder") });
+  }
+  if (section === "scan" && req.method === "GET") {
+    const path = new URL(req.url ?? "", "http://local").searchParams.get("path") ?? "";
+    try {
+      const { videos, photos } = scanFolder(path);
+      return json(res, 200, { ok: true, videos, photos });
+    } catch {
+      return json(res, 200, { ok: false, videos: 0, photos: 0 });
+    }
+  }
+  if (section === "agents" && !id && req.method === "GET") return json(res, 200, { agents: listAgents(), muse: await findMuse() });
+  if (section === "agents" && id === "sessions" && req.method === "GET") return json(res, 200, listMuseSessions());
+  if (section === "agents" && id === "launch" && req.method === "POST") {
+    const body = JSON.parse(await readBody(req)) as { model?: string; session?: string; project?: string };
+    return json(res, 200, await launchMuse(body));
+  }
+  if (section === "agents" && id === "send" && req.method === "POST") {
+    const body = JSON.parse(await readBody(req)) as { project: string };
+    return json(res, 200, await sendBatch(body.project));
+  }
   if (section === "projects" && id && !action) {
     if (req.method === "GET") {
       const raw = readRaw(id);
@@ -95,12 +200,15 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   }
   if (section === "projects" && id && action === "render" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { format?: string; quality?: "proxy" | "original" };
-    const job: RenderJob = { id: `r${Date.now().toString(36)}`, project: id, format: body.format ?? "", status: "running", progress: 0 };
-    jobs.set(job.id, job);
-    import("./render.ts")
-      .then(({ renderProject }) => renderProject(id, { format: body.format, quality: body.quality, onProgress: (p) => (job.progress = p) }))
-      .then((out) => Object.assign(job, { status: "done", progress: 1, output: out }))
-      .catch((err) => Object.assign(job, { status: "error", error: err instanceof Error ? err.message : String(err) }));
+    const job = startJob(
+      "render",
+      id,
+      async (j) => {
+        const { renderProject } = await import("./render.ts");
+        return renderProject(id, { format: body.format, quality: body.quality, onProgress: (p) => (j.progress = p) });
+      },
+      { format: body.format },
+    );
     return json(res, 202, job);
   }
   if (section === "jobs" && id && req.method === "GET") {
