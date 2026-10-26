@@ -148,9 +148,9 @@ const hf = (path: string, token: string, init: RequestInit = {}) =>
 
 /**
  * Checks a Hugging Face token can download the model (it's signed in, and Meta has said yes to its owner), then keeps
- * it in Credential Manager. Nothing is downloaded yet.
+ * it in Credential Manager (`saved`: it's there already). Nothing is downloaded yet.
  */
-export async function setSamToken(token: string): Promise<SamStatus> {
+export async function setSamToken(token: string, saved = false): Promise<SamStatus> {
   token = token.trim();
   if (!/^hf_\w{20,}$/.test(token)) throw new Error("That doesn't look like a Hugging Face token (they start with hf_)");
   const who = await hf("/api/whoami-v2", token).catch((err: Error) => {
@@ -163,9 +163,16 @@ export async function setSamToken(token: string): Promise<SamStatus> {
   if (access.status === 401 || access.status === 403)
     throw new Error(`The token works${name ? ` (${name})` : ""}, but Meta hasn't given you access to SAM 3.1 yet. Ask on its page (${LINKS.access}); it's usually a few minutes to an hour. Then add the token again.`);
   if (access.status >= 400) throw new Error(`Hugging Face answered ${access.status} for the model; try again shortly`);
-  await setSecret("huggingface", token);
+  if (!saved) await setSecret("huggingface", token);
   updateSettings((s) => void (s.huggingface = { name, addedAt: new Date().toISOString() }));
   return samStatus();
+}
+
+/** A token already in Credential Manager that settings don't list (see findSavedKeys), checked again before it's listed. */
+export async function findSamToken() {
+  if (readSettings().huggingface) return;
+  const token = await getSecret("huggingface");
+  if (token) await setSamToken(token, true).catch(() => undefined);
 }
 
 /** The model's SHA-256, as Hugging Face has it for the pinned revision (it shows only to people with access). */

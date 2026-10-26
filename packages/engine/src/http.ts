@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type Rect } from "@beatsheet/schema";
 import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
 import { listAgents, RUNTIME } from "./agents.ts";
-import { addServiceKey, capabilities, listServices, recheckService, removeServiceKey } from "./services.ts";
+import { addServiceKey, capabilities, findSavedKeys, listServices, recheckService, removeServiceKey } from "./services.ts";
 import { readSettings, updateSettings } from "./settings.ts";
 import { answerMessage, currentTurn, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
 import { streamEvents } from "./events.ts";
@@ -328,7 +328,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   }
   if (section === "settings") {
     const body = req.method === "POST" ? (JSON.parse((await readBody(req)) || "{}") as { id?: string; model?: string; key?: string; level?: string; on?: boolean }) : {};
-    if (!id && req.method === "GET") return json(res, 200, { settings: readSettings(), services: listServices(), capabilities: capabilities(), vision: await visionStatus(), sam: samStatus() });
+    if (!id && req.method === "GET") {
+      await findSavedKeys();
+      return json(res, 200, { settings: readSettings(), services: listServices(), capabilities: capabilities(), vision: await visionStatus(), sam: samStatus() });
+    }
     // SAM 3 on this Mac: installed in the background; the page follows along by asking for the status.
     if (id === "sam" && req.method === "GET") return json(res, 200, samStatus());
     if (id === "sam" && action === "install" && req.method === "POST") return json(res, 202, installSam());

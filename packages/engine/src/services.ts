@@ -2,6 +2,7 @@
  * Optional media services the person can add with an API key. Each one gives the agent new abilities (images, video,
  * music, a voice); keys are checked with a request that spends nothing, then kept in the Keychain.
  */
+import { findSamToken } from "./sam-cuda.ts";
 import { samReady } from "./sam.ts";
 import { deleteSecret, getSecret, readSettings, setSecret, updateSettings } from "./settings.ts";
 
@@ -143,6 +144,24 @@ export type ServiceInfo = Omit<Service, "verify"> & { configured: boolean; detai
 export function listServices(): ServiceInfo[] {
   const saved = readSettings().services;
   return SERVICES.map(({ verify: _verify, ...s }) => ({ ...s, configured: !!saved[s.id], detail: saved[s.id]?.detail, addedAt: saved[s.id]?.addedAt }));
+}
+
+let found: Promise<void> | undefined;
+/**
+ * Keys already in the Keychain that settings don't list, checked again and listed, once a run. Settings can be new while
+ * the keys aren't: its file was deleted, or (on Windows) the first copy of it was kept inside another app's container.
+ */
+export function findSavedKeys(): Promise<void> {
+  const listed = readSettings().services;
+  const find = async (s: Service) => {
+    const key = await getSecret(s.id);
+    const check = key ? await s.verify(key).catch(() => undefined) : undefined;
+    if (check?.ok) updateSettings((x) => void (x.services[s.id] = { addedAt: new Date().toISOString(), detail: check.detail }));
+  };
+  return (found ??= Promise.all([...SERVICES.filter((s) => !listed[s.id]).map(find), process.platform === "win32" && findSamToken()]).then(
+    () => undefined,
+    () => undefined,
+  ));
 }
 
 /** Checks the key, and only if it works stores it in the Keychain. */
