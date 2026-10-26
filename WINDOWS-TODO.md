@@ -73,7 +73,7 @@ Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted
 | 8. agent turn, key refused | | | |
 | 9. edit, notes, undo | | | |
 | 10. export | | | |
-| 11. voices, Kokoro | | | |
+| 11. voices, Kokoro | partly | `list_voices` gives David and Zira. Narrating worked, but every word was timed 1.5× late: SAPI times its events by the voice's own rate (16 kHz for both), and the helper wrote 24 kHz. At 16 kHz both voices' word starts match the audio to the millisecond (checked with silence detection). A bookmark can't measure the rate instead: David adds 0.2 s after it, and without a full stop it fires mid-line. Listen, captions in the player, and Kokoro still to do. | |
 | 12. recording | | | |
 | 13. subjects without SAM | | | |
 | 14. SAM 3.1 install and cut-outs | | | |
