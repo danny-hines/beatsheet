@@ -59,17 +59,17 @@ Messages from this PC can't reach the Mac session, so this file is the channel. 
 
 ## Results
 
-Status: not started.
+Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted Claude Code turn all work on synthetic footage; waiting on Danny for real phone footage (HEIC, 4K HEVC from a phone) and for the steps that need someone at the screen.
 
 | Step | Result | Notes | Commit |
 | --- | --- | --- | --- |
-| 1. doctor | | | |
-| 2. npm run check | | | |
-| 3. app opens | | | |
-| 4. agents sign in | | | |
+| 1. doctor | ✓ | "All set" once uv was installed (winget, Danny's OK) and Developer Mode turned on (on this build it's Settings → System → **Advanced**, not "For developers"), then the links checked out again. Codex and Muse not installed. | |
+| 2. npm run check | ✓ | Passes, before and after pulling a0835b4 (104 tests). | |
+| 3. app opens | partly | `npm run desktop` failed to build: the desktop build's esbuild plugin took `C:\…\main.ts` for a package name and marked it external. Fixed. Setup renders, with the 4090 and 24 GB, and still does after a0835b4. Title bar and menu still to see (the snapshot is the page only). | dcbbff0 |
+| 4. agents sign in | partly | Claude Code: installed, "Signed in". Codex not installed. | |
 | 5. keys in Credential Manager | | | |
-| 6. import 4K HEVC + HEIC | | | |
-| 7. song analysis | | | |
+| 6. import 4K HEVC + HEIC | partly | CLI import of synthetic footage (a 4K HEVC clip made with `hevc_nvenc`, a 1080p clip, a 12 MP JPEG): proxies, posters and strips in about a second. Real phone footage and HEIC still to do. | |
+| 7. song analysis | partly | CLI: 120.01 BPM on a synthetic 120 BPM song (uv and librosa). Studio still to do. | |
 | 8. agent turn, key refused | | | |
 | 9. edit, notes, undo | | | |
 | 10. export | | | |
@@ -80,3 +80,7 @@ Status: not started.
 | 15. Recycle Bin | | | |
 | 16. npm run app | | | |
 | 17. 5070 | | | |
+
+**Also checked on the PC.** On a throwaway `synthtest` project: `assemble` and `render --draft` (a 30 s vertical draft in 32 s, −13.9 LUFS); `node scripts/mcp-smoke.ts synthtest --frame` (33 tools, edits, a refused bad edit, a branched cut, a frame in 2.6 s); `node scripts/agent-smoke.ts claude --project synthtest` (the hosted session ran a whole opening turn: logged footage, fetched fonts, previewed looks, loaded the montage recipe through the link and handed off, with no errors or approval cards).
+
+**Watch out:** npm 11.9 on the PC rewrites `package-lock.json` without its `libc` fields after `npm install`. Don't commit that from the PC.
