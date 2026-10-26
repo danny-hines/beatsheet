@@ -3,15 +3,28 @@
  * needs). The studio mounts this inside Vite; renders and the MCP server start it standalone.
  */
 import { execFile } from "node:child_process";
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { extname, join, resolve, sep } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { slugify, type Brief } from "@beatsheet/schema";
-import { findMuse, launchMuse, listAgents, listMuseSessions, sendBatch } from "./agents.ts";
-import { importFolder, scanFolder } from "./ingest.ts";
-import { assetPath, cachePaths, expandHome, isProjectId, mediaPath } from "./paths.ts";
-import { ConflictError, InvalidProjectError, listProjects, loadProject, readRaw, saveProject } from "./store.ts";
+import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type Rect } from "@beatsheet/schema";
+import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
+import { listAgents, RUNTIME } from "./agents.ts";
+import { addServiceKey, capabilities, listServices, recheckService, removeServiceKey } from "./services.ts";
+import { readSettings, updateSettings } from "./settings.ts";
+import { answerMessage, currentTurn, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
+import { streamEvents } from "./events.ts";
+import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
+import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
+import { narrate } from "./narrate.ts";
+import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
+import { SFX_DIR } from "./sounds.ts";
+import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
+import { cloneVoice, designVoice, listVoices, previewFile, removeVoice, saveDesignedVoice, saveSample, setVoiceSettings } from "./voices.ts";
+import { cutOut, findSubjects, joinSubjects, trackSubject, visionStatus, type CutOutOptions } from "./subjects.ts";
+import { addFootage, addSong, ensureCached, importFolder, scanFolder } from "./ingest.ts";
+import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, sourceRoot } from "./paths.ts";
+import { ConflictError, InvalidProjectError, listProjects, loadFile, loadProject, readRaw, saveFile, trashPlan, trashProject } from "./store.ts";
 
 const run = promisify(execFile);
 
@@ -21,13 +34,39 @@ const TYPES: Record<string, string> = {
   ".mp4": "video/mp4", ".mov": "video/quicktime", ".m4v": "video/mp4", ".webm": "video/webm",
   ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
   ".mp3": "audio/mpeg", ".wav": "audio/wav", ".m4a": "audio/mp4", ".aac": "audio/aac", ".aiff": "audio/aiff", ".flac": "audio/flac",
+  ".svg": "image/svg+xml", ".json": "application/json", ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".stl": "model/stl", ".obj": "text/plain",
+  ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf",
 };
+
+/** Appends to .beatsheet/studio.log, keeping the newest half when it passes half a megabyte. */
+function appendStudioLog(entry: string) {
+  const file = join(RUNTIME, "studio.log");
+  mkdirSync(RUNTIME, { recursive: true });
+  const old = existsSync(file) ? readFileSync(file, "utf8") : "";
+  writeFileSync(file, (old.length > 512 * 1024 ? old.slice(-256 * 1024) : old) + entry + "\n");
+}
 
 const json = (res: ServerResponse, status: number, body: unknown) => {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(body));
 };
+
+/** A request's body as bytes (a recording of the person's voice for cloning, say), up to `limit`. */
+const readBytes = (req: IncomingMessage, limit = 100 * 2 ** 20) =>
+  new Promise<Buffer>((ok, fail) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (c: Buffer) => {
+      size += c.length;
+      if (size > limit) {
+        req.destroy();
+        fail(new Error("That's too big to send"));
+      } else chunks.push(c);
+    });
+    req.on("end", () => ok(Buffer.concat(chunks)));
+    req.on("error", fail);
+  });
 
 const readBody = (req: IncomingMessage) =>
   new Promise<string>((ok, fail) => {
@@ -67,7 +106,7 @@ export function sendFile(req: IncomingMessage, res: ServerResponse, file: string
 
 export type Job = {
   id: string;
-  kind: "render" | "import";
+  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate";
   project: string;
   format?: string;
   status: "running" | "done" | "error";
@@ -75,6 +114,14 @@ export type Job = {
   log: string[];
   output?: string;
   error?: string;
+};
+const JOB_WORDS: Record<Job["kind"], string> = {
+  render: "exporting",
+  import: "bringing in footage",
+  install: "installing",
+  subjects: "finding people",
+  record: "saving a recording",
+  narrate: "voicing the narration",
 };
 /** Kept for older imports. */
 export type RenderJob = Job;
@@ -85,8 +132,17 @@ function startJob(kind: Job["kind"], project: string, work: (job: Job) => Promis
   jobs.set(job.id, job);
   work(job)
     .then((out) => Object.assign(job, { status: "done", progress: 1, output: out ?? undefined }))
-    .catch((err) => Object.assign(job, { status: "error", error: err instanceof Error ? err.message : String(err) }));
+    .catch((err) => Object.assign(job, { status: "error", error: said(err) }));
   return job;
+}
+
+/** An error as a person should read it; a missing tool says how to get it. */
+function said(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const tool = /spawn (ffmpeg|ffprobe|uv)\b.*ENOENT/.exec(msg)?.[1];
+  if (tool === "ffmpeg" || tool === "ffprobe") return "beatsheet needs ffmpeg to read and convert video, and it isn't on this Mac. Install it with Homebrew (brew install ffmpeg), then try again.";
+  if (tool === "uv") return "beatsheet needs uv (a Python tool) to analyse songs. Install it (brew install uv), then try again.";
+  return msg;
 }
 
 export type NewProjectRequest = {
@@ -96,6 +152,7 @@ export type NewProjectRequest = {
   song?: string;
   formats?: string[];
   brief?: Partial<Brief>;
+  spec?: Partial<CutSpec>;
   firstCut?: boolean;
 };
 
@@ -109,11 +166,13 @@ export function freeId(title: string): string {
 }
 
 /** macOS file and folder pickers, so the studio gets real paths. */
-async function pick(kind: "folder" | "audio"): Promise<string | null> {
+async function pick(kind: "folder" | "audio" | "file"): Promise<string | null> {
   const choose =
     kind === "folder"
-      ? 'POSIX path of (choose folder with prompt "Choose the folder of photos and videos")'
-      : 'POSIX path of (choose file with prompt "Choose a song" of type {"public.audio"})';
+      ? 'POSIX path of (choose folder with prompt "Choose a folder")'
+      : kind === "file"
+        ? 'POSIX path of (choose file with prompt "Choose a file")'
+        : 'POSIX path of (choose file with prompt "Choose a song or recording" of type {"public.audio"})';
   try {
     const { stdout } = await run("osascript", ["-e", "activate", "-e", choose], { timeout: 10 * 60_000 });
     return stdout.trim().replace(/\/$/, "") || null;
@@ -123,19 +182,33 @@ async function pick(kind: "folder" | "audio"): Promise<string | null> {
 }
 
 /** Connect-style handler for /api/* and /media/*; anything else goes to `next`. */
+/**
+ * Requests from this machine's studio only. The host must be the loopback name the server was opened on (which stops
+ * a web page from reaching it through a DNS trick), and anything that changes something must carry the studio's
+ * header, which a page on another site can't add without the server's permission (never given).
+ */
+function trusted(req: IncomingMessage): boolean {
+  const host = (req.headers.host ?? "").replace(/:\d+$/, "");
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(host)) return false;
+  return req.method === "GET" || req.method === "HEAD" || req.headers["x-beatsheet"] === "1";
+}
+
 export function beatsheetHandler() {
   return async (req: IncomingMessage, res: ServerResponse, next?: Next) => {
     const url = new URL(req.url ?? "/", "http://local");
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     try {
+      if ((parts[0] === "api" || parts[0] === "media") && !trusted(req)) return json(res, 403, { error: "Not from the studio" });
+      if (parts[0] === "api" && parts[1] === "events" && req.method === "GET") return streamEvents(req, res);
       if (parts[0] === "api") return await api(req, res, parts.slice(1));
-      if (parts[0] === "media") return media(req, res, parts.slice(1));
+      if (parts[0] === "media") return await media(req, res, parts.slice(1));
       if (next) return next();
       json(res, 404, { error: "not found" });
     } catch (err) {
       if (err instanceof ConflictError) return json(res, 409, { error: err.message, version: err.current });
       if (err instanceof InvalidProjectError) return json(res, 400, { error: err.message, issues: err.issues });
-      json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+      if (err instanceof NoProjectError) return json(res, 404, { error: err.message });
+      json(res, 500, { error: said(err) });
     }
   };
 }
@@ -157,6 +230,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         song: body.song?.trim() || undefined,
         formats: body.formats,
         brief: body.brief,
+        spec: body.spec,
         firstCut: body.firstCut,
         log: (m) => j.log.push(m),
         onProgress: (f) => (j.progress = f),
@@ -165,8 +239,25 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 202, job);
   }
   if (section === "pick" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as { kind?: "folder" | "audio" };
-    return json(res, 200, { path: await pick(body.kind === "audio" ? "audio" : "folder") });
+    const body = JSON.parse((await readBody(req)) || "{}") as { kind?: "folder" | "audio" | "file" };
+    return json(res, 200, { path: await pick(body.kind === "audio" || body.kind === "file" ? body.kind : "folder") });
+  }
+  // Shows a project's file in Finder: the footage stays where it is, so this is how you get back to it. Without an
+  // asset, the project's own folder.
+  if (section === "reveal" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { project?: string; asset?: string };
+    if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
+    if (!body.asset) {
+      await run("open", ["-R", projectDir(body.project)]);
+      return json(res, 200, { ok: true });
+    }
+    const { project, dir } = loadProject(body.project);
+    const a = project.assets.find((x) => x.id === body.asset);
+    if (!a) return json(res, 404, { error: `no asset ${body.asset}` });
+    const path = assetPath(project, dir, a);
+    if (!existsSync(path)) return json(res, 404, { error: `${path} isn't there any more` });
+    await run("open", ["-R", path]);
+    return json(res, 200, { ok: true });
   }
   if (section === "scan" && req.method === "GET") {
     const path = new URL(req.url ?? "", "http://local").searchParams.get("path") ?? "";
@@ -177,15 +268,148 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, { ok: false, videos: 0, photos: 0 });
     }
   }
-  if (section === "agents" && !id && req.method === "GET") return json(res, 200, { agents: listAgents(), muse: await findMuse() });
-  if (section === "agents" && id === "sessions" && req.method === "GET") return json(res, 200, listMuseSessions());
-  if (section === "agents" && id === "launch" && req.method === "POST") {
-    const body = JSON.parse(await readBody(req)) as { model?: string; session?: string; project?: string };
-    return json(res, 200, await launchMuse(body));
+  if (section === "agents" && !id && req.method === "GET") return json(res, 200, listAgents());
+  if (section === "turn" && id === "undo" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { project?: string };
+    if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
+    const r = undoAgentTurn(body.project);
+    return json(res, r.restored ? 200 : 409, r.restored ? { ok: true } : { error: r.reason });
   }
-  if (section === "agents" && id === "send" && req.method === "POST") {
-    const body = JSON.parse(await readBody(req)) as { project: string };
-    return json(res, 200, await sendBatch(body.project));
+  if (section === "turn" && id === "skip" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { project?: string };
+    if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
+    skipAsk(body.project);
+    return json(res, 200, { ok: true });
+  }
+  // The person's answer to the agent's hand-off becomes the agent's next message, with the notes they attached. Each
+  // cut has its own conversation: with none open on this cut, their default agent starts one and gets the answer with
+  // its opening (unless the agent is busy elsewhere, which a new conversation would cut off).
+  if (section === "turn" && id === "answer" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as Omit<Answer, "notes"> & { project?: string; cut?: string; notes?: boolean };
+    if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
+    const notes = body.notes ? takeNotes(body.project, body.cut).line : undefined;
+    const message = answerMessage(body.project, currentTurn(body.project), { ...body, notes });
+    const agent = agentStudio();
+    if (agent.openOn(body.project, body.cut)) {
+      await agent.send(message);
+      return json(res, 200, { delivered: "session" });
+    }
+    if (agent.busyElsewhere(body.project, body.cut)) {
+      const v = agent.view;
+      const where = v.project === body.project ? `the cut "${v.cut ? (loadFile(body.project).doc.cuts.find((c) => c.id === v.cut)?.name ?? v.cut) : "another cut"}"` : "another project";
+      return json(res, 423, { error: `${AGENT_LABELS[v.agent ?? "claude"]} is still working on ${where}. Wait for it to hand back, or stop it, then send this again.` });
+    }
+    const preferred = readSettings().agent;
+    if (!preferred) return json(res, 409, { error: "No agent is set up yet. Pick one in Settings." });
+    void agent.start(preferred.id, { model: preferred.model, project: body.project, cut: body.cut, then: message });
+    return json(res, 200, { delivered: "started", agent: preferred.id });
+  }
+  // What went wrong in the studio page, kept where it can be read later (the Mac app has no console to open).
+  if (section === "log" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { where?: string; message?: string; stack?: string; url?: string };
+    appendStudioLog(`${new Date().toISOString()} ${body.where ?? "?"} ${body.url ?? ""}\n${body.message ?? ""}\n${body.stack ?? ""}\n`);
+    return json(res, 200, { ok: true });
+  }
+  if (section === "settings") {
+    const body = req.method === "POST" ? (JSON.parse((await readBody(req)) || "{}") as { id?: string; model?: string; key?: string; level?: string; on?: boolean }) : {};
+    if (!id && req.method === "GET") return json(res, 200, { settings: readSettings(), services: listServices(), capabilities: capabilities(), vision: await visionStatus(), sam: samStatus() });
+    // SAM 3 on this Mac: installed in the background; the page follows along by asking for the status.
+    if (id === "sam" && req.method === "GET") return json(res, 200, samStatus());
+    if (id === "sam" && action === "install" && req.method === "POST") return json(res, 202, installSam());
+    if (id === "sam" && action === "cancel" && req.method === "POST") {
+      cancelSamInstall();
+      return json(res, 200, samStatus());
+    }
+    if (id === "sam" && !action && req.method === "DELETE") {
+      removeSam();
+      return json(res, 200, samStatus());
+    }
+    // Kokoro on this Mac, installed and removed like SAM 3.
+    if (id === "kokoro" && req.method === "GET") return json(res, 200, kokoroStatus());
+    if (id === "kokoro" && action === "install" && req.method === "POST") return json(res, 202, installKokoro());
+    if (id === "kokoro" && action === "cancel" && req.method === "POST") {
+      cancelKokoroInstall();
+      return json(res, 200, kokoroStatus());
+    }
+    if (id === "kokoro" && !action && req.method === "DELETE") {
+      removeKokoro();
+      return json(res, 200, kokoroStatus());
+    }
+    if (id === "agent" && req.method === "POST") {
+      if (!AGENT_IDS.includes(body.id as AgentId)) return json(res, 400, { error: "Which agent?" });
+      return json(res, 200, updateSettings((s) => void (s.agent = { id: body.id as AgentId, model: body.model })));
+    }
+    if (id === "done" && req.method === "POST") return json(res, 200, updateSettings((s) => void (s.setupDone = true)));
+    // How much the agent does without asking. It applies to the session that's open now, mid-turn included.
+    if (id === "autonomy" && req.method === "POST") {
+      const level = body.level === "free" ? "free" : "ask";
+      const saved = updateSettings((s) => void (s.autonomy = level));
+      await agentStudio().autonomyChanged(level);
+      return json(res, 200, saved);
+    }
+    // Claude Code in the person's own Chrome, for pages they're signed in to.
+    if (id === "chrome" && req.method === "POST") {
+      const saved = updateSettings((s) => void (s.chrome = !!body.on));
+      await agentStudio().chromeChanged();
+      return json(res, 200, saved);
+    }
+    if (id === "service" && action && req.method === "POST") return json(res, 200, body.key ? await addServiceKey(action, body.key) : await recheckService(action));
+    if (id === "service" && action && req.method === "DELETE") {
+      await removeServiceKey(action);
+      return json(res, 200, { ok: true });
+    }
+  }
+  if (section === "agent") {
+    const agent = agentStudio();
+    if (!id && req.method === "GET") return json(res, 200, agent.view);
+    if (id === "list" && req.method === "GET") return json(res, 200, await agent.agents());
+    if (id === "sessions" && req.method === "GET") {
+      const params = new URL(req.url ?? "", "http://local").searchParams;
+      const which = params.get("agent") as AgentId;
+      if (!AGENT_IDS.includes(which)) return json(res, 400, { error: "Which agent?" });
+      return json(res, 200, await agent.sessions(which, params.get("project") ?? undefined, params.get("cut") ?? undefined));
+    }
+    if (req.method === "POST") {
+      const body = JSON.parse((await readBody(req)) || "{}") as { agent?: AgentId; model?: string; project?: string; cut?: string; session?: string; text?: string; approvalId?: string; choiceId?: string; then?: string };
+      if (["start", "resume", "check", "install", "signin"].includes(id ?? "") && !AGENT_IDS.includes(body.agent!)) return json(res, 400, { error: "Which agent?" });
+      // Installing runs the CLI's official installer; the page follows the job's log, then checks the agent.
+      if (id === "install") {
+        const which = body.agent!;
+        return json(
+          res,
+          202,
+          startJob("install", "", async (j) => {
+            await agent.install(which, (line) => j.log.push(line));
+            const check = await agent.check(which);
+            updateSettings((s) => void (s.checks[which] = { ...check, at: new Date().toISOString() }));
+          }),
+        );
+      }
+      // Reopens a project's conversation; with `then`, carries on an interrupted turn or hands it back to the person.
+      if (id === "pickup") {
+        if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
+        return json(res, 200, await agent.pickup(body.project, body.cut, body.then === "continue" || body.then === "takeback" ? body.then : undefined));
+      }
+      if (id === "signin") {
+        await agent.signIn(body.agent!);
+        return json(res, 200, { ok: true });
+      }
+      if (id === "check") {
+        const check = await agent.check(body.agent!);
+        updateSettings((s) => void (s.checks[body.agent!] = { ...check, at: new Date().toISOString() }));
+        return json(res, 200, check);
+      }
+      if (body.model && !/^[\w.:/-]+$/.test(body.model)) return json(res, 400, { error: `Unknown model "${body.model}"` });
+      // Starting takes a while (the CLI boots, then the first message); the page follows along through change events.
+      if (id === "start") void agent.start(body.agent!, { model: body.model, project: body.project, cut: body.cut });
+      else if (id === "resume" && body.session) void agent.resume(body.agent!, body.session, body.project, body.cut);
+      else if (id === "send" && body.text?.trim()) await agent.send(body.text.trim());
+      else if (id === "interrupt") await agent.interrupt();
+      else if (id === "approval" && body.approvalId && body.choiceId) await agent.decide(body.approvalId, body.choiceId);
+      else if (id === "stop") agent.stop();
+      else return json(res, 400, { error: "Bad agent request" });
+      return json(res, 200, { ok: true });
+    }
   }
   if (section === "projects" && id && !action) {
     if (req.method === "GET") {
@@ -194,18 +418,140 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     }
     if (req.method === "PUT") {
       const body = JSON.parse(await readBody(req)) as { project: unknown; version?: string };
-      const saved = saveProject(id, body.project, body.version);
+      // The studio sends the whole file: every cut, plus the shared material.
+      const saved = saveFile(id, body.project, body.version);
       return json(res, 200, { version: saved.version });
     }
+    // To the Trash: the project's own folder only, never its footage (see trashPlan).
+    if (req.method === "DELETE") {
+      const busy = [...jobs.values()].find((j) => j.project === id && j.status === "running");
+      if (busy) return json(res, 409, { error: `It's still ${JOB_WORDS[busy.kind]}. Try again when that's done.` });
+      const agent = agentStudio();
+      if (agent.view.project === id) agent.stop();
+      await trashProject(id);
+      return json(res, 200, { ok: true });
+    }
+  }
+  if (section === "projects" && id && action === "trash" && req.method === "GET") return json(res, 200, trashPlan(id));
+  if (section === "projects" && id && action === "footage" && req.method === "POST") {
+    // Folders, single files, or both (what was picked or dropped).
+    const body = JSON.parse((await readBody(req)) || "{}") as { folder?: string; paths?: string[] };
+    const paths = body.paths?.length ? body.paths : body.folder ? [body.folder] : [];
+    if (!paths.length) return json(res, 400, { error: "Which files or folder?" });
+    const job = startJob("import", id, async (j) => {
+      const r = await addFootage(id, paths, (m) => j.log.push(m), (f) => (j.progress = f));
+      return `${r.added}`;
+    });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "subjects" && parts[3] === "join" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; keep?: string; others?: string[] };
+    if (!body.asset || !body.keep || !body.others?.length) return json(res, 400, { error: "Which subjects?" });
+    const t = joinSubjects(id, body.asset, body.keep, body.others);
+    return json(res, 200, { id: t.id, label: t.label });
+  }
+  // Subjects and cut-outs (Apple Vision on this Mac): find faces and people, follow a boxed thing, lift a subject out.
+  if (section === "projects" && id && (action === "subjects" || action === "track" || action === "cutout") && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; at?: number; box?: Rect; label?: string } & CutOutOptions;
+    if (!body.asset) return json(res, 400, { error: "Which asset?" });
+    const asset = body.asset;
+    if (action === "track" && (body.at === undefined || !body.box)) return json(res, 400, { error: "Box something first" });
+    const job = startJob("subjects", id, async (j) => {
+      const progress = (f: number) => (j.progress = f);
+      if (action === "subjects") {
+        const found = await findSubjects(id, asset, progress);
+        return `${found.length}`;
+      }
+      if (action === "track") {
+        const t = await trackSubject(id, asset, { at: body.at!, box: body.box!, label: body.label?.trim() || "Subject" }, progress);
+        return t.id;
+      }
+      const made = await cutOut(id, asset, body, progress);
+      return made.map((a) => a.id).join(",");
+    });
+    return json(res, 202, job);
+  }
+  // Narration voices: what's on hand, a sample of each, the default, and making new ones with ElevenLabs.
+  if (section === "voices") {
+    if (!id && req.method === "GET") return json(res, 200, await listVoices());
+    if (id === "preview" && req.method === "GET") {
+      const voice = new URL(req.url ?? "", "http://local").searchParams.get("voice");
+      if (!voice) return json(res, 400, { error: "Which voice?" });
+      return sendFile(req, res, await previewFile(voice));
+    }
+    if (id === "settings" && req.method === "POST") {
+      const body = JSON.parse((await readBody(req)) || "{}") as { default?: string | null; model?: string };
+      setVoiceSettings(body);
+      return json(res, 200, { ok: true });
+    }
+    if (id === "design" && !action && req.method === "POST") {
+      const body = JSON.parse((await readBody(req)) || "{}") as { description?: string; text?: string };
+      if (!body.description?.trim()) return json(res, 400, { error: "Describe the voice first" });
+      return json(res, 200, await designVoice(body.description, body.text));
+    }
+    if (id === "design" && action === "save" && req.method === "POST") {
+      const body = JSON.parse((await readBody(req)) || "{}") as { generatedId?: string; name?: string; description?: string };
+      if (!body.generatedId || !body.name?.trim()) return json(res, 400, { error: "Name the voice first" });
+      return json(res, 200, await saveDesignedVoice(body.generatedId, body.name, body.description ?? body.name));
+    }
+    // A recording of the person reading, sent as it is; it waits for the clone and goes once that's made.
+    if (id === "samples" && req.method === "POST") return json(res, 200, saveSample(await readBytes(req), String(req.headers["content-type"] ?? "audio/webm")));
+    if (id === "clone" && req.method === "POST") {
+      const body = JSON.parse((await readBody(req)) || "{}") as { name?: string; samples?: string[]; files?: string[]; description?: string; removeNoise?: boolean; consent?: boolean };
+      if (!body.consent) return json(res, 400, { error: "Only clone your own voice, or one you have permission to use" });
+      if (!body.name?.trim()) return json(res, 400, { error: "Name the voice first" });
+      return json(res, 200, await cloneVoice(body.name, body));
+    }
+    if (id && req.method === "DELETE") {
+      await removeVoice(id);
+      return json(res, 200, { ok: true });
+    }
+  }
+  // A recording from the studio: the bytes stream straight to disk (a screen recording can be big), then it's tidied
+  // into an MP4 or M4A and added to the media in the background.
+  if (section === "projects" && id && action === "recordings" && req.method === "POST") {
+    const params = new URL(req.url ?? "", "http://local").searchParams;
+    const kind = params.get("kind") as RecordingKind;
+    if (!["screen", "camera", "voice"].includes(kind)) return json(res, 400, { error: "What kind of recording?" });
+    const type = String(req.headers["content-type"] ?? "");
+    const upload = incomingPath(id, type);
+    await new Promise<void>((ok, fail) => {
+      const out = createWriteStream(upload);
+      req.pipe(out);
+      out.on("finish", ok);
+      out.on("error", fail);
+      req.on("error", fail);
+    });
+    const at = Number(params.get("at")) || Date.now();
+    const job = startJob("record", id, async () => (await addRecording(id, upload, { kind, label: params.get("label") ?? undefined, at: new Date(at) })).id);
+    return json(res, 202, job);
+  }
+  // Voices a cut's lines (all that need it, or the ones named) in its voice, or in a new one.
+  if (section === "projects" && id && action === "narrate" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; voice?: string; lines?: string[]; force?: boolean };
+    const job = startJob("narrate", id, async (j) => {
+      const r = await narrate(id, { cut: body.cut, voice: body.voice, only: body.lines, force: body.force, onProgress: (f, line) => ((j.progress = f), line && j.log.push(line)) });
+      return `${r.voiced.length}`;
+    });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "song" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { file?: string; cut?: string };
+    if (!body.file) return json(res, 400, { error: "Which song?" });
+    const a = await addSong(id, body.file, () => {}, body.cut);
+    return json(res, 200, { asset: a.id, label: a.label, bpm: a.grid?.bpm });
   }
   if (section === "projects" && id && action === "render" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as { format?: string; quality?: "proxy" | "original" };
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; quality?: "proxy" | "original"; saveAs?: string };
+    // Where the person chose in the save dialog: an .mp4 in a folder that exists.
+    if (body.saveAs !== undefined && (!body.saveAs.startsWith("/") || !/\.mp4$/i.test(body.saveAs) || !existsSync(dirname(body.saveAs))))
+      return json(res, 400, { error: "Save the video as an .mp4 in a folder that exists" });
     const job = startJob(
       "render",
       id,
       async (j) => {
         const { renderProject } = await import("./render.ts");
-        return renderProject(id, { format: body.format, quality: body.quality, onProgress: (p) => (j.progress = p) });
+        return renderProject(id, { cut: body.cut, format: body.format, quality: body.quality, saveAs: body.saveAs, onProgress: (p) => (j.progress = p) });
       },
       { format: body.format },
     );
@@ -218,7 +564,20 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   json(res, 404, { error: "not found" });
 }
 
-function media(req: IncomingMessage, res: ServerResponse, parts: string[]) {
+/** One preview job per file at a time, however many requests ask for it. */
+const caching = new Map<string, Promise<void>>();
+function cacheOnce(key: string, job: () => Promise<void>): Promise<void> {
+  let p = caching.get(key);
+  if (!p) {
+    p = job()
+      .catch(() => {})
+      .finally(() => caching.delete(key));
+    caching.set(key, p);
+  }
+  return p;
+}
+
+async function media(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   const [id, what, ...rest] = parts;
   const { project, dir } = loadProject(id!);
   if (what === "asset") {
@@ -227,6 +586,9 @@ function media(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!a) return json(res, 404, { error: `no asset ${assetId}` });
     const c = cachePaths(dir, a.id);
     const original = assetPath(project, dir, a);
+    // Files added after import (by an agent, say) get their previews the first time one is asked for.
+    const missing = (kind === "poster" && !existsSync(c.poster)) || (kind === "strip" && a.kind === "video" && !existsSync(c.strip));
+    if (missing && existsSync(original)) await cacheOnce(`${id}/${a.id}`, () => ensureCached(project, dir, a));
     const pick =
       kind === "proxy" ? (existsSync(c.proxy) ? c.proxy : original)
       : kind === "image" ? (existsSync(c.image) ? c.image : original)
@@ -236,13 +598,40 @@ function media(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return sendFile(req, res, pick);
   }
   if (what === "file") {
-    // Only files inside the project's media folder or the project folder itself.
+    // Only files inside one of the project's footage folders or the project folder itself.
     const path = mediaPath(project, dir, rest.join("/"));
-    const roots = [resolve(dir, expandHome(project.mediaRoot ?? ".")), dir].map((r) => r + sep);
+    const roots = [...project.sources.map((s) => sourceRoot(project, dir, s.id)), dir].map((r) => r + sep);
     if (!roots.some((r) => path.startsWith(r))) return json(res, 403, { error: "outside the project" });
     return sendFile(req, res, path);
   }
   if (what === "out") return sendFile(req, res, join(dir, "out", rest.join("/")));
+  // A scene's code, compiled for the page (React, Remotion, three and the kit come from the page itself).
+  if (what === "code") {
+    const file = sceneFile(id!, rest.join("/"));
+    const compiled = await compileScene(file, [join(codeRoot(id!), "node_modules")]);
+    res.setHeader("cache-control", "no-cache");
+    res.setHeader("access-control-allow-origin", "*");
+    if ("error" in compiled) {
+      res.statusCode = 422;
+      res.setHeader("content-type", "text/plain; charset=utf-8");
+      return res.end(compiled.error);
+    }
+    res.setHeader("content-type", "text/javascript; charset=utf-8");
+    return res.end(`/*bs-hosts:${JSON.stringify(compiled.hosts)}*/\n${compiled.code}`);
+  }
+  // Files scenes load (models, SVGs, data) from the code folder, and the look's fonts from the project folder.
+  if (what === "scene-file") return sendFile(req, res, sceneFile(id!, rest.join("/")));
+  if (what === "project-file") {
+    const path = resolve(dir, rest.join("/"));
+    if (!(path + sep).startsWith(dir + sep)) return json(res, 403, { error: "outside the project" });
+    return sendFile(req, res, path);
+  }
+  // beatsheet's own sound effects.
+  if (what === "sfx") {
+    const name = rest[0] ?? "";
+    if (!(SFX_SOUNDS as readonly string[]).includes(name)) return json(res, 404, { error: `no sound "${name}"` });
+    return sendFile(req, res, join(SFX_DIR, `${name}.wav`));
+  }
   json(res, 404, { error: "not found" });
 }
 

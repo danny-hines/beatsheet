@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @beatsheet/studio",
+    "desktop": "npm run start -w @beatsheet/desktop",
+    "app": "npm run app -w @beatsheet/desktop",
     "test": "vitest run",
     "typecheck": "tsc -p packages/schema && tsc -p packages/video && tsc -p packages/engine && tsc -p apps/studio",
     "check": "npm run typecheck && npm test && node scripts/validate-examples.ts",

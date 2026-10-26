@@ -15,11 +15,13 @@ export type BatchNote = {
   stage?: string;
   shot?: { id: string; label?: string; kind: string; fidelity: string; plays?: string; startsOn: string; content: string; intent?: string };
   line?: { id: string; text?: string; plays?: string };
+  /** For a note on a stretch of the cut: the shots that play in it. */
+  range?: { from: string; to: string; shots: string[] };
   region?: { x: number; y: number; w: number; h: number };
 };
 
 export type Batch = {
-  project: { id: string; title: string; file?: string; recipe: string; codeRoot?: string; mediaRoot?: string };
+  project: { id: string; title: string; cut: string; file?: string; recipe: string; codeRoot?: string; sources: string[] };
   notes: BatchNote[];
 };
 
@@ -47,7 +49,7 @@ export function buildBatch(p: Project, notes: Note[], opts: { file?: string } = 
     return timelines.get(format)!;
   };
   return {
-    project: { id: p.id, title: p.title, file: opts.file, recipe: p.recipe, codeRoot: p.codeRoot, mediaRoot: p.mediaRoot },
+    project: { id: p.id, title: p.title, cut: p.cut.id, file: opts.file, recipe: p.recipe, codeRoot: p.codeRoot, sources: p.sources.map((x) => x.path) },
     notes: notes.map((n) => {
       const format = n.format ?? p.formats[0]!.id;
       const tl = tlFor(format);
@@ -73,6 +75,10 @@ export function buildBatch(p: Project, notes: Note[], opts: { file?: string } = 
       if (t.kind === "line" || t.kind === "word") {
         const r = tl.lines.find((l) => l.id === t.line);
         out.line = { id: t.line, text: r?.text, plays: r ? `${formatTime(r.start)}–${formatTime(r.end)}` : undefined };
+      }
+      if (t.kind === "range") {
+        const inside = tl.shots.filter((r) => r.end > t.from + 1e-3 && r.start < t.to - 1e-3).map((r) => r.id);
+        out.range = { from: formatTime(t.from), to: formatTime(t.to), shots: inside };
       }
       if (n.region) out.region = n.region;
       return out;

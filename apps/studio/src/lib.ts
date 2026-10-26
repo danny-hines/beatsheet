@@ -1,20 +1,10 @@
-import type { Asset, Fidelity, Note, NoteTarget, Project, ResolvedShot, Shot, ShotKind, StageId, Timeline } from "@beatsheet/schema";
-import type { Selection } from "./store";
-
-export const STAGE_LABELS: Record<StageId, { title: string; blurb: string }> = {
-  brief: { title: "Brief", blurb: "What this video is for, who it's for, and where it goes" },
-  material: { title: "Material", blurb: "Footage, photos, captures and generated assets, logged and rated" },
-  structure: { title: "Structure", blurb: "The spine: the script and voice, or the music and its sections" },
-  board: { title: "Board", blurb: "One card per shot, from idea to final" },
-  assemble: { title: "Assemble", blurb: "The cut, playing live; drag cuts and they snap to words and beats" },
-  craft: { title: "Craft", blurb: "Polish one shot at a time: values, takes, framing" },
-  sound: { title: "Sound", blurb: "Voice, music edits and levels" },
-  finish: { title: "Finish", blurb: "Formats, checks and export" },
-};
+import type { AgentId, AgentInfo, AgentItem, AgentView } from "@beatsheet/engine";
+import type { Asset, Fidelity, Note, NoteTarget, Project, ResolvedShot, Shot, ShotKind, Timeline } from "@beatsheet/schema";
+import { actions, getState, timelineFor, type Selection } from "./store";
 
 export const KIND_LABEL: Record<ShotKind, string> = {
   clip: "Clip",
-  coded: "Coded",
+  coded: "Designed",
   generated: "Generated",
   text: "Text",
   placeholder: "Placeholder",
@@ -26,7 +16,11 @@ export const assetMap = (p: Project) => new Map<string, Asset>(p.assets.map((a) 
 
 /** Thumbnail URLs, served from the project's .cache (missing for projects that were never imported). */
 export const posterUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/poster`;
+/** A file in the project's folder (a look's preview the agent made, say). */
+export const projectFileUrl = (projectId: string, path: string) => `/media/${projectId}/project-file/${path.split("/").map(encodeURIComponent).join("/")}`;
 export const stripUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/strip`;
+/** The clip itself, as its small preview copy (the original when there is none). */
+export const proxyUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/proxy`;
 export function shotAsset(shot: Shot): string | undefined {
   const c = shot.content;
   return c.kind === "clip" ? c.asset : c.kind === "generated" ? c.take : undefined;
@@ -59,8 +53,12 @@ export function shotSummary(shot: Shot, assets: Map<string, Asset>): string {
       return assets.get(c.asset)?.label ?? c.asset;
     case "generated":
       return c.take ? `${assets.get(c.take)?.label ?? c.take}` : "no take chosen";
-    case "coded":
-      return c.component.split("/").pop() ?? c.component;
+    case "coded": {
+      // kit:Title → Title: "This camera…"; scenes/Hook.tsx#Hook → Hook
+      const name = c.component.startsWith("kit:") ? c.component.slice(4) : (c.component.split("#")[1] ?? c.component.split("/").pop() ?? c.component);
+      const words = (c.props?.text ?? c.props?.label ?? c.props?.title) as string | undefined;
+      return typeof words === "string" && words ? `${name}: "${words.split(/\n|\\n/)[0]}"` : name;
+    }
     case "text":
       return `"${c.text}"`;
     case "placeholder":
@@ -117,6 +115,7 @@ export function noteTime(n: Note, tl: Timeline): number | undefined {
   if (n.at !== undefined) return n.at;
   const t = n.target;
   if (t.kind === "time") return t.t;
+  if (t.kind === "range") return t.from;
   if (t.kind === "shot") return tl.shots.find((s) => s.id === t.shot)?.start;
   if (t.kind === "line" || t.kind === "word") return tl.lines.find((l) => l.id === t.line)?.start;
   if (t.kind === "cue") return tl.cues.find((c) => c.id === t.cue)?.start;
@@ -132,16 +131,61 @@ export function selectionForTarget(t: NoteTarget): Selection | undefined {
   return undefined;
 }
 
-export const AGENT_NAME = { muse: "Muse Code", other: "Agent" } as const;
+/** What each media service adds; the engine's list, repeated here because the page only takes types from the engine. */
+export const CAPABILITY_LABELS = {
+  images: "Generate images",
+  video: "Generate video",
+  music: "Generate music",
+  voice: "Voiceover",
+  sfx: "Sound effects",
+  transcribe: "Transcribe speech",
+  stock: "Stock footage",
+  segment: "Cut out anything you describe",
+} as const;
 
-/** The models a new Muse Code session can run on. */
-export const MUSE_MODELS = [
-  { id: "muse-wonder-full-1.0", label: "Muse Wonder Full", hint: "Default · launched this week" },
-  { id: "muse-wonder-1.0", label: "Muse Wonder", hint: "" },
-  { id: "muse-spark-1.3", label: "Muse Spark 1.3", hint: "" },
-  { id: "muse-spark-1.2", label: "Muse Spark 1.2", hint: "" },
-];
-export const modelLabel = (id?: string) => (id ? MUSE_MODELS.find((m) => m.id === id)?.label ?? id : undefined);
+/** What the Mac app adds when the studio runs inside it (see apps/desktop/src/preload.ts). */
+type Desktop = {
+  desktop: true;
+  pick: (kind: PickKind) => Promise<string | null>;
+  pathFor: (file: File) => string;
+  /** Photos and videos, a folder of them, or several of either. */
+  pickFootage?: () => Promise<string[] | null>;
+  onMenu: (fn: (command: string) => void) => () => void;
+  /** Asks macOS for the camera or microphone; resolves to granted, denied, restricted or not-determined. */
+  mediaAccess?: (kind: "camera" | "microphone") => Promise<string>;
+  /** Opens System Settings at the privacy pane for the camera, the microphone or screen recording. */
+  openPrivacy?: (kind: "camera" | "microphone" | "screen") => void;
+  /** The save dialog for an export: where it goes and what it's called. Null if they cancel. */
+  saveVideo?: (opts: { name: string; dir?: string }) => Promise<string | null>;
+  /** Shows a file in Finder, or opens it in its app. */
+  reveal?: (path: string) => void;
+  openFile?: (path: string) => Promise<string>;
+};
+export const desktop = (window as unknown as { beatsheet?: Desktop }).beatsheet;
+
+/** What the pickers choose: a folder, a song or other audio, or any file. */
+export type PickKind = "folder" | "audio" | "file";
+/** A folder or file from the person: the Mac app's own picker, or the engine's when the studio runs in a browser. */
+export async function pickPath(kind: PickKind): Promise<string | null> {
+  if (desktop) return desktop.pick(kind);
+  const res = await fetch("/api/pick", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind }) });
+  return ((await res.json()) as { path: string | null }).path;
+}
+
+/** Footage to add: files and folders in the Mac app (one picker does both), a folder when the studio runs in a browser. */
+export async function pickFootage(): Promise<string[] | null> {
+  if (desktop?.pickFootage) return desktop.pickFootage();
+  const folder = await pickPath("folder");
+  return folder ? [folder] : null;
+}
+
+export const AGENT_NAMES: Record<string, string> = { muse: "Muse Code", codex: "Codex", claude: "Claude Code", other: "Agent" };
+
+/** A model's name for display, from the agent's own list when it's loaded. */
+export function modelName(list: AgentInfo[] | undefined, agent: AgentId | undefined, id?: string): string | undefined {
+  if (!id) return undefined;
+  return list?.find((a) => a.id === agent)?.models?.find((m) => m.id === id)?.label ?? id;
+}
 
 const TOOL_WORDS: Record<string, string> = {
   list_projects: "looking around",
@@ -156,14 +200,96 @@ const TOOL_WORDS: Record<string, string> = {
   resolve_note: "closing a note",
   frame: "checking a frame",
   render: "rendering",
+  create_cut: "making a new cut",
+  add_asset: "adding a file",
+  find_subjects: "finding people",
+  track_subject: "following something",
+  cut_out: "making a cut-out",
+  hand_off: "handing over to you",
   "received batch": "got your notes",
 };
 
-/** What an agent last did, in words: "editing july-4". */
+/** The agents' own tools (Claude Code's, Codex's, Muse's), in words. */
+const OWN_TOOL_WORDS: Record<string, string> = {
+  shell: "ran",
+  Bash: "ran",
+  bash: "ran",
+  "edit files": "edited",
+  Edit: "edited",
+  MultiEdit: "edited",
+  Write: "wrote",
+  Read: "read",
+  read_file: "read",
+  Grep: "searched",
+  Glob: "looked for files",
+  search: "searched",
+  WebFetch: "fetched",
+  WebSearch: "searched the web",
+  "web search": "searched the web",
+  TodoWrite: "updated its plan",
+  Task: "asked a helper",
+  helper: "asked a helper",
+  read_skill: "read the recipe",
+  Skill: "read the recipe",
+  "image generation": "generated an image",
+};
+
+/** What an agent in a terminal last did, in words: "editing july-4". */
 export function agentActivity(a: { activity?: { tool: string; project?: string } }): string {
   if (!a.activity) return "";
   const what = TOOL_WORDS[a.activity.tool] ?? a.activity.tool;
   return a.activity.project ? `${what} ${a.activity.project}` : what;
+}
+
+const capital = (s: string) => s[0]!.toUpperCase() + s.slice(1);
+
+/** A tool call in words, for the transcript: "Editing july-4 · 1 change", "Ran npm test". */
+export function toolCallWords(item: AgentItem): { title: string; detail?: string } {
+  const tool = item.tool ?? "tool";
+  const args = (item.args && typeof item.args === "object" ? item.args : {}) as Record<string, unknown>;
+  const words = item.server === "beatsheet" ? TOOL_WORDS[tool] : undefined;
+  if (words) {
+    const project = typeof args.project === "string" ? args.project : undefined;
+    const ops = Array.isArray(args.ops) ? args.ops.length : 0;
+    const ids = Array.isArray(args.ids) ? args.ids.length : 0;
+    const where = typeof args.shot === "string" ? `shot ${args.shot}` : typeof args.t === "number" ? `${args.t}s` : undefined;
+    const detail =
+      tool === "frame" && where
+        ? `${project ?? ""} · ${where}`
+        : tool === "edit_project" && ops
+          ? `${project ?? ""} · ${ops} change${ops === 1 ? "" : "s"}`
+          : tool === "look_at_assets" && ids
+            ? `${ids} clip${ids === 1 ? "" : "s"}`
+            : tool === "resolve_note" && typeof args.reply === "string"
+              ? args.reply
+              : project;
+    return { title: capital(words), detail };
+  }
+  // Agents often read the recipe or the project file with a shell command; say what they read.
+  if ((tool === "shell" || tool === "Bash" || tool === "bash") && typeof (item.detail ?? args.command) === "string") {
+    const cmd = String(item.detail ?? args.command);
+    if (/SKILL\.md/.test(cmd)) return { title: "Read the recipe" };
+    if (/project\.json/.test(cmd) && /\b(cat|head|sed|jq|less)\b/.test(cmd)) return { title: "Read the project file" };
+  }
+  const own = OWN_TOOL_WORDS[tool];
+  const detail =
+    item.detail ?? (["command", "cmd", "file_path", "path", "pattern", "query", "url", "prompt"].map((k) => args[k]).find((v) => typeof v === "string") as string | undefined);
+  return { title: own ? capital(own) : item.server ? `${item.server} · ${tool.replace(/_/g, " ")}` : capital(tool.replace(/_/g, " ")), detail };
+}
+
+/** What the hosted agent is up to, for the top bar: "editing july-4", "thinking", "ready". */
+export function sessionActivity(view: AgentView): string {
+  if (view.status === "starting") return "starting";
+  if (view.status === "error") return "stopped";
+  if (view.approvals.length) return "needs your OK";
+  if (view.status !== "running") return "ready";
+  const last = view.items.at(-1);
+  if (last?.kind === "tool" && last.status === "running") {
+    const { title, detail } = toolCallWords(last);
+    return `${title.toLowerCase()}${detail && detail.length < 24 ? ` ${detail}` : ""}`;
+  }
+  if (last?.kind === "assistant" && last.status === "running") return "writing";
+  return "thinking";
 }
 
 export function timeAgo(iso: string, now = Date.now()): string {
@@ -171,10 +297,52 @@ export function timeAgo(iso: string, now = Date.now()): string {
   if (s < 5) return "just now";
   if (s < 60) return `${s}s ago`;
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  return `${Math.round(s / 3600)}h ago`;
+  if (s < 48 * 3600) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
 }
 
 export const isTyping = (e: KeyboardEvent) => {
   const el = e.target as HTMLElement | null;
   return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
 };
+
+export type EngineJob = { id: string; status: "running" | "done" | "error"; progress: number; log: string[]; output?: string; error?: string };
+/** Starts an engine job and waits for it, reporting progress; resolves to its output, or throws its error. */
+export async function runJob(url: string, body: unknown, onProgress?: (fraction: number) => void): Promise<string | undefined> {
+  const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  let j = (await res.json()) as EngineJob & { error?: string };
+  if (!res.ok) throw new Error(j.error ?? `${res.status}`);
+  while (j.status === "running") {
+    onProgress?.(j.progress);
+    await new Promise((r) => setTimeout(r, 400));
+    j = (await (await fetch(`/api/jobs/${j.id}`)).json()) as EngineJob;
+  }
+  if (j.status === "error") throw new Error(j.error ?? "It stopped");
+  return j.output;
+}
+
+/** Where a picture of `aspect` (w/h) is drawn inside a w×h box with object-fit: contain, as fractions of the box. */
+export function containRect(aspect: number, boxW: number, boxH: number) {
+  const boxAspect = boxW / boxH;
+  return aspect > boxAspect ? { x: 0, y: (1 - boxAspect / aspect) / 2, w: 1, h: boxAspect / aspect } : { x: (1 - aspect / boxAspect) / 2, y: 0, w: aspect / boxAspect, h: 1 };
+}
+
+/** A note on what's selected, or on the shot under the playhead, written right over the player (N). */
+export function noteHere() {
+  const s = getState();
+  if (!s.project) return;
+  const frame = document.querySelector(".frame")?.getBoundingClientRect();
+  const target = targetFromSelection(s.selection, s.project, timelineFor(s.project, s.format), s.playhead);
+  actions.noteOn(target, frame ? { x: frame.left + frame.width / 2, y: frame.top + frame.height * 0.6 } : { x: innerWidth / 2, y: innerHeight / 2 });
+}
+
+/** Writes an error to the studio's log (.beatsheet/studio.log), so a crash in the Mac app can be looked into later. */
+export function reportError(where: string, err: unknown) {
+  const e = err instanceof Error ? err : new Error(String(err));
+  console.error(`beatsheet ${where}:`, e);
+  void fetch("/api/log", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ where, message: e.message, stack: e.stack?.split("\n").slice(0, 12).join("\n"), url: location.hash }),
+  }).catch(() => {});
+}

@@ -119,3 +119,23 @@ export function NumberField({
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
 }
+
+/** beatsheet's mark: beat bars on a warm square, as on the app icon. */
+export function Mark() {
+  const bars = [0.35, 0.6, 0.85, 0.5, 0.95, 0.65, 0.4];
+  return (
+    <svg className="mark" viewBox="0 0 1024 1024" aria-hidden>
+      <defs>
+        <linearGradient id="mark-g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#2a2210" />
+          <stop offset="1" stopColor="#121317" />
+        </linearGradient>
+      </defs>
+      <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#mark-g)" stroke="#f2b544" strokeOpacity="0.35" strokeWidth="8" />
+      {bars.map((h, i) => (
+        <rect key={i} x={512 - (7 * 64 + 6 * 40) / 2 + i * 104} y={552 - (520 * h) / 2} width="64" height={520 * h} rx="32" fill={i === 4 ? "#f2b544" : "#e6e8ec"} fillOpacity={i === 4 ? 1 : 0.85} />
+      ))}
+      <circle cx="512" cy="852" r="18" fill="#f2b544" />
+    </svg>
+  );
+}

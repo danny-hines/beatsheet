@@ -11,7 +11,7 @@ export type AssembleOptions = {
   targetLength?: number;
   /** Format to assemble against; default the first. */
   format?: string;
-  /** Music asset id; default the first music asset. */
+  /** Music asset id; default the cut's own song, else the project's first. */
   music?: string;
   /** Section to start the song in; default up to 8 bars before the first drop. */
   startSection?: string;
@@ -32,7 +32,8 @@ export function autoAssemble(input: Project, opts: AssembleOptions = {}): Assemb
   const summary: string[] = [];
   const format = opts.format ?? p.formats[0]!.id;
   const fmt = p.formats.find((f) => f.id === format)!;
-  const music = p.assets.find((a) => (opts.music ? a.id === opts.music : a.kind === "music"));
+  const own = p.music?.cues[0]?.asset;
+  const music = p.assets.find((a) => a.kind === "music" && a.id === (opts.music ?? own)) ?? (opts.music ? undefined : p.assets.find((a) => a.kind === "music"));
   if (!music?.grid || !music.duration) throw new Error("Assembling needs a music asset with a beat grid and duration");
   const bar = (music.grid.beatsPerBar * 60) / music.grid.bpm;
   const sections = [...(music.sections ?? [])].sort((a, b) => a.start - b.start);
@@ -50,7 +51,7 @@ export function autoAssemble(input: Project, opts: AssembleOptions = {}): Assemb
     } else if (sections[1]) from = sections[1].start;
   }
   const firstSection = [...sections].reverse().find((s) => s.start <= from + 1e-3) ?? sections[0];
-  const target = opts.targetLength ?? p.brief.targetLength ?? 30;
+  const target = opts.targetLength ?? p.spec.targetLength ?? 30;
   const available = Math.floor((music.duration - from) / bar);
   const bars = Math.max(2, Math.min(available, Math.round(target / bar)));
   const endAnchor: Anchor = firstSection

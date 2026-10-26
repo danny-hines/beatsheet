@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { autoAssemble, checkReferences, Project, resolveTimeline, SCHEMA_VERSION, STAGE_IDS } from "../src/index.ts";
+import { autoAssemble, checkCut, Project, resolveTimeline, SCHEMA_VERSION, STAGE_IDS } from "../src/index.ts";
 
 const make = () =>
   Project.parse({
@@ -7,7 +7,8 @@ const make = () =>
     id: "trip",
     title: "Beach trip",
     recipe: "montage",
-    brief: { goal: "reel", targetLength: 30 },
+    brief: { goal: "reel" },
+    spec: { targetLength: 30 },
     formats: [{ id: "vertical", label: "9:16", width: 1080, height: 1920, fps: 30 }],
     stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])),
     spine: "music",
@@ -62,7 +63,16 @@ describe("autoAssemble", () => {
 
   it("adds a title, keeps references valid and re-points notes on removed shots", () => {
     expect(project.shots.find((s) => s.id === "t1")!.content).toMatchObject({ kind: "text", text: "Beach trip" });
-    expect(checkReferences(project)).toEqual([]);
+    expect(checkCut(project)).toEqual([]);
     expect(project.notes[0]!.target).toEqual({ kind: "time", t: 3 });
+  });
+
+  it("cuts to the cut's own song when the project has several", () => {
+    const p = make();
+    const other = { ...p.assets[0]!, id: "other", label: "Other", duration: 90 };
+    p.assets.push(other);
+    p.music = { cues: [{ id: "m1", asset: "other" }] };
+    expect(autoAssemble(p).project.music!.cues[0]!.asset).toBe("other");
+    expect(autoAssemble(p, { music: "song" }).project.music!.cues[0]!.asset).toBe("song");
   });
 });

@@ -9,10 +9,10 @@ import { listProjects, loadProject, saveProject } from "./store.ts";
 const USAGE = `beatsheet <command>
 
   import <folder> --id <id> [--title <title>] [--song <file>]   new project from a folder of footage
-  song <project> <file>                                          set the music (analyses beats and sections)
-  assemble <project> [--length <seconds>]                        deterministic first cut on the beat
+  song <project> <file> [--cut <id>]                             set a cut's music (analyses beats and sections)
+  assemble <project> [--cut <id>] [--length <seconds>]           deterministic first cut on the beat
   cache <project>                                                make any missing preview copies and thumbnails
-  render <project> [--format <id>] [--draft]                     export an MP4
+  render <project> [--cut <id>] [--format <id>] [--draft]        export an MP4
   analyze <file>                                                 print a song's beat grid and sections
   list                                                           projects and examples`;
 
@@ -23,7 +23,7 @@ async function main() {
   const { values, positionals } = parseArgs({
     args: rest,
     allowPositionals: true,
-    options: { id: { type: "string" }, title: { type: "string" }, song: { type: "string" }, length: { type: "string" }, format: { type: "string" }, draft: { type: "boolean" } },
+    options: { id: { type: "string" }, title: { type: "string" }, song: { type: "string" }, cut: { type: "string" }, length: { type: "string" }, format: { type: "string" }, draft: { type: "boolean" } },
   });
   switch (cmd) {
     case "import": {
@@ -34,11 +34,11 @@ async function main() {
       break;
     }
     case "song":
-      await addSong(need(positionals[0]), need(positionals[1]), log);
+      await addSong(need(positionals[0]), need(positionals[1]), log, values.cut);
       break;
     case "assemble": {
       const id = need(positionals[0]);
-      const { project, version } = loadProject(id);
+      const { project, version } = loadProject(id, values.cut);
       const { project: next, summary } = autoAssemble(project, { targetLength: values.length ? Number(values.length) : undefined });
       saveProject(id, next, version);
       summary.forEach((s) => log(s));
@@ -51,7 +51,7 @@ async function main() {
       break;
     case "render": {
       const { renderProject } = await import("./render.ts");
-      const out = await renderProject(need(positionals[0]), { format: values.format, quality: values.draft ? "proxy" : "original", onProgress: (p) => process.stdout.write(`\r  ${Math.round(p * 100)}%`) });
+      const out = await renderProject(need(positionals[0]), { cut: values.cut, format: values.format, quality: values.draft ? "proxy" : "original", onProgress: (p) => process.stdout.write(`\r  ${Math.round(p * 100)}%`) });
       log(`\nWrote ${out}`);
       break;
     }

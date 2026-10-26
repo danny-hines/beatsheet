@@ -1,12 +1,10 @@
 import react from "@vitejs/plugin-react";
-import { mkdirSync, watch } from "node:fs";
-import { basename, dirname, join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
-import { AGENTS_DIR, beatsheetHandler, currentVersion, listAgents, ROOTS } from "../../packages/engine/src/index.ts";
+import { agentStudio, beatsheetHandler, startEvents } from "../../packages/engine/src/index.ts";
 
 /**
- * Mounts the engine's project API and media server in the dev server, and tells the page when a project file changes
- * on disk (an agent's edit, say) so it can reload instead of overwriting it.
+ * Mounts the engine in the dev server: the project API, media, and the live event stream the studio listens to
+ * (project files changed on disk, agents, the hosted agent's progress). The Mac app serves the same thing itself.
  */
 function beatsheet(): Plugin {
   return {
@@ -17,45 +15,11 @@ function beatsheet(): Plugin {
         if (req.url?.startsWith("/api/") || req.url?.startsWith("/media/")) return void handler(req, res, next);
         next();
       });
-      // Agent sessions come and go; tell the page whenever the list changes.
-      let lastAgents = "";
-      const pushAgents = () => {
-        const agents = listAgents();
-        const json = JSON.stringify(agents);
-        if (json === lastAgents) return;
-        lastAgents = json;
-        server.ws.send({ type: "custom", event: "beatsheet:agents", data: agents });
-      };
-      mkdirSync(AGENTS_DIR, { recursive: true });
-      let agentTimer: ReturnType<typeof setTimeout> | undefined;
-      watch(AGENTS_DIR, () => {
-        clearTimeout(agentTimer);
-        agentTimer = setTimeout(pushAgents, 100);
+      const stopEvents = startEvents();
+      server.httpServer?.once("close", () => {
+        stopEvents();
+        agentStudio().close();
       });
-      setInterval(pushAgents, 4000).unref(); // also notices sessions that quit without saying so
-
-      const timers = new Map<string, ReturnType<typeof setTimeout>>();
-      for (const root of [ROOTS.projects, ROOTS.examples]) {
-        try {
-          watch(root, { recursive: true }, (_event, file) => {
-            if (!file || basename(file) !== "project.json") return;
-            const id = basename(dirname(join(root, file)));
-            clearTimeout(timers.get(id));
-            timers.set(
-              id,
-              setTimeout(() => {
-                try {
-                  server.ws.send({ type: "custom", event: "beatsheet:changed", data: { id, version: currentVersion(id) } });
-                } catch {
-                  // Mid-write or removed; the next event will report it.
-                }
-              }, 120),
-            );
-          });
-        } catch {
-          // The folder doesn't exist yet (no projects imported).
-        }
-      }
     },
   };
 }

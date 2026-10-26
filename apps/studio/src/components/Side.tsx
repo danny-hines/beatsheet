@@ -1,5 +1,4 @@
 import {
-  buildBatch,
   describeTarget,
   FIDELITY,
   formatTime,
@@ -9,26 +8,39 @@ import {
   type Shot,
   type Timeline,
 } from "@beatsheet/schema";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AGENT_NAME, assetMap, FIDELITY_LABEL, hideBroken, KIND_LABEL, nextId, noteMatches, noteTime, posterUrl, selectionForTarget, shotSummary, stripUrl, targetFromSelection } from "../lib";
+import { useMemo, useState } from "react";
+import { AGENT_NAMES, assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, selectionForTarget, shotSummary, targetFromSelection } from "../lib";
 import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
-import { AnchorChip, Empty, Stars, TextField } from "./ui";
+import { AgentPanel } from "./AgentPanel";
+import { AssetView } from "./AssetView";
+import { LookPanel, SceneProps } from "./Designed";
+import { LineVoice, NarrationOverview } from "./Narration";
+import { ShotLook } from "./Subjects";
+import { AnchorChip, Empty, TextField } from "./ui";
 
 export function SidePanel() {
   const side = useStore((s) => s.side);
   const project = useProject();
   const pending = project.notes.filter((n) => n.status === "queued" || n.status === "open").length;
+  const agent = useStore((s) => s.agent);
+  const here = !agent.project || agent.project === project.id;
+  const asks = here ? agent.approvals.length : 0;
   return (
     <>
       <div className="tabs">
-        <button className={side === "inspect" ? "on" : ""} onClick={() => actions.setSide("inspect")}>
-          Inspect
+        <button className={`agent-tab ${side === "agent" ? "on" : ""}`} onClick={() => actions.setSide("agent")}>
+          <span className={`dot ${!here ? "idle" : agent.status === "running" || agent.status === "starting" ? "pending" : agent.status === "idle" ? "on" : "idle"}`} />{" "}
+          {here && agent.agent && agent.status !== "off" ? AGENT_NAMES[agent.agent] : "Agent"}
+          {asks > 0 && <span className="count">{asks}</span>}
         </button>
         <button className={side === "notes" ? "on" : ""} onClick={() => actions.setSide("notes")}>
           Notes {pending > 0 && <span className="count">{pending}</span>}
         </button>
+        <button className={side === "inspect" ? "on" : ""} onClick={() => actions.setSide("inspect")}>
+          Inspect
+        </button>
       </div>
-      <div className="side-body">{side === "inspect" ? <Inspector /> : <Notes />}</div>
+      <div className={`side-body ${side === "agent" ? "agent" : ""}`}>{side === "inspect" ? <Inspector /> : side === "notes" ? <Notes /> : <AgentPanel />}</div>
     </>
   );
 }
@@ -38,7 +50,6 @@ function Inspector() {
   const p = useProject();
   const tl = useTimeline();
   const sel = useStore((s) => s.selection);
-  const projectId = useStore((s) => s.projectId)!;
   const assets = useMemo(() => assetMap(p), [p]);
 
   if (sel?.kind === "shot") {
@@ -89,10 +100,12 @@ function Inspector() {
             )}
           </dl>
         )}
+        <SceneProps shot={shot} />
         <label>
           Intent
           <TextField multiline value={shot.intent ?? ""} placeholder="What this shot is for" onCommit={(v) => editShot((s) => void (s.intent = v || undefined))} />
         </label>
+        <ShotLook shot={shot} />
         <NotesFor />
       </div>
     );
@@ -101,69 +114,13 @@ function Inspector() {
   if (sel?.kind === "asset") {
     const a = p.assets.find((x) => x.id === sel.id);
     if (!a) return <Empty>That asset no longer exists.</Empty>;
-    const usedBy = p.shots.filter((s) => (s.content.kind === "clip" && s.content.asset === a.id) || (s.content.kind === "generated" && s.content.takes?.includes(a.id)));
     return (
-      <div className="inspector">
-        <div className="asset-hero" style={{ background: a.color ?? "#333" }}>
-          {a.kind !== "music" && <img src={a.kind === "video" ? stripUrl(projectId, a.id) : posterUrl(projectId, a.id)} alt="" onError={hideBroken} />}
+      <>
+        <AssetView a={a} />
+        <div className="inspector">
+          <NotesFor />
         </div>
-        <h3>{a.label ?? a.id}</h3>
-        <dl>
-          <dt>File</dt>
-          <dd className="mono small">{a.path}</dd>
-          <dt>Kind</dt>
-          <dd>{a.kind}</dd>
-          {a.duration !== undefined && (<><dt>Length</dt><dd>{formatTime(a.duration)}</dd></>)}
-          {a.width && (<><dt>Size</dt><dd>{a.width}×{a.height}</dd></>)}
-          {a.grid && (<><dt>Grid</dt><dd>{a.grid.bpm} BPM, downbeat at {a.grid.downbeat}s</dd></>)}
-          {a.provenance && (
-            <>
-              <dt>Source</dt>
-              <dd>
-                {a.provenance.source}
-                {a.provenance.provider && ` · ${a.provenance.provider}`}
-                {a.provenance.model && ` · ${a.provenance.model}`}
-                {a.provenance.costUsd !== undefined && ` · $${a.provenance.costUsd.toFixed(2)}`}
-              </dd>
-            </>
-          )}
-          {a.provenance?.prompt && (<><dt>Prompt</dt><dd className="small">{a.provenance.prompt}</dd></>)}
-        </dl>
-        {a.kind !== "music" && <Stars rating={a.rating} onChange={(r) => actions.edit((d) => void (d.assets.find((x) => x.id === a.id)!.rating = r))} />}
-        {a.moments && (
-          <>
-            <h4>Moments</h4>
-            <ul className="plain">
-              {a.moments.map((m) => (
-                <li key={m.id}>
-                  <span className="mono dim">{m.t.toFixed(1)}s</span> {m.label} {m.score !== undefined && <span className="dim">({Math.round(m.score * 100)}%)</span>}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {a.sections && (
-          <>
-            <h4>Sections</h4>
-            <ul className="plain">
-              {a.sections.map((s) => (
-                <li key={s.id}><span className="mono dim">{formatTime(s.start)}</span> {s.label}</li>
-              ))}
-            </ul>
-          </>
-        )}
-        <h4>Used in</h4>
-        {usedBy.length ? (
-          <div className="chips">
-            {usedBy.map((s) => (
-              <button key={s.id} className="chip" onClick={() => actions.select({ kind: "shot", id: s.id })}>{s.id} · {s.label}</button>
-            ))}
-          </div>
-        ) : (
-          <p className="dim small">Not in the cut yet.</p>
-        )}
-        <NotesFor />
-      </div>
+      </>
     );
   }
 
@@ -171,16 +128,20 @@ function Inspector() {
     const l = p.voice?.lines.find((x) => x.id === sel.id);
     const r = tl.lines.find((x) => x.id === sel.id);
     if (!l) return <Empty>That line no longer exists.</Empty>;
+    const editLine = (fn: (x: NonNullable<typeof l>) => void) => actions.edit((d) => fn(d.voice!.lines.find((x) => x.id === l.id)!));
     return (
       <div className="inspector">
         <div className="insp-head"><span className="mono dim">{l.id}</span><span className="pill">Line</span></div>
-        <p className="line-quote">{l.text}</p>
-        {l.tts && <p className="dim small">Spoken as: {l.tts}</p>}
+        <TextField multiline value={l.text} placeholder="What it says" onCommit={(v) => v.trim() && editLine((x) => void (x.text = v.trim()))} />
+        <TextField value={l.tts ?? ""} placeholder="Spoken as (when it differs: numbers, names)" onCommit={(v) => editLine((x) => void (x.tts = v.trim() || undefined))} />
+        <LineVoice p={p} l={l} />
         <dl>
           <dt>Plays</dt>
           <dd className="mono">{r ? `${formatTime(r.start)} → ${formatTime(r.end)}` : "not in this format"}</dd>
           <dt>Audio</dt>
-          <dd className="mono small">{l.file}</dd>
+          <dd className="mono small line-file" title={l.file}>
+            {l.file?.split("/").pop() ?? "none yet"}
+          </dd>
         </dl>
         <h4>Words</h4>
         <div className="chips">
@@ -243,18 +204,30 @@ function ProjectOverview({ p, tl }: { p: Project; tl: Timeline }) {
       ) : (
         <p className="dim small">Every anchor resolves. Select a shot, line, music cue or asset to inspect it.</p>
       )}
+      <NarrationOverview p={p} />
+      <LookPanel p={p} />
     </div>
   );
 }
 
 function NotesFor() {
   const p = useProject();
+  const tl = useTimeline();
   const sel = useStore((s) => s.selection);
   const notes = p.notes.filter((n) => n.status !== "dismissed" && noteMatches(n, sel));
   return (
     <div className="notes-for">
       <h4>
-        Notes here <button className="link" onClick={actions.compose}>+ Add</button>
+        Notes here{" "}
+        <button
+          className="link"
+          onClick={(e) => {
+            const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            actions.noteOn(targetFromSelection(sel, p, tl, getState().playhead), { x: r.left - 120, y: r.bottom });
+          }}
+        >
+          + Add
+        </button>
       </h4>
       {notes.length ? notes.map((n) => <NoteCard key={n.id} n={n} compact />) : <p className="dim small">None yet.</p>}
     </div>
@@ -262,88 +235,37 @@ function NotesFor() {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-const STATUS_LABEL: Record<Note["status"], string> = { open: "Held", queued: "Next batch", working: "With agent", done: "Done", dismissed: "Dismissed" };
+const STATUS_LABEL: Record<Note["status"], string> = { open: "Handed back", queued: "Attached", working: "With the agent", done: "Done", dismissed: "Dismissed" };
 
+/** Every note on this cut: attached to your next message, with the agent, or done with its reply. */
 function Notes() {
   const p = useProject();
-  const [showBatch, setShowBatch] = useState(false);
   const groups: [string, Note[]][] = [
-    ["Next batch", p.notes.filter((n) => n.status === "queued")],
-    ["Held back", p.notes.filter((n) => n.status === "open")],
+    ["Attached to your next message", p.notes.filter((n) => n.status === "queued")],
+    ["Handed back", p.notes.filter((n) => n.status === "open")],
     ["With the agent", p.notes.filter((n) => n.status === "working")],
-    ["Done", p.notes.filter((n) => n.status === "done")],
+    ["Done", p.notes.filter((n) => n.status === "done").reverse()],
   ];
-  const queued = groups[0]![1].filter((n) => n.text.trim());
   return (
     <div className="notes">
-      <Composer />
+      <p className="dim small notes-how">
+        Note anything: press N for what's selected, right-click a shot, ⇧-drag along the ruler for a stretch, draw on the frame, or ✎ a clip in Media. Notes go with your next message to the agent.
+      </p>
       <div className="note-groups">
         {groups.map(([title, list]) =>
           list.length ? (
             <section key={title}>
-              <h4>{title} <span className="dim">{list.length}</span></h4>
-              {list.map((n) => <NoteCard key={n.id} n={n} />)}
+              <h4>
+                {title} <span className="dim">{list.length}</span>
+              </h4>
+              {list.map((n) => (
+                <NoteCard key={n.id} n={n} />
+              ))}
             </section>
           ) : null,
         )}
+        {!p.notes.length && <Empty>No notes on this cut yet.</Empty>}
       </div>
-      <div className="send">
-        <button className="primary" disabled={!queued.length} onClick={() => setShowBatch(true)}>
-          Send {queued.length || ""} to agent
-        </button>
-      </div>
-      {showBatch && <BatchDialog notes={queued} onClose={() => setShowBatch(false)} />}
-    </div>
-  );
-}
-
-/** Compose requests already acted on, so remounting the tab doesn't steal focus again. */
-let composeHandled = 0;
-
-function Composer() {
-  const p = useProject();
-  const tl = useTimeline();
-  const sel = useStore((s) => s.selection);
-  const playhead = useStore((s) => s.playhead);
-  const format = useStore((s) => s.format);
-  const [text, setText] = useState("");
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const target = targetFromSelection(sel, p, tl, playhead);
-  const compose = useStore((s) => s.compose);
-  useEffect(() => {
-    if (compose > composeHandled) {
-      composeHandled = compose;
-      ref.current?.focus();
-    }
-  }, [compose]);
-  const add = () => {
-    if (!text.trim()) return;
-    // Assets aren't on the timeline, so a note about one has no playhead time.
-    const at = target.kind === "asset" ? undefined : Math.round(getState().playhead * 100) / 100;
-    actions.edit((d) => {
-      d.notes.push({ id: nextId("n", d.notes), text: text.trim(), status: "queued", target, at, format, stage: getState().stage, author: "you", createdAt: new Date().toISOString() });
-    });
-    setText("");
-  };
-  return (
-    <div className="composer">
-      <div className="dim small">
-        Note on <strong>{describeTarget(target, p)}</strong>{target.kind !== "asset" && <> at {formatTime(playhead)}</>}
-      </div>
-      <textarea
-        ref={ref}
-        value={text}
-        placeholder="What should change? Enter adds it to the next batch."
-        rows={2}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            add();
-          }
-          if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
-        }}
-      />
     </div>
   );
 }
@@ -352,7 +274,6 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
   const p = useProject();
   const tl = useTimeline();
   const [editing, setEditing] = useState(false);
-  const focused = useStore((s) => s.focusNote === n.id);
   const set = (fn: (x: Note) => void) => actions.edit((d) => fn(d.notes.find((x) => x.id === n.id)!));
   const t = noteTime(n, tl);
   const fmt = n.format ? p.formats.find((f) => f.id === n.format)?.label : undefined;
@@ -380,11 +301,10 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
       {editing || (!n.text && n.status !== "done") ? (
         <TextField
           multiline
-          autoFocus={focused || editing}
+          autoFocus={editing}
           value={n.text}
           placeholder="Describe the change for this area"
           onCommit={(v) => {
-            if (focused) setState({ focusNote: undefined });
             set((x) => {
               x.text = v;
               if (x.status === "open" && !n.text && v.trim()) x.status = "queued";
@@ -396,119 +316,17 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
         <p className="note-text" onDoubleClick={() => n.status !== "done" && setEditing(true)}>{n.text}</p>
       )}
       {n.reply && <p className="note-reply"><span className="who">Agent</span> {n.reply}</p>}
-      {!compact && n.status !== "done" && n.status !== "working" && (
+      {!compact && (n.status === "queued" || n.status === "open") && (
         <div className="note-actions">
-          {n.status === "queued" ? (
-            <button className="link" onClick={() => set((x) => void (x.status = "open"))}>Hold back</button>
-          ) : (
-            <button className="link" onClick={() => set((x) => void (x.status = "queued"))}>Add to batch</button>
+          {n.status === "open" && (
+            <button className="link" onClick={() => set((x) => void (x.status = "queued"))} title="Attach it to your next message again">
+              Try again
+            </button>
           )}
           <button className="link" onClick={() => setEditing(true)}>Edit</button>
-          <button className="link danger" onClick={() => set((x) => void (x.status = "dismissed"))}>Dismiss</button>
+          <button className="link danger" onClick={() => actions.removeNote(n.id)}>Remove</button>
         </div>
       )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------------------------
-type SendResult = { count: number; delivered: "muse" | "none"; agent?: { kind: "muse" | "other" }; message: string; error?: string };
-
-function BatchDialog({ notes, onClose }: { notes: Note[]; onClose: () => void }) {
-  const p = useProject();
-  const projectId = useStore((s) => s.projectId)!;
-  const agents = useStore((s) => s.agents);
-  const [copied, setCopied] = useState(false);
-  const [result, setResult] = useState<SendResult | null>(null);
-  const [sending, setSending] = useState(false);
-  const where = useStore((s) => s.list.find((x) => x.id === projectId)?.where ?? "examples");
-  const batch = useMemo(() => buildBatch(p, notes, { file: `${where}/${projectId}/project.json` }), [p, projectId, notes, where]);
-  const target = agents.find((a) => a.kind === "muse" && a.museSession);
-  const someone = target ?? agents[0];
-  const prompt = [
-    `Address these ${notes.length} beatsheet notes on ${p.title}.`,
-    `Edit ${batch.project.file}${p.codeRoot ? ` and the coded shots under ${p.codeRoot}` : ""}. Keep timing as anchors (words, beats, sections, shots), never raw timecodes.`,
-    `When a note is handled, set its status to "done" and write a one-line "reply" saying what changed.`,
-    "",
-    "```json",
-    JSON.stringify(batch, null, 2),
-    "```",
-  ].join("\n");
-  const copy = async (text: string) => {
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-  };
-  const send = async () => {
-    setSending(true);
-    try {
-      await actions.flushSave();
-      const res = await fetch("/api/agents/send", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project: projectId }) });
-      setResult((await res.json()) as SendResult);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  if (result) {
-    const name = result.agent ? AGENT_NAME[result.agent.kind] : "your agent";
-    return (
-      <div className="modal-back" onClick={onClose}>
-        <div className="modal" onClick={(e) => e.stopPropagation()}>
-          <h3>{result.delivered === "none" ? "Notes marked as sent" : `Sent to ${name}`}</h3>
-          {result.delivered !== "none" ? (
-            <p>
-              {result.count === 1 ? "It has the note and is working on it." : `It has the ${result.count} notes and is working on them.`} Each one moves to
-              Done with a reply as it's handled.
-            </p>
-          ) : (
-            <>
-              <p>
-                {result.error
-                  ? `${name} couldn't be messaged (it may have been started without session messaging), so tell it:`
-                  : agents.length
-                    ? `${name} can't be messaged from here, so tell it:`
-                    : "Muse Code isn't connected. Connect it from the top right, then tell it:"}{" "}
-                <strong>“handle my beatsheet notes”</strong>. It picks up exactly these notes.
-              </p>
-              <div className="modal-actions">
-                <button onClick={() => copy("handle my beatsheet notes")}>{copied ? "Copied" : "Copy that"}</button>
-              </div>
-            </>
-          )}
-          <div className="modal-actions">
-            <span className="spacer" />
-            <button className="primary" onClick={onClose}>Done</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="modal-back" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Send {notes.length} note{notes.length === 1 ? "" : "s"} to {someone ? AGENT_NAME[someone.kind] : "your agent"}</h3>
-        <p className="dim">
-          {target
-            ? `${AGENT_NAME[target.kind]} gets them right away and starts on them.`
-            : someone
-              ? `${AGENT_NAME[someone.kind]} is connected, but this session can't be messaged, so after sending, tell it “handle my beatsheet notes”.`
-              : "Muse Code isn't connected yet. Sending marks the notes as sent; the next session you connect picks them up."}{" "}
-          Each note goes with the shot, line or frame area it points at, so the agent opens only what it needs.
-        </p>
-        <details>
-          <summary className="small">What the agent gets</summary>
-          <pre className="batch">{prompt}</pre>
-        </details>
-        <div className="modal-actions">
-          <button onClick={onClose}>Cancel</button>
-          <button onClick={() => copy(prompt)}>{copied ? "Copied" : "Copy as text"}</button>
-          <span className="spacer" />
-          <button className="primary" onClick={send} disabled={sending}>
-            {sending ? "Sending…" : target ? `Send to ${AGENT_NAME[target.kind]}` : "Mark as sent"}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

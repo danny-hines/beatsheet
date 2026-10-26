@@ -1,0 +1,22 @@
+/** The ready-made kit scenes a shot can use as `kit:Name`, and what each takes: for the agent's tools and docs. Plain TypeScript, so the engine can read it. */
+export const KIT_PROPS: Record<string, string> = {
+  Title: "text (\\n for a second line in the accent), kicker?, sub?, at?, bg? (paper|paper-grid|ink|blueprint|none|a colour), align?, position?, size?",
+  Words: "text? (default: the narration during the shot), accent? (words to highlight), at?, over?, size?, color?, align?, position?, bg? (default none: over the picture below)",
+  Stat: "value, label, kicker?, prefix?, suffix?, at?, bg?",
+  Cards: "items: [{title, body?, meta?, tag?, image? (asset id), at?}], kicker?, bg?",
+  Quote: "text, name?, handle?, date?, at?, bg?",
+  Code: "code, title?, at?, cps?, bg?",
+  Split: "before (asset id), after (asset id), labels? [before, after], at? (the wipe), direction? (vertical|horizontal), bg?",
+  Grid: "assets [ids], columns?, zoomFrom? (index to start on, then pull back), at?, dur?, tilt? (degrees), drift?, bg?",
+  Polaroids: "assets [ids], captions?, at?, every?, ats? (a time or word per photo), bg?, size?",
+  Phone: "asset? (a screenshot or clip for the screen), url? (types in the address bar), scroll? (0..1), at?, bg?",
+  Callouts: "points: [{x, y (0..1 of the frame), label, sub?, at?, side?}], asset? (picture under them), bg? (default none)",
+  Media: "asset, focus? {x,y}, zoom?, push? (0.1 = a 10% push in), from? (seconds into a clip), bg?",
+  Viewfinder: "label?, status?, focus? {x,y,w,h}, lockAt?  (an overlay: put it on a track above the picture)",
+  Flash: "at?, color?, dur?  (overlay)",
+  Stamp: "text, at?, color?, rotate?, size?, x?, y?  (overlay)",
+  ScanLine: "at?, dur?, color?  (overlay)",
+  Paper: "(a background)",
+  Ink: "(a background)",
+  Blueprint: "(a background)",
+};

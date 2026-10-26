@@ -1,0 +1,17 @@
+{
+  "name": "@beatsheet/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "beatsheet as a Mac app: the studio in its own window, with the engine and agents running inside it.",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build:main": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && BEATSHEET_DEV_URL=http://localhost:5180 electron .",
+    "start": "npm run build -w @beatsheet/studio && node scripts/build.mjs && electron .",
+    "app": "node scripts/make-app.mjs"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "esbuild": "0.28.2"
+  }
+}

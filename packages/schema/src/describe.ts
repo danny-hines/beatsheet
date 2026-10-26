@@ -66,5 +66,7 @@ export function describeTarget(t: NoteTarget, project?: Project): string {
       return `section ${t.section}`;
     case "time":
       return `at ${formatTime(t.t)}`;
+    case "range":
+      return `${formatTime(t.from)}–${formatTime(t.to)}`;
   }
 }

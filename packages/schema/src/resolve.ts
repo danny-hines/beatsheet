@@ -23,6 +23,7 @@ export type ResolvedBeat = { t: number; bar: boolean };
 export type ResolvedSection = { id: string; label: string; start: number; end: number; cue: string };
 export type ResolvedShot = { id: string; track: string; start: number; end: number; sourceIn?: number };
 export type ResolvedMarker = { id: string; label: string; t: number };
+export type ResolvedSfx = { id: string; sound: string; t: number; gain: number };
 
 export type Timeline = {
   format: string;
@@ -33,6 +34,7 @@ export type Timeline = {
   sections: ResolvedSection[];
   shots: ResolvedShot[];
   markers: ResolvedMarker[];
+  sfx: ResolvedSfx[];
   diagnostics: Diagnostic[];
 };
 
@@ -346,6 +348,12 @@ export function resolveTimeline(project: Project, formatId?: string): Timeline {
     label: m.label,
     t: attempt(`marker ${m.id}`, () => anchor(m.at)),
   }));
+  const sfx: ResolvedSfx[] = (project.sfx ?? []).filter(inFormat).map((c) => ({
+    id: c.id,
+    sound: c.sound,
+    t: attempt(`sound ${c.id}`, () => anchor(c.at)),
+    gain: c.gain ?? 0.5,
+  }));
 
   return {
     format,
@@ -356,6 +364,7 @@ export function resolveTimeline(project: Project, formatId?: string): Timeline {
     sections,
     shots: resolvedShots,
     markers,
+    sfx,
     diagnostics: dedupe(diagnostics),
   };
 }

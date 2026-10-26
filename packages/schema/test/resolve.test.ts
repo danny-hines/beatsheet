@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   anchorForTime,
-  checkReferences,
+  checkCut,
   Project,
   resolveAnchor,
   resolveTimeline,
@@ -238,7 +238,7 @@ describe("references", () => {
       shots: [{ id: "a", track: "nope", start: { kind: "line", line: "ghost" }, content: { kind: "clip", asset: "missing" }, fidelity: "idea" }],
       notes: [{ id: "n1", text: "x", status: "open", target: { kind: "shot", shot: "zzz" }, author: "you", createdAt: "2026-10-13" }],
     });
-    expect(checkReferences(p).map((i) => i.message)).toEqual([
+    expect(checkCut(p).map((i) => i.message)).toEqual([
       'unknown track "nope"',
       'unknown line "ghost"',
       'unknown asset "missing"',

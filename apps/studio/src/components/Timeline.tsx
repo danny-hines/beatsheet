@@ -1,7 +1,7 @@
-import { anchorForTime, describeAnchor, formatTime, snapPoints, type Anchor, type SnapPoint } from "@beatsheet/schema";
-import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { anchorForTime, describeAnchor, formatTime, snapPoints, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { assetMap, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch } from "../lib";
-import { actions, setState, useProject, useStore, useTimeline } from "../store";
+import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 
 const PAD = 48;
 const RULER_H = 22;
@@ -45,15 +45,57 @@ export function Timeline() {
     return Math.max(0, (clientX - rect.left) / z);
   };
 
-  // ---- Scrubbing on the ruler and empty lane space.
-  const scrub = (e: ReactPointerEvent) => {
+  // ---- A note on anything: right-click an item, or ⇧-drag along the ruler to pick a stretch of the cut.
+  const noteMenu = (target: NoteTarget, select?: Selection) => (e: ReactMouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (select) actions.select(select);
+    actions.noteOn(target, { x: e.clientX, y: e.clientY });
+  };
+  const [stretch, setStretch] = useState<{ from: number; to: number; x0: number } | null>(null);
+  // Dragging on the ruler moves the playhead; with ⇧ it marks a stretch for a note instead.
+  const rulerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
+    e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    actions.seek(timeAt(e.clientX));
+    const t = timeAt(e.clientX);
+    if (e.shiftKey) setStretch({ from: t, to: t, x0: e.clientX });
+    actions.seek(t);
+  };
+  const rulerMove = (e: ReactPointerEvent) => {
+    if (!(e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) return;
+    if (!stretch || Math.abs(e.clientX - stretch.x0) < 5) return actions.seek(timeAt(e.clientX));
+    setStretch({ ...stretch, to: timeAt(e.clientX) });
+  };
+  const rulerUp = (e: ReactPointerEvent) => {
+    if (!stretch) return;
+    const [from, to] = [Math.min(stretch.from, stretch.to), Math.max(stretch.from, stretch.to)];
+    setStretch(null);
+    if (to - from < 0.2) return;
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    actions.noteOn({ kind: "range", from: r2(from), to: r2(to) }, { x: e.clientX, y: e.clientY }, { at: r2(from) });
+  };
+
+  // ---- Scrubbing in the lanes. Pressing on empty space moves the playhead there; pressing on a shot, line or cue
+  // selects it, and dragging from there scrubs (so a lane full of shots can still be scrubbed).
+  const press = useRef<{ x0: number; moving: boolean } | null>(null);
+  const scrub = (e: ReactPointerEvent, now = true) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const lane = (e.currentTarget as HTMLElement).closest(".lane") as HTMLElement | null;
+    lane?.setPointerCapture(e.pointerId);
+    press.current = { x0: e.clientX, moving: now };
+    if (now) actions.seek(timeAt(e.clientX));
   };
   const scrubMove = (e: ReactPointerEvent) => {
-    if ((e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) actions.seek(timeAt(e.clientX));
+    const p = press.current;
+    if (!p || !(e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) return;
+    if (!p.moving && Math.abs(e.clientX - p.x0) < 4) return;
+    p.moving = true;
+    actions.seek(timeAt(e.clientX));
   };
+  const scrubEnd = () => void (press.current = null);
+  const lane = { onPointerDown: (e: ReactPointerEvent) => scrub(e), onPointerMove: scrubMove, onPointerUp: scrubEnd, onPointerCancel: scrubEnd };
 
   // ---- Dragging a cut.
   const startDrag = (e: ReactPointerEvent, shot: string, edge: "start" | "end") => {
@@ -105,19 +147,23 @@ export function Timeline() {
           <div style={{ height: RULER_H }} />
           {tl.lines.length > 0 && <div className="tl-label" style={{ height: H.voice }}>Voice</div>}
           {tl.cues.length > 0 && <div className="tl-label" style={{ height: H.music }}>Music</div>}
+          {tl.sfx.length > 0 && <div className="tl-label" style={{ height: H.sfx }}>Sound</div>}
           {project.tracks.map((t) => (
-            <div key={t.id} className="tl-label" style={{ height: H[t.kind] }}>{t.label}</div>
+            <div key={t.id} className="tl-label" style={{ height: H[t.kind] }} title={t.label}><span>{t.label}</span></div>
           ))}
           <div className="tl-label" style={{ height: H.notes }}>Notes</div>
         </div>
         <div className="tl-scroll" ref={scroller}>
           <div className="tl-canvas" ref={canvas} style={{ width }} onPointerMove={moveDrag} onPointerUp={endDrag}>
-            <div className="tl-ruler" style={{ height: RULER_H }} onPointerDown={scrub} onPointerMove={scrubMove}>
+            <div className="tl-ruler" style={{ height: RULER_H }} onPointerDown={rulerDown} onPointerMove={rulerMove} onPointerUp={rulerUp} title="Click or drag to move the playhead; ⇧-drag to note a stretch of the cut">
               <Ruler z={z} duration={duration} />
+              {stretch && Math.abs(stretch.to - stretch.from) > 0 && (
+                <div className="tl-stretch" style={{ left: x(Math.min(stretch.from, stretch.to)), width: Math.abs(x(stretch.to) - x(stretch.from)) }} />
+              )}
             </div>
 
             {tl.lines.length > 0 && (
-              <div className="lane" style={{ height: H.voice }} onPointerDown={scrub} onPointerMove={scrubMove}>
+              <div className="lane" style={{ height: H.voice }} {...lane}>
                 {tl.lines.map((l) => (
                   <div
                     key={l.id}
@@ -127,7 +173,9 @@ export function Timeline() {
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       actions.select({ kind: "line", id: l.id });
+                      scrub(e, false);
                     }}
+                    onContextMenu={noteMenu({ kind: "line", line: l.id }, { kind: "line", id: l.id })}
                   >
                     <span className="line-text">{l.text}</span>
                     {z >= 30 &&
@@ -142,9 +190,15 @@ export function Timeline() {
             )}
 
             {tl.cues.length > 0 && (
-              <div className="lane music-lane" style={{ height: H.music }} onPointerDown={scrub} onPointerMove={scrubMove}>
+              <div className="lane music-lane" style={{ height: H.music }} {...lane}>
                 {tl.sections.map((s, i) => (
-                  <div key={s.id} className="section-band" style={{ left: x(s.start), width: x(s.end) - x(s.start), background: SECTION_COLORS[i % SECTION_COLORS.length] }} title={`${s.label} ${formatTime(s.start)}`}>
+                  <div
+                    key={s.id}
+                    className="section-band"
+                    style={{ left: x(s.start), width: x(s.end) - x(s.start), background: SECTION_COLORS[i % SECTION_COLORS.length] }}
+                    title={`${s.label} ${formatTime(s.start)} · right-click for a note`}
+                    onContextMenu={noteMenu({ kind: "section", section: s.id })}
+                  >
                     {s.label}
                   </div>
                 ))}
@@ -160,14 +214,37 @@ export function Timeline() {
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       actions.select({ kind: "cue", id: c.id });
+                      scrub(e, false);
                     }}
+                    onContextMenu={noteMenu({ kind: "cue", cue: c.id }, { kind: "cue", id: c.id })}
                   />
                 ))}
               </div>
             )}
 
+            {tl.sfx.length > 0 && (
+              <div className="lane sfx-lane" style={{ height: H.sfx }} {...lane}>
+                {tl.sfx
+                  .filter((cue) => Number.isFinite(cue.t))
+                  .map((cue) => (
+                    <span
+                      key={cue.id}
+                      className="sfx-cue"
+                      style={{ left: x(cue.t) }}
+                      title={`${cue.sound} at ${formatTime(cue.t)}`}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        actions.seek(cue.t);
+                      }}
+                    >
+                      {z >= 40 ? cue.sound : ""}
+                    </span>
+                  ))}
+              </div>
+            )}
+
             {project.tracks.map((track) => (
-              <div key={track.id} className={`lane track-${track.kind}`} style={{ height: H[track.kind] }} onPointerDown={scrub} onPointerMove={scrubMove}>
+              <div key={track.id} className={`lane track-${track.kind}`} style={{ height: H[track.kind] }} {...lane}>
                 {tl.shots
                   .filter((s) => s.track === track.id && Number.isFinite(s.start) && Number.isFinite(s.end))
                   .map((r) => {
@@ -185,9 +262,12 @@ export function Timeline() {
                         onPointerDown={(e) => {
                           e.stopPropagation();
                           actions.select({ kind: "shot", id: r.id });
+                          scrub(e, false);
                         }}
+                        onContextMenu={noteMenu({ kind: "shot", shot: r.id }, { kind: "shot", id: r.id })}
                       >
                         <span className="shot-label">{shot.label ?? r.id}</span>
+                        <ShotBadges shot={shot} format={format} assets={assets} />
                         {track.kind === "picture" && <span className="shot-sub">{shotSummary(shot, assets)}</span>}
                         {notes > 0 && <span className="shot-notes">{notes}</span>}
                         {!shot.locked && <span className="handle start" onPointerDown={(e) => startDrag(e, r.id, "start")} />}
@@ -198,24 +278,22 @@ export function Timeline() {
               </div>
             ))}
 
-            <div className="lane notes-lane" style={{ height: H.notes }} onPointerDown={scrub} onPointerMove={scrubMove}>
+            <div className="lane notes-lane" style={{ height: H.notes }} {...lane}>
               {formatNotes.map((n) => {
                 const t = noteTime(n, tl);
                 if (t === undefined || !Number.isFinite(t)) return null;
-                return (
-                  <button
-                    key={n.id}
-                    className={`note-pin st-${n.status}`}
-                    style={{ left: x(t) }}
-                    title={n.text}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      actions.seek(t);
-                      actions.select(selectionForTarget(n.target));
-                      setState({ side: "notes" });
-                    }}
-                  />
-                );
+                const open = (e: ReactPointerEvent) => {
+                  e.stopPropagation();
+                  actions.seek(t);
+                  actions.select(selectionForTarget(n.target));
+                  // Attached notes can still be changed; sent ones are history in the Notes tab.
+                  if (n.status === "queued") actions.noteOn(n.target, { x: e.clientX, y: e.clientY }, { id: n.id, text: n.text, at: n.at, region: n.region });
+                  else setState({ side: "notes" });
+                };
+                // A note on a stretch of the cut shows as a band across it.
+                if (n.target.kind === "range")
+                  return <button key={n.id} className={`note-band st-${n.status}`} style={{ left: x(n.target.from), width: Math.max(4, x(n.target.to) - x(n.target.from)) }} title={n.text} onPointerDown={open} />;
+                return <button key={n.id} className={`note-pin st-${n.status}`} style={{ left: x(t) }} title={n.text} onPointerDown={open} />;
               })}
             </div>
 
@@ -264,4 +342,30 @@ function Playhead({ z }: { z: number }) {
     if (px > sc.scrollLeft + sc.clientWidth - 80 || px < sc.scrollLeft) sc.scrollLeft = px - 80;
   }, [t, z, playing]);
   return <div ref={ref} className="playhead" style={{ left: t * z }} />;
+}
+
+/** Small marks on a shot block for what's layered on it: effects, a crop that follows someone, a look, an entrance. */
+function ShotBadges({ shot, format, assets }: { shot: Shot; format: string; assets: Map<string, Asset> }) {
+  const c = shot.content;
+  const marks: [string, string][] = [];
+  if (c.kind === "clip") {
+    const a = assets.get(c.asset);
+    const who = (id: string) => a?.subjects?.find((s) => s.id === id)?.label ?? id;
+    if (a?.cutout) marks.push(["✂", "A cut-out"]);
+    if (c.effects?.length) marks.push(["◍", c.effects.map((e) => `${e.kind === "label" ? `Name tag "${e.text}"` : e.kind === "blur" ? "Blur" : "Spotlight"} on ${who(e.subject)}`).join("\n")]);
+    const follow = c.reframe?.[format]?.follow;
+    if (follow) marks.push(["⤧", `Keeps ${who(follow)} in frame`]);
+    if (c.look) marks.push(["◐", `Look: ${c.look}`]);
+  }
+  if (shot.transition?.kind) marks.push(["↗", `Comes in: ${shot.transition.kind}`]);
+  if (!marks.length) return null;
+  return (
+    <span className="shot-badges">
+      {marks.map(([glyph, title]) => (
+        <span key={glyph} title={title}>
+          {glyph}
+        </span>
+      ))}
+    </span>
+  );
 }

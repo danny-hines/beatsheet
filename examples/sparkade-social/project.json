@@ -1,23 +1,17 @@
 {
-  "schema": "beatsheet/0.1",
+  "schema": "beatsheet/0.2",
   "id": "sparkade-social",
   "title": "Sparkade social video",
-  "recipe": "narrated",
-  "mediaRoot": "~/sparkade-video/video/public",
+  "sources": [
+    {
+      "id": "footage",
+      "path": "~/sparkade-video/video/public"
+    }
+  ],
   "codeRoot": "~/sparkade-video/video",
   "brief": {
     "goal": "Show what Sparkade is and how it works: walk up, snap a photo, and the arcade dreams up a game starring you.",
     "audience": "Social: YouTube, LinkedIn and X (16:9); TikTok, Reels and Shorts (9:16)",
-    "platforms": [
-      "YouTube",
-      "LinkedIn",
-      "X",
-      "TikTok",
-      "Reels",
-      "Shorts"
-    ],
-    "targetLength": 99,
-    "maxLength": 120,
     "tone": [
       "retro arcade",
       "punchy",
@@ -25,65 +19,6 @@
     ],
     "notes": "The vertical cut skips the \"what if AI…\", build, Voice Transcribe, SAM and engines beats so it stays short. Master to −14 LUFS with peaks at or below −1 dBTP. Captions burned in."
   },
-  "formats": [
-    {
-      "id": "land",
-      "label": "16:9",
-      "width": 1920,
-      "height": 1080,
-      "fps": 30,
-      "platforms": [
-        "YouTube",
-        "LinkedIn",
-        "X"
-      ]
-    },
-    {
-      "id": "port",
-      "label": "9:16",
-      "width": 1080,
-      "height": 1920,
-      "fps": 30,
-      "platforms": [
-        "TikTok",
-        "Reels",
-        "Shorts"
-      ]
-    }
-  ],
-  "stages": {
-    "brief": {
-      "status": "done"
-    },
-    "material": {
-      "status": "done",
-      "summary": "Kiosk and phone captures, cabinet photos, real game output"
-    },
-    "structure": {
-      "status": "done",
-      "locked": true,
-      "summary": "Script locked; narration recorded with the Danny clone"
-    },
-    "board": {
-      "status": "done"
-    },
-    "assemble": {
-      "status": "done"
-    },
-    "craft": {
-      "status": "active",
-      "summary": "Revision pass"
-    },
-    "sound": {
-      "status": "done",
-      "summary": "Two music beds fitted to the voice; −14 LUFS master"
-    },
-    "finish": {
-      "status": "done",
-      "summary": "v1 delivered: 1:39 (16:9) and 1:05 (9:16)"
-    }
-  },
-  "spine": "voice",
   "assets": [
     {
       "id": "musicA",
@@ -328,9 +263,9 @@
       "kind": "video",
       "path": "cap/phone-play.mp4",
       "label": "phone gameplay",
+      "duration": 24,
       "width": 780,
       "height": 1688,
-      "duration": 24.0,
       "tags": [
         "gameplay",
         "phone"
@@ -346,9 +281,9 @@
       "kind": "video",
       "path": "cap/phone-land.mp4",
       "label": "phone gameplay",
+      "duration": 26,
       "width": 1688,
       "height": 780,
-      "duration": 26.0,
       "tags": [
         "gameplay",
         "phone"
@@ -364,9 +299,9 @@
       "kind": "video",
       "path": "cap/g-1sggrylcgd.mp4",
       "label": "kiosk gameplay 1sgg",
+      "duration": 30,
       "width": 1024,
       "height": 600,
-      "duration": 30.0,
       "tags": [
         "gameplay",
         "kiosk"
@@ -382,9 +317,9 @@
       "kind": "video",
       "path": "cap/g-28mdl1klva.mp4",
       "label": "kiosk gameplay 28md",
+      "duration": 26,
       "width": 1024,
       "height": 600,
-      "duration": 26.0,
       "tags": [
         "gameplay",
         "kiosk"
@@ -400,9 +335,9 @@
       "kind": "video",
       "path": "cap/g-3lsv0xkvvu.mp4",
       "label": "kiosk gameplay 3lsv",
+      "duration": 20,
       "width": 1024,
       "height": 600,
-      "duration": 20.0,
       "tags": [
         "gameplay",
         "kiosk"
@@ -418,9 +353,9 @@
       "kind": "video",
       "path": "cap/g-aco9qwvbvx.mp4",
       "label": "kiosk gameplay aco9",
+      "duration": 26,
       "width": 1024,
       "height": 600,
-      "duration": 26.0,
       "tags": [
         "gameplay",
         "kiosk"
@@ -432,1921 +367,1999 @@
       "color": "#3a4a8c"
     }
   ],
-  "voice": {
-    "voice": "Danny (ElevenLabs eleven_v4)",
-    "leadIn": 0.3,
-    "defaultGap": 0.5,
-    "tail": 1,
-    "lines": [
-      {
-        "id": "hookA",
-        "text": "This arcade doesn't want your quarters. It wants your face.",
-        "file": "vo/hookA.wav",
-        "duration": 3.788,
-        "words": [
-          {
-            "w": "This",
-            "s": 0.0,
-            "e": 0.22
-          },
-          {
-            "w": "arcade",
-            "s": 0.22,
-            "e": 0.6
-          },
-          {
-            "w": "doesn't",
-            "s": 0.6,
-            "e": 0.96
-          },
-          {
-            "w": "want",
-            "s": 0.96,
-            "e": 1.14
-          },
-          {
-            "w": "your",
-            "s": 1.14,
-            "e": 1.34
-          },
-          {
-            "w": "quarters.",
-            "s": 1.34,
-            "e": 1.8
-          },
-          {
-            "w": "It",
-            "s": 2.4,
-            "e": 2.52
-          },
-          {
-            "w": "wants",
-            "s": 2.52,
-            "e": 2.8
-          },
-          {
-            "w": "your",
-            "s": 2.8,
-            "e": 3.0
-          },
-          {
-            "w": "face.",
-            "s": 3.0,
-            "e": 3.44
-          }
+  "cuts": [
+    {
+      "id": "main",
+      "name": "Main cut",
+      "recipe": "narrated",
+      "spec": {
+        "platforms": [
+          "YouTube",
+          "LinkedIn",
+          "X",
+          "TikTok",
+          "Reels",
+          "Shorts"
         ],
-        "gapAfter": 0.35
+        "targetLength": 99,
+        "maxLength": 120
       },
-      {
-        "id": "hookB",
-        "text": "Snap a photo, and it dreams up a brand new game, starring you.",
-        "file": "vo/hookB.wav",
-        "duration": 4.022,
-        "words": [
-          {
-            "w": "Snap",
-            "s": 0.0,
-            "e": 0.32
-          },
-          {
-            "w": "a",
-            "s": 0.32,
-            "e": 0.5
-          },
-          {
-            "w": "photo,",
-            "s": 0.5,
-            "e": 0.76
-          },
-          {
-            "w": "and",
-            "s": 1.16,
-            "e": 1.18
-          },
-          {
-            "w": "it",
-            "s": 1.18,
-            "e": 1.3
-          },
-          {
-            "w": "dreams",
-            "s": 1.3,
-            "e": 1.56
-          },
-          {
-            "w": "up",
-            "s": 1.56,
-            "e": 1.76
-          },
-          {
-            "w": "a",
-            "s": 1.76,
-            "e": 1.92
-          },
-          {
-            "w": "brand",
-            "s": 1.92,
-            "e": 2.22
-          },
-          {
-            "w": "new",
-            "s": 2.22,
-            "e": 2.44
-          },
-          {
-            "w": "game,",
-            "s": 2.44,
-            "e": 2.82
-          },
-          {
-            "w": "starring",
-            "s": 3.1,
-            "e": 3.48
-          },
-          {
-            "w": "you.",
-            "s": 3.48,
-            "e": 3.88
-          }
-        ],
-        "gapAfter": 0.55
-      },
-      {
-        "id": "title",
-        "text": "This is Sparkade.",
-        "file": "vo/title.wav",
-        "duration": 1.588,
-        "words": [
-          {
-            "w": "This",
-            "s": 0.0,
-            "e": 0.38
-          },
-          {
-            "w": "is",
-            "s": 0.38,
-            "e": 0.8
-          },
-          {
-            "w": "Sparkade.",
-            "s": 0.8,
-            "e": 1.42
-          }
-        ],
-        "gapAfter": 0.9,
-        "gaps": {
-          "port": 0.8
+      "formats": [
+        {
+          "id": "land",
+          "label": "16:9",
+          "width": 1920,
+          "height": 1080,
+          "fps": 30,
+          "platforms": [
+            "YouTube",
+            "LinkedIn",
+            "X"
+          ]
+        },
+        {
+          "id": "port",
+          "label": "9:16",
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "platforms": [
+            "TikTok",
+            "Reels",
+            "Shorts"
+          ]
+        }
+      ],
+      "stages": {
+        "brief": {
+          "status": "done"
+        },
+        "material": {
+          "status": "done",
+          "summary": "Kiosk and phone captures, cabinet photos, real game output"
+        },
+        "structure": {
+          "status": "done",
+          "locked": true,
+          "summary": "Script locked; narration recorded with the Danny clone"
+        },
+        "board": {
+          "status": "done"
+        },
+        "assemble": {
+          "status": "done"
+        },
+        "craft": {
+          "status": "active",
+          "summary": "Revision pass"
+        },
+        "sound": {
+          "status": "done",
+          "summary": "Two music beds fitted to the voice; −14 LUFS master"
+        },
+        "finish": {
+          "status": "done",
+          "summary": "v1 delivered: 1:39 (16:9) and 1:05 (9:16)"
         }
       },
-      {
-        "id": "origin",
-        "text": "I love retro games. Enough to build a whole fleet of arcade cabinets, just to run emulators.",
-        "file": "vo/origin.wav",
-        "duration": 5.494,
-        "words": [
+      "spine": "voice",
+      "voice": {
+        "voice": "Danny (ElevenLabs eleven_v4)",
+        "leadIn": 0.3,
+        "defaultGap": 0.5,
+        "tail": 1,
+        "lines": [
           {
-            "w": "I",
-            "s": 0.0,
-            "e": 0.2
+            "id": "hookA",
+            "text": "This arcade doesn't want your quarters. It wants your face.",
+            "file": "vo/hookA.wav",
+            "duration": 3.788,
+            "words": [
+              {
+                "w": "This",
+                "s": 0,
+                "e": 0.22
+              },
+              {
+                "w": "arcade",
+                "s": 0.22,
+                "e": 0.6
+              },
+              {
+                "w": "doesn't",
+                "s": 0.6,
+                "e": 0.96
+              },
+              {
+                "w": "want",
+                "s": 0.96,
+                "e": 1.14
+              },
+              {
+                "w": "your",
+                "s": 1.14,
+                "e": 1.34
+              },
+              {
+                "w": "quarters.",
+                "s": 1.34,
+                "e": 1.8
+              },
+              {
+                "w": "It",
+                "s": 2.4,
+                "e": 2.52
+              },
+              {
+                "w": "wants",
+                "s": 2.52,
+                "e": 2.8
+              },
+              {
+                "w": "your",
+                "s": 2.8,
+                "e": 3
+              },
+              {
+                "w": "face.",
+                "s": 3,
+                "e": 3.44
+              }
+            ],
+            "gapAfter": 0.35
           },
           {
-            "w": "love",
-            "s": 0.2,
-            "e": 0.54
+            "id": "hookB",
+            "text": "Snap a photo, and it dreams up a brand new game, starring you.",
+            "file": "vo/hookB.wav",
+            "duration": 4.022,
+            "words": [
+              {
+                "w": "Snap",
+                "s": 0,
+                "e": 0.32
+              },
+              {
+                "w": "a",
+                "s": 0.32,
+                "e": 0.5
+              },
+              {
+                "w": "photo,",
+                "s": 0.5,
+                "e": 0.76
+              },
+              {
+                "w": "and",
+                "s": 1.16,
+                "e": 1.18
+              },
+              {
+                "w": "it",
+                "s": 1.18,
+                "e": 1.3
+              },
+              {
+                "w": "dreams",
+                "s": 1.3,
+                "e": 1.56
+              },
+              {
+                "w": "up",
+                "s": 1.56,
+                "e": 1.76
+              },
+              {
+                "w": "a",
+                "s": 1.76,
+                "e": 1.92
+              },
+              {
+                "w": "brand",
+                "s": 1.92,
+                "e": 2.22
+              },
+              {
+                "w": "new",
+                "s": 2.22,
+                "e": 2.44
+              },
+              {
+                "w": "game,",
+                "s": 2.44,
+                "e": 2.82
+              },
+              {
+                "w": "starring",
+                "s": 3.1,
+                "e": 3.48
+              },
+              {
+                "w": "you.",
+                "s": 3.48,
+                "e": 3.88
+              }
+            ],
+            "gapAfter": 0.55
           },
           {
-            "w": "retro",
-            "s": 0.54,
-            "e": 0.94
+            "id": "title",
+            "text": "This is Sparkade.",
+            "file": "vo/title.wav",
+            "duration": 1.588,
+            "words": [
+              {
+                "w": "This",
+                "s": 0,
+                "e": 0.38
+              },
+              {
+                "w": "is",
+                "s": 0.38,
+                "e": 0.8
+              },
+              {
+                "w": "Sparkade.",
+                "s": 0.8,
+                "e": 1.42
+              }
+            ],
+            "gapAfter": 0.9,
+            "gaps": {
+              "port": 0.8
+            }
           },
           {
-            "w": "games.",
-            "s": 0.94,
-            "e": 1.34
+            "id": "origin",
+            "text": "I love retro games. Enough to build a whole fleet of arcade cabinets, just to run emulators.",
+            "file": "vo/origin.wav",
+            "duration": 5.494,
+            "words": [
+              {
+                "w": "I",
+                "s": 0,
+                "e": 0.2
+              },
+              {
+                "w": "love",
+                "s": 0.2,
+                "e": 0.54
+              },
+              {
+                "w": "retro",
+                "s": 0.54,
+                "e": 0.94
+              },
+              {
+                "w": "games.",
+                "s": 0.94,
+                "e": 1.34
+              },
+              {
+                "w": "Enough",
+                "s": 1.9,
+                "e": 2
+              },
+              {
+                "w": "to",
+                "s": 2,
+                "e": 2.2
+              },
+              {
+                "w": "build",
+                "s": 2.2,
+                "e": 2.36
+              },
+              {
+                "w": "a",
+                "s": 2.36,
+                "e": 2.52
+              },
+              {
+                "w": "whole",
+                "s": 2.52,
+                "e": 2.76
+              },
+              {
+                "w": "fleet",
+                "s": 2.76,
+                "e": 3.14
+              },
+              {
+                "w": "of",
+                "s": 3.14,
+                "e": 3.3
+              },
+              {
+                "w": "arcade",
+                "s": 3.3,
+                "e": 3.62
+              },
+              {
+                "w": "cabinets,",
+                "s": 3.62,
+                "e": 4.06
+              },
+              {
+                "w": "just",
+                "s": 4.06,
+                "e": 4.42
+              },
+              {
+                "w": "to",
+                "s": 4.42,
+                "e": 4.62
+              },
+              {
+                "w": "run",
+                "s": 4.62,
+                "e": 4.76
+              },
+              {
+                "w": "emulators.",
+                "s": 4.76,
+                "e": 5.2
+              }
+            ],
+            "gapAfter": 0.5,
+            "gaps": {
+              "port": 1
+            }
           },
           {
-            "w": "Enough",
-            "s": 1.9,
-            "e": 2.0
+            "id": "question",
+            "text": "So I started wondering: what if AI could make games nobody has ever played?",
+            "file": "vo/question.wav",
+            "duration": 4.607,
+            "words": [
+              {
+                "w": "So",
+                "s": 0,
+                "e": 0.18
+              },
+              {
+                "w": "I",
+                "s": 0.18,
+                "e": 0.3
+              },
+              {
+                "w": "started",
+                "s": 0.3,
+                "e": 0.58
+              },
+              {
+                "w": "wondering:",
+                "s": 0.58,
+                "e": 1.06
+              },
+              {
+                "w": "what",
+                "s": 1.56,
+                "e": 1.74
+              },
+              {
+                "w": "if",
+                "s": 1.74,
+                "e": 1.9
+              },
+              {
+                "w": "AI",
+                "s": 1.9,
+                "e": 2.26
+              },
+              {
+                "w": "could",
+                "s": 2.26,
+                "e": 2.5
+              },
+              {
+                "w": "make",
+                "s": 2.5,
+                "e": 2.7
+              },
+              {
+                "w": "games",
+                "s": 2.7,
+                "e": 3.06
+              },
+              {
+                "w": "nobody",
+                "s": 3.06,
+                "e": 3.42
+              },
+              {
+                "w": "has",
+                "s": 3.42,
+                "e": 3.74
+              },
+              {
+                "w": "ever",
+                "s": 3.74,
+                "e": 4.04
+              },
+              {
+                "w": "played?",
+                "s": 4.04,
+                "e": 4.4
+              }
+            ],
+            "gapAfter": 0.7,
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "to",
-            "s": 2.0,
-            "e": 2.2
+            "id": "build",
+            "text": "I reused my Raspberry Pi mini arcade design, with one small upgrade: a camera and mic, built right into the marquee.",
+            "file": "vo/build.wav",
+            "duration": 7.151,
+            "words": [
+              {
+                "w": "I",
+                "s": 0,
+                "e": 0.12
+              },
+              {
+                "w": "reused",
+                "s": 0.12,
+                "e": 0.48
+              },
+              {
+                "w": "my",
+                "s": 0.48,
+                "e": 0.74
+              },
+              {
+                "w": "Raspberry",
+                "s": 0.74,
+                "e": 1.16
+              },
+              {
+                "w": "Pi",
+                "s": 1.16,
+                "e": 1.52
+              },
+              {
+                "w": "mini",
+                "s": 1.52,
+                "e": 1.74
+              },
+              {
+                "w": "arcade",
+                "s": 1.74,
+                "e": 2.14
+              },
+              {
+                "w": "design,",
+                "s": 2.14,
+                "e": 2.6
+              },
+              {
+                "w": "with",
+                "s": 2.6,
+                "e": 2.94
+              },
+              {
+                "w": "one",
+                "s": 2.94,
+                "e": 3.3
+              },
+              {
+                "w": "small",
+                "s": 3.3,
+                "e": 3.66
+              },
+              {
+                "w": "upgrade:",
+                "s": 3.66,
+                "e": 4.1
+              },
+              {
+                "w": "a",
+                "s": 4.56,
+                "e": 4.74
+              },
+              {
+                "w": "camera",
+                "s": 4.74,
+                "e": 5.02
+              },
+              {
+                "w": "and",
+                "s": 5.02,
+                "e": 5.3
+              },
+              {
+                "w": "mic,",
+                "s": 5.3,
+                "e": 5.56
+              },
+              {
+                "w": "built",
+                "s": 5.56,
+                "e": 5.92
+              },
+              {
+                "w": "right",
+                "s": 5.92,
+                "e": 6.28
+              },
+              {
+                "w": "into",
+                "s": 6.28,
+                "e": 6.56
+              },
+              {
+                "w": "the",
+                "s": 6.56,
+                "e": 6.68
+              },
+              {
+                "w": "marquee.",
+                "s": 6.68,
+                "e": 6.88
+              }
+            ],
+            "gapAfter": 1.2,
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "build",
-            "s": 2.2,
-            "e": 2.36
+            "id": "walkup",
+            "text": "Walk up, snap a photo, and tell it what you want to play.",
+            "file": "vo/walkup.wav",
+            "duration": 2.858,
+            "words": [
+              {
+                "w": "Walk",
+                "s": 0,
+                "e": 0.18
+              },
+              {
+                "w": "up,",
+                "s": 0.18,
+                "e": 0.5
+              },
+              {
+                "w": "snap",
+                "s": 0.7,
+                "e": 0.96
+              },
+              {
+                "w": "a",
+                "s": 0.96,
+                "e": 1.12
+              },
+              {
+                "w": "photo,",
+                "s": 1.12,
+                "e": 1.42
+              },
+              {
+                "w": "and",
+                "s": 1.7,
+                "e": 1.84
+              },
+              {
+                "w": "tell",
+                "s": 1.84,
+                "e": 2
+              },
+              {
+                "w": "it",
+                "s": 2,
+                "e": 2.1
+              },
+              {
+                "w": "what",
+                "s": 2.1,
+                "e": 2.22
+              },
+              {
+                "w": "you",
+                "s": 2.22,
+                "e": 2.32
+              },
+              {
+                "w": "want",
+                "s": 2.32,
+                "e": 2.44
+              },
+              {
+                "w": "to",
+                "s": 2.44,
+                "e": 2.54
+              },
+              {
+                "w": "play.",
+                "s": 2.54,
+                "e": 2.74
+              }
+            ],
+            "gapAfter": 0.8,
+            "gaps": {
+              "port": 0.6
+            }
           },
           {
-            "w": "a",
-            "s": 2.36,
-            "e": 2.52
+            "id": "api",
+            "text": "From there, it's all Meta's Model API, and every model has a job.",
+            "file": "vo/api.wav",
+            "duration": 4.439,
+            "words": [
+              {
+                "w": "From",
+                "s": 0,
+                "e": 0.14
+              },
+              {
+                "w": "there,",
+                "s": 0.14,
+                "e": 0.44
+              },
+              {
+                "w": "it's",
+                "s": 0.64,
+                "e": 0.96
+              },
+              {
+                "w": "all",
+                "s": 0.96,
+                "e": 1.16
+              },
+              {
+                "w": "Meta's",
+                "s": 1.16,
+                "e": 1.54
+              },
+              {
+                "w": "Model",
+                "s": 1.54,
+                "e": 1.88
+              },
+              {
+                "w": "API,",
+                "s": 1.88,
+                "e": 2.44
+              },
+              {
+                "w": "and",
+                "s": 2.44,
+                "e": 3.02
+              },
+              {
+                "w": "every",
+                "s": 3.02,
+                "e": 3.42
+              },
+              {
+                "w": "model",
+                "s": 3.42,
+                "e": 3.72
+              },
+              {
+                "w": "has",
+                "s": 3.72,
+                "e": 3.98
+              },
+              {
+                "w": "a",
+                "s": 3.98,
+                "e": 4.14
+              },
+              {
+                "w": "job.",
+                "s": 4.14,
+                "e": 4.34
+              }
+            ],
+            "gapAfter": 0.5,
+            "gaps": {
+              "port": 0.4
+            }
           },
           {
-            "w": "whole",
-            "s": 2.52,
-            "e": 2.76
+            "id": "voice",
+            "text": "Muse Voice Transcribe turns your idea into text.",
+            "file": "vo/voice.wav",
+            "duration": 2.979,
+            "words": [
+              {
+                "w": "Muse",
+                "s": 0,
+                "e": 0.24
+              },
+              {
+                "w": "Voice",
+                "s": 0.24,
+                "e": 0.54
+              },
+              {
+                "w": "Transcribe",
+                "s": 0.54,
+                "e": 1.24
+              },
+              {
+                "w": "turns",
+                "s": 1.24,
+                "e": 1.5
+              },
+              {
+                "w": "your",
+                "s": 1.5,
+                "e": 1.7
+              },
+              {
+                "w": "idea",
+                "s": 1.7,
+                "e": 2.02
+              },
+              {
+                "w": "into",
+                "s": 2.02,
+                "e": 2.4
+              },
+              {
+                "w": "text.",
+                "s": 2.4,
+                "e": 2.72
+              }
+            ],
+            "gapAfter": 0.6,
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "fleet",
-            "s": 2.76,
-            "e": 3.14
+            "id": "spark",
+            "text": "Muse Spark is the brains. It writes the story, designs the levels, and even composes the music.",
+            "file": "vo/spark.wav",
+            "duration": 5.996,
+            "words": [
+              {
+                "w": "Muse",
+                "s": 0,
+                "e": 0.48
+              },
+              {
+                "w": "Spark",
+                "s": 0.48,
+                "e": 0.58
+              },
+              {
+                "w": "is",
+                "s": 0.58,
+                "e": 0.92
+              },
+              {
+                "w": "the",
+                "s": 0.92,
+                "e": 1.1
+              },
+              {
+                "w": "brains.",
+                "s": 1.1,
+                "e": 1.46
+              },
+              {
+                "w": "It",
+                "s": 2.04,
+                "e": 2.1
+              },
+              {
+                "w": "writes",
+                "s": 2.1,
+                "e": 2.3
+              },
+              {
+                "w": "the",
+                "s": 2.3,
+                "e": 2.5
+              },
+              {
+                "w": "story,",
+                "s": 2.5,
+                "e": 2.92
+              },
+              {
+                "w": "designs",
+                "s": 3.24,
+                "e": 3.48
+              },
+              {
+                "w": "the",
+                "s": 3.48,
+                "e": 3.76
+              },
+              {
+                "w": "levels,",
+                "s": 3.76,
+                "e": 4.04
+              },
+              {
+                "w": "and",
+                "s": 4.38,
+                "e": 4.48
+              },
+              {
+                "w": "even",
+                "s": 4.48,
+                "e": 4.78
+              },
+              {
+                "w": "composes",
+                "s": 4.78,
+                "e": 5.3
+              },
+              {
+                "w": "the",
+                "s": 5.3,
+                "e": 5.5
+              },
+              {
+                "w": "music.",
+                "s": 5.5,
+                "e": 5.72
+              }
+            ],
+            "gapAfter": 0.6,
+            "gaps": {
+              "port": 0.9
+            }
           },
           {
-            "w": "of",
-            "s": 3.14,
-            "e": 3.3
+            "id": "image",
+            "text": "Muse Image paints everything you see. Heroes, enemies, bosses, backgrounds.",
+            "file": "vo/image.wav",
+            "duration": 5.27,
+            "words": [
+              {
+                "w": "Muse",
+                "s": 0,
+                "e": 0.22
+              },
+              {
+                "w": "Image",
+                "s": 0.22,
+                "e": 0.6
+              },
+              {
+                "w": "paints",
+                "s": 0.6,
+                "e": 1.02
+              },
+              {
+                "w": "everything",
+                "s": 1.02,
+                "e": 1.56
+              },
+              {
+                "w": "you",
+                "s": 1.56,
+                "e": 1.86
+              },
+              {
+                "w": "see.",
+                "s": 1.86,
+                "e": 2.16
+              },
+              {
+                "w": "Heroes,",
+                "s": 3.02,
+                "e": 3.02
+              },
+              {
+                "w": "enemies,",
+                "s": 3.36,
+                "e": 3.54
+              },
+              {
+                "w": "bosses,",
+                "s": 4.08,
+                "e": 4.36
+              },
+              {
+                "w": "backgrounds.",
+                "s": 4.92,
+                "e": 5.04
+              }
+            ],
+            "gapAfter": 0.7,
+            "gaps": {
+              "port": 1.105
+            }
           },
           {
-            "w": "arcade",
-            "s": 3.3,
-            "e": 3.62
+            "id": "sam",
+            "text": "And I'm testing SAM 3.1 to cut out sprites with pixel perfect masks.",
+            "file": "vo/sam.wav",
+            "duration": 5.113,
+            "words": [
+              {
+                "w": "And",
+                "s": 0,
+                "e": 0
+              },
+              {
+                "w": "I'm",
+                "s": 0,
+                "e": 0.8
+              },
+              {
+                "w": "testing",
+                "s": 0.8,
+                "e": 1.12
+              },
+              {
+                "w": "SAM",
+                "s": 1.12,
+                "e": 1.5
+              },
+              {
+                "w": "3.1",
+                "s": 1.5,
+                "e": 2.38
+              },
+              {
+                "w": "to",
+                "s": 2.38,
+                "e": 2.6
+              },
+              {
+                "w": "cut",
+                "s": 2.6,
+                "e": 2.78
+              },
+              {
+                "w": "out",
+                "s": 2.78,
+                "e": 2.94
+              },
+              {
+                "w": "sprites",
+                "s": 2.94,
+                "e": 3.26
+              },
+              {
+                "w": "with",
+                "s": 3.26,
+                "e": 3.6
+              },
+              {
+                "w": "pixel",
+                "s": 3.6,
+                "e": 4
+              },
+              {
+                "w": "perfect",
+                "s": 4,
+                "e": 4.38
+              },
+              {
+                "w": "masks.",
+                "s": 4.38,
+                "e": 4.88
+              }
+            ],
+            "gapAfter": 1.2,
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "cabinets,",
-            "s": 3.62,
-            "e": 4.06
+            "id": "engines",
+            "text": "To keep it fast and reliable, the AI never writes code. It tunes one of six game engines I built, each with hundreds of knobs.",
+            "file": "vo/engines.wav",
+            "duration": 7.81,
+            "words": [
+              {
+                "w": "To",
+                "s": 0,
+                "e": 0.12
+              },
+              {
+                "w": "keep",
+                "s": 0.12,
+                "e": 0.26
+              },
+              {
+                "w": "it",
+                "s": 0.26,
+                "e": 0.42
+              },
+              {
+                "w": "fast",
+                "s": 0.42,
+                "e": 0.7
+              },
+              {
+                "w": "and",
+                "s": 0.7,
+                "e": 0.92
+              },
+              {
+                "w": "reliable,",
+                "s": 0.92,
+                "e": 1.36
+              },
+              {
+                "w": "the",
+                "s": 1.74,
+                "e": 1.82
+              },
+              {
+                "w": "AI",
+                "s": 1.82,
+                "e": 2.16
+              },
+              {
+                "w": "never",
+                "s": 2.16,
+                "e": 2.54
+              },
+              {
+                "w": "writes",
+                "s": 2.54,
+                "e": 2.86
+              },
+              {
+                "w": "code.",
+                "s": 2.86,
+                "e": 3.22
+              },
+              {
+                "w": "It",
+                "s": 3.68,
+                "e": 3.78
+              },
+              {
+                "w": "tunes",
+                "s": 3.78,
+                "e": 4.06
+              },
+              {
+                "w": "one",
+                "s": 4.06,
+                "e": 4.36
+              },
+              {
+                "w": "of",
+                "s": 4.36,
+                "e": 4.48
+              },
+              {
+                "w": "six",
+                "s": 4.48,
+                "e": 4.78
+              },
+              {
+                "w": "game",
+                "s": 4.78,
+                "e": 5.1
+              },
+              {
+                "w": "engines",
+                "s": 5.1,
+                "e": 5.44
+              },
+              {
+                "w": "I",
+                "s": 5.44,
+                "e": 5.66
+              },
+              {
+                "w": "built,",
+                "s": 5.66,
+                "e": 5.94
+              },
+              {
+                "w": "each",
+                "s": 6.16,
+                "e": 6.36
+              },
+              {
+                "w": "with",
+                "s": 6.36,
+                "e": 6.62
+              },
+              {
+                "w": "hundreds",
+                "s": 6.62,
+                "e": 7.04
+              },
+              {
+                "w": "of",
+                "s": 7.04,
+                "e": 7.32
+              },
+              {
+                "w": "knobs.",
+                "s": 7.32,
+                "e": 7.64
+              }
+            ],
+            "gapAfter": 1.355,
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "just",
-            "s": 4.06,
-            "e": 4.42
+            "id": "qr",
+            "text": "While it builds, scan the QR code to follow along on your phone.",
+            "file": "vo/qr.wav",
+            "duration": 3.21,
+            "words": [
+              {
+                "w": "While",
+                "s": 0,
+                "e": 0.16
+              },
+              {
+                "w": "it",
+                "s": 0.16,
+                "e": 0.28
+              },
+              {
+                "w": "builds,",
+                "s": 0.28,
+                "e": 0.66
+              },
+              {
+                "w": "scan",
+                "s": 0.88,
+                "e": 1.2
+              },
+              {
+                "w": "the",
+                "s": 1.2,
+                "e": 1.34
+              },
+              {
+                "w": "QR",
+                "s": 1.34,
+                "e": 1.6
+              },
+              {
+                "w": "code",
+                "s": 1.6,
+                "e": 1.88
+              },
+              {
+                "w": "to",
+                "s": 1.88,
+                "e": 2.06
+              },
+              {
+                "w": "follow",
+                "s": 2.06,
+                "e": 2.24
+              },
+              {
+                "w": "along",
+                "s": 2.24,
+                "e": 2.58
+              },
+              {
+                "w": "on",
+                "s": 2.58,
+                "e": 2.74
+              },
+              {
+                "w": "your",
+                "s": 2.74,
+                "e": 2.86
+              },
+              {
+                "w": "phone.",
+                "s": 2.86,
+                "e": 3.08
+              }
+            ],
+            "gapAfter": 0.6,
+            "gaps": {
+              "port": 0.5
+            }
           },
           {
-            "w": "to",
-            "s": 4.42,
-            "e": 4.62
+            "id": "ready",
+            "text": "About five minutes later, your game is ready. And it typically costs under fifty cents.",
+            "file": "vo/ready.wav",
+            "duration": 4.954,
+            "words": [
+              {
+                "w": "About",
+                "s": 0,
+                "e": 0.22
+              },
+              {
+                "w": "five",
+                "s": 0.22,
+                "e": 0.52
+              },
+              {
+                "w": "minutes",
+                "s": 0.52,
+                "e": 0.72
+              },
+              {
+                "w": "later,",
+                "s": 0.72,
+                "e": 1.16
+              },
+              {
+                "w": "your",
+                "s": 1.44,
+                "e": 1.52
+              },
+              {
+                "w": "game",
+                "s": 1.52,
+                "e": 1.72
+              },
+              {
+                "w": "is",
+                "s": 1.72,
+                "e": 1.88
+              },
+              {
+                "w": "ready.",
+                "s": 1.88,
+                "e": 2.12
+              },
+              {
+                "w": "And",
+                "s": 2.66,
+                "e": 2.68
+              },
+              {
+                "w": "it",
+                "s": 2.68,
+                "e": 2.82
+              },
+              {
+                "w": "typically",
+                "s": 2.82,
+                "e": 3.08
+              },
+              {
+                "w": "costs",
+                "s": 3.08,
+                "e": 3.52
+              },
+              {
+                "w": "under",
+                "s": 3.52,
+                "e": 3.92
+              },
+              {
+                "w": "fifty",
+                "s": 3.92,
+                "e": 4.3
+              },
+              {
+                "w": "cents.",
+                "s": 4.3,
+                "e": 4.64
+              }
+            ],
+            "gapAfter": 0.5,
+            "gaps": {
+              "port": 0.4
+            }
           },
           {
-            "w": "run",
-            "s": 4.62,
-            "e": 4.76
+            "id": "anywhere",
+            "text": "Play it right here on the cabinet, or anywhere on your phone.",
+            "file": "vo/anywhere.wav",
+            "duration": 2.792,
+            "words": [
+              {
+                "w": "Play",
+                "s": 0,
+                "e": 0.16
+              },
+              {
+                "w": "it",
+                "s": 0.16,
+                "e": 0.28
+              },
+              {
+                "w": "right",
+                "s": 0.28,
+                "e": 0.46
+              },
+              {
+                "w": "here",
+                "s": 0.46,
+                "e": 0.66
+              },
+              {
+                "w": "on",
+                "s": 0.66,
+                "e": 0.78
+              },
+              {
+                "w": "the",
+                "s": 0.78,
+                "e": 0.9
+              },
+              {
+                "w": "cabinet,",
+                "s": 0.9,
+                "e": 1.24
+              },
+              {
+                "w": "or",
+                "s": 1.24,
+                "e": 1.58
+              },
+              {
+                "w": "anywhere",
+                "s": 1.58,
+                "e": 1.98
+              },
+              {
+                "w": "on",
+                "s": 1.98,
+                "e": 2.26
+              },
+              {
+                "w": "your",
+                "s": 2.26,
+                "e": 2.4
+              },
+              {
+                "w": "phone.",
+                "s": 2.4,
+                "e": 2.62
+              }
+            ],
+            "gapAfter": 0.6,
+            "gaps": {
+              "port": 0.5
+            }
           },
           {
-            "w": "emulators.",
-            "s": 4.76,
-            "e": 5.2
+            "id": "montage",
+            "text": "Platformers. Shooters. Fighters. Racers. Every single one, brand new.",
+            "file": "vo/montage.wav",
+            "duration": 5.384,
+            "words": [
+              {
+                "w": "Platformers.",
+                "s": 0,
+                "e": 0.74
+              },
+              {
+                "w": "Shooters.",
+                "s": 1.06,
+                "e": 1.32
+              },
+              {
+                "w": "Fighters.",
+                "s": 1.82,
+                "e": 2.12
+              },
+              {
+                "w": "Racers.",
+                "s": 2.56,
+                "e": 3.08
+              },
+              {
+                "w": "Every",
+                "s": 3.5,
+                "e": 3.74
+              },
+              {
+                "w": "single",
+                "s": 3.74,
+                "e": 4.02
+              },
+              {
+                "w": "one,",
+                "s": 4.02,
+                "e": 4.54
+              },
+              {
+                "w": "brand",
+                "s": 4.54,
+                "e": 4.96
+              },
+              {
+                "w": "new.",
+                "s": 4.96,
+                "e": 5.28
+              }
+            ],
+            "gapAfter": 3.61,
+            "gaps": {
+              "port": 1.81
+            }
+          },
+          {
+            "id": "tag",
+            "text": "Sparkade. The arcade that dreams up its own games.",
+            "file": "vo/tag.wav",
+            "duration": 3.466,
+            "words": [
+              {
+                "w": "Sparkade.",
+                "s": 0,
+                "e": 0.68
+              },
+              {
+                "w": "The",
+                "s": 1.04,
+                "e": 1.24
+              },
+              {
+                "w": "arcade",
+                "s": 1.24,
+                "e": 1.58
+              },
+              {
+                "w": "that",
+                "s": 1.58,
+                "e": 1.86
+              },
+              {
+                "w": "dreams",
+                "s": 1.86,
+                "e": 2.12
+              },
+              {
+                "w": "up",
+                "s": 2.12,
+                "e": 2.38
+              },
+              {
+                "w": "its",
+                "s": 2.38,
+                "e": 2.54
+              },
+              {
+                "w": "own",
+                "s": 2.54,
+                "e": 2.82
+              },
+              {
+                "w": "games.",
+                "s": 2.82,
+                "e": 3.24
+              }
+            ],
+            "gapAfter": 2.3,
+            "gaps": {
+              "port": 2
+            }
           }
-        ],
-        "gapAfter": 0.5,
-        "gaps": {
-          "port": 1.0
-        }
-      },
-      {
-        "id": "question",
-        "text": "So I started wondering: what if AI could make games nobody has ever played?",
-        "file": "vo/question.wav",
-        "duration": 4.607,
-        "words": [
-          {
-            "w": "So",
-            "s": 0.0,
-            "e": 0.18
-          },
-          {
-            "w": "I",
-            "s": 0.18,
-            "e": 0.3
-          },
-          {
-            "w": "started",
-            "s": 0.3,
-            "e": 0.58
-          },
-          {
-            "w": "wondering:",
-            "s": 0.58,
-            "e": 1.06
-          },
-          {
-            "w": "what",
-            "s": 1.56,
-            "e": 1.74
-          },
-          {
-            "w": "if",
-            "s": 1.74,
-            "e": 1.9
-          },
-          {
-            "w": "AI",
-            "s": 1.9,
-            "e": 2.26
-          },
-          {
-            "w": "could",
-            "s": 2.26,
-            "e": 2.5
-          },
-          {
-            "w": "make",
-            "s": 2.5,
-            "e": 2.7
-          },
-          {
-            "w": "games",
-            "s": 2.7,
-            "e": 3.06
-          },
-          {
-            "w": "nobody",
-            "s": 3.06,
-            "e": 3.42
-          },
-          {
-            "w": "has",
-            "s": 3.42,
-            "e": 3.74
-          },
-          {
-            "w": "ever",
-            "s": 3.74,
-            "e": 4.04
-          },
-          {
-            "w": "played?",
-            "s": 4.04,
-            "e": 4.4
-          }
-        ],
-        "gapAfter": 0.7,
-        "only": [
-          "land"
         ]
       },
-      {
-        "id": "build",
-        "text": "I reused my Raspberry Pi mini arcade design, with one small upgrade: a camera and mic, built right into the marquee.",
-        "file": "vo/build.wav",
-        "duration": 7.151,
-        "words": [
+      "music": {
+        "cues": [
           {
-            "w": "I",
-            "s": 0.0,
-            "e": 0.12
+            "id": "a1",
+            "asset": "musicA",
+            "sync": {
+              "track": 7.1001,
+              "at": {
+                "kind": "line",
+                "line": "title"
+              }
+            },
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "reused",
-            "s": 0.12,
-            "e": 0.48
+            "id": "a2",
+            "asset": "musicA",
+            "from": 107.1101,
+            "sync": {
+              "track": 107.1101,
+              "at": {
+                "kind": "line",
+                "line": "tag"
+              }
+            },
+            "to": 110.9,
+            "fadeOut": 1.6,
+            "only": [
+              "land"
+            ]
           },
           {
-            "w": "my",
-            "s": 0.48,
-            "e": 0.74
+            "id": "b1",
+            "asset": "musicB",
+            "sync": {
+              "track": 9.564,
+              "at": {
+                "kind": "line",
+                "line": "title"
+              }
+            },
+            "only": [
+              "port"
+            ]
           },
           {
-            "w": "Raspberry",
-            "s": 0.74,
-            "e": 1.16
-          },
-          {
-            "w": "Pi",
-            "s": 1.16,
-            "e": 1.52
-          },
-          {
-            "w": "mini",
-            "s": 1.52,
-            "e": 1.74
-          },
-          {
-            "w": "arcade",
-            "s": 1.74,
-            "e": 2.14
-          },
-          {
-            "w": "design,",
-            "s": 2.14,
-            "e": 2.6
-          },
-          {
-            "w": "with",
-            "s": 2.6,
-            "e": 2.94
-          },
-          {
-            "w": "one",
-            "s": 2.94,
-            "e": 3.3
-          },
-          {
-            "w": "small",
-            "s": 3.3,
-            "e": 3.66
-          },
-          {
-            "w": "upgrade:",
-            "s": 3.66,
-            "e": 4.1
-          },
-          {
-            "w": "a",
-            "s": 4.56,
-            "e": 4.74
-          },
-          {
-            "w": "camera",
-            "s": 4.74,
-            "e": 5.02
-          },
-          {
-            "w": "and",
-            "s": 5.02,
-            "e": 5.3
-          },
-          {
-            "w": "mic,",
-            "s": 5.3,
-            "e": 5.56
-          },
-          {
-            "w": "built",
-            "s": 5.56,
-            "e": 5.92
-          },
-          {
-            "w": "right",
-            "s": 5.92,
-            "e": 6.28
-          },
-          {
-            "w": "into",
-            "s": 6.28,
-            "e": 6.56
-          },
-          {
-            "w": "the",
-            "s": 6.56,
-            "e": 6.68
-          },
-          {
-            "w": "marquee.",
-            "s": 6.68,
-            "e": 6.88
+            "id": "b2",
+            "asset": "musicB",
+            "from": 95.564,
+            "sync": {
+              "track": 99.564,
+              "at": {
+                "kind": "word",
+                "line": "ready",
+                "word": "ready",
+                "offset": -0.04
+              }
+            },
+            "to": 116.6,
+            "fadeOut": 1.4,
+            "only": [
+              "port"
+            ]
           }
-        ],
-        "gapAfter": 1.2,
-        "only": [
-          "land"
         ]
       },
-      {
-        "id": "walkup",
-        "text": "Walk up, snap a photo, and tell it what you want to play.",
-        "file": "vo/walkup.wav",
-        "duration": 2.858,
-        "words": [
-          {
-            "w": "Walk",
-            "s": 0.0,
-            "e": 0.18
-          },
-          {
-            "w": "up,",
-            "s": 0.18,
-            "e": 0.5
-          },
-          {
-            "w": "snap",
-            "s": 0.7,
-            "e": 0.96
-          },
-          {
-            "w": "a",
-            "s": 0.96,
-            "e": 1.12
-          },
-          {
-            "w": "photo,",
-            "s": 1.12,
-            "e": 1.42
-          },
-          {
-            "w": "and",
-            "s": 1.7,
-            "e": 1.84
-          },
-          {
-            "w": "tell",
-            "s": 1.84,
-            "e": 2.0
-          },
-          {
-            "w": "it",
-            "s": 2.0,
-            "e": 2.1
-          },
-          {
-            "w": "what",
-            "s": 2.1,
-            "e": 2.22
-          },
-          {
-            "w": "you",
-            "s": 2.22,
-            "e": 2.32
-          },
-          {
-            "w": "want",
-            "s": 2.32,
-            "e": 2.44
-          },
-          {
-            "w": "to",
-            "s": 2.44,
-            "e": 2.54
-          },
-          {
-            "w": "play.",
-            "s": 2.54,
-            "e": 2.74
-          }
-        ],
-        "gapAfter": 0.8,
-        "gaps": {
-          "port": 0.6
+      "tracks": [
+        {
+          "id": "pic",
+          "kind": "picture",
+          "label": "Picture"
+        },
+        {
+          "id": "fx",
+          "kind": "overlay",
+          "label": "Effects"
+        },
+        {
+          "id": "cap",
+          "kind": "text",
+          "label": "Captions"
         }
-      },
-      {
-        "id": "api",
-        "text": "From there, it's all Meta's Model API, and every model has a job.",
-        "file": "vo/api.wav",
-        "duration": 4.439,
-        "words": [
-          {
-            "w": "From",
-            "s": 0.0,
-            "e": 0.14
-          },
-          {
-            "w": "there,",
-            "s": 0.14,
-            "e": 0.44
-          },
-          {
-            "w": "it's",
-            "s": 0.64,
-            "e": 0.96
-          },
-          {
-            "w": "all",
-            "s": 0.96,
-            "e": 1.16
-          },
-          {
-            "w": "Meta's",
-            "s": 1.16,
-            "e": 1.54
-          },
-          {
-            "w": "Model",
-            "s": 1.54,
-            "e": 1.88
-          },
-          {
-            "w": "API,",
-            "s": 1.88,
-            "e": 2.44
-          },
-          {
-            "w": "and",
-            "s": 2.44,
-            "e": 3.02
-          },
-          {
-            "w": "every",
-            "s": 3.02,
-            "e": 3.42
-          },
-          {
-            "w": "model",
-            "s": 3.42,
-            "e": 3.72
-          },
-          {
-            "w": "has",
-            "s": 3.72,
-            "e": 3.98
-          },
-          {
-            "w": "a",
-            "s": 3.98,
-            "e": 4.14
-          },
-          {
-            "w": "job.",
-            "s": 4.14,
-            "e": 4.34
-          }
-        ],
-        "gapAfter": 0.5,
-        "gaps": {
-          "port": 0.4
-        }
-      },
-      {
-        "id": "voice",
-        "text": "Muse Voice Transcribe turns your idea into text.",
-        "file": "vo/voice.wav",
-        "duration": 2.979,
-        "words": [
-          {
-            "w": "Muse",
-            "s": 0.0,
-            "e": 0.24
-          },
-          {
-            "w": "Voice",
-            "s": 0.24,
-            "e": 0.54
-          },
-          {
-            "w": "Transcribe",
-            "s": 0.54,
-            "e": 1.24
-          },
-          {
-            "w": "turns",
-            "s": 1.24,
-            "e": 1.5
-          },
-          {
-            "w": "your",
-            "s": 1.5,
-            "e": 1.7
-          },
-          {
-            "w": "idea",
-            "s": 1.7,
-            "e": 2.02
-          },
-          {
-            "w": "into",
-            "s": 2.02,
-            "e": 2.4
-          },
-          {
-            "w": "text.",
-            "s": 2.4,
-            "e": 2.72
-          }
-        ],
-        "gapAfter": 0.6,
-        "only": [
-          "land"
-        ]
-      },
-      {
-        "id": "spark",
-        "text": "Muse Spark is the brains. It writes the story, designs the levels, and even composes the music.",
-        "file": "vo/spark.wav",
-        "duration": 5.996,
-        "words": [
-          {
-            "w": "Muse",
-            "s": 0.0,
-            "e": 0.48
-          },
-          {
-            "w": "Spark",
-            "s": 0.48,
-            "e": 0.58
-          },
-          {
-            "w": "is",
-            "s": 0.58,
-            "e": 0.92
-          },
-          {
-            "w": "the",
-            "s": 0.92,
-            "e": 1.1
-          },
-          {
-            "w": "brains.",
-            "s": 1.1,
-            "e": 1.46
-          },
-          {
-            "w": "It",
-            "s": 2.04,
-            "e": 2.1
-          },
-          {
-            "w": "writes",
-            "s": 2.1,
-            "e": 2.3
-          },
-          {
-            "w": "the",
-            "s": 2.3,
-            "e": 2.5
-          },
-          {
-            "w": "story,",
-            "s": 2.5,
-            "e": 2.92
-          },
-          {
-            "w": "designs",
-            "s": 3.24,
-            "e": 3.48
-          },
-          {
-            "w": "the",
-            "s": 3.48,
-            "e": 3.76
-          },
-          {
-            "w": "levels,",
-            "s": 3.76,
-            "e": 4.04
-          },
-          {
-            "w": "and",
-            "s": 4.38,
-            "e": 4.48
-          },
-          {
-            "w": "even",
-            "s": 4.48,
-            "e": 4.78
-          },
-          {
-            "w": "composes",
-            "s": 4.78,
-            "e": 5.3
-          },
-          {
-            "w": "the",
-            "s": 5.3,
-            "e": 5.5
-          },
-          {
-            "w": "music.",
-            "s": 5.5,
-            "e": 5.72
-          }
-        ],
-        "gapAfter": 0.6,
-        "gaps": {
-          "port": 0.9
-        }
-      },
-      {
-        "id": "image",
-        "text": "Muse Image paints everything you see. Heroes, enemies, bosses, backgrounds.",
-        "file": "vo/image.wav",
-        "duration": 5.27,
-        "words": [
-          {
-            "w": "Muse",
-            "s": 0.0,
-            "e": 0.22
-          },
-          {
-            "w": "Image",
-            "s": 0.22,
-            "e": 0.6
-          },
-          {
-            "w": "paints",
-            "s": 0.6,
-            "e": 1.02
-          },
-          {
-            "w": "everything",
-            "s": 1.02,
-            "e": 1.56
-          },
-          {
-            "w": "you",
-            "s": 1.56,
-            "e": 1.86
-          },
-          {
-            "w": "see.",
-            "s": 1.86,
-            "e": 2.16
-          },
-          {
-            "w": "Heroes,",
-            "s": 3.02,
-            "e": 3.02
-          },
-          {
-            "w": "enemies,",
-            "s": 3.36,
-            "e": 3.54
-          },
-          {
-            "w": "bosses,",
-            "s": 4.08,
-            "e": 4.36
-          },
-          {
-            "w": "backgrounds.",
-            "s": 4.92,
-            "e": 5.04
-          }
-        ],
-        "gapAfter": 0.7,
-        "gaps": {
-          "port": 1.105
-        }
-      },
-      {
-        "id": "sam",
-        "text": "And I'm testing SAM 3.1 to cut out sprites with pixel perfect masks.",
-        "file": "vo/sam.wav",
-        "duration": 5.113,
-        "words": [
-          {
-            "w": "And",
-            "s": 0.0,
-            "e": 0.0
-          },
-          {
-            "w": "I'm",
-            "s": 0.0,
-            "e": 0.8
-          },
-          {
-            "w": "testing",
-            "s": 0.8,
-            "e": 1.12
-          },
-          {
-            "w": "SAM",
-            "s": 1.12,
-            "e": 1.5
-          },
-          {
-            "w": "3.1",
-            "s": 1.5,
-            "e": 2.38
-          },
-          {
-            "w": "to",
-            "s": 2.38,
-            "e": 2.6
-          },
-          {
-            "w": "cut",
-            "s": 2.6,
-            "e": 2.78
-          },
-          {
-            "w": "out",
-            "s": 2.78,
-            "e": 2.94
-          },
-          {
-            "w": "sprites",
-            "s": 2.94,
-            "e": 3.26
-          },
-          {
-            "w": "with",
-            "s": 3.26,
-            "e": 3.6
-          },
-          {
-            "w": "pixel",
-            "s": 3.6,
-            "e": 4.0
-          },
-          {
-            "w": "perfect",
-            "s": 4.0,
-            "e": 4.38
-          },
-          {
-            "w": "masks.",
-            "s": 4.38,
-            "e": 4.88
-          }
-        ],
-        "gapAfter": 1.2,
-        "only": [
-          "land"
-        ]
-      },
-      {
-        "id": "engines",
-        "text": "To keep it fast and reliable, the AI never writes code. It tunes one of six game engines I built, each with hundreds of knobs.",
-        "file": "vo/engines.wav",
-        "duration": 7.81,
-        "words": [
-          {
-            "w": "To",
-            "s": 0.0,
-            "e": 0.12
-          },
-          {
-            "w": "keep",
-            "s": 0.12,
-            "e": 0.26
-          },
-          {
-            "w": "it",
-            "s": 0.26,
-            "e": 0.42
-          },
-          {
-            "w": "fast",
-            "s": 0.42,
-            "e": 0.7
-          },
-          {
-            "w": "and",
-            "s": 0.7,
-            "e": 0.92
-          },
-          {
-            "w": "reliable,",
-            "s": 0.92,
-            "e": 1.36
-          },
-          {
-            "w": "the",
-            "s": 1.74,
-            "e": 1.82
-          },
-          {
-            "w": "AI",
-            "s": 1.82,
-            "e": 2.16
-          },
-          {
-            "w": "never",
-            "s": 2.16,
-            "e": 2.54
-          },
-          {
-            "w": "writes",
-            "s": 2.54,
-            "e": 2.86
-          },
-          {
-            "w": "code.",
-            "s": 2.86,
-            "e": 3.22
-          },
-          {
-            "w": "It",
-            "s": 3.68,
-            "e": 3.78
-          },
-          {
-            "w": "tunes",
-            "s": 3.78,
-            "e": 4.06
-          },
-          {
-            "w": "one",
-            "s": 4.06,
-            "e": 4.36
-          },
-          {
-            "w": "of",
-            "s": 4.36,
-            "e": 4.48
-          },
-          {
-            "w": "six",
-            "s": 4.48,
-            "e": 4.78
-          },
-          {
-            "w": "game",
-            "s": 4.78,
-            "e": 5.1
-          },
-          {
-            "w": "engines",
-            "s": 5.1,
-            "e": 5.44
-          },
-          {
-            "w": "I",
-            "s": 5.44,
-            "e": 5.66
-          },
-          {
-            "w": "built,",
-            "s": 5.66,
-            "e": 5.94
-          },
-          {
-            "w": "each",
-            "s": 6.16,
-            "e": 6.36
-          },
-          {
-            "w": "with",
-            "s": 6.36,
-            "e": 6.62
-          },
-          {
-            "w": "hundreds",
-            "s": 6.62,
-            "e": 7.04
-          },
-          {
-            "w": "of",
-            "s": 7.04,
-            "e": 7.32
-          },
-          {
-            "w": "knobs.",
-            "s": 7.32,
-            "e": 7.64
-          }
-        ],
-        "gapAfter": 1.355,
-        "only": [
-          "land"
-        ]
-      },
-      {
-        "id": "qr",
-        "text": "While it builds, scan the QR code to follow along on your phone.",
-        "file": "vo/qr.wav",
-        "duration": 3.21,
-        "words": [
-          {
-            "w": "While",
-            "s": 0.0,
-            "e": 0.16
-          },
-          {
-            "w": "it",
-            "s": 0.16,
-            "e": 0.28
-          },
-          {
-            "w": "builds,",
-            "s": 0.28,
-            "e": 0.66
-          },
-          {
-            "w": "scan",
-            "s": 0.88,
-            "e": 1.2
-          },
-          {
-            "w": "the",
-            "s": 1.2,
-            "e": 1.34
-          },
-          {
-            "w": "QR",
-            "s": 1.34,
-            "e": 1.6
-          },
-          {
-            "w": "code",
-            "s": 1.6,
-            "e": 1.88
-          },
-          {
-            "w": "to",
-            "s": 1.88,
-            "e": 2.06
-          },
-          {
-            "w": "follow",
-            "s": 2.06,
-            "e": 2.24
-          },
-          {
-            "w": "along",
-            "s": 2.24,
-            "e": 2.58
-          },
-          {
-            "w": "on",
-            "s": 2.58,
-            "e": 2.74
-          },
-          {
-            "w": "your",
-            "s": 2.74,
-            "e": 2.86
-          },
-          {
-            "w": "phone.",
-            "s": 2.86,
-            "e": 3.08
-          }
-        ],
-        "gapAfter": 0.6,
-        "gaps": {
-          "port": 0.5
-        }
-      },
-      {
-        "id": "ready",
-        "text": "About five minutes later, your game is ready. And it typically costs under fifty cents.",
-        "file": "vo/ready.wav",
-        "duration": 4.954,
-        "words": [
-          {
-            "w": "About",
-            "s": 0.0,
-            "e": 0.22
-          },
-          {
-            "w": "five",
-            "s": 0.22,
-            "e": 0.52
-          },
-          {
-            "w": "minutes",
-            "s": 0.52,
-            "e": 0.72
-          },
-          {
-            "w": "later,",
-            "s": 0.72,
-            "e": 1.16
-          },
-          {
-            "w": "your",
-            "s": 1.44,
-            "e": 1.52
-          },
-          {
-            "w": "game",
-            "s": 1.52,
-            "e": 1.72
-          },
-          {
-            "w": "is",
-            "s": 1.72,
-            "e": 1.88
-          },
-          {
-            "w": "ready.",
-            "s": 1.88,
-            "e": 2.12
-          },
-          {
-            "w": "And",
-            "s": 2.66,
-            "e": 2.68
-          },
-          {
-            "w": "it",
-            "s": 2.68,
-            "e": 2.82
-          },
-          {
-            "w": "typically",
-            "s": 2.82,
-            "e": 3.08
-          },
-          {
-            "w": "costs",
-            "s": 3.08,
-            "e": 3.52
-          },
-          {
-            "w": "under",
-            "s": 3.52,
-            "e": 3.92
-          },
-          {
-            "w": "fifty",
-            "s": 3.92,
-            "e": 4.3
-          },
-          {
-            "w": "cents.",
-            "s": 4.3,
-            "e": 4.64
-          }
-        ],
-        "gapAfter": 0.5,
-        "gaps": {
-          "port": 0.4
-        }
-      },
-      {
-        "id": "anywhere",
-        "text": "Play it right here on the cabinet, or anywhere on your phone.",
-        "file": "vo/anywhere.wav",
-        "duration": 2.792,
-        "words": [
-          {
-            "w": "Play",
-            "s": 0.0,
-            "e": 0.16
-          },
-          {
-            "w": "it",
-            "s": 0.16,
-            "e": 0.28
-          },
-          {
-            "w": "right",
-            "s": 0.28,
-            "e": 0.46
-          },
-          {
-            "w": "here",
-            "s": 0.46,
-            "e": 0.66
-          },
-          {
-            "w": "on",
-            "s": 0.66,
-            "e": 0.78
-          },
-          {
-            "w": "the",
-            "s": 0.78,
-            "e": 0.9
-          },
-          {
-            "w": "cabinet,",
-            "s": 0.9,
-            "e": 1.24
-          },
-          {
-            "w": "or",
-            "s": 1.24,
-            "e": 1.58
-          },
-          {
-            "w": "anywhere",
-            "s": 1.58,
-            "e": 1.98
-          },
-          {
-            "w": "on",
-            "s": 1.98,
-            "e": 2.26
-          },
-          {
-            "w": "your",
-            "s": 2.26,
-            "e": 2.4
-          },
-          {
-            "w": "phone.",
-            "s": 2.4,
-            "e": 2.62
-          }
-        ],
-        "gapAfter": 0.6,
-        "gaps": {
-          "port": 0.5
-        }
-      },
-      {
-        "id": "montage",
-        "text": "Platformers. Shooters. Fighters. Racers. Every single one, brand new.",
-        "file": "vo/montage.wav",
-        "duration": 5.384,
-        "words": [
-          {
-            "w": "Platformers.",
-            "s": 0.0,
-            "e": 0.74
-          },
-          {
-            "w": "Shooters.",
-            "s": 1.06,
-            "e": 1.32
-          },
-          {
-            "w": "Fighters.",
-            "s": 1.82,
-            "e": 2.12
-          },
-          {
-            "w": "Racers.",
-            "s": 2.56,
-            "e": 3.08
-          },
-          {
-            "w": "Every",
-            "s": 3.5,
-            "e": 3.74
-          },
-          {
-            "w": "single",
-            "s": 3.74,
-            "e": 4.02
-          },
-          {
-            "w": "one,",
-            "s": 4.02,
-            "e": 4.54
-          },
-          {
-            "w": "brand",
-            "s": 4.54,
-            "e": 4.96
-          },
-          {
-            "w": "new.",
-            "s": 4.96,
-            "e": 5.28
-          }
-        ],
-        "gapAfter": 3.61,
-        "gaps": {
-          "port": 1.81
-        }
-      },
-      {
-        "id": "tag",
-        "text": "Sparkade. The arcade that dreams up its own games.",
-        "file": "vo/tag.wav",
-        "duration": 3.466,
-        "words": [
-          {
-            "w": "Sparkade.",
-            "s": 0.0,
-            "e": 0.68
-          },
-          {
-            "w": "The",
-            "s": 1.04,
-            "e": 1.24
-          },
-          {
-            "w": "arcade",
-            "s": 1.24,
-            "e": 1.58
-          },
-          {
-            "w": "that",
-            "s": 1.58,
-            "e": 1.86
-          },
-          {
-            "w": "dreams",
-            "s": 1.86,
-            "e": 2.12
-          },
-          {
-            "w": "up",
-            "s": 2.12,
-            "e": 2.38
-          },
-          {
-            "w": "its",
-            "s": 2.38,
-            "e": 2.54
-          },
-          {
-            "w": "own",
-            "s": 2.54,
-            "e": 2.82
-          },
-          {
-            "w": "games.",
-            "s": 2.82,
-            "e": 3.24
-          }
-        ],
-        "gapAfter": 2.3,
-        "gaps": {
-          "port": 2.0
-        }
-      }
-    ]
-  },
-  "music": {
-    "cues": [
-      {
-        "id": "a1",
-        "asset": "musicA",
-        "sync": {
-          "track": 7.1001,
-          "at": {
-            "kind": "line",
-            "line": "title"
+      ],
+      "shots": [
+        {
+          "id": "hook",
+          "track": "pic",
+          "label": "Insert face",
+          "intent": "Cabinet turntable. INSERT COIN blinks, a quarter bounces off, and it glitches to INSERT FACE. Your real kiosk selfie in a viewfinder, then a 3‑2‑1 countdown and shutter flash. The photo dissolves pixel by pixel into your Muse‑made hero. STARRING YOU plays over 4 cuts of your games' key art.",
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Opening.tsx#Hook"
+          },
+          "fidelity": "final",
+          "knobs": {
+            "snapAfterPhoto": {
+              "value": 0.12,
+              "min": 0,
+              "max": 0.5,
+              "step": 0.01,
+              "label": "Shutter after \"photo\" (s)"
+            }
           }
         },
-        "only": [
-          "land"
-        ]
-      },
-      {
-        "id": "a2",
-        "asset": "musicA",
-        "from": 107.1101,
-        "to": 110.9,
-        "sync": {
-          "track": 107.1101,
-          "at": {
+        {
+          "id": "title",
+          "track": "pic",
+          "label": "Logo slam",
+          "intent": "Music drop. The logo slams in and the tagline types out.",
+          "start": {
             "kind": "line",
-            "line": "tag"
+            "line": "title",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Opening.tsx#Title"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "origin",
+          "track": "pic",
+          "label": "Cabinet fleet",
+          "intent": "Your cabinets (photos and turntable), then hands on the stick.",
+          "start": {
+            "kind": "line",
+            "line": "origin",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Story.tsx#Origin"
+          },
+          "fidelity": "final",
+          "transition": {
+            "kind": "pixel-wipe",
+            "duration": 0.5
           }
         },
-        "fadeOut": 1.6,
-        "only": [
-          "land"
-        ]
-      },
-      {
-        "id": "b1",
-        "asset": "musicB",
-        "sync": {
-          "track": 9.564,
-          "at": {
+        {
+          "id": "question",
+          "track": "pic",
+          "label": "What if AI…",
+          "intent": "A terminal prompt types the question.",
+          "start": {
             "kind": "line",
-            "line": "title"
+            "line": "question",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Story.tsx#Question"
+          },
+          "fidelity": "final",
+          "only": [
+            "land"
+          ]
+        },
+        {
+          "id": "build",
+          "track": "pic",
+          "label": "Mini arcade build",
+          "intent": "Pi in the back panel, the CAD model, a 16× build time‑lapse (GoPro footage flipped 180°), then a zoom into the marquee with CAMERA and MIC callouts.",
+          "start": {
+            "kind": "line",
+            "line": "build",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Story.tsx#Build"
+          },
+          "fidelity": "final",
+          "transition": {
+            "kind": "pixel-wipe",
+            "duration": 0.5
+          },
+          "only": [
+            "land"
+          ]
+        },
+        {
+          "id": "walkup",
+          "track": "pic",
+          "label": "Walk up",
+          "intent": "Real kiosk selfie footage, then the kiosk recording your spoken idea and Muse Voice Transcribe filling in the details.",
+          "start": {
+            "kind": "line",
+            "line": "walkup",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Story.tsx#Walkup"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "api",
+          "track": "pic",
+          "label": "Select your team",
+          "intent": "\"Meta Model API\" title with the @AIatMeta launch post, then a SELECT YOUR TEAM character select of the 4 models.",
+          "start": {
+            "kind": "line",
+            "line": "api",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Models.tsx#Api"
+          },
+          "fidelity": "final",
+          "transition": {
+            "kind": "pixel-wipe",
+            "duration": 0.5
           }
         },
-        "only": [
-          "port"
-        ]
-      },
-      {
-        "id": "b2",
-        "asset": "musicB",
-        "from": 95.564,
-        "to": 116.6,
-        "sync": {
-          "track": 99.564,
-          "at": {
-            "kind": "word",
+        {
+          "id": "voice",
+          "track": "pic",
+          "label": "Voice Transcribe",
+          "intent": "Waveform, then the transcript types out. Quote card from @finkd.",
+          "start": {
+            "kind": "line",
+            "line": "voice",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Models.tsx#Voice"
+          },
+          "fidelity": "final",
+          "only": [
+            "land"
+          ]
+        },
+        {
+          "id": "spark",
+          "track": "pic",
+          "label": "Muse Spark",
+          "intent": "The real spec Muse wrote for this game: its story intro, a scrolling tile map of level 1, and a piano roll of its theme. You hear Muse's actual composed chiptune at that moment. Quote card from @finkd.",
+          "start": {
+            "kind": "line",
+            "line": "spark",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Models.tsx#Spark"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "image",
+          "track": "pic",
+          "label": "Muse Image",
+          "intent": "The key art paints in, then the real sprites pop in on each word. Chips read \"45 images painted · $0.01 each\". The @MetaforDevs quote card is on 16:9 only.",
+          "start": {
+            "kind": "line",
+            "line": "image",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Models.tsx#ImageScene"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "sam",
+          "track": "pic",
+          "label": "SAM 3.1",
+          "intent": "A real SAM 3.1 run on your pajama‑hero sprite: green screen → mask → clean cutout. @MetaforDevs quote card.",
+          "start": {
+            "kind": "line",
+            "line": "sam",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Models.tsx#Sam"
+          },
+          "fidelity": "final",
+          "only": [
+            "land"
+          ]
+        },
+        {
+          "id": "engines",
+          "track": "pic",
+          "label": "Six engines",
+          "intent": "Code gets a NO CODE stamp, then the 6 engine cards, then a wall of real schema setting names as spinning knobs (\"~300 settings per engine\").",
+          "start": {
+            "kind": "line",
+            "line": "engines",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Models.tsx#Engines"
+          },
+          "fidelity": "final",
+          "only": [
+            "land"
+          ]
+        },
+        {
+          "id": "qr",
+          "track": "pic",
+          "label": "Follow along",
+          "intent": "The kiosk's \"MUSE IS BUILDING\" screen with the QR card highlighted. A phone slides in showing sparkade.dev's live \"Sparkade is building.\" page.",
+          "start": {
+            "kind": "line",
+            "line": "qr",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Payoff.tsx#Qr"
+          },
+          "fidelity": "final",
+          "transition": {
+            "kind": "pixel-wipe",
+            "duration": 0.5
+          }
+        },
+        {
+          "id": "ready",
+          "track": "pic",
+          "label": "Game ready",
+          "intent": "Fast‑forward through the real build log (timer counts to 3:14), then GAME READY! on the chorus downbeat. The price counts up to $0.44 with an UNDER 50¢ stamp.",
+          "start": {
+            "kind": "line",
             "line": "ready",
-            "word": "ready",
-            "offset": -0.04
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Payoff.tsx#Ready"
+          },
+          "fidelity": "final",
+          "knobs": {
+            "shake": {
+              "value": 18,
+              "min": 0,
+              "max": 40,
+              "step": 1,
+              "label": "Shake on READY (px)"
+            }
           }
         },
-        "fadeOut": 1.4,
-        "only": [
-          "port"
-        ]
-      }
-    ]
-  },
-  "tracks": [
-    {
-      "id": "pic",
-      "kind": "picture",
-      "label": "Picture"
-    },
-    {
-      "id": "fx",
-      "kind": "overlay",
-      "label": "Effects"
-    },
-    {
-      "id": "cap",
-      "kind": "text",
-      "label": "Captions"
-    }
-  ],
-  "shots": [
-    {
-      "id": "hook",
-      "track": "pic",
-      "label": "Insert face",
-      "intent": "Cabinet turntable. INSERT COIN blinks, a quarter bounces off, and it glitches to INSERT FACE. Your real kiosk selfie in a viewfinder, then a 3‑2‑1 countdown and shutter flash. The photo dissolves pixel by pixel into your Muse‑made hero. STARRING YOU plays over 4 cuts of your games' key art.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Opening.tsx#Hook"
-      },
-      "fidelity": "final",
-      "knobs": {
-        "snapAfterPhoto": {
-          "value": 0.12,
-          "min": 0,
-          "max": 0.5,
-          "step": 0.01,
-          "label": "Shutter after \"photo\" (s)"
+        {
+          "id": "anywhere",
+          "track": "pic",
+          "label": "Play anywhere",
+          "intent": "Hands on the cabinet, then a phone playing on sparkade.dev with the on‑screen touch controls lighting up.",
+          "start": {
+            "kind": "line",
+            "line": "anywhere",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Payoff.tsx#Anywhere"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "montage",
+          "track": "pic",
+          "label": "Gameplay montage",
+          "intent": "Real gameplay on each word, then a wall of game art pulls back, then fast beat‑cut gameplay.",
+          "start": {
+            "kind": "line",
+            "line": "montage",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Payoff.tsx#Montage"
+          },
+          "fidelity": "final",
+          "transition": {
+            "kind": "pixel-wipe",
+            "duration": 0.5
+          }
+        },
+        {
+          "id": "tag",
+          "track": "pic",
+          "label": "Tagline",
+          "intent": "Logo, tagline, a QR to sparkade.dev and the model credits.",
+          "start": {
+            "kind": "line",
+            "line": "tag",
+            "offset": -0.12
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/scenes/Payoff.tsx#Tag"
+          },
+          "fidelity": "final",
+          "knobs": {
+            "shake": {
+              "value": 20,
+              "min": 0,
+              "max": 40,
+              "step": 1,
+              "label": "Shake on logo (px)"
+            }
+          }
+        },
+        {
+          "id": "captions",
+          "track": "cap",
+          "label": "Burned-in captions",
+          "intent": "One word at a time, current word in cyan. Off while the title, montage and tag lines are on screen as kinetic type.",
+          "start": {
+            "kind": "time",
+            "t": 0
+          },
+          "end": {
+            "kind": "end"
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/components/Captions.tsx#Captions"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "crt",
+          "track": "fx",
+          "label": "CRT overlay",
+          "intent": "Scanlines and vignette over everything.",
+          "start": {
+            "kind": "time",
+            "t": 0
+          },
+          "end": {
+            "kind": "end"
+          },
+          "content": {
+            "kind": "coded",
+            "component": "src/components/ui.tsx#CRT"
+          },
+          "fidelity": "final",
+          "knobs": {
+            "strength": {
+              "value": 0.7,
+              "min": 0,
+              "max": 1,
+              "step": 0.05,
+              "label": "Strength"
+            }
+          }
         }
-      }
-    },
-    {
-      "id": "title",
-      "track": "pic",
-      "label": "Logo slam",
-      "intent": "Music drop. The logo slams in and the tagline types out.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Opening.tsx#Title"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "title",
-        "offset": -0.12
-      }
-    },
-    {
-      "id": "origin",
-      "track": "pic",
-      "label": "Cabinet fleet",
-      "intent": "Your cabinets (photos and turntable), then hands on the stick.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Story.tsx#Origin"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "origin",
-        "offset": -0.12
-      },
-      "transition": {
-        "kind": "pixel-wipe",
-        "duration": 0.5
-      }
-    },
-    {
-      "id": "question",
-      "track": "pic",
-      "label": "What if AI…",
-      "intent": "A terminal prompt types the question.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Story.tsx#Question"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "question",
-        "offset": -0.12
-      },
-      "only": [
-        "land"
-      ]
-    },
-    {
-      "id": "build",
-      "track": "pic",
-      "label": "Mini arcade build",
-      "intent": "Pi in the back panel, the CAD model, a 16× build time‑lapse (GoPro footage flipped 180°), then a zoom into the marquee with CAMERA and MIC callouts.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Story.tsx#Build"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "build",
-        "offset": -0.12
-      },
-      "transition": {
-        "kind": "pixel-wipe",
-        "duration": 0.5
-      },
-      "only": [
-        "land"
-      ]
-    },
-    {
-      "id": "walkup",
-      "track": "pic",
-      "label": "Walk up",
-      "intent": "Real kiosk selfie footage, then the kiosk recording your spoken idea and Muse Voice Transcribe filling in the details.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Story.tsx#Walkup"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "walkup",
-        "offset": -0.12
-      }
-    },
-    {
-      "id": "api",
-      "track": "pic",
-      "label": "Select your team",
-      "intent": "\"Meta Model API\" title with the @AIatMeta launch post, then a SELECT YOUR TEAM character select of the 4 models.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Models.tsx#Api"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "api",
-        "offset": -0.12
-      },
-      "transition": {
-        "kind": "pixel-wipe",
-        "duration": 0.5
-      }
-    },
-    {
-      "id": "voice",
-      "track": "pic",
-      "label": "Voice Transcribe",
-      "intent": "Waveform, then the transcript types out. Quote card from @finkd.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Models.tsx#Voice"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "voice",
-        "offset": -0.12
-      },
-      "only": [
-        "land"
-      ]
-    },
-    {
-      "id": "spark",
-      "track": "pic",
-      "label": "Muse Spark",
-      "intent": "The real spec Muse wrote for this game: its story intro, a scrolling tile map of level 1, and a piano roll of its theme. You hear Muse's actual composed chiptune at that moment. Quote card from @finkd.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Models.tsx#Spark"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "spark",
-        "offset": -0.12
-      }
-    },
-    {
-      "id": "image",
-      "track": "pic",
-      "label": "Muse Image",
-      "intent": "The key art paints in, then the real sprites pop in on each word. Chips read \"45 images painted · $0.01 each\". The @MetaforDevs quote card is on 16:9 only.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Models.tsx#ImageScene"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "image",
-        "offset": -0.12
-      }
-    },
-    {
-      "id": "sam",
-      "track": "pic",
-      "label": "SAM 3.1",
-      "intent": "A real SAM 3.1 run on your pajama‑hero sprite: green screen → mask → clean cutout. @MetaforDevs quote card.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Models.tsx#Sam"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "sam",
-        "offset": -0.12
-      },
-      "only": [
-        "land"
-      ]
-    },
-    {
-      "id": "engines",
-      "track": "pic",
-      "label": "Six engines",
-      "intent": "Code gets a NO CODE stamp, then the 6 engine cards, then a wall of real schema setting names as spinning knobs (\"~300 settings per engine\").",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Models.tsx#Engines"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "engines",
-        "offset": -0.12
-      },
-      "only": [
-        "land"
-      ]
-    },
-    {
-      "id": "qr",
-      "track": "pic",
-      "label": "Follow along",
-      "intent": "The kiosk's \"MUSE IS BUILDING\" screen with the QR card highlighted. A phone slides in showing sparkade.dev's live \"Sparkade is building.\" page.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Payoff.tsx#Qr"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "qr",
-        "offset": -0.12
-      },
-      "transition": {
-        "kind": "pixel-wipe",
-        "duration": 0.5
-      }
-    },
-    {
-      "id": "ready",
-      "track": "pic",
-      "label": "Game ready",
-      "intent": "Fast‑forward through the real build log (timer counts to 3:14), then GAME READY! on the chorus downbeat. The price counts up to $0.44 with an UNDER 50¢ stamp.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Payoff.tsx#Ready"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "ready",
-        "offset": -0.12
-      },
-      "knobs": {
-        "shake": {
-          "value": 18,
-          "min": 0,
-          "max": 40,
-          "step": 1,
-          "label": "Shake on READY (px)"
+      ],
+      "notes": [
+        {
+          "id": "n1",
+          "text": "GAME READY! should slam exactly on the chorus downbeat. It reads a touch late on 16:9.",
+          "status": "queued",
+          "target": {
+            "kind": "shot",
+            "shot": "ready"
+          },
+          "at": 77.05,
+          "format": "land",
+          "stage": "craft",
+          "author": "you",
+          "createdAt": "2026-10-13T09:12:00Z"
+        },
+        {
+          "id": "n2",
+          "text": "On 9:16 the caption breaks between \"Model\" and \"API\". Keep them on one line.",
+          "status": "queued",
+          "target": {
+            "kind": "word",
+            "line": "api",
+            "word": "model"
+          },
+          "at": 22.6,
+          "region": {
+            "x": 0.1,
+            "y": 0.74,
+            "w": 0.8,
+            "h": 0.1
+          },
+          "format": "port",
+          "stage": "craft",
+          "author": "you",
+          "createdAt": "2026-10-13T09:14:00Z"
+        },
+        {
+          "id": "n3",
+          "text": "End montage: try cutting gameplay every half bar instead of every beat.",
+          "status": "open",
+          "target": {
+            "kind": "shot",
+            "shot": "montage"
+          },
+          "at": 88,
+          "format": "land",
+          "stage": "craft",
+          "author": "you",
+          "createdAt": "2026-10-13T09:20:00Z"
+        },
+        {
+          "id": "n4",
+          "text": "Workplace variant: keep flashes and shakes subtle.",
+          "status": "done",
+          "target": {
+            "kind": "project"
+          },
+          "stage": "craft",
+          "author": "you",
+          "createdAt": "2026-10-11T15:02:00Z",
+          "reply": "Added an energy setting; the workplace cut runs flashes and shakes at 40%."
         }
-      }
-    },
-    {
-      "id": "anywhere",
-      "track": "pic",
-      "label": "Play anywhere",
-      "intent": "Hands on the cabinet, then a phone playing on sparkade.dev with the on‑screen touch controls lighting up.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Payoff.tsx#Anywhere"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "anywhere",
-        "offset": -0.12
-      }
-    },
-    {
-      "id": "montage",
-      "track": "pic",
-      "label": "Gameplay montage",
-      "intent": "Real gameplay on each word, then a wall of game art pulls back, then fast beat‑cut gameplay.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Payoff.tsx#Montage"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "montage",
-        "offset": -0.12
-      },
-      "transition": {
-        "kind": "pixel-wipe",
-        "duration": 0.5
-      }
-    },
-    {
-      "id": "tag",
-      "track": "pic",
-      "label": "Tagline",
-      "intent": "Logo, tagline, a QR to sparkade.dev and the model credits.",
-      "content": {
-        "kind": "coded",
-        "component": "src/scenes/Payoff.tsx#Tag"
-      },
-      "fidelity": "final",
-      "start": {
-        "kind": "line",
-        "line": "tag",
-        "offset": -0.12
-      },
-      "knobs": {
-        "shake": {
-          "value": 20,
-          "min": 0,
-          "max": 40,
-          "step": 1,
-          "label": "Shake on logo (px)"
-        }
-      }
-    },
-    {
-      "id": "captions",
-      "track": "cap",
-      "label": "Burned-in captions",
-      "intent": "One word at a time, current word in cyan. Off while the title, montage and tag lines are on screen as kinetic type.",
-      "start": {
-        "kind": "time",
-        "t": 0
-      },
-      "end": {
-        "kind": "end"
-      },
-      "content": {
-        "kind": "coded",
-        "component": "src/components/Captions.tsx#Captions"
-      },
-      "fidelity": "final"
-    },
-    {
-      "id": "crt",
-      "track": "fx",
-      "label": "CRT overlay",
-      "intent": "Scanlines and vignette over everything.",
-      "start": {
-        "kind": "time",
-        "t": 0
-      },
-      "end": {
-        "kind": "end"
-      },
-      "content": {
-        "kind": "coded",
-        "component": "src/components/ui.tsx#CRT"
-      },
-      "fidelity": "final",
-      "knobs": {
-        "strength": {
-          "value": 0.7,
-          "min": 0,
-          "max": 1,
-          "step": 0.05,
-          "label": "Strength"
-        }
-      }
-    }
-  ],
-  "notes": [
-    {
-      "id": "n1",
-      "text": "GAME READY! should slam exactly on the chorus downbeat. It reads a touch late on 16:9.",
-      "status": "queued",
-      "target": {
-        "kind": "shot",
-        "shot": "ready"
-      },
-      "at": 77.05,
-      "format": "land",
-      "stage": "craft",
-      "author": "you",
-      "createdAt": "2026-10-13T09:12:00Z"
-    },
-    {
-      "id": "n2",
-      "text": "On 9:16 the caption breaks between \"Model\" and \"API\". Keep them on one line.",
-      "status": "queued",
-      "target": {
-        "kind": "word",
-        "line": "api",
-        "word": "model"
-      },
-      "at": 22.6,
-      "format": "port",
-      "stage": "craft",
-      "region": {
-        "x": 0.1,
-        "y": 0.74,
-        "w": 0.8,
-        "h": 0.1
-      },
-      "author": "you",
-      "createdAt": "2026-10-13T09:14:00Z"
-    },
-    {
-      "id": "n3",
-      "text": "End montage: try cutting gameplay every half bar instead of every beat.",
-      "status": "open",
-      "target": {
-        "kind": "shot",
-        "shot": "montage"
-      },
-      "at": 88.0,
-      "format": "land",
-      "stage": "craft",
-      "author": "you",
-      "createdAt": "2026-10-13T09:20:00Z"
-    },
-    {
-      "id": "n4",
-      "text": "Workplace variant: keep flashes and shakes subtle.",
-      "status": "done",
-      "target": {
-        "kind": "project"
-      },
-      "stage": "craft",
-      "author": "you",
-      "createdAt": "2026-10-11T15:02:00Z",
-      "reply": "Added an energy setting; the workplace cut runs flashes and shakes at 40%."
+      ]
     }
   ]
 }

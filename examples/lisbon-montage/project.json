@@ -1,18 +1,16 @@
 {
-  "schema": "beatsheet/0.1",
+  "schema": "beatsheet/0.2",
   "id": "lisbon-montage",
   "title": "Lisbon weekend",
-  "recipe": "montage",
-  "mediaRoot": "./media",
+  "sources": [
+    {
+      "id": "footage",
+      "path": "./media"
+    }
+  ],
   "brief": {
     "goal": "A 30-second reel of our Lisbon weekend to share with friends.",
     "audience": "Friends on Instagram and TikTok",
-    "platforms": [
-      "Instagram Reels",
-      "TikTok"
-    ],
-    "targetLength": 30,
-    "maxLength": 45,
     "tone": [
       "sunny",
       "playful",
@@ -20,49 +18,6 @@
     ],
     "notes": "Keep strangers' faces out of close-ups. Land the drop on something big."
   },
-  "formats": [
-    {
-      "id": "vertical",
-      "label": "9:16",
-      "width": 1080,
-      "height": 1920,
-      "fps": 30,
-      "platforms": [
-        "Instagram Reels",
-        "TikTok"
-      ]
-    }
-  ],
-  "stages": {
-    "brief": {
-      "status": "done"
-    },
-    "material": {
-      "status": "done",
-      "summary": "19 clips and photos logged, 2 rejected, 7 moments found; 2 generated takes"
-    },
-    "structure": {
-      "status": "done",
-      "summary": "Golden Hour, from the build into 8 bars of the drop (~31 s)"
-    },
-    "board": {
-      "status": "skipped",
-      "summary": "Montages go straight from music to assembly"
-    },
-    "assemble": {
-      "status": "active"
-    },
-    "craft": {
-      "status": "todo"
-    },
-    "sound": {
-      "status": "todo"
-    },
-    "finish": {
-      "status": "todo"
-    }
-  },
-  "spine": "music",
   "assets": [
     {
       "id": "rooftop-sunrise",
@@ -97,11 +52,6 @@
         "street"
       ],
       "rating": 5,
-      "provenance": {
-        "source": "import",
-        "provider": "iPhone"
-      },
-      "color": "#d9a441",
       "moments": [
         {
           "id": "pass",
@@ -109,7 +59,12 @@
           "label": "Tram fills frame",
           "score": 0.8
         }
-      ]
+      ],
+      "provenance": {
+        "source": "import",
+        "provider": "iPhone"
+      },
+      "color": "#d9a441"
     },
     {
       "id": "nata",
@@ -135,7 +90,7 @@
       "kind": "video",
       "path": "alfama-stairs.mov",
       "label": "Alfama stairs",
-      "duration": 11.0,
+      "duration": 11,
       "width": 3840,
       "height": 2160,
       "tags": [
@@ -182,11 +137,6 @@
         "jump"
       ],
       "rating": 5,
-      "provenance": {
-        "source": "import",
-        "provider": "iPhone"
-      },
-      "color": "#8a6d3b",
       "moments": [
         {
           "id": "takeoff",
@@ -206,7 +156,12 @@
           "label": "Splash",
           "score": 0.85
         }
-      ]
+      ],
+      "provenance": {
+        "source": "import",
+        "provider": "iPhone"
+      },
+      "color": "#8a6d3b"
     },
     {
       "id": "surf",
@@ -222,11 +177,6 @@
         "action"
       ],
       "rating": 4,
-      "provenance": {
-        "source": "import",
-        "provider": "iPhone"
-      },
-      "color": "#3f7f6a",
       "moments": [
         {
           "id": "wipeout",
@@ -234,7 +184,12 @@
           "label": "Wipeout",
           "score": 0.9
         }
-      ]
+      ],
+      "provenance": {
+        "source": "import",
+        "provider": "iPhone"
+      },
+      "color": "#3f7f6a"
     },
     {
       "id": "sardines",
@@ -269,11 +224,6 @@
         "laugh"
       ],
       "rating": 5,
-      "provenance": {
-        "source": "import",
-        "provider": "iPhone"
-      },
-      "color": "#6d5aa8",
       "moments": [
         {
           "id": "laugh",
@@ -281,7 +231,12 @@
           "label": "Big laugh",
           "score": 0.85
         }
-      ]
+      ],
+      "provenance": {
+        "source": "import",
+        "provider": "iPhone"
+      },
+      "color": "#6d5aa8"
     },
     {
       "id": "street-art",
@@ -307,7 +262,7 @@
       "kind": "video",
       "path": "night-tram.mov",
       "label": "Night tram lights",
-      "duration": 12.0,
+      "duration": 12,
       "width": 3840,
       "height": 2160,
       "tags": [
@@ -385,7 +340,7 @@
       "kind": "video",
       "path": "tiles-slowmo.mov",
       "label": "Tiles, slow motion",
-      "duration": 9.0,
+      "duration": 9,
       "width": 3840,
       "height": 2160,
       "tags": [
@@ -477,7 +432,7 @@
       "kind": "video",
       "path": "generated/aerial-take1.mp4",
       "label": "Aerial rooftops, take 1",
-      "duration": 5.0,
+      "duration": 5,
       "width": 1080,
       "height": 1920,
       "tags": [
@@ -488,10 +443,10 @@
         "source": "generated",
         "provider": "fal",
         "model": "kling-video",
+        "prompt": "Slow aerial drift over Lisbon's terracotta rooftops at golden hour, the river in the distance, handheld travel-film look",
         "seed": 4411,
         "costUsd": 0.35,
-        "createdAt": "2026-10-12T20:41:00Z",
-        "prompt": "Slow aerial drift over Lisbon's terracotta rooftops at golden hour, the river in the distance, handheld travel-film look"
+        "createdAt": "2026-10-12T20:41:00Z"
       },
       "color": "#c47a3a"
     },
@@ -500,7 +455,7 @@
       "kind": "video",
       "path": "generated/aerial-take2.mp4",
       "label": "Aerial rooftops, take 2",
-      "duration": 5.0,
+      "duration": 5,
       "width": 1080,
       "height": 1920,
       "tags": [
@@ -511,10 +466,10 @@
         "source": "generated",
         "provider": "fal",
         "model": "kling-video",
+        "prompt": "Slow aerial drift over Lisbon's terracotta rooftops at golden hour, the river in the distance, handheld travel-film look",
         "seed": 9022,
         "costUsd": 0.35,
-        "createdAt": "2026-10-12T20:43:00Z",
-        "prompt": "Slow aerial drift over Lisbon's terracotta rooftops at golden hour, the river in the distance, handheld travel-film look"
+        "createdAt": "2026-10-12T20:43:00Z"
       },
       "color": "#b8693a"
     },
@@ -568,519 +523,577 @@
       "color": "#7a4f8f"
     }
   ],
-  "music": {
-    "cues": [
-      {
-        "id": "m1",
-        "asset": "golden-hour",
-        "from": 15.8339,
-        "end": {
-          "kind": "beat",
-          "unit": "bar",
-          "n": 8,
-          "from": "drop"
-        },
-        "fadeOut": 0.6
-      }
-    ]
-  },
-  "tracks": [
+  "cuts": [
     {
-      "id": "pic",
-      "kind": "picture",
-      "label": "Picture"
-    },
-    {
-      "id": "txt",
-      "kind": "text",
-      "label": "Text"
-    }
-  ],
-  "shots": [
-    {
-      "id": "s01",
-      "track": "pic",
-      "label": "Rooftop sunrise",
-      "content": {
-        "kind": "clip",
-        "asset": "rooftop-sunrise",
-        "look": "warm-film",
-        "in": 2.0,
-        "reframe": {
-          "vertical": {
-            "x": 0.62,
-            "y": 0.5,
-            "zoom": 1
-          }
-        }
-      },
-      "fidelity": "final"
-    },
-    {
-      "id": "s02",
-      "track": "pic",
-      "label": "Tram 28",
-      "content": {
-        "kind": "clip",
-        "asset": "tram28",
-        "look": "warm-film",
-        "in": 2.2,
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
-          }
-        }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 2,
-        "from": "build"
-      }
-    },
-    {
-      "id": "s03",
-      "track": "pic",
-      "label": "Pastel de nata",
-      "content": {
-        "kind": "clip",
-        "asset": "nata",
-        "look": "warm-film",
-        "in": 0.8
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 4,
-        "from": "build"
-      }
-    },
-    {
-      "id": "s04",
-      "track": "pic",
-      "label": "Alfama stairs",
-      "content": {
-        "kind": "clip",
-        "asset": "alfama-stairs",
-        "look": "warm-film",
-        "in": 3.0,
-        "reframe": {
-          "vertical": {
-            "x": 0.4,
-            "y": 0.55,
-            "zoom": 1.1
-          }
-        }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 5,
-        "from": "build"
-      }
-    },
-    {
-      "id": "s05",
-      "track": "pic",
-      "label": "Inside the tram",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 6,
-        "from": "build"
-      },
-      "fidelity": "idea",
-      "intent": "The two of us inside tram 28, rattling uphill. Nothing like it in the footage yet.",
-      "content": {
-        "kind": "placeholder",
-        "description": "Interior of tram 28, both of us at the window, warm light"
-      }
-    },
-    {
-      "id": "s06",
-      "track": "pic",
-      "label": "Aerial rooftops",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 7,
-        "from": "build"
-      },
-      "fidelity": "rough",
-      "intent": "A breath of scale right before the drop.",
-      "content": {
-        "kind": "generated",
-        "prompt": "Slow aerial drift over Lisbon's terracotta rooftops at golden hour, the river in the distance, handheld travel-film look",
-        "take": "aerial-take2",
-        "takes": [
-          "aerial-take1",
-          "aerial-take2"
+      "id": "main",
+      "name": "Main cut",
+      "recipe": "montage",
+      "spec": {
+        "platforms": [
+          "Instagram Reels",
+          "TikTok"
         ],
-        "provider": "fal",
-        "model": "kling-video"
-      }
-    },
-    {
-      "id": "s07",
-      "track": "pic",
-      "label": "Cliff jump",
-      "content": {
-        "kind": "clip",
-        "asset": "cliff-jump",
-        "look": "warm-film",
-        "sync": {
-          "moment": "jump",
-          "at": {
-            "kind": "section",
-            "section": "drop"
-          }
-        }
+        "targetLength": 30,
+        "maxLength": 45
       },
-      "fidelity": "rough",
-      "start": {
-        "kind": "section",
-        "section": "drop",
-        "offset": -0.97
-      }
-    },
-    {
-      "id": "s08",
-      "track": "pic",
-      "label": "Surf wipeout",
-      "content": {
-        "kind": "clip",
-        "asset": "surf",
-        "look": "warm-film",
-        "sync": {
-          "moment": "wipeout",
-          "at": {
-            "kind": "beat",
-            "n": 2.5,
-            "from": "drop"
-          }
+      "formats": [
+        {
+          "id": "vertical",
+          "label": "9:16",
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "platforms": [
+            "Instagram Reels",
+            "TikTok"
+          ]
+        }
+      ],
+      "stages": {
+        "brief": {
+          "status": "done"
         },
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
-          }
+        "material": {
+          "status": "done",
+          "summary": "19 clips and photos logged, 2 rejected, 7 moments found; 2 generated takes"
+        },
+        "structure": {
+          "status": "done",
+          "summary": "Golden Hour, from the build into 8 bars of the drop (~31 s)"
+        },
+        "board": {
+          "status": "skipped",
+          "summary": "Montages go straight from music to assembly"
+        },
+        "assemble": {
+          "status": "active"
+        },
+        "craft": {
+          "status": "todo"
+        },
+        "sound": {
+          "status": "todo"
+        },
+        "finish": {
+          "status": "todo"
         }
       },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 2,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s09",
-      "track": "pic",
-      "label": "Sardines",
-      "content": {
-        "kind": "clip",
-        "asset": "sardines",
-        "look": "warm-film",
-        "in": 1.5,
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
+      "spine": "music",
+      "music": {
+        "cues": [
+          {
+            "id": "m1",
+            "asset": "golden-hour",
+            "from": 15.8339,
+            "end": {
+              "kind": "beat",
+              "n": 8,
+              "unit": "bar",
+              "from": "drop"
+            },
+            "fadeOut": 0.6
           }
-        }
+        ]
       },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 4,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s10",
-      "track": "pic",
-      "label": "Dinner laugh",
-      "content": {
-        "kind": "clip",
-        "asset": "dinner-laugh",
-        "look": "warm-film",
-        "sync": {
-          "moment": "laugh",
-          "at": {
+      "tracks": [
+        {
+          "id": "pic",
+          "kind": "picture",
+          "label": "Picture"
+        },
+        {
+          "id": "txt",
+          "kind": "text",
+          "label": "Text"
+        }
+      ],
+      "shots": [
+        {
+          "id": "s01",
+          "track": "pic",
+          "label": "Rooftop sunrise",
+          "content": {
+            "kind": "clip",
+            "asset": "rooftop-sunrise",
+            "in": 2,
+            "reframe": {
+              "vertical": {
+                "x": 0.62,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "final"
+        },
+        {
+          "id": "s02",
+          "track": "pic",
+          "label": "Tram 28",
+          "start": {
             "kind": "beat",
-            "n": 6.5,
+            "n": 2,
+            "unit": "bar",
+            "from": "build"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "tram28",
+            "in": 2.2,
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s03",
+          "track": "pic",
+          "label": "Pastel de nata",
+          "start": {
+            "kind": "beat",
+            "n": 4,
+            "unit": "bar",
+            "from": "build"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "nata",
+            "in": 0.8,
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s04",
+          "track": "pic",
+          "label": "Alfama stairs",
+          "start": {
+            "kind": "beat",
+            "n": 5,
+            "unit": "bar",
+            "from": "build"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "alfama-stairs",
+            "in": 3,
+            "reframe": {
+              "vertical": {
+                "x": 0.4,
+                "y": 0.55,
+                "zoom": 1.1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s05",
+          "track": "pic",
+          "label": "Inside the tram",
+          "intent": "The two of us inside tram 28, rattling uphill. Nothing like it in the footage yet.",
+          "start": {
+            "kind": "beat",
+            "n": 6,
+            "unit": "bar",
+            "from": "build"
+          },
+          "content": {
+            "kind": "placeholder",
+            "description": "Interior of tram 28, both of us at the window, warm light"
+          },
+          "fidelity": "idea"
+        },
+        {
+          "id": "s06",
+          "track": "pic",
+          "label": "Aerial rooftops",
+          "intent": "A breath of scale right before the drop.",
+          "start": {
+            "kind": "beat",
+            "n": 7,
+            "unit": "bar",
+            "from": "build"
+          },
+          "content": {
+            "kind": "generated",
+            "prompt": "Slow aerial drift over Lisbon's terracotta rooftops at golden hour, the river in the distance, handheld travel-film look",
+            "take": "aerial-take2",
+            "takes": [
+              "aerial-take1",
+              "aerial-take2"
+            ],
+            "provider": "fal",
+            "model": "kling-video"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s07",
+          "track": "pic",
+          "label": "Cliff jump",
+          "start": {
+            "kind": "section",
+            "section": "drop",
+            "offset": -0.97
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "cliff-jump",
+            "sync": {
+              "moment": "jump",
+              "at": {
+                "kind": "section",
+                "section": "drop"
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s08",
+          "track": "pic",
+          "label": "Surf wipeout",
+          "start": {
+            "kind": "beat",
+            "n": 2,
             "from": "drop"
-          }
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "surf",
+            "sync": {
+              "moment": "wipeout",
+              "at": {
+                "kind": "beat",
+                "n": 2.5,
+                "from": "drop"
+              }
+            },
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s09",
+          "track": "pic",
+          "label": "Sardines",
+          "start": {
+            "kind": "beat",
+            "n": 4,
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "sardines",
+            "in": 1.5,
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s10",
+          "track": "pic",
+          "label": "Dinner laugh",
+          "start": {
+            "kind": "beat",
+            "n": 6,
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "dinner-laugh",
+            "sync": {
+              "moment": "laugh",
+              "at": {
+                "kind": "beat",
+                "n": 6.5,
+                "from": "drop"
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s11",
+          "track": "pic",
+          "label": "Street art",
+          "start": {
+            "kind": "beat",
+            "n": 8,
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "street-art",
+            "in": 2,
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s12",
+          "track": "pic",
+          "label": "Night tram",
+          "start": {
+            "kind": "beat",
+            "n": 10,
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "night-tram",
+            "in": 4,
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s13",
+          "track": "pic",
+          "label": "Fado",
+          "start": {
+            "kind": "beat",
+            "n": 12,
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "fado",
+            "in": 8,
+            "reframe": {
+              "vertical": {
+                "x": 0.35,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s14",
+          "track": "pic",
+          "label": "Belém sunset",
+          "start": {
+            "kind": "beat",
+            "n": 14,
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "belem-sunset",
+            "in": 6,
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s15",
+          "track": "pic",
+          "label": "Rooftop party",
+          "start": {
+            "kind": "beat",
+            "n": 4,
+            "unit": "bar",
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "rooftop-party",
+            "in": 2.5,
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s16",
+          "track": "pic",
+          "label": "Tiles",
+          "start": {
+            "kind": "beat",
+            "n": 5,
+            "unit": "bar",
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "tiles-slowmo",
+            "in": 1,
+            "speed": 0.5,
+            "reframe": {
+              "vertical": {
+                "x": 0.5,
+                "y": 0.5,
+                "zoom": 1
+              }
+            },
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "s17",
+          "track": "pic",
+          "label": "Us at the viewpoint",
+          "intent": "End on the two of us; slow push in.",
+          "start": {
+            "kind": "beat",
+            "n": 6,
+            "unit": "bar",
+            "from": "drop"
+          },
+          "content": {
+            "kind": "clip",
+            "asset": "viewpoint-us",
+            "look": "warm-film"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "t1",
+          "track": "txt",
+          "label": "Title",
+          "start": {
+            "kind": "time",
+            "t": 0
+          },
+          "end": {
+            "kind": "beat",
+            "n": 2,
+            "unit": "bar",
+            "from": "build"
+          },
+          "content": {
+            "kind": "text",
+            "text": "LISBON · 48 HOURS",
+            "style": "title-bold"
+          },
+          "fidelity": "rough"
+        },
+        {
+          "id": "t2",
+          "track": "txt",
+          "label": "Sign-off",
+          "start": {
+            "kind": "beat",
+            "n": 6,
+            "unit": "bar",
+            "from": "drop"
+          },
+          "end": {
+            "kind": "end"
+          },
+          "content": {
+            "kind": "text",
+            "text": "até já",
+            "style": "handwritten"
+          },
+          "fidelity": "rough"
         }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 6,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s11",
-      "track": "pic",
-      "label": "Street art",
-      "content": {
-        "kind": "clip",
-        "asset": "street-art",
-        "look": "warm-film",
-        "in": 2.0,
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
-          }
+      ],
+      "notes": [
+        {
+          "id": "n1",
+          "text": "The jump should land right on the drop. Right now it feels a frame late.",
+          "status": "queued",
+          "target": {
+            "kind": "shot",
+            "shot": "s07"
+          },
+          "at": 15.5,
+          "format": "vertical",
+          "stage": "assemble",
+          "author": "you",
+          "createdAt": "2026-10-13T10:02:00Z"
+        },
+        {
+          "id": "n2",
+          "text": "Hold the dinner laugh for a full bar. The drop feels too busy right after the surf.",
+          "status": "queued",
+          "target": {
+            "kind": "shot",
+            "shot": "s10"
+          },
+          "at": 18.6,
+          "format": "vertical",
+          "stage": "assemble",
+          "author": "you",
+          "createdAt": "2026-10-13T10:05:00Z"
+        },
+        {
+          "id": "n3",
+          "text": "No tram interior in the footage. Generate one, or crop into tram28?",
+          "status": "open",
+          "target": {
+            "kind": "shot",
+            "shot": "s05"
+          },
+          "at": 12,
+          "format": "vertical",
+          "stage": "assemble",
+          "author": "you",
+          "createdAt": "2026-10-13T10:07:00Z"
+        },
+        {
+          "id": "n4",
+          "text": "Warmer look across everything.",
+          "status": "done",
+          "target": {
+            "kind": "project"
+          },
+          "stage": "assemble",
+          "author": "you",
+          "createdAt": "2026-10-12T21:30:00Z",
+          "reply": "Applied the warm-film look to all 15 clips and the photo."
         }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 8,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s12",
-      "track": "pic",
-      "label": "Night tram",
-      "content": {
-        "kind": "clip",
-        "asset": "night-tram",
-        "look": "warm-film",
-        "in": 4.0,
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
-          }
-        }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 10,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s13",
-      "track": "pic",
-      "label": "Fado",
-      "content": {
-        "kind": "clip",
-        "asset": "fado",
-        "look": "warm-film",
-        "in": 8.0,
-        "reframe": {
-          "vertical": {
-            "x": 0.35,
-            "y": 0.5,
-            "zoom": 1
-          }
-        }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 12,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s14",
-      "track": "pic",
-      "label": "Belém sunset",
-      "content": {
-        "kind": "clip",
-        "asset": "belem-sunset",
-        "look": "warm-film",
-        "in": 6.0,
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
-          }
-        }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "n": 14,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s15",
-      "track": "pic",
-      "label": "Rooftop party",
-      "content": {
-        "kind": "clip",
-        "asset": "rooftop-party",
-        "look": "warm-film",
-        "in": 2.5
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 4,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s16",
-      "track": "pic",
-      "label": "Tiles",
-      "content": {
-        "kind": "clip",
-        "asset": "tiles-slowmo",
-        "look": "warm-film",
-        "in": 1.0,
-        "speed": 0.5,
-        "reframe": {
-          "vertical": {
-            "x": 0.5,
-            "y": 0.5,
-            "zoom": 1
-          }
-        }
-      },
-      "fidelity": "rough",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 5,
-        "from": "drop"
-      }
-    },
-    {
-      "id": "s17",
-      "track": "pic",
-      "label": "Us at the viewpoint",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 6,
-        "from": "drop"
-      },
-      "fidelity": "rough",
-      "intent": "End on the two of us; slow push in.",
-      "content": {
-        "kind": "clip",
-        "asset": "viewpoint-us",
-        "look": "warm-film"
-      }
-    },
-    {
-      "id": "t1",
-      "track": "txt",
-      "label": "Title",
-      "start": {
-        "kind": "time",
-        "t": 0
-      },
-      "end": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 2,
-        "from": "build"
-      },
-      "fidelity": "rough",
-      "content": {
-        "kind": "text",
-        "text": "LISBON · 48 HOURS",
-        "style": "title-bold"
-      }
-    },
-    {
-      "id": "t2",
-      "track": "txt",
-      "label": "Sign-off",
-      "start": {
-        "kind": "beat",
-        "unit": "bar",
-        "n": 6,
-        "from": "drop"
-      },
-      "end": {
-        "kind": "end"
-      },
-      "fidelity": "rough",
-      "content": {
-        "kind": "text",
-        "text": "até já",
-        "style": "handwritten"
-      }
-    }
-  ],
-  "notes": [
-    {
-      "id": "n1",
-      "text": "The jump should land right on the drop. Right now it feels a frame late.",
-      "status": "queued",
-      "target": {
-        "kind": "shot",
-        "shot": "s07"
-      },
-      "at": 15.5,
-      "format": "vertical",
-      "stage": "assemble",
-      "author": "you",
-      "createdAt": "2026-10-13T10:02:00Z"
-    },
-    {
-      "id": "n2",
-      "text": "Hold the dinner laugh for a full bar. The drop feels too busy right after the surf.",
-      "status": "queued",
-      "target": {
-        "kind": "shot",
-        "shot": "s10"
-      },
-      "at": 18.6,
-      "format": "vertical",
-      "stage": "assemble",
-      "author": "you",
-      "createdAt": "2026-10-13T10:05:00Z"
-    },
-    {
-      "id": "n3",
-      "text": "No tram interior in the footage. Generate one, or crop into tram28?",
-      "status": "open",
-      "target": {
-        "kind": "shot",
-        "shot": "s05"
-      },
-      "at": 12.0,
-      "format": "vertical",
-      "stage": "assemble",
-      "author": "you",
-      "createdAt": "2026-10-13T10:07:00Z"
-    },
-    {
-      "id": "n4",
-      "text": "Warmer look across everything.",
-      "status": "done",
-      "target": {
-        "kind": "project"
-      },
-      "stage": "assemble",
-      "author": "you",
-      "createdAt": "2026-10-12T21:30:00Z",
-      "reply": "Applied the warm-film look to all 15 clips and the photo."
+      ]
     }
   ]
 }

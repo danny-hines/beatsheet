@@ -1,38 +1,44 @@
-import { FORMAT_PRESETS, slugify } from "@beatsheet/schema";
+import type { Reference } from "@beatsheet/schema";
+import { FORMAT_PRESETS } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
-import { actions } from "../store";
+import { desktop, pickPath } from "../lib";
+import { actions, getState, useStore } from "../store";
+import { keptReferences, ReferencesField } from "./References";
 
-type Job = { id: string; status: "running" | "done" | "error"; progress: number; log: string[]; error?: string; project: string };
+type Job = { id: string; status: "running" | "done" | "error"; progress: number; log: string[]; error?: string; project: string; output?: string };
 type Scan = { ok: boolean; videos: number; photos: number };
 
-const RECIPES = [
-  { id: "montage", label: "Montage", hint: "Clips and photos cut to music", ready: true },
-  { id: "narrated", label: "Narrated", hint: "Voiceover drives the timing", ready: false },
-  { id: "cinematic", label: "Cinematic", hint: "Story beats and a shot list", ready: false },
-];
+const titleFromFolder = (path: string) =>
+  (path.split("/").filter(Boolean).pop() ?? "")
+    .replace(/^\d{4}[_-]/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
 
-/** New project: the brief, the footage and the song in one step. Importing runs on the server with live progress. */
+const pick = pickPath;
+
+/**
+ * New project: footage (a folder, or nothing yet) and a few words about what it's for. Everything else has a sensible
+ * default under More. Once it's in, the default agent takes the first turn: logging the footage and proposing directions.
+ */
 export function NewProjectDialog() {
-  const [title, setTitle] = useState("");
-  const [id, setId] = useState("");
-  const [idEdited, setIdEdited] = useState(false);
+  const start = useStore((s) => s.newProjectStart);
+  const dropped = typeof start === "object" ? start.folder : undefined;
+  const [route, setRoute] = useState<"folder" | "scratch" | null>(dropped ? "folder" : start === "scratch" ? "scratch" : null);
+  const [folder, setFolder] = useState(dropped ?? "");
+  const [scan, setScan] = useState<Scan | null>(null);
+  const [title, setTitle] = useState(dropped ? titleFromFolder(dropped) : "");
+  const [titleEdited, setTitleEdited] = useState(false);
   const [goal, setGoal] = useState("");
+  const [more, setMore] = useState(false);
   const [audience, setAudience] = useState("");
-  const [tone, setTone] = useState("");
+  const [references, setReferences] = useState<Reference[]>([]);
   const [formats, setFormats] = useState<string[]>(["vertical"]);
   const [target, setTarget] = useState(30);
-  const [max, setMax] = useState(60);
-  const [folder, setFolder] = useState("");
-  const [scan, setScan] = useState<Scan | null>(null);
   const [song, setSong] = useState("");
-  const [firstCut, setFirstCut] = useState(true);
   const [error, setError] = useState("");
   const [job, setJob] = useState<Job | null>(null);
-  const [picking, setPicking] = useState<"" | "folder" | "audio">("");
 
-  const projectId = idEdited ? id : slugify(title);
   const close = () => !job && actions.setNewProjectOpen(false);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", onKey);
@@ -41,43 +47,34 @@ export function NewProjectDialog() {
 
   // What's in the folder, so you know you picked the right one.
   useEffect(() => {
-    if (!folder.trim()) return setScan(null);
-    const t = setTimeout(async () => setScan((await (await fetch(`/api/scan?path=${encodeURIComponent(folder.trim())}`)).json()) as Scan), 250);
-    return () => clearTimeout(t);
+    if (!folder) return setScan(null);
+    void fetch(`/api/scan?path=${encodeURIComponent(folder)}`)
+      .then((r) => r.json())
+      .then((s: Scan) => setScan(s));
   }, [folder]);
 
-  const pick = async (kind: "folder" | "audio") => {
-    setPicking(kind);
-    try {
-      const res = await fetch("/api/pick", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind }) });
-      const { path } = (await res.json()) as { path: string | null };
-      if (path) (kind === "folder" ? setFolder : setSong)(path);
-    } finally {
-      setPicking("");
-    }
+  const chooseFolder = async () => {
+    const path = await pick("folder");
+    if (!path) return;
+    setFolder(path);
+    setRoute("folder");
+    if (!titleEdited) setTitle(titleFromFolder(path));
   };
 
   const create = async () => {
     setError("");
     if (!title.trim()) return setError("Give it a title.");
-    if (!formats.length) return setError("Pick at least one format.");
+    if (route === "folder" && !scan?.ok) return setError("That folder has no photos or videos.");
     const res = await fetch("/api/projects", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         title: title.trim(),
-        id: projectId,
-        folder: folder.trim() || undefined,
-        song: song.trim() || undefined,
+        folder: route === "folder" ? folder : undefined,
+        song: song || undefined,
         formats,
-        firstCut: firstCut && !!song.trim() && !!folder.trim(),
-        brief: {
-          goal: goal.trim() || undefined,
-          audience: audience.trim() || undefined,
-          tone: tone.split(",").map((t) => t.trim()).filter(Boolean),
-          targetLength: target || undefined,
-          maxLength: max || undefined,
-        },
+        brief: { goal: goal.trim() || undefined, audience: audience.trim() || undefined, references: keptReferences(references) },
+        spec: { targetLength: target || undefined, maxLength: target ? Math.max(target * 2, 60) : undefined },
       }),
     });
     const body = (await res.json()) as Job & { error?: string };
@@ -92,21 +89,26 @@ export function NewProjectDialog() {
     if (j.status === "error") return;
     await actions.loadList();
     await actions.open(j.project);
-    actions.setStage(firstCut && song.trim() && folder.trim() ? "assemble" : "material");
     actions.setNewProjectOpen(false);
+    // With footage in, the agent goes first: it logs everything and comes back with directions to pick from.
+    const preferred = getState().setup?.settings.agent;
+    if (route === "folder" && preferred) {
+      actions.setSide("agent");
+      void actions.agentCommand("start", { agent: preferred.id, model: preferred.model, project: j.project });
+    }
   };
 
   if (job) {
     return (
       <div className="modal-back">
         <div className="modal new-project">
-          <h3>{job.status === "error" ? "Import stopped" : `Setting up ${title}`}</h3>
+          <h3>{job.status === "error" ? "Import stopped" : `Bringing in ${title}`}</h3>
           <div className="progress">
             <div style={{ width: `${Math.round(job.progress * 100)}%` }} />
             <span>{Math.round(job.progress * 100)}%</span>
           </div>
           <pre className="job-log">{job.log.slice(-8).join("\n") || "Starting…"}</pre>
-          {job.status === "error" && (
+          {job.status === "error" ? (
             <>
               <p className="warn">{job.error}</p>
               <div className="modal-actions">
@@ -114,116 +116,130 @@ export function NewProjectDialog() {
                 <button onClick={() => setJob(null)}>Back</button>
               </div>
             </>
+          ) : (
+            <p className="dim small">Your footage stays where it is; beatsheet makes small preview copies. When it's done, the agent takes the first look.</p>
           )}
         </div>
       </div>
     );
   }
 
+  // In the Mac app a folder can be dropped right onto the dialog.
+  const onDrop = (e: React.DragEvent) => {
+    const file = e.dataTransfer.files[0];
+    if (!file || !desktop) return;
+    e.preventDefault();
+    const path = desktop.pathFor(file);
+    setFolder(path);
+    setRoute("folder");
+    if (!titleEdited) setTitle(titleFromFolder(path));
+  };
   return (
     <div className="modal-back" onClick={close}>
-      <div className="modal new-project" onClick={(e) => e.stopPropagation()}>
+      <div className="modal new-project" onClick={(e) => e.stopPropagation()} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
         <h3>New project</h3>
-        <div className="np-grid">
+        {!route ? (
+          <div className="np-routes">
+            <button className="np-route" onClick={() => void chooseFolder()}>
+              <strong>Open a footage folder</strong>
+              <span className="dim small">
+                Pick the folder with your clips and photos{desktop ? ", or drop it here" : ""}. The agent goes through all of it and suggests a few directions.
+              </span>
+            </button>
+            <button className="np-route" onClick={() => setRoute("scratch")}>
+              <strong>Start from scratch</strong>
+              <span className="dim small">An empty project. Add footage whenever you're ready.</span>
+            </button>
+          </div>
+        ) : (
           <div className="form">
+            {route === "folder" && (
+              <div className="np-folder">
+                <code>{folder}</code>
+                <span className="dim small">{scan ? (scan.ok ? `${scan.videos} videos · ${scan.photos} photos` : "No photos or videos here") : "Looking…"}</span>
+                <button onClick={() => void chooseFolder()}>Change…</button>
+              </div>
+            )}
             <label>
               Title
-              <input autoFocus value={title} placeholder="Seabrook weekend" onChange={(e) => setTitle(e.target.value)} />
-            </label>
-            <label>
-              Project id
               <input
-                value={projectId}
+                autoFocus={route === "scratch"}
+                value={title}
+                placeholder="Seabrook weekend"
                 onChange={(e) => {
-                  setIdEdited(true);
-                  setId(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"));
+                  setTitle(e.target.value);
+                  setTitleEdited(true);
                 }}
               />
             </label>
-            <div className="field">
-              <span className="field-label">Kind of video</span>
-              <div className="choice-row">
-                {RECIPES.map((r) => (
-                  <button key={r.id} className={r.id === "montage" ? "on" : ""} disabled={!r.ready} title={r.ready ? r.hint : `${r.hint} (coming soon)`}>
-                    {r.label}
-                  </button>
-                ))}
-              </div>
-            </div>
             <label>
-              Goal
-              <textarea rows={2} value={goal} placeholder="A 30-second reel of the trip to share with family" onChange={(e) => setGoal(e.target.value)} />
+              <span>What's it for? <span className="dim">(optional)</span></span>
+              <input value={goal} placeholder="A short reel of the trip to share with family" onChange={(e) => setGoal(e.target.value)} />
             </label>
-            <label>
-              Audience
-              <input value={audience} placeholder="Friends and family on Instagram" onChange={(e) => setAudience(e.target.value)} />
-            </label>
-            <label>
-              Tone
-              <input value={tone} placeholder="Sunny, playful, fast" onChange={(e) => setTone(e.target.value)} />
-            </label>
+            <button className="link np-more" onClick={() => setMore(!more)}>
+              {more ? "▾ Less" : "▸ More: audience, references, format, length, song"}
+            </button>
+            {more && (
+              <>
+                <label>
+                  Audience
+                  <input value={audience} placeholder="Family and friends" onChange={(e) => setAudience(e.target.value)} />
+                </label>
+                <ReferencesField value={references} onChange={setReferences} />
+                <div className="field">
+                  <span className="field-label">Format</span>
+                  <div className="format-choices">
+                    {FORMAT_PRESETS.map((f) => (
+                      <button
+                        key={f.id}
+                        className={`format-choice ${formats.includes(f.id) ? "on" : ""}`}
+                        onClick={() => setFormats(formats.includes(f.id) ? formats.filter((x) => x !== f.id) : [...formats, f.id])}
+                      >
+                        <span className="format-shape" style={{ aspectRatio: `${f.width} / ${f.height}` }} />
+                        <span>
+                          <strong>{f.label}</strong>
+                          <span className="dim small">{f.platforms?.join(", ")}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label>
+                  Length
+                  <span className="row">
+                    <input type="number" min={5} step={5} value={target} onChange={(e) => setTarget(Number(e.target.value))} style={{ width: 80 }} /> seconds
+                  </span>
+                </label>
+                <div className="field">
+                  <span className="field-label">Song</span>
+                  <div className="path-row">
+                    {song ? <code>{song}</code> : <span className="dim small">None yet; the agent will ask when it needs one.</span>}
+                    <button onClick={() => void pick("audio").then((p) => p && setSong(p))}>Choose…</button>
+                    {song && (
+                      <button className="link" onClick={() => setSong("")}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
-          <div className="form">
-            <div className="field">
-              <span className="field-label">Formats</span>
-              <div className="format-choices">
-                {FORMAT_PRESETS.map((f) => {
-                  const on = formats.includes(f.id);
-                  return (
-                    <button key={f.id} className={`format-choice ${on ? "on" : ""}`} onClick={() => setFormats(on ? formats.filter((x) => x !== f.id) : [...formats, f.id])}>
-                      <span className="format-shape" style={{ aspectRatio: `${f.width} / ${f.height}` }} />
-                      <span>
-                        <strong>{f.label}</strong>
-                        <span className="dim small">{f.hint}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div className="row">
-              <label>
-                Target length
-                <span className="numfield">
-                  <input type="number" value={target} min={5} onChange={(e) => setTarget(Number(e.target.value))} />
-                  <span className="suffix">s</span>
-                </span>
-              </label>
-              <label>
-                Longest
-                <span className="numfield">
-                  <input type="number" value={max} min={5} onChange={(e) => setMax(Number(e.target.value))} />
-                  <span className="suffix">s</span>
-                </span>
-              </label>
-            </div>
-            <label>
-              Footage folder
-              <span className="path-row">
-                <input value={folder} placeholder="~/Movies/trip" onChange={(e) => setFolder(e.target.value)} />
-                <button onClick={() => pick("folder")} disabled={!!picking}>{picking === "folder" ? "…" : "Choose…"}</button>
-              </span>
-              {scan && <span className={`small ${scan.ok && scan.videos + scan.photos ? "dim" : "warn"}`}>{scan.ok ? `${scan.videos} videos and ${scan.photos} photos` : "Can't read that folder"}</span>}
-            </label>
-            <label>
-              Song
-              <span className="path-row">
-                <input value={song} placeholder="Optional: add one later" onChange={(e) => setSong(e.target.value)} />
-                <button onClick={() => pick("audio")} disabled={!!picking}>{picking === "audio" ? "…" : "Choose…"}</button>
-              </span>
-            </label>
-            <label className="check">
-              <input type="checkbox" checked={firstCut} disabled={!song.trim() || !folder.trim()} onChange={(e) => setFirstCut(e.target.checked)} />
-              Make a first cut on the beat as soon as it's imported
-            </label>
-          </div>
-        </div>
-        {error && <p className="warn">{error}</p>}
+        )}
+        {error && <p className="warn small">{error}</p>}
         <div className="modal-actions">
-          <span className="dim small">Footage stays where it is. beatsheet keeps small preview copies in projects/{projectId || "…"}/.</span>
+          {route && (
+            <button className="link" onClick={() => setRoute(null)}>
+              ← Back
+            </button>
+          )}
           <span className="spacer" />
           <button onClick={close}>Cancel</button>
-          <button className="primary" onClick={create}>Create project</button>
+          {route && (
+            <button className="primary" onClick={() => void create()} disabled={!formats.length}>
+              {route === "folder" ? "Create and start" : "Create"}
+            </button>
+          )}
         </div>
       </div>
     </div>

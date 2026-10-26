@@ -8,3 +8,6 @@ media/
 out/
 .cache/
 projects/
+
+# The Mac app build
+apps/desktop/release
