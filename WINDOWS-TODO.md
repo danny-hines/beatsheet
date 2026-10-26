@@ -35,7 +35,7 @@ From the README's "Not proved yet":
 
 - **SAM 3.1:**
   - It does photos too, as one-frame videos, so there's one 3.5 GB download. If photo cut-outs disappoint, the fallback is Meta's image model with the `facebook/sam3` checkpoint.
-  - Least certain in the worker (`packages/engine/native/sam-cuda-worker.py`): point prompts (`cut_out` with `point`, and the fallback when a box finds nothing), and boxes. A box is used as an example of what to find, keeping the match that best fills it.
+  - Least certain in the worker (`packages/engine/native/sam-cuda-worker.py`): point prompts (`cut_out` with `point`, and the fallback when a box finds nothing; patched after a review found they came back empty), and boxes. A box is used as an example of what to find, keeping the match that best fills it.
   - Workarounds for Meta's sam3#544 and #523 stay harmless if upstream fixes them.
 - **Switches for testing SAM:**
   - `BEATSHEET_SAM_TRITON=0` runs the three Triton steps on the processor.
