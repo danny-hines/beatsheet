@@ -4,11 +4,12 @@
  * OpenCV finds faces and people and follows a box (`native/subjects-lite.py`, run with uv, which brings OpenCV), and
  * cut-outs wait for SAM. Each answers the way the Mac's Vision helper does, so subjects.ts reads them alike.
  *
- * SAM reads clips cut down first with ffmpeg: just the stretch wanted, at a frame rate and size the card can take.
+ * SAM reads clips cut down first with ffmpeg into a folder of frames: just the stretch wanted, at a frame rate and size
+ * the card can take.
  */
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -16,13 +17,15 @@ import type { Rect } from "@beatsheet/schema";
 import { cliEnv } from "./agent/cli.ts";
 import { alphaWebm } from "./media.ts";
 import { REPO } from "./paths.ts";
-import { capture, pickWhere, systemExe } from "./platform.ts";
+import { findOnPath, pathKey } from "./platform.ts";
 import { findUv } from "./pyenv.ts";
 import { samReady } from "./sam.ts";
 import { samCutoutVideo, samSegment, samSubjects, samTrack, videoLimits } from "./sam-cuda.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
-const run = promisify(execFile);
+const exec = promisify(execFile);
+/** ffmpeg and the rest, without a console window flashing up from the app. */
+const run = (cmd: string, args: string[], opts: { maxBuffer?: number } = {}) => exec(cmd, args, { ...opts, windowsHide: true });
 type Progress = (fraction: number) => void;
 export type Found = { tracks: { kind: "face" | "person"; samples: number[][] }[] };
 
@@ -31,8 +34,8 @@ export const windowsFinder = () => (samReady() ? "sam-3.1" : "opencv");
 
 export async function windowsVisionStatus(): Promise<{ ok: boolean; detail: string }> {
   if (samReady()) return { ok: true, detail: "Built in: SAM 3.1 on this PC's graphics card" };
-  const uv = await capture(systemExe("where.exe"), ["uv"], { env: await cliEnv(), timeout: 8000 }).catch(() => undefined);
-  return uv && pickWhere(uv.out)
+  const env = await cliEnv();
+  return findOnPath("uv", env[pathKey(env)] ?? "")
     ? { ok: true, detail: "Faces and people with OpenCV. Install SAM 3.1 (below) to cut things out and to find anything you name" }
     : { ok: true, detail: "Faces and people with OpenCV (beatsheet fetches uv for it the first time). Install SAM 3.1 (below) to cut things out" };
 }
@@ -64,14 +67,22 @@ export function fitSize(width: number, height: number, maxSide: number): { width
   return { width: even(width), height: even(height) };
 }
 
-/** Just the stretch wanted, at `fps` frames a second and no bigger than `maxSide`, for SAM to read. */
+/**
+ * Just the stretch wanted, at `fps` frames a second and no bigger than `maxSide`, as a folder of frames (0.jpg, 1.jpg…)
+ * for SAM to read. (Meta's .mp4 reader leaves pixels unscaled and frames at full float32; its folder reader doesn't.)
+ */
 async function workClip(src: string, opts: { from?: number; to?: number; fps: number; maxSide: number; width?: number; height?: number }): Promise<string> {
-  const file = temp("mp4");
+  const folder = mkdtempSync(join(tmpdir(), "beatsheet-sam-"));
   const size = opts.width && opts.height ? fitSize(opts.width, opts.height, opts.maxSide) : undefined;
   const scale = size ? `scale=${size.width}:${size.height}` : `scale='if(gt(iw,ih),min(${opts.maxSide},iw),-2)':'if(gt(iw,ih),-2,min(${opts.maxSide},ih))'`;
   const span = opts.to !== undefined && Number.isFinite(opts.to) ? ["-t", String(Math.max(0.1, opts.to - (opts.from ?? 0)))] : [];
-  await run("ffmpeg", ["-v", "error", "-y", ...(opts.from ? ["-ss", String(opts.from)] : []), "-i", src, ...span, "-vf", `fps=${opts.fps},${scale}`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", file], { maxBuffer: 1 << 24 });
-  return file;
+  try {
+    await run("ffmpeg", ["-v", "error", "-y", ...(opts.from ? ["-ss", String(opts.from)] : []), "-i", src, ...span, "-vf", `fps=${opts.fps},${scale}`, "-an", "-q:v", "2", "-start_number", "0", join(folder, "%d.jpg")], { maxBuffer: 1 << 24 });
+  } catch (err) {
+    rmSync(folder, { recursive: true, force: true });
+    throw err;
+  }
+  return folder;
 }
 
 /** Frames a second to read a clip at: up to `most`, fewer for a long one, so SAM looks at no more than ~1200 frames. */
@@ -148,7 +159,7 @@ export async function windowsSubjects(file: string, a: { kind: string; duration?
   try {
     return await samSubjects(clip, fps, 0, onProgress);
   } finally {
-    rmSync(clip, { force: true });
+    rmSync(clip, { recursive: true, force: true });
   }
 }
 
@@ -160,7 +171,7 @@ export async function windowsTrack(file: string, a: { duration?: number }, at: n
   try {
     return await samTrack(clip, fps, 0, at, box, onProgress);
   } finally {
-    rmSync(clip, { force: true });
+    rmSync(clip, { recursive: true, force: true });
   }
 }
 
@@ -214,7 +225,7 @@ export async function windowsCutoutVideo(
     onProgress?.(1);
     return { box: r.box, frames: r.frames, to };
   } finally {
-    rmSync(clip, { force: true });
+    rmSync(clip, { recursive: true, force: true });
     rmSync(tmp, { force: true });
   }
 }

@@ -5,7 +5,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { launch } from "../platform.ts";
+import { launch, systemExe } from "../platform.ts";
 
 /** Command and turn ids both protocols want: UUIDv7. */
 export function uuid7(): string {
@@ -118,6 +118,13 @@ export class StdioRpc extends EventEmitter {
 
   close() {
     this.fail(new Error("closed"));
-    this.child?.kill();
+    const child = this.child;
+    if (process.platform === "win32" && child?.pid) {
+      // npm's codex is node starting codex.exe: ending node alone would leave codex.exe (and its MCP servers) running.
+      child.stdin?.end();
+      spawn(systemExe("taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
+      return;
+    }
+    child?.kill();
   }
 }

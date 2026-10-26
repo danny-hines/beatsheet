@@ -6,7 +6,7 @@ transparent frame for every frame), so a cut-out lines up over where it came fro
 
 Run with the Python environment beatsheet installs (Settings → On this PC):
 
-    python -I -B sam-cuda-worker.py <sam3.1_multiplex.pt>
+    python -I -B -X utf8 sam-cuda-worker.py <sam3.1_multiplex.pt>
 
 It loads the model once, says {"ready": true, ...} on stdout, then answers one JSON request per line on stdin. Long
 requests report {"id": n, "progress": 0..1} along the way.
@@ -20,9 +20,10 @@ requests report {"id": n, "progress": 0..1} along the way.
     {"op": "cutout-video", "video": ..., "fps": 30, "from": 0, "prompt" | "box" + "at" | "follow": [[t, x, y, w, h]], "encoder": [argv]}
       → {"frames": 240, "box": {...}, "width": 1280, "height": 720}; every frame goes, as raw RGBA, to the encoder's stdin
 
-`video` is a clip the engine has already cut to the stretch wanted, at `fps` frames a second and a size this card can
-handle; frame n of it is `from + n / fps` seconds into the original. Boxes are 0..1 of the picture, top-left origin.
-Anything else the libraries print goes to stderr.
+`video` is a folder of frames (0.jpg, 1.jpg, …) the engine has already cut from the stretch wanted, at `fps` frames a
+second and a size this card can handle; frame n is `from + n / fps` seconds into the original. (A folder, not an .mp4:
+Meta's .mp4 reader leaves the pixels unscaled and keeps every frame at full float32.) Boxes are 0..1 of the picture,
+top-left origin. Anything else the libraries print goes to stderr.
 
 Three things in Meta's code are worked around here: start_session passing an argument SAM 3.1's model doesn't take
 (facebookresearch/sam3#544), a decoder that insists on Flash Attention, which PyTorch for Windows doesn't have (#523,
@@ -124,13 +125,33 @@ def main():
         except Exception:  # noqa: BLE001 - closing is tidying up
             pass
 
-    def frame_count(video):
-        import cv2
+    def frames_of(folder):
+        """The frames in a folder the engine made, in order."""
+        names = [f for f in os.listdir(folder) if f.lower().endswith(".jpg")]
+        return [os.path.join(folder, f) for f in sorted(names, key=lambda f: int(os.path.splitext(f)[0]))]
 
-        cap = cv2.VideoCapture(video)
-        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        return max(1, n)
+    def frame_count(video):
+        return max(1, len(frames_of(video))) if os.path.isdir(video) else 1
+
+    def direction(at, total):
+        # From the last frame there's nothing ahead, and from the first nothing behind (Meta's "both" fails at the ends).
+        return "forward" if at <= 0 else "backward" if at >= total - 1 else "both"
+
+    class detecting:
+        """SAM 3.1 ignores output_prob_thresh when it detects; these are the cut-offs it really uses."""
+
+        def __init__(self, threshold):
+            self.threshold = threshold
+
+        def __enter__(self):
+            m = predictor.model
+            self.saved = (m.score_threshold_detection, m.new_det_thresh)
+            if self.threshold is not None:
+                m.score_threshold_detection = min(self.saved[0], self.threshold)
+                m.new_det_thresh = min(self.saved[1], max(self.threshold, NEAR_MISS))
+
+        def __exit__(self, *_):
+            predictor.model.score_threshold_detection, predictor.model.new_det_thresh = self.saved
 
     def clamp_box(b):
         x = min(max(float(b["x"]), 0.0), 1.0)
@@ -150,11 +171,13 @@ def main():
         """Prompts one frame: by description (every match), or the one thing in a box or under a point. Returns that
         frame's results and the ids to keep."""
         if prompt is not None:
-            out = ask(type="add_prompt", session_id=session, frame_index=frame, text=prompt, output_prob_thresh=threshold)["outputs"]
+            with detecting(threshold if threshold != 0.5 else None):
+                out = ask(type="add_prompt", session_id=session, frame_index=frame, text=prompt, output_prob_thresh=threshold)["outputs"]
             ids, probs, boxes, masks = outputs(out)
             if not len(ids) and threshold > NEAR_MISS:
                 # Nothing sure enough: the best near miss beats nothing ("the parade float" may only score 0.46).
-                out = ask(type="add_prompt", session_id=session, frame_index=frame, text=prompt, output_prob_thresh=NEAR_MISS)["outputs"]
+                with detecting(NEAR_MISS):
+                    out = ask(type="add_prompt", session_id=session, frame_index=frame, text=prompt, output_prob_thresh=NEAR_MISS)["outputs"]
                 ids, probs, boxes, masks = outputs(out)
                 if len(ids):
                     best = int(np.argmax(probs))
@@ -163,7 +186,8 @@ def main():
         if box is not None:
             # The box as an example: SAM finds it (and things like it); the one that fills the box is kept.
             want = clamp_box(box)
-            out = ask(type="add_prompt", session_id=session, frame_index=frame, bounding_boxes=[want], bounding_box_labels=[1], output_prob_thresh=NEAR_MISS)["outputs"]
+            with detecting(NEAR_MISS):
+                out = ask(type="add_prompt", session_id=session, frame_index=frame, bounding_boxes=[want], bounding_box_labels=[1], output_prob_thresh=NEAR_MISS)["outputs"]
             ids, probs, boxes, masks = outputs(out)
             if len(ids):
                 scores = [iou(list(b), want) for b in boxes]
@@ -174,6 +198,9 @@ def main():
             point = {"x": want[0] + want[2] / 2, "y": want[1] + want[3] / 2}
         if point is not None:
             ask(type="reset_session", session_id=session)
+            # After a reset no frame has cached results, and a new object's mask is only kept for frames that do.
+            state = predictor._all_inference_states[session]["state"]
+            state["cached_frame_outputs"] = {f: {} for f in range(state["num_frames"])}
             out = ask(type="add_prompt", session_id=session, frame_index=frame, points=[[float(point["x"]), float(point["y"])]], point_labels=[1], obj_id=1)["outputs"]
             ids, *_ = outputs(out)
             return out, [int(i) for i in ids][:1]
@@ -271,7 +298,7 @@ def main():
         """Faces and people, each followed through the clip: one pass for each."""
         video, fps, t0 = req["video"], float(req["fps"]), float(req.get("from", 0))
         total = frame_count(video)
-        is_image = os.path.splitext(video)[1].lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+        is_image = not os.path.isdir(video)
         session = start(video, total)
         tracks = []
         try:
@@ -309,7 +336,7 @@ def main():
                 raise ValueError("nothing to follow in that box")
             keep_only(session, at, out, keep)
             samples, seen = [], set()
-            for f, ids, _, boxes, _ in propagate(session, req["id"], at, total, "both", set(keep)):
+            for f, ids, _, boxes, _ in propagate(session, req["id"], at, total, direction(at, total), set(keep)):
                 if len(ids) and f not in seen:
                     seen.add(f)
                     samples.append([r3(t0 + f / fps), *(r4(v) for v in boxes[0])])
@@ -348,21 +375,21 @@ def main():
             keep_only(session, at, out, keep)
             # SAM gives frames forward from the prompt, then backward; they're kept (packed) until written in order.
             masks = {}
-            for f, ids, _, _, m in propagate(session, req["id"], at, total, "both" if at > 0 else "forward", set(keep)):
+            for f, ids, _, _, m in propagate(session, req["id"], at, total, direction(at, total), set(keep)):
                 if m is not None and len(ids):
                     masks[f] = (np.packbits(np.any(m, axis=0)), m.shape[1:])
         finally:
             close(session)
 
-        cap = cv2.VideoCapture(video)
-        width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        files = frames_of(video)
+        height, width = cv2.imread(files[0]).shape[:2]
         argv = [a.replace("{size}", f"{width}x{height}").replace("{fps}", f"{fps:g}") for a in req["encoder"]]
-        enc = subprocess.Popen(argv, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        enc = subprocess.Popen(argv, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         extent, n = None, 0
         try:
-            while True:
-                ok, frame = cap.read()
-                if not ok:
+            for file in files:
+                frame = cv2.imread(file)
+                if frame is None:
                     break
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 packed = masks.get(n)
@@ -381,7 +408,6 @@ def main():
                 enc.stdin.write(rgba.tobytes())
                 n += 1
         finally:
-            cap.release()
             enc.stdin.close()
             err = enc.stderr.read().decode("utf-8", "replace")
             code = enc.wait()

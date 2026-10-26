@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { cliEnv } from "./agent/cli.ts";
-import { capture, IS_WINDOWS, pickWhere, powershell, psString, systemExe } from "./platform.ts";
+import { findOnPath, IS_WINDOWS, pathKey, powershell, psString } from "./platform.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
 const run = promisify(execFile);
@@ -55,8 +55,7 @@ export async function findUv(log: (l: string) => void, signal: AbortSignal, home
 async function findUvWindows(log: (l: string) => void, signal: AbortSignal, home: string): Promise<string> {
   const own = join(home, "bin", "uv.exe");
   const env = await cliEnv();
-  const where = await capture(systemExe("where.exe"), ["uv"], { env, timeout: 8000 }).catch(() => undefined);
-  const known = (where && pickWhere(where.out)) ?? [join(homedir(), ".local", "bin", "uv.exe"), join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Links", "uv.exe"), join(SAM_HOME, "bin", "uv.exe"), own].find((p) => existsSync(p));
+  const known = findOnPath("uv", env[pathKey(env)] ?? "") ?? [join(homedir(), ".local", "bin", "uv.exe"), join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet", "Links", "uv.exe"), join(SAM_HOME, "bin", "uv.exe"), own].find((p) => existsSync(p));
   if (known) {
     log(`Using uv at ${known}`);
     return known;

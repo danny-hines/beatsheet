@@ -265,11 +265,14 @@ export function cancelSamInstall() {
   install?.abort.abort();
 }
 
-/** Deletes everything the install put on this PC. The token stays, for installing again. */
-export function removeSam() {
+/**
+ * Deletes everything the install put on this PC, once the worker has let go of its files (Windows won't delete a
+ * running Python's). The token stays, for installing again.
+ */
+export async function removeSam() {
   if (install && !install.done) throw new Error("It's still installing; stop it first");
-  stopSam();
-  rmSync(SAM_DIR, { recursive: true, force: true });
+  await stopSam();
+  rmSync(SAM_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   install = undefined;
 }
 
@@ -352,9 +355,11 @@ let idle: ReturnType<typeof setTimeout> | undefined;
 const IDLE_MS = 3 * 60_000;
 
 function worker(): Promise<Worker> {
-  current ??= new Promise<Worker>((resolve, reject) => {
-    // Isolated (-I) and no bytecode (-B), as on the Mac. The model never reaches for the network once it's here.
-    const proc = spawn(paths.python, ["-I", "-B", WORKER, paths.weights], {
+  if (current) return current;
+  const mine: Promise<Worker> = new Promise<Worker>((resolve, reject) => {
+    // Isolated (-I) and no bytecode (-B), as on the Mac; UTF-8 pipes (-X utf8, which -I still honours), since Windows'
+    // Python would read them in the old code page. The model never reaches for the network once it's here.
+    const proc = spawn(paths.python, ["-I", "-B", "-X", "utf8", WORKER, paths.weights], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       env: { ...process.env, HF_HUB_OFFLINE: "1", HF_HUB_DISABLE_TELEMETRY: "1", PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True", ...(videoLimits().low ? { BEATSHEET_SAM_LOW: "1" } : {}) },
@@ -362,7 +367,8 @@ function worker(): Promise<Worker> {
     const pending = new Map<number, Pending>();
     let next = 1, buf = "", err = "", ready = false;
     const fail = (e: Error) => {
-      current = undefined;
+      // A worker that stops after another has taken its place leaves the new one be.
+      if (current === mine) current = undefined;
       for (const p of pending.values()) p.reject(e);
       pending.clear();
       if (!ready) reject(e);
@@ -412,15 +418,28 @@ function worker(): Promise<Worker> {
     });
     proc.on("error", (e) => fail(e));
     proc.on("close", (code) => fail(new Error(`SAM 3.1 stopped (${code ?? "killed"})${err.trim() ? `: ${err.trim().split("\n").pop()}` : ""}`)));
+    // Writing to a worker that has just died mustn't take the engine with it.
+    proc.stdin!.on("error", (e) => fail(e));
   });
-  return current;
+  current = mine;
+  return mine;
 }
 
-export function stopSam() {
+/** Stops the worker; resolves once its process has gone (and let go of its files). */
+export function stopSam(): Promise<void> {
   if (idle) clearTimeout(idle);
   const w = current;
   current = undefined;
-  void w?.then((x) => x.proc.kill()).catch(() => {});
+  return (w ?? Promise.reject(new Error("none")))
+    .then(
+      (x) =>
+        new Promise<void>((done) => {
+          if (x.proc.exitCode !== null || x.proc.signalCode !== null) return done();
+          x.proc.once("exit", () => done());
+          x.proc.kill();
+        }),
+    )
+    .catch(() => {});
 }
 
 async function ready(): Promise<Worker> {

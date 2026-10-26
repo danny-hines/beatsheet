@@ -16,6 +16,8 @@ static class Program {
   const uint CRED_PERSIST_LOCAL_MACHINE = 2;
   const int ERROR_NOT_FOUND = 1168;
 
+  // Fields Windows fills in, never assigned here.
+#pragma warning disable 649
   [StructLayout(LayoutKind.Sequential)]
   struct CREDENTIAL {
     public uint Flags;
@@ -31,6 +33,7 @@ static class Program {
     public IntPtr TargetAlias;
     public IntPtr UserName;
   }
+#pragma warning restore 649
 
   [DllImport("advapi32.dll", EntryPoint = "CredWriteW", SetLastError = true)]
   static extern bool CredWrite(ref CREDENTIAL credential, uint flags);

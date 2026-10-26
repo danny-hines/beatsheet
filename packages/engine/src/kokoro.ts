@@ -172,8 +172,17 @@ export function cancelKokoroInstall() {
 }
 
 /** Deletes everything the install put on this Mac. */
-export function removeKokoro() {
+export async function removeKokoro() {
   if (install && !install.done) throw new Error("It's still installing; stop it first");
+  if (process.platform === "win32") {
+    // Windows won't delete a running Python's files: the worker goes first.
+    const w = await current?.catch(() => undefined);
+    stopKokoro();
+    if (w && w.proc.exitCode === null && w.proc.signalCode === null) await new Promise((done) => w.proc.once("exit", done));
+    rmSync(KOKORO_DIR, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    install = undefined;
+    return;
+  }
   stopKokoro();
   rmSync(KOKORO_DIR, { recursive: true, force: true });
   install = undefined;
@@ -207,7 +216,8 @@ const IDLE_MS = 3 * 60_000;
 function worker(): Promise<Worker> {
   current ??= new Promise<Worker>((resolve, reject) => {
     // Isolated (-I) and no bytecode (-B), as for SAM. The model comes from (and is kept in) our own Hugging Face cache.
-    const proc = spawn(paths.python, ["-I", "-B", WORKER], {
+    // On Windows, -X utf8 too: its Python reads pipes in the old code page otherwise (and -I ignores PYTHONUTF8).
+    const proc = spawn(paths.python, ["-I", "-B", ...(process.platform === "win32" ? ["-X", "utf8"] : []), WORKER], {
       stdio: ["pipe", "pipe", "pipe"],
       env: {
         ...process.env,
@@ -215,8 +225,6 @@ function worker(): Promise<Worker> {
         HF_HUB_DISABLE_TELEMETRY: "1",
         TOKENIZERS_PARALLELISM: "false",
         PYTORCH_ENABLE_MPS_FALLBACK: "1",
-        // Windows' Python reads pipes in the old code page unless told otherwise; the lines are UTF-8.
-        ...(process.platform === "win32" ? { PYTHONUTF8: "1" } : {}),
       },
     });
     const pending = new Map<number, Pending>();

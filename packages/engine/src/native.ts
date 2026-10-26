@@ -74,7 +74,8 @@ export function windowsHelper(name: "credentials" | "speech"): Promise<string> {
       const script = [
         ...refs.map((r) => `Add-Type -AssemblyName ${r}`),
         `$refs = @(${refs.map((r) => `([System.AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq ${psString(r)} } | Select-Object -First 1).Location`).join(", ")})`,
-        `$params = @{ TypeDefinition = [IO.File]::ReadAllText(${psString(source)}); Language = 'CSharp'; OutputAssembly = ${psString(tmp)}; OutputType = 'ConsoleApplication' }`,
+        // Warnings (a struct field P/Invoke fills in, say) would otherwise fail the build.
+        `$params = @{ TypeDefinition = [IO.File]::ReadAllText(${psString(source)}); Language = 'CSharp'; OutputAssembly = ${psString(tmp)}; OutputType = 'ConsoleApplication'; IgnoreWarnings = $true }`,
         "if ($refs.Count) { $params.ReferencedAssemblies = $refs }",
         "Add-Type @params",
       ].join("\n");

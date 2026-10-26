@@ -76,22 +76,18 @@ export function withPath(env: NodeJS.ProcessEnv, PATH: string, platform: Platfor
 }
 
 /**
- * The PATH a new terminal would get on Windows: the machine's and the person's own, from the registry, with %VARS%
- * expanded. An app keeps the PATH it started with, so a tool installed since (ffmpeg, uv, an agent CLI) is found here.
+ * The PATH a new terminal would get on Windows: the machine's and the person's own, as Windows keeps them (asked of
+ * PowerShell, which answers in UTF-8; reg.exe would answer in the old code page). An app keeps the PATH it started
+ * with, so a tool installed since (ffmpeg, uv, an agent CLI) is found here. Asked at most every 15 seconds.
  */
-export function parseRegistryPath(regOutput: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const m = /^\s*Path\s+REG_(?:EXPAND_)?SZ\s+(.*)$/im.exec(regOutput);
-  if (!m) return undefined;
-  return m[1]!.trim().replace(/%([^%]+)%/g, (all, name: string) => {
-    const key = Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
-    return key ? (env[key] ?? all) : all;
-  });
-}
-
-export async function registryPath(): Promise<string> {
-  const query = (key: string) => capture(systemExe("reg.exe"), ["query", key, "/v", "Path"]).then((r) => parseRegistryPath(r.out), () => undefined);
-  const [machine, user] = await Promise.all([query("HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment"), query("HKCU\\Environment")]);
-  return mergePath([machine, user], "win32");
+let registry: { at: number; path: Promise<string> } | undefined;
+export function registryPath(): Promise<string> {
+  if (registry && Date.now() - registry.at < 15_000) return registry.path;
+  const path = run(powershell("[Environment]::GetEnvironmentVariable('Path', 'Machine'); [Environment]::GetEnvironmentVariable('Path', 'User')"), { timeout: 20_000 }).then((r) =>
+    mergePath(r.out.split(/\r?\n/), "win32"),
+  );
+  registry = { at: Date.now(), path };
+  return path;
 }
 
 /** Windows' own folder. */
@@ -125,11 +121,19 @@ export function cliGuesses(name: string, platform: Platform = process.platform, 
   return [...(own[name] ?? [j(home, ".local/bin", name)]), `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`];
 }
 
-/** What `where.exe` found, best first: a real program before a script shim. */
-export function pickWhere(output: string): string | undefined {
-  const rank = (p: string) => ({ ".exe": 0, ".com": 1, ".cmd": 2, ".bat": 3 })[extname(p).toLowerCase()] ?? 9;
-  const found = output.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^[a-z]:\\|^\\\\/i.test(l) && rank(l) < 9);
-  return found.sort((a, b) => rank(a) - rank(b))[0];
+/**
+ * A program on a Windows PATH, as a terminal would find it, but a real program before a script shim anywhere on it
+ * (Claude Code's own claude.exe before an old npm claude.cmd). Looked for here rather than with where.exe, whose
+ * answer comes in the old code page.
+ */
+export function findOnPath(name: string, PATH: string, exists: (p: string) => boolean = existsSync): string | undefined {
+  const dirs = PATH.split(";").map((d) => d.trim().replace(/^"|"$/g, "")).filter(Boolean);
+  for (const ext of [".exe", ".com", ".cmd", ".bat"])
+    for (const dir of dirs) {
+      const p = win32.join(dir, `${name}${ext}`);
+      if (exists(p)) return p;
+    }
+  return undefined;
 }
 
 /**
@@ -203,9 +207,12 @@ export function powershell(script: string): Launch {
   };
 }
 
-/** Moves a folder to the Recycle Bin, as Delete in File Explorer does (so Restore works). */
+/**
+ * Moves a folder to the Recycle Bin, as Delete in File Explorer does (so Restore works). With Windows' own dialogs on,
+ * so where it can't recycle (a drive with no Recycle Bin, a folder too big for it) Windows asks before deleting for good.
+ */
 export const recycleCommand = (folder: string) =>
-  powershell(`Add-Type -AssemblyName Microsoft.VisualBasic\n[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(${psString(folder)}, 'OnlyErrorDialogs', 'SendToRecycleBin')`);
+  powershell(`Add-Type -AssemblyName Microsoft.VisualBasic\n[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(${psString(folder)}, 'AllDialogs', 'SendToRecycleBin')`);
 
 /** Windows' own file and folder pickers (for the studio in a browser; the app has its own). Prints the path, or nothing. */
 export function pickerCommand(kind: "folder" | "audio" | "file"): Launch {

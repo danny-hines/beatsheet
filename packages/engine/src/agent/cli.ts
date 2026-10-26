@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { REPO } from "../paths.ts";
-import { capture, cliGuesses, launch, mergePath, pathKey, pickWhere, powershell, registryPath, systemExe, withPath } from "../platform.ts";
+import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, registryPath, systemExe, withPath } from "../platform.ts";
 
 const run = promisify(execFile);
 const WINDOWS = process.platform === "win32";
@@ -43,8 +43,8 @@ export async function findCli(name: CliName): Promise<string | null> {
   let path: string | null = null;
   if (WINDOWS) {
     // Where a new terminal would find it, then where its installer puts it.
-    const r = await capture(systemExe("where.exe"), [name], { env: await cliEnv(), timeout: 8000 }).catch(() => undefined);
-    path = (r && pickWhere(r.out)) ?? null;
+    const env = await cliEnv();
+    path = findOnPath(name, env[pathKey(env)] ?? "") ?? null;
   } else {
     try {
       const { stdout } = await run("/bin/zsh", ["-lc", `command -v ${name}`], { timeout: 8000 });
@@ -168,7 +168,8 @@ export async function openSignIn(name: CliName): Promise<void> {
     const script = join(dir, `sign-in-${name}.cmd`);
     // `call`, so a .cmd shim (npm's codex) returns to the script; /k keeps the window open to read what it said.
     const command = SETUP[name].signIn.replace(/^\S+/, `call "${cli}"`);
-    writeFileSync(script, ["@echo off", `title Sign in to ${name}`, `cd /d "${REPO}"`, command, ""].join("\r\n"));
+    // UTF-8 (chcp 65001), as the script is written, for a folder or user name beyond ASCII.
+    writeFileSync(script, ["@echo off", "chcp 65001 >nul", `title Sign in to ${name}`, `cd /d "${REPO}"`, command, ""].join("\r\n"));
     const child = spawn(process.env.ComSpec ?? systemExe("cmd.exe"), ["/d", "/c", `start "Sign in to ${name}" "${process.env.ComSpec ?? systemExe("cmd.exe")}" /k "${script}"`], {
       env: await cliEnv(),
       detached: true,

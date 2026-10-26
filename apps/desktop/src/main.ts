@@ -6,8 +6,11 @@
  * On Windows the window keeps its own title bar (dark, to match), the menu is Windows' (Ctrl shortcuts, Exit), privacy
  * links open Windows Settings, and recording asks which screen with a small dialog of its own.
  */
+import childProcess from "node:child_process";
 import { existsSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
 
 // The engine finds projects, recipes and its MCP server relative to the repo.
@@ -18,6 +21,7 @@ const REPO = process.env.BEATSHEET_REPO;
 process.chdir(REPO);
 const DEV_URL = process.env.BEATSHEET_DEV_URL;
 const WINDOWS = process.platform === "win32";
+if (WINDOWS) hideConsoles();
 
 let win: BrowserWindow | null = null;
 let stopServer: (() => void) | undefined;
@@ -174,6 +178,28 @@ function menu() {
 }
 
 // ---- Windows
+
+/**
+ * An app has no console, so every program it starts (ffmpeg, uv, Python, the agents) would open a console window of
+ * its own for a moment. On Windows they all start hidden instead, wherever in the engine (or Remotion) they're started.
+ */
+function hideConsoles() {
+  const cp = childProcess as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const hidden = (args: unknown[]) => {
+    const at = args.findIndex((a, i) => i > 0 && !!a && typeof a === "object" && !Array.isArray(a));
+    if (at >= 0) args[at] = { windowsHide: true, ...(args[at] as object) };
+    else args.splice(typeof args[args.length - 1] === "function" ? args.length - 1 : args.length, 0, { windowsHide: true });
+    return args;
+  };
+  for (const name of ["spawn", "spawnSync", "execFile", "execFileSync", "exec", "execSync", "fork"]) {
+    const original = cp[name]!;
+    const wrapped = (...args: unknown[]) => original.apply(childProcess, hidden(args));
+    const custom = (original as unknown as Record<symbol, (...a: unknown[]) => unknown>)[promisify.custom];
+    if (custom) Object.defineProperty(wrapped, promisify.custom, { value: (...args: unknown[]) => custom.apply(childProcess, hidden(args)) });
+    cp[name] = wrapped;
+  }
+  syncBuiltinESMExports();
+}
 
 /** Windows' own title bar, dark like the app, with beatsheet's icon when the app build has drawn it. */
 function windowsFrame(): Electron.BrowserWindowConstructorOptions {

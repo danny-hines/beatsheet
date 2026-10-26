@@ -346,7 +346,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, samStatus());
     }
     if (id === "sam" && !action && req.method === "DELETE") {
-      removeSam();
+      await removeSam();
       return json(res, 200, samStatus());
     }
     // Kokoro on this Mac, installed and removed like SAM 3.
@@ -357,7 +357,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, kokoroStatus());
     }
     if (id === "kokoro" && !action && req.method === "DELETE") {
-      removeKokoro();
+      await removeKokoro();
       return json(res, 200, kokoroStatus());
     }
     if (id === "agent" && req.method === "POST") {

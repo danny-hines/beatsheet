@@ -9,8 +9,7 @@ import {
   launch,
   mergePath,
   npmShimTarget,
-  parseRegistryPath,
-  pickWhere,
+  findOnPath,
   powershell,
   replaceFile,
   revealCommand,
@@ -78,12 +77,6 @@ describe("PATH", () => {
     expect(env.Path).toBe("C:\\new");
     expect(withPath({ PATH: "/old" }, "/new", "darwin")).toEqual({ PATH: "/new" });
   });
-
-  it("reads the registry's PATH, expanding %VARIABLES%", () => {
-    const out = "\r\nHKEY_CURRENT_USER\\Environment\r\n    Path    REG_EXPAND_SZ    %USERPROFILE%\\.local\\bin;C:\\Tools;%NOPE%\\x\r\n\r\n";
-    expect(parseRegistryPath(out, { USERPROFILE: "C:\\Users\\me" })).toBe("C:\\Users\\me\\.local\\bin;C:\\Tools;%NOPE%\\x");
-    expect(parseRegistryPath("ERROR: The system was unable to find the specified registry key or value.")).toBeUndefined();
-  });
 });
 
 describe("finding the agent CLIs", () => {
@@ -104,9 +97,11 @@ describe("finding the agent CLIs", () => {
     expect(g).toContain("C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd");
   });
 
-  it("takes a real program over a script shim from where.exe, and ignores its complaints", () => {
-    expect(pickWhere("C:\\Users\\me\\AppData\\Roaming\\npm\\claude\r\nC:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd\r\nC:\\Users\\me\\.local\\bin\\claude.exe\r\n")).toBe("C:\\Users\\me\\.local\\bin\\claude.exe");
-    expect(pickWhere("INFO: Could not find files for the given pattern(s).")).toBeUndefined();
+  it("takes a real program over a script shim anywhere on the PATH, and nothing that isn't a program", () => {
+    const there = new Set(["C:\\Users\\me\\AppData\\Roaming\\npm\\claude.cmd", "C:\\Users\\me\\AppData\\Roaming\\npm\\claude", "C:\\Users\\me\\.local\\bin\\claude.exe"]);
+    const PATH = 'C:\\Users\\me\\AppData\\Roaming\\npm;"C:\\Users\\me\\.local\\bin";';
+    expect(findOnPath("claude", PATH, (p) => there.has(p))).toBe("C:\\Users\\me\\.local\\bin\\claude.exe");
+    expect(findOnPath("codex", PATH, (p) => there.has(p))).toBeUndefined();
   });
 });
 
