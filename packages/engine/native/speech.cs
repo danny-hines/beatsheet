@@ -22,7 +22,9 @@ class Inline : SynchronizationContext {
 }
 
 static class Program {
-  const int Rate = 24000;
+  // The rate Windows' voices (David, Zira…) make. SAPI times its events by the voice's own rate whatever the file's,
+  // so at 24 kHz every word came out half as late again as it's heard.
+  const int Rate = 16000;
 
   static int Fail(string message) {
     Console.Error.WriteLine("error " + message);
