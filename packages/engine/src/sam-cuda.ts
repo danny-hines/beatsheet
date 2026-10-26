@@ -16,7 +16,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { cliEnv } from "./agent/cli.ts";
 import { REPO } from "./paths.ts";
-import { run as runLaunch, systemExe, untarCommand, venvPython } from "./platform.ts";
+import { containerTrouble, inContainer, run as runLaunch, systemExe, untarCommand, venvPython } from "./platform.ts";
 import { download, du, findUv, stream } from "./pyenv.ts";
 import type { SamCutout, SamStatus } from "./sam.ts";
 import { getSecret, readSettings, setSecret, SETTINGS_DIR, updateSettings } from "./settings.ts";
@@ -198,6 +198,8 @@ export function installSam(): SamStatus {
       const token = await getSecret("huggingface");
       if (!token) throw new Error("Add a Hugging Face token first (one with access to SAM 3.1)");
       mkdirSync(SAM_DIR, { recursive: true });
+      const boxed = inContainer(SAM_DIR);
+      if (boxed) throw new Error(containerTrouble(boxed));
       const free = statfsSync(SAM_DIR);
       const gb = (free.bavail * free.bsize) / 1e9;
       if (gb < NEEDS_GB) throw new Error(`Needs about ${NEEDS_GB} GB free; this PC has ${gb.toFixed(1)} GB on that drive`);

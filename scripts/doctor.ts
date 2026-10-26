@@ -9,7 +9,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findCli, useLoginPath } from "../packages/engine/src/agent/cli.ts";
 import { REPO } from "../packages/engine/src/paths.ts";
-import { systemExe } from "../packages/engine/src/platform.ts";
+import { inContainer, systemExe } from "../packages/engine/src/platform.ts";
 import { SETTINGS_DIR } from "../packages/engine/src/settings.ts";
 
 const WINDOWS = process.platform === "win32";
@@ -28,6 +28,12 @@ const version = (cmd: string, args = ["-version"]) => {
 
 await useLoginPath();
 console.log(`beatsheet at ${REPO}\nits own folder: ${SETTINGS_DIR}\n`);
+
+// Started from inside a packaged app (a terminal in Claude's desktop app), Windows keeps beatsheet's folder in that
+// app's own copy. Only a folder that exists can say so; this changes nothing.
+const boxed = WINDOWS && existsSync(SETTINGS_DIR) ? inContainer(SETTINGS_DIR) : undefined;
+if (boxed)
+  say(false, "its own folder", `kept in ${boxed}'s own copy: this terminal runs inside ${boxed}`, `Run beatsheet from a terminal opened from the Start menu. From inside ${boxed}, SAM and Kokoro can't install, and its settings aren't the ones the app sees when started normally.`);
 
 const node = Number(process.versions.node.split(".")[0]);
 say(node >= 24, "Node", process.versions.node, "Install Node 24 or later (it runs beatsheet's TypeScript as it is): https://nodejs.org");
@@ -62,7 +68,7 @@ if (WINDOWS) {
 
 // The recipes reach Claude Code through links in .claude/skills, and Codex reads AGENTS.md, a link to CLAUDE.md. A
 // checkout without symlinks has small text files there instead.
-const relink = WINDOWS ? "Turn on Developer Mode (Settings → System → For developers), then in this folder: git config core.symlinks true && git checkout -- .claude/skills AGENTS.md" : "git checkout -- .claude/skills AGENTS.md";
+const relink = WINDOWS ? "Turn on Developer Mode (Settings → System → Advanced; For developers on older Windows), then in this folder: git config core.symlinks true && git checkout -- .claude/skills AGENTS.md" : "git checkout -- .claude/skills AGENTS.md";
 for (const skill of ["montage", "story", "motion"]) {
   const link = join(REPO, ".claude", "skills", skill);
   const ok = existsSync(join(link, "SKILL.md"));

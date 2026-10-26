@@ -162,7 +162,7 @@ For SAM 3.1 you also need:
 
 No Python or CUDA toolkit to install: uv brings Python 3.12, PyTorch brings CUDA 12.8, and `triton-windows` brings its own compiler.
 
-**Get the code with its links.** The recipes reach Claude Code through symlinks in `.claude/skills`. Windows makes real links only with Developer Mode on (Settings → System → For developers), and git only when asked:
+**Get the code with its links.** The recipes reach Claude Code through symlinks in `.claude/skills`. Windows makes real links only with Developer Mode on (Settings → System → Advanced; For developers on older Windows), and git only when asked:
 
 ```powershell
 git clone -c core.symlinks=true <the repository> beatsheet
@@ -190,6 +190,8 @@ Like the Mac's `beatsheet.app`, the Windows build is a personal one linked to th
 - The app's window, without a person: `$env:BEATSHEET_SNAPSHOT="$PWD\snap.png"; $env:BEATSHEET_SNAPSHOT_QUIT="1"; npm run desktop` saves a picture of the window and quits (`BEATSHEET_SNAPSHOT_HASH="#<project>"` opens a project first, `BEATSHEET_SNAPSHOT_WAIT` waits longer, in ms). Clear the variables afterwards.
 - The engine, the way an agent drives it: `node scripts/mcp-smoke.ts <project> --frame` (edits and renders a frame through the MCP server), `node scripts/agent-smoke.ts claude --project <project>` (a hosted Claude Code session makes one tool call; `codex` likewise), `node scripts/subjects-smoke.ts <project> <clip asset> <photo asset> ["the dog"]` (find, track and cut out).
 - The CLI: `npm run beatsheet -- import <folder> --id wintest --song <song>`, then `npm run beatsheet -- render wintest --draft`.
+
+Claude's desktop app is a packaged (MSIX) app, and everything a session in it starts runs in its container: Windows keeps what beatsheet writes in `%LOCALAPPDATA%` in Claude's own copy. The engine, the CLI and the smoke scripts don't mind, but an app started from there has its own settings, and SAM and Kokoro can't install (`doctor` and the installs say so). For those, start the app from the Start menu, or from a terminal opened from there.
 
 Steps that need Danny: anything signed in or paid for (agent sign-in, the ElevenLabs key, the Hugging Face token and Meta's approval), what only a person can see or hear (playback, voices, recording, the picker dialogs), and installing anything (the `winget` lines). A session never reads a key or token itself.
 

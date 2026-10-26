@@ -5,7 +5,7 @@
  * tests can ask for either.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, renameSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, posix, win32 } from "node:path";
 
@@ -21,6 +21,30 @@ export function appDataDir(platform: Platform = process.platform, env: NodeJS.Pr
   if (platform === "darwin") return posix.join(home, "Library", "Application Support", "beatsheet");
   return posix.join(env.XDG_DATA_HOME ?? posix.join(home, ".local", "share"), "beatsheet");
 }
+
+/**
+ * The app whose container Windows keeps `dir` in, when beatsheet was started from inside a packaged (MSIX) app, such as
+ * a terminal in Claude's desktop app. What it writes in AppData then lands in that app's own copy, apart from a normal
+ * launch's, and links made there (uv's Python) point at nothing outside it. `real` is `dir` with links resolved.
+ */
+export function containerOf(dir: string, real: string): string | undefined {
+  const m = /\\Packages\\([^\\]+?)(?:_[a-z0-9]{13})?\\LocalCache\\/i.exec(real);
+  return m && real.toLowerCase() !== dir.toLowerCase() ? m[1] : undefined;
+}
+
+/** The same for a folder that exists on this PC. */
+export function inContainer(dir: string): string | undefined {
+  if (!IS_WINDOWS) return undefined;
+  try {
+    return containerOf(dir, realpathSync.native(dir));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Why an install (SAM, Kokoro) can't go ahead in another app's container. */
+export const containerTrouble = (app: string) =>
+  `beatsheet was started from inside ${app}, so Windows keeps its files in ${app}'s own copy, where Python can't be installed. Start beatsheet from the Start menu (or a terminal opened from there), then install again.`;
 
 /** A virtual environment's Python. */
 export const venvPython = (venv: string, platform: Platform = process.platform) =>

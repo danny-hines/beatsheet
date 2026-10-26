@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync 
 import { join } from "node:path";
 import { cliEnv } from "./agent/cli.ts";
 import { REPO } from "./paths.ts";
-import { HERE, venvPython } from "./platform.ts";
+import { containerTrouble, HERE, inContainer, venvPython } from "./platform.ts";
 import { du, findUv, stream } from "./pyenv.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
@@ -121,6 +121,8 @@ export function installKokoro(): KokoroStatus {
   void (async () => {
     try {
       mkdirSync(KOKORO_DIR, { recursive: true });
+      const boxed = inContainer(KOKORO_DIR);
+      if (boxed) throw new Error(containerTrouble(boxed));
       const free = statfsSync(KOKORO_DIR);
       const gb = (free.bavail * free.bsize) / 1e9;
       if (gb < NEEDS_GB) throw new Error(`Needs about ${NEEDS_GB} GB free; ${HERE} has ${gb.toFixed(1)} GB`);

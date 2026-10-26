@@ -6,6 +6,7 @@ import {
   appDataDir,
   cliGuesses,
   cmdQuote,
+  containerOf,
   launch,
   mergePath,
   npmShimTarget,
@@ -34,6 +35,15 @@ describe("where beatsheet keeps its own things", () => {
   it("finds a virtual environment's Python where each system puts it", () => {
     expect(venvPython("/a/venv", "darwin")).toBe("/a/venv/bin/python");
     expect(venvPython("C:\\a\\venv", "win32")).toBe("C:\\a\\venv\\Scripts\\python.exe");
+  });
+
+  // Real paths from a PC where beatsheet was started from a terminal in Claude's desktop app.
+  it("knows when Windows keeps it in another app's container", () => {
+    const dir = "C:\\Users\\danny\\AppData\\Local\\beatsheet\\sam3";
+    expect(containerOf(dir, "C:\\Users\\danny\\AppData\\Local\\Packages\\Claude_pzs8sxrjxfjjc\\LocalCache\\Local\\beatsheet\\sam3")).toBe("Claude");
+    expect(containerOf(dir, dir)).toBeUndefined();
+    expect(containerOf(dir, "c:\\users\\danny\\appdata\\local\\beatsheet\\sam3")).toBeUndefined();
+    expect(containerOf("/Users/me/Library/Application Support/beatsheet", "/Users/me/Library/Application Support/beatsheet")).toBeUndefined();
   });
 });
 
