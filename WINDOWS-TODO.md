@@ -5,7 +5,7 @@ For the Claude session on Danny's Windows PC (the RTX 4090). The Windows port wa
 ## Start here
 
 1. `git pull` on `main`: the Mac may have pushed since.
-2. This clone was made without symlinks, so the recipes in `.claude/skills` aren't linked. Ask Danny to turn on Developer Mode (Settings → System → For developers), then run:
+2. This clone was made without symlinks, so the recipes in `.claude/skills` aren't linked. Ask Danny to turn on Developer Mode (Settings → System → Advanced), then run:
    ```powershell
    git config core.symlinks true
    git checkout -- .claude/skills AGENTS.md
@@ -59,28 +59,30 @@ Messages from this PC can't reach the Mac session, so this file is the channel. 
 
 ## Results
 
-Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted Claude Code turn all work on synthetic footage; waiting on Danny for real phone footage (HEIC, 4K HEVC from a phone) and for the steps that need someone at the screen.
+Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted Claude Code turn all work on synthetic footage. Next: Danny runs `npm run app` in a terminal of his own and starts beatsheet from the Start menu (an app started from a Claude desktop session runs in Claude's container; see the note below the table), then makes the Kids' Room project and retries SAM there.
 
 | Step | Result | Notes | Commit |
 | --- | --- | --- | --- |
 | 1. doctor | ✓ | "All set" once uv was installed (winget, Danny's OK) and Developer Mode turned on (on this build it's Settings → System → **Advanced**, not "For developers"), then the links checked out again. Codex and Muse not installed. | |
 | 2. npm run check | ✓ | Passes, before and after pulling a0835b4 (104 tests). | |
-| 3. app opens | partly | `npm run desktop` failed to build: the desktop build's esbuild plugin took `C:\…\main.ts` for a package name and marked it external. Fixed. Setup renders, with the 4090 and 24 GB, and still does after a0835b4. Title bar and menu still to see (the snapshot is the page only). | dcbbff0 |
-| 4. agents sign in | partly | Claude Code: installed, "Signed in". Codex not installed. | |
-| 5. keys in Credential Manager | | | |
+| 3. app opens | ✓ | `npm run desktop` failed to build: the desktop build's esbuild plugin took `C:\…\main.ts` for a package name and marked it external. Fixed. Setup renders, with the 4090 and 24 GB. Danny: dark title bar, the menu, and Ctrl+Shift+O goes home. | dcbbff0 |
+| 4. agents sign in | partly | Claude Code: installed, "Signed in", made the default. Codex not installed; Sign in not needed, so not tried. | |
+| 5. keys in Credential Manager | ✓ | Danny: the ElevenLabs key says "in Credential Manager", Credential Manager lists `beatsheet:elevenlabs`, and removing and adding it again works. | |
 | 6. import 4K HEVC + HEIC | partly | CLI import of synthetic footage (a 4K HEVC clip made with `hevc_nvenc`, a 1080p clip, a 12 MP JPEG): proxies, posters and strips in about a second. Real phone footage and HEIC still to do. | |
 | 7. song analysis | partly | CLI: 120.01 BPM on a synthetic 120 BPM song (uv and librosa). Studio still to do. | |
 | 8. agent turn, key refused | | | |
 | 9. edit, notes, undo | | | |
 | 10. export | | | |
-| 11. voices, Kokoro | partly | `list_voices` gives David and Zira. Narrating worked, but every word was timed 1.5× late: SAPI times its events by the voice's own rate (16 kHz for both), and the helper wrote 24 kHz. At 16 kHz both voices' word starts match the audio to the millisecond (checked with silence detection). A bookmark can't measure the rate instead: David adds 0.2 s after it, and without a full stop it fires mid-line. Listen, captions in the player, and Kokoro still to do. | |
+| 11. voices, Kokoro | partly | `list_voices` gives David and Zira. Narrating worked, but every word was timed 1.5× late: SAPI times its events by the voice's own rate (16 kHz for both), and the helper wrote 24 kHz. At 16 kHz both voices' word starts match the audio to the millisecond (checked with silence detection). A bookmark can't measure the rate instead: David adds 0.2 s after it, and without a full stop it fires mid-line. Listen, captions in the player, and Kokoro still to do. | 4497d1b |
 | 12. recording | | | |
-| 13. subjects without SAM | | | |
-| 14. SAM 3.1 install and cut-outs | | | |
-| 15. Recycle Bin | | | |
-| 16. npm run app | | | |
+| 13. subjects without SAM | partly | On the synthetic clips: `find_subjects` ran OpenCV through uv (8 s) and `track_subject` followed a box; `cut_out` says it needs SAM 3.1. It also found a "person" in a test pattern with no people, so watch for false positives on real footage. Faces and the blur in the studio still to do. | |
+| 14. SAM 3.1 install and cut-outs | ✕ first try | Failed at `uv venv`: "Missing expected target directory for Python minor version link". The app had been started from a Claude desktop session, so it ran in Claude's container (below), and uv's junction pointed at a path that exists only there. Not a bug in the install itself; the installs and doctor now say so up front. To retry from the Start menu. | 7a86355 |
+| 15. Recycle Bin | ✓ | Through the engine (`trashProject`, what Home's menu calls): `synthtest` went to the Recycle Bin in 0.7 s with its original location, and Restore brought it back whole. The Home menu itself not clicked. | |
+| 16. npm run app | partly | Built `apps\desktop\release\beatsheet-win32-x64\beatsheet.exe`, and `beatsheet.lnk` is in the real Start menu (not Claude's copy), working in the repo. Opening it from the Start menu still to do. | |
 | 17. 5070 | | | |
 
 **Also checked on the PC.** On a throwaway `synthtest` project: `assemble` and `render --draft` (a 30 s vertical draft in 32 s, −13.9 LUFS); `node scripts/mcp-smoke.ts synthtest --frame` (33 tools, edits, a refused bad edit, a branched cut, a frame in 2.6 s); `node scripts/agent-smoke.ts claude --project synthtest` (the hosted session ran a whole opening turn: logged footage, fetched fonts, previewed looks, loaded the montage recipe through the link and handed off, with no errors or approval cards).
 
-**Watch out:** npm 11.9 on the PC rewrites `package-lock.json` without its `libc` fields after `npm install`. Don't commit that from the PC.
+**Watch out:**
+- npm 11.9 on the PC rewrites `package-lock.json` without its `libc` fields after `npm install`. Don't commit that from the PC.
+- Claude's desktop app on Windows is an MSIX package, and everything a session in it starts (terminals, `npm run desktop`) runs in its container. `%LOCALAPPDATA%\beatsheet`, first made from inside it, went to `%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\beatsheet`: settings made in such an app aren't the ones a normal launch sees, and links made there break (SAM's Python). A file put in a folder that already exists outside (a probe in the Start menu's Programs) is written in place, and Credential Manager isn't affected. `fs.realpathSync.native` shows the real path, which is how doctor and the installs now tell.
