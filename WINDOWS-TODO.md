@@ -59,7 +59,7 @@ Messages from this PC can't reach the Mac session, so this file is the channel. 
 
 ## Results
 
-Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted Claude Code turn all work on synthetic footage. beatsheet now runs from the Start menu, outside Claude's container (see the note below the table). Next: Danny adds the Hugging Face token again and retries SAM there, then makes the Kids' Room project.
+Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted Claude Code turn all work on synthetic footage. beatsheet now runs from the Start menu, outside Claude's container (see the note below the table), and found the keys and the Hugging Face token by itself. Danny's `kids-room` project has a narrated cut. Next: Danny installs SAM 3.1 from the Start-menu app, and asks the agent for a song from ElevenLabs.
 
 | Step | Result | Notes | Commit |
 | --- | --- | --- | --- |
@@ -68,10 +68,10 @@ Status: in progress on the PC (2026-10-26). Engine, CLI, MCP server and a hosted
 | 3. app opens | ✓ | `npm run desktop` failed to build: the desktop build's esbuild plugin took `C:\…\main.ts` for a package name and marked it external. Fixed. Setup renders, with the 4090 and 24 GB. Danny: dark title bar, the menu, and Ctrl+Shift+O goes home. | dcbbff0 |
 | 4. agents sign in | partly | Claude Code: installed, "Signed in", made the default. Codex not installed; Sign in not needed, so not tried. | |
 | 5. keys in Credential Manager | ✓ | Danny: the ElevenLabs key says "in Credential Manager", Credential Manager lists `beatsheet:elevenlabs`, and removing and adding it again works. | |
-| 6. import 4K HEVC + HEIC | partly | CLI import of synthetic footage (a 4K HEVC clip made with `hevc_nvenc`, a 1080p clip, a 12 MP JPEG): proxies, posters and strips in about a second. Real phone footage and HEIC still to do. | |
+| 6. import 4K HEVC + HEIC | partly | CLI import of synthetic footage (a 4K HEVC clip made with `hevc_nvenc`, a 1080p clip, a 12 MP JPEG): proxies, posters and strips in about a second. Real footage: Danny made `kids-room` in the app from `Videos\Kids' Room` (116 JPEGs, 6 PNGs, 8 phone HEVC clips from 1080p to 1632×2176, most at 120 fps, two of 3 minutes), and every preview, poster and strip was made (268 files in `.cache`). No HEIC in the album (skipped for now); smooth scrubbing not asked yet. | |
 | 7. song analysis | partly | CLI: 120.01 BPM on a synthetic 120 BPM song (uv and librosa). Studio still to do. | |
-| 8. agent turn, key refused | | | |
-| 9. edit, notes, undo | | | |
+| 8. agent turn, key refused | partly | In `kids-room` the hosted Claude Code agent logged the footage, wrote the brief (a 60 s narrated build story for Reels, TikTok and Shorts) and handed off over three turns. The approval card and the key refusal still to try. | |
+| 9. edit, notes, undo | partly | The agent built a 31-shot cut with 15 lines narrated by ElevenLabs. Danny's notes went through: two done with replies, one queued. Dragging in the timeline, Alt, undo and redo still to try. | |
 | 10. export | | | |
 | 11. voices, Kokoro | partly | `list_voices` gives David and Zira. Narrating worked, but every word was timed 1.5× late: SAPI times its events by the voice's own rate (16 kHz for both), and the helper wrote 24 kHz. At 16 kHz both voices' word starts match the audio to the millisecond (checked with silence detection). A bookmark can't measure the rate instead: David adds 0.2 s after it, and without a full stop it fires mid-line. Listen, captions in the player, and Kokoro still to do. | 4497d1b |
 | 12. recording | | | |
