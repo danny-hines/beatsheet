@@ -1,14 +1,15 @@
 // Bundles the main process and preload. beatsheet's own packages (TypeScript sources) are bundled in; everything else
 // (sharp, Remotion, Electron itself) is loaded from node_modules at run time.
 import { build } from "esbuild";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ownCode = {
   name: "bundle-own-code",
   setup(b) {
-    b.onResolve({ filter: /^[^./]/ }, (args) => (args.path.startsWith("@beatsheet/") ? undefined : { path: args.path, external: true }));
+    // A Windows path (C:\…) doesn't start with . or / either, but it's a file, not a package.
+    b.onResolve({ filter: /^[^./]/ }, (args) => (args.path.startsWith("@beatsheet/") || isAbsolute(args.path) ? undefined : { path: args.path, external: true }));
   },
 };
 const common = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: true, logLevel: "warning", plugins: [ownCode] };

@@ -1,8 +1,11 @@
 // End-to-end check of a hosted agent: start a session on the person's own CLI, ask for one beatsheet tool call, print
-// what streams back. Usage: node scripts/agent-smoke.ts <muse|codex|claude> [model]
+// what streams back. Usage: node scripts/agent-smoke.ts <muse|codex|claude> [model] [--project <id>] (july-4 by default)
 import { AgentStudio, type AgentChange, type AgentId } from "../packages/engine/src/agent/index.ts";
 
-const [which = "codex", model] = process.argv.slice(2) as [AgentId, string?];
+const args = process.argv.slice(2);
+const flag = args.indexOf("--project");
+const project = flag >= 0 ? args.splice(flag, 2)[1]! : "july-4";
+const [which = "codex", model] = args as [AgentId, string?];
 const studio = new AgentStudio();
 const t0 = Date.now();
 const at = () => `${((Date.now() - t0) / 1000).toFixed(1)}s`;
@@ -16,7 +19,7 @@ studio.on("change", (c: AgentChange) => {
   if (c.view.error) console.log(`\n[${at()}] error: ${c.view.error}`);
   const was = last;
   last = c.view.status;
-  if (was === "running" && last === "idle" && ++turns === 1) void studio.send("Call the beatsheet list_assets tool for july-4, then reply with just the number of assets.");
+  if (was === "running" && last === "idle" && ++turns === 1) void studio.send(`Call the beatsheet list_assets tool for ${project}, then reply with just the number of assets.`);
   else if (was === "running" && last === "idle") finish(0);
   if (last === "error") finish(1);
 });
@@ -28,5 +31,5 @@ const finish = (code: number) => {
 const [info] = (await studio.agents()).filter((a) => a.id === which);
 console.log(`${info?.label}: ${info?.installed ? `models ${info.models?.map((m) => m.id).join(", ")}` : `not installed. ${info?.install}`}`);
 if (!info?.installed) process.exit(1);
-await studio.start(which, { model, project: "july-4" });
+await studio.start(which, { model, project });
 setTimeout(() => finish(1), 240_000);

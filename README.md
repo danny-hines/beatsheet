@@ -101,7 +101,7 @@ beatsheet's own tools are allowed without asking, and so is looking around (list
 
 Agents started yourself in a terminal in this folder load beatsheet's tools too (`.mcp.json`; `muse --trust-workspace`) and show up under "In a terminal".
 
-`node scripts/agent-smoke.ts <muse|codex|claude> [model]` checks the hosting end to end: it starts a session and asks for one beatsheet tool call.
+`node scripts/agent-smoke.ts <muse|codex|claude> [model] [--project <id>]` checks the hosting end to end: it starts a session on a project (july-4 unless you say) and asks for one beatsheet tool call.
 
 ## From the terminal
 
@@ -188,7 +188,7 @@ Like the Mac's `beatsheet.app`, the Windows build is a personal one linked to th
 **Test checklist (on the 4090).** Each step says what should happen; anything else is worth a note. `.beatsheet\studio.log` in this folder has the studio's errors. A Claude Code session on the PC can do much of it from a terminal, without anyone at the screen:
 
 - The app's window, without a person: `$env:BEATSHEET_SNAPSHOT="$PWD\snap.png"; $env:BEATSHEET_SNAPSHOT_QUIT="1"; npm run desktop` saves a picture of the window and quits (`BEATSHEET_SNAPSHOT_HASH="#<project>"` opens a project first, `BEATSHEET_SNAPSHOT_WAIT` waits longer, in ms). Clear the variables afterwards.
-- The engine, the way an agent drives it: `node scripts/mcp-smoke.ts <project> --frame` (edits and renders a frame through the MCP server), `node scripts/agent-smoke.ts claude` (a hosted Claude Code session makes one tool call; `codex` likewise), `node scripts/subjects-smoke.ts <project> <clip asset> <photo asset> ["the dog"]` (find, track and cut out).
+- The engine, the way an agent drives it: `node scripts/mcp-smoke.ts <project> --frame` (edits and renders a frame through the MCP server), `node scripts/agent-smoke.ts claude --project <project>` (a hosted Claude Code session makes one tool call; `codex` likewise), `node scripts/subjects-smoke.ts <project> <clip asset> <photo asset> ["the dog"]` (find, track and cut out).
 - The CLI: `npm run beatsheet -- import <folder> --id wintest --song <song>`, then `npm run beatsheet -- render wintest --draft`.
 
 Steps that need Danny: anything signed in or paid for (agent sign-in, the ElevenLabs key, the Hugging Face token and Meta's approval), what only a person can see or hear (playback, voices, recording, the picker dialogs), and installing anything (the `winget` lines). A session never reads a key or token itself.
