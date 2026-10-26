@@ -7,7 +7,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { extname, join, win32 } from "node:path";
+import { extname, posix, win32 } from "node:path";
 
 export type Platform = NodeJS.Platform;
 export const IS_WINDOWS = process.platform === "win32";
@@ -18,13 +18,13 @@ export const HERE = IS_WINDOWS ? "this PC" : "this Mac";
 /** beatsheet's own folder: settings, helpers it builds, and what Settings installs (SAM, Kokoro). */
 export function appDataDir(platform: Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
   if (platform === "win32") return win32.join(env.LOCALAPPDATA ?? win32.join(home, "AppData", "Local"), "beatsheet");
-  if (platform === "darwin") return join(home, "Library", "Application Support", "beatsheet");
-  return join(env.XDG_DATA_HOME ?? join(home, ".local", "share"), "beatsheet");
+  if (platform === "darwin") return posix.join(home, "Library", "Application Support", "beatsheet");
+  return posix.join(env.XDG_DATA_HOME ?? posix.join(home, ".local", "share"), "beatsheet");
 }
 
 /** A virtual environment's Python. */
 export const venvPython = (venv: string, platform: Platform = process.platform) =>
-  platform === "win32" ? win32.join(venv, "Scripts", "python.exe") : join(venv, "bin", "python");
+  platform === "win32" ? win32.join(venv, "Scripts", "python.exe") : posix.join(venv, "bin", "python");
 
 /**
  * Renames over a file in one step, as writes that mustn't be seen half-done do. Windows refuses (EPERM, EBUSY,
@@ -116,12 +116,13 @@ export function cliGuesses(name: string, platform: Platform = process.platform, 
       w(home, ".npm-global", `${name}.cmd`),
     ];
   }
+  const j = posix.join;
   const own: Record<string, string[]> = {
-    muse: [join(home, ".local/bin/muse")],
-    codex: [join(home, ".local/bin/codex"), join(home, ".npm-global/bin/codex")],
-    claude: [join(home, ".local/bin/claude"), join(home, ".claude/local/claude"), join(home, ".npm-global/bin/claude")],
+    muse: [j(home, ".local/bin/muse")],
+    codex: [j(home, ".local/bin/codex"), j(home, ".npm-global/bin/codex")],
+    claude: [j(home, ".local/bin/claude"), j(home, ".claude/local/claude"), j(home, ".npm-global/bin/claude")],
   };
-  return [...(own[name] ?? [join(home, ".local/bin", name)]), `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`];
+  return [...(own[name] ?? [j(home, ".local/bin", name)]), `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`];
 }
 
 /** What `where.exe` found, best first: a real program before a script shim. */
