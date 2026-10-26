@@ -31,6 +31,28 @@ From the README's "Not proved yet":
 - HEIC photos, which need ffmpeg 7.1 or later.
 - On the 5070 (12 GB): whether SAM 3.1 fits in memory.
 
+## Notes from the session that wrote the port
+
+- **SAM 3.1:**
+  - It does photos too, as one-frame videos, so there's one 3.5 GB download. If photo cut-outs disappoint, the fallback is Meta's image model with the `facebook/sam3` checkpoint.
+  - Least certain in the worker (`packages/engine/native/sam-cuda-worker.py`): point prompts (`cut_out` with `point`, and the fallback when a box finds nothing), and boxes. A box is used as an example of what to find, keeping the match that best fills it.
+  - Workarounds for Meta's sam3#544 and #523 stay harmless if upstream fixes them.
+- **Switches for testing SAM:**
+  - `BEATSHEET_SAM_TRITON=0` runs the three Triton steps on the processor.
+  - `BEATSHEET_SAM_LOW=1` puts the 4090 in the 5070's 12 GB mode.
+  - The install log says whether Triton works on the card.
+- **Helpers:** the C# helpers (keys, Windows voices) are compiled on first use by Windows PowerShell 5.1 into `%LOCALAPPDATA%\beatsheet\bin`. A failure shows as "Couldn't build the … helper"; deleting that folder forces a rebuild.
+- **Without SAM:** OpenCV runs through `uv run` (`opencv-contrib-python-headless` 4.10.0.84) with a pinned 230 KB face model in `%LOCALAPPDATA%\beatsheet\models`.
+- **Voices:** only the SAPI desktop voices (David, Zira) show up; the newer "natural" Narrator voices aren't reachable that way. Kokoro runs PyTorch on the processor and hasn't been tried.
+- **Agents:**
+  - Hosted Claude Code needs Git for Windows for its Bash tool, and gets PowerShell rules that deny reading Credential Manager.
+  - Codex runs with `sandbox: "workspace-write"`, which may behave differently on Windows.
+  - Muse Code may not exist for Windows.
+- **The app:**
+  - Ctrl+Shift+I is Add Footage, so the developer tools are on F12.
+  - Recording takes a whole screen, with no window picker (the PC's own sound isn't wired up).
+  - `explorer.exe` returns exit code 1 even when "Show in File Explorer" works; that's ignored on purpose.
+
 ## Reporting back
 
 Messages from this PC can't reach the Mac session, so this file is the channel. After each step, update the Results table and push. When you finish, or get stuck on something only Danny can do, say so at the top of Results.
