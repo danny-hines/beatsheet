@@ -9,9 +9,9 @@
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
-import { recycleCommand, run as runLaunch } from "./platform.ts";
+import { recycleCommand, replaceFile, run as runLaunch } from "./platform.ts";
 import { promisify } from "node:util";
 import { checkReferences, cutView, parseFile, SCHEMA_V1, withCut, type CheckIssue, type Project, type ProjectFile, type Source, type Turn } from "@beatsheet/schema";
 import { expandHome, mediaPath, projectDir, ROOTS } from "./paths.ts";
@@ -145,7 +145,7 @@ export function saveFile(id: string, input: unknown, baseVersion?: string): { ve
   const text = serialize(parsed.file);
   const tmp = `${file}.${process.pid}.tmp`;
   writeFileSync(tmp, text);
-  renameSync(tmp, file);
+  replaceFile(tmp, file);
   return { version: versionOf(text), doc: parsed.file };
 }
 

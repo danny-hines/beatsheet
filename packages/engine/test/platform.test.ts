@@ -12,6 +12,7 @@ import {
   parseRegistryPath,
   pickWhere,
   powershell,
+  replaceFile,
   revealCommand,
   untarCommand,
   unzipCommand,
@@ -34,6 +35,33 @@ describe("where beatsheet keeps its own things", () => {
   it("finds a virtual environment's Python where each system puts it", () => {
     expect(venvPython("/a/venv", "darwin")).toBe("/a/venv/bin/python");
     expect(venvPython("C:\\a\\venv", "win32")).toBe("C:\\a\\venv\\Scripts\\python.exe");
+  });
+});
+
+describe("replacing a file in one step", () => {
+  const flaky = (failures: number, code = "EPERM") => {
+    let calls = 0;
+    return {
+      rename: () => {
+        if (++calls <= failures) throw Object.assign(new Error(code), { code });
+      },
+      calls: () => calls,
+    };
+  };
+
+  it("tries again on Windows while something holds the file for a moment", () => {
+    const r = flaky(3);
+    replaceFile("a.tmp", "a", "win32", r.rename);
+    expect(r.calls()).toBe(4);
+  });
+
+  it("renames once on a Mac, and gives up on Windows for any other error", () => {
+    const mac = flaky(1);
+    expect(() => replaceFile("a.tmp", "a", "darwin", mac.rename)).toThrow("EPERM");
+    expect(mac.calls()).toBe(1);
+    const gone = flaky(1, "ENOENT");
+    expect(() => replaceFile("a.tmp", "a", "win32", gone.rename)).toThrow("ENOENT");
+    expect(gone.calls()).toBe(1);
   });
 });
 

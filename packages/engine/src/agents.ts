@@ -5,10 +5,11 @@
  * Presence comes from the MCP server itself: every agent that loads beatsheet's tools (hosted by the studio or started
  * by hand in a terminal) writes a small file under .beatsheet/agents while it's alive.
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { REPO } from "./paths.ts";
+import { replaceFile } from "./platform.ts";
 import { loadFile } from "./store.ts";
 
 
@@ -45,7 +46,7 @@ export function writePresence(p: Presence) {
   mkdirSync(AGENTS_DIR, { recursive: true });
   const file = join(AGENTS_DIR, `${p.pid}.json`);
   writeFileSync(`${file}.tmp`, JSON.stringify(p));
-  renameSync(`${file}.tmp`, file);
+  replaceFile(`${file}.tmp`, file);
 }
 
 export function removePresence(pid: number) {

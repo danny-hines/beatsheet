@@ -357,7 +357,7 @@ function worker(): Promise<Worker> {
     const proc = spawn(paths.python, ["-I", "-B", WORKER, paths.weights], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      env: { ...process.env, HF_HUB_OFFLINE: "1", HF_HUB_DISABLE_TELEMETRY: "1", PYTHONIOENCODING: "utf-8", PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True", ...(videoLimits().low ? { BEATSHEET_SAM_LOW: "1" } : {}) },
+      env: { ...process.env, HF_HUB_OFFLINE: "1", HF_HUB_DISABLE_TELEMETRY: "1", PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8", PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True", ...(videoLimits().low ? { BEATSHEET_SAM_LOW: "1" } : {}) },
     });
     const pending = new Map<number, Pending>();
     let next = 1, buf = "", err = "", ready = false;

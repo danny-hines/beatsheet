@@ -4,11 +4,11 @@
  * Windows, Credential Manager) and never touch disk in the clear.
  */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentId } from "./agent/session.ts";
 import { windowsHelper } from "./native.ts";
-import { appDataDir, capture } from "./platform.ts";
+import { appDataDir, capture, replaceFile } from "./platform.ts";
 
 export const SETTINGS_DIR = process.env.BEATSHEET_HOME ?? appDataDir();
 const FILE = join(SETTINGS_DIR, "settings.json");
@@ -54,7 +54,7 @@ export function updateSettings(fn: (s: Settings) => void): Settings {
   fn(s);
   mkdirSync(SETTINGS_DIR, { recursive: true });
   writeFileSync(`${FILE}.tmp`, JSON.stringify(s, null, 2));
-  renameSync(`${FILE}.tmp`, FILE);
+  replaceFile(`${FILE}.tmp`, FILE);
   return s;
 }
 

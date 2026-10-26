@@ -209,7 +209,15 @@ function worker(): Promise<Worker> {
     // Isolated (-I) and no bytecode (-B), as for SAM. The model comes from (and is kept in) our own Hugging Face cache.
     const proc = spawn(paths.python, ["-I", "-B", WORKER], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, HF_HOME: paths.hf, HF_HUB_DISABLE_TELEMETRY: "1", TOKENIZERS_PARALLELISM: "false", PYTORCH_ENABLE_MPS_FALLBACK: "1" },
+      env: {
+        ...process.env,
+        HF_HOME: paths.hf,
+        HF_HUB_DISABLE_TELEMETRY: "1",
+        TOKENIZERS_PARALLELISM: "false",
+        PYTORCH_ENABLE_MPS_FALLBACK: "1",
+        // Windows' Python reads pipes in the old code page unless told otherwise; the lines are UTF-8.
+        ...(process.platform === "win32" ? { PYTHONUTF8: "1" } : {}),
+      },
     });
     const pending = new Map<number, Pending>();
     let next = 1, buf = "", err = "", ready = false;

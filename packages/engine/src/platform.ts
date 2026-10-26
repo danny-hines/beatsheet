@@ -5,7 +5,7 @@
  * tests can ask for either.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { extname, join, win32 } from "node:path";
 
@@ -25,6 +25,23 @@ export function appDataDir(platform: Platform = process.platform, env: NodeJS.Pr
 /** A virtual environment's Python. */
 export const venvPython = (venv: string, platform: Platform = process.platform) =>
   platform === "win32" ? win32.join(venv, "Scripts", "python.exe") : join(venv, "bin", "python");
+
+/**
+ * Renames over a file in one step, as writes that mustn't be seen half-done do. Windows refuses (EPERM, EBUSY,
+ * EACCES) while anything has the file open for a moment (a reader, the antivirus), so there it tries again for a
+ * second; a Mac renames straight away, as it always has.
+ */
+export function replaceFile(from: string, to: string, platform: Platform = process.platform, rename: (a: string, b: string) => void = renameSync) {
+  if (platform !== "win32") return rename(from, to);
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return rename(from, to);
+    } catch (err) {
+      if (attempt >= 20 || !["EPERM", "EBUSY", "EACCES"].includes((err as NodeJS.ErrnoException).code ?? "")) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+}
 
 // ---- PATH
 
