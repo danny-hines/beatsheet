@@ -11,6 +11,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
+import { recycleCommand, run as runLaunch } from "./platform.ts";
 import { promisify } from "node:util";
 import { checkReferences, cutView, parseFile, SCHEMA_V1, withCut, type CheckIssue, type Project, type ProjectFile, type Source, type Turn } from "@beatsheet/schema";
 import { expandHome, mediaPath, projectDir, ROOTS } from "./paths.ts";
@@ -232,10 +233,18 @@ function sizeOf(path: string): number {
 
 const run = promisify(execFile);
 
-/** Moves a project's folder to the Trash, where Finder can put it back. Refuses whatever `trashPlan` blocks. */
+/**
+ * Moves a project's folder to the Trash, where Finder can put it back (on Windows, the Recycle Bin, where Restore does).
+ * Refuses whatever `trashPlan` blocks.
+ */
 export async function trashProject(id: string): Promise<void> {
   const plan = trashPlan(id);
   if (plan.blocked) throw new Error(plan.blocked);
+  if (process.platform === "win32") {
+    const r = await runLaunch(recycleCommand(plan.folder), { timeout: 120_000 });
+    if (r.code !== 0) throw new Error(`Couldn't move it to the Recycle Bin: ${r.err.trim().split("\n")[0] || `exit ${r.code}`}`);
+    return;
+  }
   // macOS 15's trash does what dragging to the Trash does, so Put Back works.
   if (!existsSync("/usr/bin/trash")) throw new Error("Moving to the Trash needs macOS 15 or later. Drag the project's folder to the Trash in Finder instead.");
   try {

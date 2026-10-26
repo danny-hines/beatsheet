@@ -125,7 +125,7 @@ export async function writeScene(projectId: string, name: string, code: string):
 export function importSceneFile(projectId: string, from: string, as?: string): string {
   const src = resolve(expandHome(from));
   if (!existsSync(src) || !statSync(src).isFile()) throw new Error(`There's no file at ${src}`);
-  if (/\/\.ssh\/|\/Keychains\/|auth\.json$|\.credentials|\.env$/i.test(src)) throw new Error("That file holds secrets; it can't go into a project");
+  if (/[\\/]\.ssh[\\/]|[\\/]Keychains[\\/]|[\\/]Microsoft[\\/](Credentials|Vault)[\\/]|auth\.json$|\.credentials|\.env$/i.test(src)) throw new Error("That file holds secrets; it can't go into a project");
   const dir = join(scenesDir(projectId), "files");
   mkdirSync(dir, { recursive: true });
   const name = (as ?? basename(src)).replace(/[^\w.-]+/g, "-");

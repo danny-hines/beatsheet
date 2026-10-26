@@ -2,7 +2,7 @@ import type { Job } from "@beatsheet/engine";
 import { formatTime, type Brief, type CutSpec, type Reference } from "@beatsheet/schema";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { desktop, isTyping } from "../lib";
+import { desktop, isTyping, OS, keys, WINDOWS } from "../lib";
 import { actions, getState, timelineFor, useProject, useStore } from "../store";
 import { keptReferences, ReferencesField } from "./References";
 import { NumberField, TextField } from "./ui";
@@ -187,7 +187,7 @@ function RenderControls({ format, label }: { format: string; label: string }) {
       const chosen = await desktop.saveVideo({ name, dir: lastExportDir() });
       if (!chosen) return;
       saveAs = chosen;
-      rememberExportDir(chosen.slice(0, chosen.lastIndexOf("/")));
+      rememberExportDir(chosen.slice(0, Math.max(chosen.lastIndexOf("/"), WINDOWS ? chosen.lastIndexOf("\\") : -1)));
     }
     const res = await fetch(`/api/projects/${projectId}/render`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cut: getState().cutId, format, quality, saveAs }) });
     if (!res.ok) return setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "The export didn't start");
@@ -199,9 +199,10 @@ function RenderControls({ format, label }: { format: string; label: string }) {
       setJob(j);
     }
   };
-  const file = job?.output?.split("/").pop();
+  const output = WINDOWS ? job?.output?.replace(/\\/g, "/") : job?.output;
+  const file = output?.split("/").pop();
   // Inside the project's out/ folder the page can play it; anywhere else, Finder and the person's own player can.
-  const inProject = !!job?.output?.includes(`/${projectId}/out/`);
+  const inProject = !!output?.includes(`/${projectId}/out/`);
   return (
     <div className="render">
       <div className="row">
@@ -224,7 +225,7 @@ function RenderControls({ format, label }: { format: string; label: string }) {
           {inProject && <video src={`/media/${projectId}/out/${file}?v=${job.id}`} controls />}
           <div className="mono small dim">{job.output}</div>
           <div className="row">
-            {desktop?.reveal && <button onClick={() => desktop!.reveal!(job.output!)}>Show in Finder</button>}
+            {desktop?.reveal && <button onClick={() => desktop!.reveal!(job.output!)}>Show in {OS.files}</button>}
             {desktop?.openFile && <button onClick={() => void desktop!.openFile!(job.output!)}>Open</button>}
             {!desktop && inProject && (
               <a className="button" href={`/media/${projectId}/out/${file}`} download={file}>
@@ -240,19 +241,19 @@ function RenderControls({ format, label }: { format: string; label: string }) {
 
 const SHORTCUTS: [string[], string][] = [
   [["Space"], "Play / pause"],
-  [["←", "→"], "Step a frame (⇧ for a second)"],
+  [["←", "→"], `Step a frame (${keys("⇧")} for a second)`],
   [["↑", "↓"], "Previous / next shot"],
   [["Home", "End"], "Start / end"],
   [["N"], "Note what's selected, or the shot under the playhead"],
   [["Drag on the frame"], "Note a part of the picture"],
   [["Drag on the timeline"], "Move the playhead"],
-  [["⇧ drag on the ruler"], "Note a stretch of the cut"],
+  [[WINDOWS ? "Shift-drag on the ruler" : "⇧ drag on the ruler"], "Note a stretch of the cut"],
   [["Esc"], "Clear the selection"],
-  [["⌘Z", "⇧⌘Z"], "Undo / redo"],
-  [["⌘N"], "New project (Mac app)"],
-  [["⇧⌘N"], "New cut (Mac app)"],
-  [["⇧⌘O"], "All projects (Mac app)"],
-  [["⌘E"], "Export (Mac app)"],
+  [[keys("⌘Z"), keys("⇧⌘Z")], "Undo / redo"],
+  [[keys("⌘N")], `New project (${OS.app})`],
+  [[keys("⇧⌘N")], `New cut (${OS.app})`],
+  [[keys("⇧⌘O")], `All projects (${OS.app})`],
+  [[keys("⌘E")], `Export (${OS.app})`],
   [["?"], "These shortcuts"],
 ];
 

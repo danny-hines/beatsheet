@@ -1,35 +1,38 @@
 /**
  * Finding the agent CLIs and starting things the way the person's terminal would. The studio may run without their
- * login PATH (a desktop app never has it), so ask a login shell, then look where each CLI installs.
+ * login PATH (a desktop app never has it), so ask a login shell, then look where each CLI installs. On Windows the
+ * PATH a new terminal would get is in the registry, and npm's CLIs are .cmd shims that need starting their own way
+ * (`launch` in platform.ts).
  */
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn, type SpawnOptions } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { REPO } from "../paths.ts";
+import { capture, cliGuesses, launch, mergePath, pathKey, pickWhere, powershell, registryPath, systemExe, withPath } from "../platform.ts";
 
 const run = promisify(execFile);
-const home = homedir();
+const WINDOWS = process.platform === "win32";
 
 export type CliName = "muse" | "codex" | "claude";
 
-/** Where each CLI's installer puts it, for when the login shell doesn't say. */
-const GUESSES: Record<CliName, string[]> = {
-  muse: [join(home, ".local/bin/muse")],
-  codex: [join(home, ".local/bin/codex"), join(home, ".npm-global/bin/codex")],
-  claude: [join(home, ".local/bin/claude"), join(home, ".claude/local/claude"), join(home, ".npm-global/bin/claude")],
-};
-
 /**
  * Getting each CLI working: the official install command (when there's one beatsheet can run for you) and the command
- * that signs in. Sign-in always happens in the CLI itself, in a terminal; beatsheet never sees the credentials.
+ * that signs in. Sign-in always happens in the CLI itself, in a terminal; beatsheet never sees the credentials. On
+ * Windows the installers are PowerShell's (Claude Code's install.ps1) or npm's.
  */
-export const SETUP: Record<CliName, { install?: string; signIn: string }> = {
-  muse: { signIn: "muse" },
-  codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
-  claude: { install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
-};
+export const SETUP: Record<CliName, { install?: string; signIn: string }> = WINDOWS
+  ? {
+      muse: { signIn: "muse" },
+      codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
+      claude: { install: "irm https://claude.ai/install.ps1 | iex", signIn: "claude" },
+    }
+  : {
+      muse: { signIn: "muse" },
+      codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
+      claude: { install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
+    };
 
 const found = new Map<CliName, { at: number; path: string | null }>();
 /** Look again next time, e.g. right after installing. */
@@ -38,21 +41,38 @@ export async function findCli(name: CliName): Promise<string | null> {
   const hit = found.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.path;
   let path: string | null = null;
-  try {
-    const { stdout } = await run("/bin/zsh", ["-lc", `command -v ${name}`], { timeout: 8000 });
-    const p = stdout.trim().split("\n").pop();
-    if (p?.startsWith("/")) path = p;
-  } catch {
-    // not on the login PATH
+  if (WINDOWS) {
+    // Where a new terminal would find it, then where its installer puts it.
+    const r = await capture(systemExe("where.exe"), [name], { env: await cliEnv(), timeout: 8000 }).catch(() => undefined);
+    path = (r && pickWhere(r.out)) ?? null;
+  } else {
+    try {
+      const { stdout } = await run("/bin/zsh", ["-lc", `command -v ${name}`], { timeout: 8000 });
+      const p = stdout.trim().split("\n").pop();
+      if (p?.startsWith("/")) path = p;
+    } catch {
+      // not on the login PATH
+    }
   }
-  path ??= [...GUESSES[name], `/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`].find((g) => existsSync(g)) ?? null;
+  path ??= cliGuesses(name).find((g) => existsSync(g)) ?? null;
   found.set(name, { at: Date.now(), path });
   return path;
+}
+
+/** Starts a CLI found by findCli (on Windows an npm .cmd shim runs on Node; see `launch`). */
+export function spawnCli(cli: string, args: string[], opts: SpawnOptions) {
+  const l = launch(cli, args);
+  return spawn(l.command, l.args, { windowsHide: true, ...opts, windowsVerbatimArguments: l.windowsVerbatimArguments });
 }
 
 let loginPath: string | undefined;
 /** The environment for a CLI: this process's, with the login shell's PATH so its own tools (node, git) resolve. */
 export async function cliEnv(extra: Record<string, string> = {}): Promise<NodeJS.ProcessEnv> {
+  if (WINDOWS) {
+    // The registry's PATH (what a new terminal gets) is read each time: Setup may have just installed something.
+    const PATH = mergePath([await registryPath().catch(() => ""), process.env[pathKey(process.env)]]);
+    return { ...withPath(process.env, PATH), ...extra };
+  }
   if (loginPath === undefined) {
     try {
       const { stdout } = await run("/bin/zsh", ["-lc", 'printf %s "$PATH"'], { timeout: 8000 });
@@ -71,6 +91,12 @@ export async function cliEnv(extra: Record<string, string> = {}): Promise<NodeJS
  * are added too, in case the shell's profile doesn't set them.
  */
 export async function useLoginPath(): Promise<void> {
+  if (WINDOWS) {
+    // A Windows app already has the PATH the person set; this adds anything installed since it started.
+    const key = pathKey(process.env);
+    process.env[key] = mergePath([process.env[key], await registryPath().catch(() => "")]);
+    return;
+  }
   const env = await cliEnv();
   const parts = [...(env.PATH ?? "").split(":"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   process.env.PATH = [...new Set(parts.filter(Boolean))].join(":");
@@ -112,8 +138,9 @@ export async function installCli(name: CliName, onLine: (line: string) => void):
   if (!command) throw new Error(`beatsheet can't install ${name} for you`);
   onLine(`$ ${command}`);
   const env = await cliEnv();
+  const shell = WINDOWS ? powershell(command) : { command: "/bin/zsh", args: ["-lc", command] };
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("/bin/zsh", ["-lc", command], { env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(shell.command, shell.args, { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let rest = "";
     const take = (d: Buffer) => {
       const lines = (rest + d.toString()).split(/\r?\n|\r/);
@@ -131,12 +158,26 @@ export async function installCli(name: CliName, onLine: (line: string) => void):
   forgetCli(name);
 }
 
-/** Opens Terminal running the CLI's sign-in, in the beatsheet folder. */
+/** Opens Terminal (on Windows, a console window) running the CLI's sign-in, in the beatsheet folder. */
 export async function openSignIn(name: CliName): Promise<void> {
   const cli = await findCli(name);
   if (!cli) throw new Error(`${name} isn't installed`);
   const dir = join(REPO, ".beatsheet", "launch");
   mkdirSync(dir, { recursive: true });
+  if (WINDOWS) {
+    const script = join(dir, `sign-in-${name}.cmd`);
+    // `call`, so a .cmd shim (npm's codex) returns to the script; /k keeps the window open to read what it said.
+    const command = SETUP[name].signIn.replace(/^\S+/, `call "${cli}"`);
+    writeFileSync(script, ["@echo off", `title Sign in to ${name}`, `cd /d "${REPO}"`, command, ""].join("\r\n"));
+    const child = spawn(process.env.ComSpec ?? systemExe("cmd.exe"), ["/d", "/c", `start "Sign in to ${name}" "${process.env.ComSpec ?? systemExe("cmd.exe")}" /k "${script}"`], {
+      env: await cliEnv(),
+      detached: true,
+      stdio: "ignore",
+      windowsVerbatimArguments: true,
+    });
+    child.unref();
+    return;
+  }
   const script = join(dir, `sign-in-${name}.command`);
   const command = SETUP[name].signIn.replace(/^\S+/, `'${cli}'`);
   writeFileSync(script, ["#!/bin/zsh -l", `cd '${REPO}'`, `printf '\\e]0;Sign in to ${name}\\a'`, command, ""].join("\n"));

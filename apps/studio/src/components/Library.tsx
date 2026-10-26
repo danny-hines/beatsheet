@@ -1,6 +1,6 @@
 import { formatTime, type Asset, type Project } from "@beatsheet/schema";
 import { useEffect, useMemo, useState } from "react";
-import { desktop, hideBroken, pickFootage, posterUrl, stripUrl } from "../lib";
+import { desktop, hideBroken, pickFootage, posterUrl, stripUrl, pathParts } from "../lib";
 import type { RecordKind } from "../record";
 import { actions, getState, useProject, useStore } from "../store";
 import { RecorderDialog, RecordMenu } from "./Recorder";
@@ -54,7 +54,7 @@ export function Library() {
   const imported = footage.filter((a) => !madeHere(a) && !recorded(a));
   const groups = [
     ...(p.sources.length > 1
-      ? p.sources.map((s) => ({ key: s.id, label: s.label ?? s.path.split("/").filter(Boolean).pop() ?? s.path, items: imported.filter((a) => (a.source ?? p.sources[0]!.id) === s.id && keep(a)) }))
+      ? p.sources.map((s) => ({ key: s.id, label: s.label ?? pathParts(s.path).filter(Boolean).pop() ?? s.path, items: imported.filter((a) => (a.source ?? p.sources[0]!.id) === s.id && keep(a)) }))
       : [{ key: "all", label: "", items: imported.filter(keep) }]),
     { key: "recordings", label: "Recordings", items: footage.filter((a) => recorded(a) && keep(a)) },
     { key: "cutouts", label: "Cut-outs", items: footage.filter((a) => a.cutout && keep(a)) },
@@ -182,7 +182,7 @@ function AddFootage({ big, onRecord }: { big?: boolean; onRecord: (kind: RecordK
     }
     if (j.status !== "done") return;
     setJob(null);
-    const from = paths.length === 1 ? paths[0] : `${paths.length} places (${paths.map((p) => p.split("/").pop()).join(", ")})`;
+    const from = paths.length === 1 ? paths[0] : `${paths.length} places (${paths.map((p) => pathParts(p).pop()).join(", ")})`;
     await answer({ provided: `I added ${j.output} new file${j.output === "1" ? "" : "s"} from ${from}. Log them, then fold the good ones into the cuts where they help.` });
   };
   if (job?.status === "running") {

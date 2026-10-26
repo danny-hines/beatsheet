@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { desktop, type EngineJob } from "../lib";
+import { desktop, type EngineJob, WINDOWS } from "../lib";
 import { allow, captureError, cleanAudio, clock, RECORD_WORDS, stopStream, useDevices, useLevel, useTake, type RecordKind } from "../record";
 import { actions, getState } from "../store";
 
@@ -298,7 +298,7 @@ export function RecorderDialog({ kind, onClose }: { kind: RecordKind; onClose: (
         {error && (
           <p className="warn small">
             {error}{" "}
-            {desktop?.openPrivacy && /System Settings/.test(error) && (
+            {desktop?.openPrivacy && /System Settings|Windows Settings/.test(error) && (
               <button className="link small" onClick={() => desktop!.openPrivacy!(/camera/i.test(error) ? "camera" : "microphone")}>
                 Open Privacy settings
               </button>
@@ -359,7 +359,7 @@ function ScreenPlaceholder({ kind, onChoose }: { kind: RecordKind; onChoose: () 
       <button className="primary" onClick={onChoose}>
         Choose a window or screen…
       </button>
-      <span className="dim small">{desktop ? "macOS asks what to share: a window, an app or a whole display." : "Your browser asks what to share."}</span>
+      <span className="dim small">{desktop ? (WINDOWS ? "With more than one screen, beatsheet asks which to record." : "macOS asks what to share: a window, an app or a whole display.") : "Your browser asks what to share."}</span>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { AgentId, AgentSessionSummary, Presence } from "@beatsheet/engine";
 import { useEffect, useRef, useState } from "react";
-import { AGENT_NAMES, agentActivity, modelName, sessionActivity, timeAgo } from "../lib";
+import { AGENT_NAMES, agentActivity, modelName, sessionActivity, timeAgo, OS } from "../lib";
 import { actions, useStore } from "../store";
 
 /** Re-renders every `ms` so "12s ago" stays true. */
@@ -178,7 +178,7 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
       </div>
       {!agent?.installed ? (
         <p className="small">
-          {agent?.label} isn't installed on this Mac.{" "}
+          {agent?.label} isn't installed on {OS.here}.{" "}
           <button className="link" onClick={() => actions.setSettingsOpen(true)}>
             Set it up
           </button>

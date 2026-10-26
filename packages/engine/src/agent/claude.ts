@@ -3,14 +3,15 @@
  * sign-in. The studio never reads or stores their credentials. beatsheet's tools come in with --mcp-config;
  * CLAUDE.md and the recipes in .claude/skills come from the workspace.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { REPO } from "../paths.ts";
+import { inRepo, REPO } from "../paths.ts";
+import { IS_WINDOWS } from "../platform.ts";
 import { readSettings } from "../settings.ts";
-import { cliEnv, findCli, MCP_SERVER } from "./cli.ts";
+import { cliEnv, findCli, MCP_SERVER, spawnCli } from "./cli.ts";
 import { AgentAdapter, message, readStudioMessage, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
 
 /** Claude Code keeps each workspace's transcripts in a folder named after its path. */
@@ -53,7 +54,7 @@ const blockText = (content: unknown): string =>
 const detailFor = (input: unknown) => {
   const i = (input ?? {}) as Record<string, unknown>;
   const v = i.command ?? i.file_path ?? i.path ?? i.pattern ?? i.url ?? i.description;
-  return typeof v === "string" ? v.replace(`${REPO}/`, "") : undefined;
+  return typeof v === "string" ? inRepo(v) : undefined;
 };
 
 /**
@@ -62,13 +63,20 @@ const detailFor = (input: unknown) => {
  * autonomy "free" it also runs commands, edits files and reads the web on its own. Either way it never reads keys: the
  * Keychain is beatsheet's, and services are used through beatsheet's tools.
  */
-export function permissionArgs(autonomy: "ask" | "free" = "ask", chrome = false): string[] {
+export function permissionArgs(autonomy: "ask" | "free" = "ask", chrome = false, windows = IS_WINDOWS): string[] {
   const looking = ["ls", "pwd", "which", "file", "stat", "du", "wc", "ffprobe", "mdls"].flatMap((c) => [`Bash(${c})`, `Bash(${c} *)`]);
   const free = autonomy === "free" ? ["Bash", "Edit", "Write", "WebFetch", "WebSearch"] : [];
   // The person turned on working in their Chrome; the extension asks them before acting on each site.
   if (chrome) free.push("mcp__claude-in-chrome");
   // However it's spelled (/usr/bin/security, inside $(…)), reading a password out of the Keychain is refused.
   const keys = ["Bash(security *)", "Bash(*find-generic-password*)", "Bash(*find-internet-password*)", "Bash(*dump-keychain*)"];
+  if (windows) {
+    // Claude Code on Windows has a PowerShell tool beside Bash, with rules of the same shape.
+    looking.push("PowerShell(ffprobe)", "PowerShell(ffprobe *)");
+    if (autonomy === "free") free.push("PowerShell");
+    // The keys are in Credential Manager: beatsheet's own helper, and the ways PowerShell reads it.
+    keys.push(...WINDOWS_KEY_READERS.flatMap((k) => [`Bash(*${k}*)`, `PowerShell(*${k}*)`]));
+  }
   return [
     ...(autonomy === "free" ? ["--permission-mode", "acceptEdits"] : []),
     "--allowedTools",
@@ -77,6 +85,9 @@ export function permissionArgs(autonomy: "ask" | "free" = "ask", chrome = false)
     keys.join(","),
   ];
 }
+
+/** What reads keys out of Windows Credential Manager. */
+const WINDOWS_KEY_READERS = ["beatsheet-credentials", "CredRead", "CredEnumerate", "PasswordVault", "Get-StoredCredential", "vaultcmd"];
 
 export class ClaudeAdapter extends AgentAdapter {
   readonly id = "claude" as const;
@@ -102,10 +113,10 @@ export class ClaudeAdapter extends AgentAdapter {
     if (!claude) return { ok: false, detail: "Not installed" };
     const env = await cliEnv();
     const out = await new Promise<string>((resolve, reject) => {
-      const child = spawn(claude, ["-p", "Reply with just the word OK.", "--output-format", "json", "--max-turns", "1", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawnCli(claude, ["-p", "Reply with just the word OK.", "--output-format", "json", "--max-turns", "1", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
       let text = "";
-      child.stdout.on("data", (d) => (text += d));
-      child.stderr.on("data", (d) => (text += d));
+      child.stdout!.on("data", (d) => (text += d));
+      child.stderr!.on("data", (d) => (text += d));
       const timer = setTimeout(() => child.kill(), 90_000);
       child.on("error", reject);
       child.on("close", () => (clearTimeout(timer), resolve(text)));
@@ -180,7 +191,7 @@ export class ClaudeAdapter extends AgentAdapter {
       ...permissionArgs(readSettings().autonomy, readSettings().chrome),
       ...extra,
     ];
-    const child = spawn(claude, args, { cwd: REPO, env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnCli(claude, args, { cwd: REPO, env, stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
     this.buffer = "";
     this.stderr = "";
@@ -409,10 +420,10 @@ function canSummarizeThinking(claude: string, env: NodeJS.ProcessEnv): Promise<b
   let known = thinkingFlag.get(claude);
   if (!known) {
     known = new Promise((resolve) => {
-      const child = spawn(claude, ["-p", "--thinking-display", "summarized"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawnCli(claude, ["-p", "--thinking-display", "summarized"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
       let out = "";
-      child.stdout.on("data", (d) => (out += d));
-      child.stderr.on("data", (d) => (out += d));
+      child.stdout!.on("data", (d) => (out += d));
+      child.stderr!.on("data", (d) => (out += d));
       const timer = setTimeout(() => child.kill(), 15_000);
       child.on("error", () => resolve(false));
       child.on("close", () => (clearTimeout(timer), resolve(/input must be provided/i.test(out) && !/unknown option|invalid/i.test(out))));

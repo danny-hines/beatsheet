@@ -11,7 +11,7 @@ import { SidePanel } from "./components/Side";
 import { Timeline } from "./components/Timeline";
 import { Preview, Transport } from "./components/Preview";
 import { useTurn } from "./components/Turn";
-import { desktop, isTyping, noteHere, pictureTrack } from "./lib";
+import { desktop, isTyping, noteHere, pictureTrack, WINDOWS } from "./lib";
 import { actions, getState, hasPlayer, setState, timelineFor, useStore } from "./store";
 
 export function App() {
@@ -63,6 +63,7 @@ export function App() {
       else if (command.startsWith("record-")) window.dispatchEvent(new CustomEvent("beatsheet:record", { detail: command.slice("record-".length) }));
     });
     if (desktop) document.documentElement.classList.add("desktop");
+    if (desktop && WINDOWS) document.documentElement.classList.add("win");
     void actions.loadAgent().then(() => getState().agent.agent && actions.loadAgentList());
     return () => {
       window.removeEventListener("hashchange", onHash);
@@ -217,6 +218,12 @@ function useKeys() {
         e.preventDefault();
         if (e.shiftKey) actions.redo();
         else actions.undo();
+        return;
+      }
+      // Windows' own redo.
+      if (WINDOWS && e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === "y" && !isTyping(e)) {
+        e.preventDefault();
+        actions.redo();
         return;
       }
       if (isTyping(e) || mod) return;

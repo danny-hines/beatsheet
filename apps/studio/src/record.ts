@@ -1,15 +1,16 @@
 /**
  * Recording in the studio: the screen, a camera or the microphone, through the browser's own capture and
  * MediaRecorder. In the Mac app, macOS asks once for the camera and microphone, and the screen picker is macOS's own.
+ * On Windows, Windows Settings has one switch for each that desktop apps share.
  */
 import { useEffect, useRef, useState } from "react";
-import { desktop } from "./lib";
+import { desktop, OS, WINDOWS } from "./lib";
 
 export type RecordKind = "screen" | "camera" | "voice";
 
 export const RECORD_WORDS: Record<RecordKind, { title: string; short: string; about: string }> = {
-  screen: { title: "Record your screen", short: "Screen", about: "A window, an app or the whole screen, with your microphone if you like." },
-  camera: { title: "Record from a camera", short: "Camera", about: "Your Mac's camera or one plugged in, with sound." },
+  screen: { title: "Record your screen", short: "Screen", about: WINDOWS ? "The whole screen, with your microphone if you like." : "A window, an app or the whole screen, with your microphone if you like." },
+  camera: { title: "Record from a camera", short: "Camera", about: `Your ${OS.computer}'s camera or one plugged in, with sound.` },
   voice: { title: "Record your voice", short: "Voice", about: "Just the microphone: a voiceover, a reaction, a sample to clone your voice from." },
 };
 
@@ -40,8 +41,14 @@ export async function allow(kind: "camera" | "microphone"): Promise<string | und
   if (!desktop?.mediaAccess) return undefined;
   const status = await desktop.mediaAccess(kind);
   if (status === "granted") return undefined;
-  return `beatsheet isn't allowed to use the ${kind}. Turn it on in System Settings → Privacy & Security → ${kind === "camera" ? "Camera" : "Microphone"}, then try again.`;
+  return `beatsheet isn't allowed to use the ${kind}. Turn it on in ${privacyPath(kind)}, then try again.`;
 }
+
+/** Where the switch is: System Settings on a Mac, Windows Settings (for desktop apps) on a PC. */
+const privacyPath = (kind: "camera" | "microphone") =>
+  WINDOWS
+    ? `Windows Settings → Privacy & security → ${kind === "camera" ? "Camera" : "Microphone"} (and “Let desktop apps access your ${kind}”)`
+    : `System Settings → Privacy & Security → ${kind === "camera" ? "Camera" : "Microphone"}`;
 
 /** What went wrong, for a person: a refusal says where to allow it; cancelling a picker says nothing. */
 export function captureError(err: unknown, what: "camera" | "microphone" | "screen"): string | undefined {
@@ -50,7 +57,7 @@ export function captureError(err: unknown, what: "camera" | "microphone" | "scre
   if (name === "NotAllowedError" || name === "SecurityError") {
     if (what === "screen") return undefined; // the picker was cancelled (or refused, which macOS explains itself)
     return desktop
-      ? `beatsheet isn't allowed to use the ${what}. Turn it on in System Settings → Privacy & Security → ${what === "camera" ? "Camera" : "Microphone"}.`
+      ? `beatsheet isn't allowed to use the ${what}. Turn it on in ${privacyPath(what)}.`
       : `This page isn't allowed to use the ${what}; allow it in the browser's address bar.`;
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") return `There's no ${what} to record from.`;

@@ -6,6 +6,8 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 contextBridge.exposeInMainWorld("beatsheet", {
   desktop: true,
+  /** "darwin" or "win32": the studio words a few things (shortcuts, Finder or File Explorer) to match. */
+  platform: process.platform,
   pick: (kind: "folder" | "audio" | "file") => ipcRenderer.invoke("beatsheet:pick", kind) as Promise<string | null>,
   pickFootage: () => ipcRenderer.invoke("beatsheet:pick-footage") as Promise<string[] | null>,
   saveVideo: (opts: { name: string; dir?: string }) => ipcRenderer.invoke("beatsheet:save-video", opts) as Promise<string | null>,

@@ -10,7 +10,8 @@ import { promisify } from "node:util";
 import { autoAssemble, formatPreset, SCHEMA_VERSION, STAGE_IDS, type Asset, type Brief, type Cut, type CutSpec, type Format, type Project, type ProjectFile } from "@beatsheet/schema";
 import { averageColor, makeImageProxy, makePoster, makeStrip, makeVideoProxy, pool } from "./media.ts";
 import { analyzeMusic } from "./music.ts";
-import { assetPath, cachePaths, expandHome, ROOTS } from "./paths.ts";
+import { assetPath, cachePaths, expandHome, ROOTS, samePath } from "./paths.ts";
+import { unzipCommand } from "./platform.ts";
 import { kindOf, probe } from "./probe.ts";
 import { createProject, loadFile, loadProject, saveProject, updateFile } from "./store.ts";
 
@@ -166,7 +167,7 @@ export async function addFootage(
   const made: Project["sources"] = [];
   const assets: Asset[] = [];
   for (const [folder, files] of byFolder) {
-    let source = sources.find((s) => resolve(projectFolder, expandHome(s.path)) === folder);
+    let source = sources.find((s) => samePath(resolve(projectFolder, expandHome(s.path)), folder));
     if (!source) {
       let sid = "footage";
       for (let n = 2; sources.some((s) => s.id === sid); n++) sid = `footage-${n}`;
@@ -254,7 +255,8 @@ export async function importMedia(
       const out = join(work, String(i));
       mkdirSync(out, { recursive: true });
       log(`Unpacking ${basename(zips[i]!)}`);
-      await promisify(execFile)("ditto", ["-x", "-k", zips[i]!, out]);
+      const unzip = unzipCommand(zips[i]!, out);
+      await promisify(execFile)(unzip.command, unzip.args);
       walk(out);
     }
     const where = new Map<string, string>();

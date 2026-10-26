@@ -11,7 +11,13 @@ export const ROOTS = {
   examples: join(REPO, "examples"),
 };
 
-export const expandHome = (p: string) => (p === "~" || p.startsWith("~/") ? join(homedir(), p.slice(1)) : p);
+export const expandHome = (p: string) => (p === "~" || p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\")) ? join(homedir(), p.slice(1)) : p);
+
+/** Whether two resolved paths name the same file or folder (Windows doesn't mind the case). */
+export const samePath = (a: string, b: string) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
+
+/** A path inside the beatsheet folder as the folder's own, for showing (whichever slash it uses). */
+export const inRepo = (p: string) => p.replace(`${REPO}/`, "").replace(`${REPO}\\`, "");
 
 export const isProjectId = (id: string) => /^[a-z0-9][a-z0-9-]*$/i.test(id);
 

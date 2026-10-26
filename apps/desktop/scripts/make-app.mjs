@@ -3,11 +3,19 @@
 // Mac. Drag it to Applications if you like; rebuild after pulling changes.
 //
 // Usage: node apps/desktop/scripts/make-app.mjs
+//
+// On Windows it makes a folder with beatsheet.exe instead (make-windows.mjs).
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import { svg } from "./icon.mjs";
+
+if (process.platform === "win32") {
+  await import("./make-windows.mjs");
+  process.exit(0);
+}
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), "..");
 const repo = join(desktop, "..", "..");
@@ -40,23 +48,8 @@ set("CFBundleIdentifier", "dev.beatsheet.studio");
 set("NSCameraUsageDescription", "beatsheet records from your camera when you choose Record → Camera.");
 set("NSMicrophoneUsageDescription", "beatsheet records your voice for voiceovers and screen recordings, and to clone your voice for narration.");
 
-// The icon: beat bars on a warm square, drawn here so there's nothing to download.
+// The icon: beat bars on a warm square (icon.mjs).
 console.log("Drawing the icon…");
-const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a2210"/><stop offset="1" stop-color="#121317"/></linearGradient></defs>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#g)"/>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#f2b544" stroke-opacity="0.35" stroke-width="8"/>
-  ${[0.35, 0.6, 0.85, 0.5, 0.95, 0.65, 0.4]
-    .map((h, i) => {
-      const w = 64;
-      const gap = 40;
-      const x = 512 - (7 * w + 6 * gap) / 2 + i * (w + gap);
-      const height = 520 * h;
-      return `<rect x="${x}" y="${512 + 40 - height / 2}" width="${w}" height="${height}" rx="32" fill="${i === 4 ? "#f2b544" : "#e6e8ec"}" fill-opacity="${i === 4 ? 1 : 0.85}"/>`;
-    })
-    .join("\n  ")}
-  <circle cx="512" cy="${512 + 40 + 300}" r="18" fill="#f2b544"/>
-</svg>`;
 const iconset = join(desktop, "release", "beatsheet.iconset");
 rmSync(iconset, { recursive: true, force: true });
 mkdirSync(iconset, { recursive: true });

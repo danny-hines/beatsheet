@@ -2,7 +2,7 @@
  * Codex, hosted with `codex app-server` and the person's own ChatGPT sign-in. beatsheet's tools come in as an MCP server
  * in the thread's config; AGENTS.md comes from the workspace.
  */
-import { REPO } from "../paths.ts";
+import { inRepo, REPO } from "../paths.ts";
 import { readSettings } from "../settings.ts";
 import { CHROME_DEVTOOLS, cliEnv, codexHasChrome, findCli, MCP_SERVER } from "./cli.ts";
 import { StdioRpc, uuid7, type RpcId } from "./rpc.ts";
@@ -49,7 +49,7 @@ function toItem(x: CodexItem): AgentItem | undefined {
     case "commandExecution":
       return { id: x.id, kind: "tool", tool: "shell", status, detail: x.command as string };
     case "fileChange":
-      return { id: x.id, kind: "tool", tool: "edit files", status, detail: (x.changes as { path: string }[]).map((c) => c.path.replace(`${REPO}/`, "")).join(", ") };
+      return { id: x.id, kind: "tool", tool: "edit files", status, detail: (x.changes as { path: string }[]).map((c) => inRepo(c.path)).join(", ") };
     case "mcpToolCall":
       return { id: x.id, kind: "tool", status, server: x.server as string, tool: x.tool as string, args: x.arguments, error: (x.error as { message: string } | null)?.message };
     case "webSearch":

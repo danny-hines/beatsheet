@@ -1,7 +1,7 @@
 import type { TrashPlan } from "@beatsheet/engine";
 import type { HandOff } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
-import { AGENT_NAMES, desktop, hideBroken, pickPath, posterUrl, timeAgo } from "../lib";
+import { AGENT_NAMES, desktop, hideBroken, pickPath, posterUrl, timeAgo, OS, keys, WINDOWS } from "../lib";
 import { actions, useStore, type ProjectSummary } from "../store";
 import { Mark } from "./ui";
 
@@ -48,7 +48,7 @@ export function Home() {
             <Mark />
             <h1>beatsheet</h1>
             <span className="spacer" />
-            <button className="icon" onClick={() => actions.setSettingsOpen(true)} title="Settings: agents, models and media services (⌘,)">
+            <button className="icon" onClick={() => actions.setSettingsOpen(true)} title={`Settings: agents, models and media services (${keys("⌘,")})`}>
               ⚙
             </button>
           </header>
@@ -213,11 +213,11 @@ function CardMenu({ p, x, y, onClose, onTrash }: { p: ProjectSummary; x: number;
         Open
       </button>
       <button role="menuitem" onClick={pick(() => void revealProject(p.id))}>
-        Show in Finder
+        Show in {OS.files}
       </button>
       <hr />
       <button role="menuitem" className="danger" onClick={pick(onTrash)}>
-        Move to Trash…
+        {WINDOWS ? "Move to the Recycle Bin…" : "Move to Trash…"}
       </button>
     </div>
   );
@@ -254,7 +254,7 @@ function TrashDialog({ p, onClose }: { p: ProjectSummary; onClose: () => void })
   return (
     <div className="modal-back" onClick={() => !busy && onClose()}>
       <div className="modal trash-dialog" onClick={(e) => e.stopPropagation()} role="alertdialog" aria-labelledby="trash-title">
-        <h3 id="trash-title">Move “{p.title}” to the Trash?</h3>
+        <h3 id="trash-title">Move “{p.title}” to the {OS.trash}?</h3>
         {!plan && !error && <p className="dim">Looking in its folder…</p>}
         {plan && (
           <>
@@ -272,7 +272,7 @@ function TrashDialog({ p, onClose }: { p: ProjectSummary; onClose: () => void })
             <p className="dim small">
               What goes is the project's own folder, {size(plan.bytes)}: its cuts, notes and turns, the previews, its copy of the song, exports
               {plan.made ? `, ${plan.recordings ? "" : "and "}${plan.made === 1 ? "one file" : `${plan.made} files`} made for it (cut-outs, clips)` : ""}
-              {plan.recordings ? `, and ${plan.recordings === 1 ? "the recording" : `the ${plan.recordings} recordings`} you made in beatsheet` : ""}. You can put it back from the Trash in Finder.
+              {plan.recordings ? `, and ${plan.recordings === 1 ? "the recording" : `the ${plan.recordings} recordings`} you made in beatsheet` : ""}. {WINDOWS ? "You can restore it from the Recycle Bin." : "You can put it back from the Trash in Finder."}
             </p>
           </>
         )}
@@ -280,14 +280,14 @@ function TrashDialog({ p, onClose }: { p: ProjectSummary; onClose: () => void })
         {(plan?.blocked || error) && <p className="warn small">{plan?.blocked || error}</p>}
         <div className="modal-actions">
           <button className="link" onClick={() => void revealProject(p.id)}>
-            Show in Finder
+            Show in {OS.files}
           </button>
           <span className="spacer" />
           <button onClick={onClose} disabled={busy} autoFocus>
             Cancel
           </button>
           <button className="danger" onClick={() => void trash()} disabled={!plan || !!plan.blocked || busy}>
-            {busy ? "Moving…" : "Move to Trash"}
+            {busy ? "Moving…" : WINDOWS ? "Move to the Recycle Bin" : "Move to Trash"}
           </button>
         </div>
       </div>
@@ -295,8 +295,8 @@ function TrashDialog({ p, onClose }: { p: ProjectSummary; onClose: () => void })
   );
 }
 
-/** Home folders as ~, the way Finder people read them. */
-const tilde = (path: string) => path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~");
+/** Home folders as ~, the way Finder people read them (C:\Users\<name> too, on Windows). */
+const tilde = (path: string) => (WINDOWS ? path.replace(/^[a-z]:\\Users\\[^\\]+(?=\\|$)/i, "~") : path.replace(/^\/Users\/[^/]+(?=\/|$)/, "~"));
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : "under 1 MB");
 
 const askWords = (ask: HandOff) =>

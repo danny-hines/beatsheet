@@ -1,7 +1,7 @@
 import { cutView, FORMAT_PRESETS, formatPreset, resolveTimeline, type Cut, type CutSpec, type Format } from "@beatsheet/schema";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AGENT_NAMES } from "../lib";
+import { AGENT_NAMES, keys } from "../lib";
 import { actions, useStore } from "../store";
 import { answer } from "./Turn";
 
@@ -59,7 +59,7 @@ export function CutMenu() {
               setMaking(true);
             }}
           >
-            + New cut…<span className="dim small">⇧⌘N</span>
+            + New cut…<span className="dim small">{keys("⇧⌘N")}</span>
           </button>
         </div>
       )}
@@ -82,7 +82,7 @@ function CutRow({ c, on, only, onPick }: { c: Cut; on: boolean; only: boolean; o
     setName(undefined);
   };
   const remove = () => {
-    if (window.confirm(`Delete the cut “${c.name}”? Its shots and notes go with it; ⌘Z brings it back.`)) actions.deleteCut(c.id);
+    if (window.confirm(`Delete the cut “${c.name}”? Its shots and notes go with it; ${keys("⌘Z")} brings it back.`)) actions.deleteCut(c.id);
   };
   return (
     <div className={`cut-row ${on ? "on" : ""}`}>

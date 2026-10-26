@@ -1,6 +1,6 @@
 import { formatTime, slugify, type Asset, type Moment, type Rect } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
-import { hideBroken, posterUrl, proxyUrl, stripUrl } from "../lib";
+import { hideBroken, posterUrl, proxyUrl, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
 import { actions, getState, useStore } from "../store";
 import { Stars, TextField } from "./ui";
@@ -312,9 +312,9 @@ export function AssetView({ a }: { a: Asset }) {
         <dl>
           <dt>File</dt>
           <dd className="mono small">
-            {a.path.split("/").pop()}{" "}
+            {pathParts(a.path).pop()}{" "}
             <button className="link small" onClick={() => void reveal()}>
-              Show in Finder
+              Show in {OS.files}
             </button>
             {revealError && <span className="warn small"> {revealError}</span>}
           </dd>

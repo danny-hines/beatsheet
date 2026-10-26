@@ -7,6 +7,9 @@
  * Apple's Vision framework does the work on this Mac through a small Swift helper (`native/vision.swift`), built with
  * the Xcode command line tools the first time it's needed. SAM can lift subjects out by description instead ("the dog",
  * "the red kite"): SAM 3 on this Mac once it's installed in Settings (`sam.ts`), or SAM 3.1 through fal with a key.
+ *
+ * On Windows, SAM 3.1 on the PC's NVIDIA card does all of it, clips included, with OpenCV finding faces and people
+ * until it's installed (`subjects-windows.ts`).
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -17,19 +20,25 @@ import { execFile } from "node:child_process";
 import sharp from "sharp";
 import { slugify, type Asset, type Rect, type SubjectTrack } from "@beatsheet/schema";
 import { addAsset } from "./ingest.ts";
+import { alphaWebm } from "./media.ts";
 import { swiftHelper } from "./native.ts";
 import { assetPath, cachePaths } from "./paths.ts";
 import { samReady, samSegment } from "./sam.ts";
 import { getSecret } from "./settings.ts";
 import { loadFile, updateFile } from "./store.ts";
+import { toPng, windowsCutoutStill, windowsCutoutVideo, windowsFinder, windowsSubjects, windowsTrack, windowsVisionStatus } from "./subjects-windows.ts";
 
 const run = promisify(execFile);
+const WINDOWS = process.platform === "win32";
+/** What finds subjects by itself (rather than someone boxing or joining them): found again, they're replaced. */
+const FINDERS = new Set(["apple-vision", "sam-3.1", "opencv"]);
 
 /** The Vision helper, built from source on first use (and again whenever the source changes). */
 export const visionHelper = () => swiftHelper("vision");
 
 /** Whether subjects and cut-outs are available here, without building anything. */
 export async function visionStatus(): Promise<{ ok: boolean; detail: string }> {
+  if (WINDOWS) return windowsVisionStatus();
   if (process.platform !== "darwin") return { ok: false, detail: "Needs a Mac" };
   try {
     await run("xcrun", ["--find", "swiftc"]);
@@ -95,11 +104,12 @@ const freeId = (base: string, taken: Set<string>) => {
  */
 export async function findSubjects(id: string, assetId: string, onProgress?: Progress): Promise<SubjectTrack[]> {
   const a = assetOf(id, assetId);
-  const found = await helper<{ tracks: { kind: "face" | "person"; samples: number[][] }[] }>(["subjects", analysable(id, a)], onProgress);
+  const found = WINDOWS ? await windowsSubjects(analysable(id, a), a, onProgress) : await helper<{ tracks: { kind: "face" | "person"; samples: number[][] }[] }>(["subjects", analysable(id, a)], onProgress);
+  const by = WINDOWS ? windowsFinder() : "apple-vision";
   let result: SubjectTrack[] = [];
   updateFile(id, (doc) => {
     const asset = doc.assets.find((x) => x.id === assetId)!;
-    const kept = (asset.subjects ?? []).filter((s) => s.by !== "apple-vision");
+    const kept = (asset.subjects ?? []).filter((s) => !FINDERS.has(s.by ?? ""));
     const old = (asset.subjects ?? []).filter((s) => !kept.includes(s));
     const taken = new Set(kept.map((s) => s.id));
     // Someone already followed by hand (boxed, or joined from pieces) isn't found again as a duplicate.
@@ -122,9 +132,9 @@ export async function findSubjects(id: string, assetId: string, onProgress?: Pro
     };
     const fresh = found.tracks.map((t, i): SubjectTrack => {
       const same = matched.get(i);
-      if (same) return { ...same, by: "apple-vision", samples: t.samples };
+      if (same) return { ...same, by, samples: t.samples };
       const n = next(t.kind);
-      return { id: `${t.kind}-${n}`, label: `${t.kind === "face" ? "Face" : "Person"} ${n}`, kind: t.kind, by: "apple-vision", samples: t.samples };
+      return { id: `${t.kind}-${n}`, label: `${t.kind === "face" ? "Face" : "Person"} ${n}`, kind: t.kind, by, samples: t.samples };
     });
     asset.subjects = [...kept, ...fresh];
     if (!asset.subjects.length) delete asset.subjects;
@@ -150,7 +160,7 @@ export function joinSubjects(id: string, assetId: string, keep: string, others: 
     for (const g of gone) for (const x of g.samples) if (!samples.some((y) => Math.abs(y[0]! - x[0]!) < 0.05)) samples.push(x);
     k.samples = samples.sort((a, b) => a[0]! - b[0]!);
     // Joined by hand, so a new search leaves it be.
-    if (k.by === "apple-vision") k.by = "joined";
+    if (FINDERS.has(k.by ?? "")) k.by = "joined";
     const ids = new Set(gone.map((g) => g.id));
     asset.subjects = asset.subjects!.filter((s) => !ids.has(s.id));
     for (const cut of doc.cuts)
@@ -185,6 +195,7 @@ export async function trackSubject(id: string, assetId: string, opts: { at: numb
   const b = opts.box;
   let samples: number[][];
   if (a.kind === "image") samples = [[0, b.x, b.y, b.w, b.h]];
+  else if (WINDOWS) samples = (await windowsTrack(analysable(id, a), a, opts.at, b, onProgress)).samples;
   else {
     const r = await helper<{ samples: number[][] }>(["track", analysable(id, a), "--at", String(opts.at), "--box", [b.x, b.y, b.w, b.h].join(",")], onProgress);
     samples = r.samples;
@@ -236,11 +247,16 @@ export async function cutOut(id: string, assetId: string, opts: CutOutOptions = 
   const mode = opts.mode ?? (subject ? (subject.kind === "object" ? "subject" : "people") : "people");
   const stamp = Date.now().toString(36);
   const name = `${assetId}-${subject ? subject.id : mode}-${stamp}`;
-  const made = (label: string) => ({ source: "synth" as const, provider: "apple-vision", model: mode === "people" ? "person masks" : "foreground masks", refs: [assetId], createdAt: new Date().toISOString(), prompt: label });
+  const made = (label: string) =>
+    WINDOWS
+      ? { source: "synth" as const, provider: "sam-3.1", model: "sam3.1-multiplex", refs: [assetId], createdAt: new Date().toISOString(), prompt: label }
+      : { source: "synth" as const, provider: "apple-vision", model: mode === "people" ? "person masks" : "foreground masks", refs: [assetId], createdAt: new Date().toISOString(), prompt: label };
 
   // By description: SAM on this Mac, or through fal.
   if (opts.prompt) {
     const prompt = opts.prompt.trim();
+    // SAM 3.1 on a PC follows what it's told through a clip too: a moving cut-out by description.
+    if (WINDOWS && samReady() && a.kind === "video" && opts.still === undefined) return clipCutOut(id, a, original, join(out, `${assetId}-${slugify(prompt).slice(0, 24) || "described"}-${stamp}.webm`), { mode, prompt, from: opts.from, to: opts.to, label: prompt }, made, onProgress);
     if (a.kind !== "image" && opts.still === undefined) throw new Error("Cut-outs by description work on photos and stills from a clip (pass `still`); for a moving cut-out, track the subject and cut that out.");
     if (samReady()) return localSamCutOut(id, a, original, join(out, `${assetId}-${slugify(prompt).slice(0, 24) || "described"}-${stamp}`), prompt, opts, onProgress);
     if (a.kind !== "image") throw new Error("Cut-outs by description from a clip need SAM 3 on this Mac: install it in Settings.");
@@ -249,6 +265,12 @@ export async function cutOut(id: string, assetId: string, opts: CutOutOptions = 
 
   // A photo, or one frame of a clip.
   if (a.kind === "image" || opts.still !== undefined) {
+    if (WINDOWS) {
+      const at = opts.still ?? 0;
+      const box = opts.point || !subject ? undefined : subjectBox(subject, at);
+      const r = await windowsCutoutStill(original, a.kind === "video" ? "video" : "image", { out: join(out, name), at, mode, point: opts.point, box, each: opts.each }, onProgress);
+      return addCutouts(id, a, r.cutouts, subject?.label, made);
+    }
     const args = ["cutout", original, "--out", join(out, name), "--mode", mode];
     if (opts.still !== undefined) args.push("--at", String(opts.still));
     const at = opts.still ?? 0;
@@ -264,6 +286,8 @@ export async function cutOut(id: string, assetId: string, opts: CutOutOptions = 
     }
     return made_;
   }
+
+  if (WINDOWS) return clipCutOut(id, a, original, join(out, `${name}.webm`), { mode, follow: subject && subject.samples.length > 1 ? subject.samples : undefined, from: opts.from, to: opts.to, label: subject?.label ?? a.label ?? a.id }, made, onProgress);
 
   // A clip: every frame, streamed from the helper straight into a VP9 encoder that keeps the alpha.
   const from = Math.max(0, opts.from ?? 0);
@@ -283,6 +307,33 @@ export async function cutOut(id: string, assetId: string, opts: CutOutOptions = 
   } finally {
     if (followFile) rmSync(followFile, { force: true });
   }
+}
+
+/** Cut-outs made on Windows, added as assets the way the Mac's are. */
+async function addCutouts(id: string, a: Asset, cutouts: { file: string; box: Rect }[], subjectLabel: string | undefined, made: (label: string) => Asset["provenance"]): Promise<Asset[]> {
+  const added: Asset[] = [];
+  for (const [i, c] of cutouts.entries()) {
+    const label = `${subjectLabel ?? a.label ?? a.id}${cutouts.length > 1 ? ` · piece ${i + 1}` : ""} (cut out)`;
+    added.push(await addAsset(id, c.file, { id: `${a.id}-cut`, label, tags: ["cutout", ...(a.tags ?? []).filter((t) => t !== "cutout")], provenance: made(label), cutout: { of: a.id, box: c.box } }));
+  }
+  return added;
+}
+
+/** A moving cut-out on Windows, by SAM 3.1: someone followed before, what a prompt describes, or people. */
+async function clipCutOut(
+  id: string,
+  a: Asset,
+  original: string,
+  file: string,
+  opts: { mode: "people" | "subject"; follow?: number[][]; prompt?: string; from?: number; to?: number; label: string },
+  made: (label: string) => Asset["provenance"],
+  onProgress?: Progress,
+): Promise<Asset[]> {
+  const from = Math.max(0, opts.from ?? 0);
+  const to = Math.min(a.duration ?? Infinity, opts.to ?? from + 30);
+  const result = await windowsCutoutVideo(original, a, { file, from, to, mode: opts.mode, follow: opts.follow, prompt: opts.prompt }, onProgress);
+  const label = `${opts.label} (cut out)`;
+  return [await addAsset(id, file, { id: `${a.id}-cut`, label, tags: ["cutout", ...(a.tags ?? []).filter((t) => t !== "cutout")], provenance: made(label), cutout: { of: a.id, box: result.box, from } })];
 }
 
 function subjectBox(s: SubjectTrack, t: number): Rect | undefined {
@@ -311,7 +362,8 @@ function encodeCutout(bin: string, args: string[], file: string, onProgress?: Pr
           result = { box: r.box.x !== undefined ? (r.box as Rect) : undefined, frames: r.frames };
         } else if (line.startsWith("size ")) {
           const [wh, fps] = line.slice(5).split(" ");
-          enc = spawn("ffmpeg", ["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", wh!, "-r", fps!, "-i", "-", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-crf", "32", "-b:v", "0", "-row-mt", "1", "-deadline", "good", "-cpu-used", "4", "-f", "webm", tmp], {
+          const [ffmpeg, ...encode] = alphaWebm(wh!, fps!, tmp);
+          enc = spawn(ffmpeg!, encode, {
             stdio: ["pipe", "ignore", "pipe"],
           });
           enc.stderr!.on("data", (e) => (encErr += e));
@@ -354,7 +406,8 @@ async function localSamCutOut(id: string, a: Asset, original: string, outBase: s
       await run("ffmpeg", ["-v", "error", "-y", "-ss", String(opts.still ?? 0), "-i", original, "-frames:v", "1", tmp]);
       picture = tmp;
     } else if (!READABLE.test(original)) {
-      await run("sips", ["-s", "format", "png", original, "--out", tmp]);
+      if (WINDOWS) await toPng(original, tmp);
+      else await run("sips", ["-s", "format", "png", original, "--out", tmp]);
       picture = tmp;
     }
     onProgress?.(0.1);
@@ -369,7 +422,7 @@ async function localSamCutOut(id: string, a: Asset, original: string, outBase: s
           id: `${a.id}-cut`,
           label,
           tags: ["cutout", ...(a.tags ?? []).filter((t) => t !== "cutout")],
-          provenance: { source: "synth", provider: "sam-3-mlx", model: "sam3-image", prompt, refs: [a.id], createdAt: new Date().toISOString() },
+          provenance: { source: "synth", provider: WINDOWS ? "sam-3.1" : "sam-3-mlx", model: WINDOWS ? "sam3.1-multiplex" : "sam3-image", prompt, refs: [a.id], createdAt: new Date().toISOString() },
           cutout: { of: a.id, box: c.box },
         }),
       );

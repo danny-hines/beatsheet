@@ -1,7 +1,8 @@
 /**
  * Voices for narration, from whatever this Mac has: ElevenLabs with a key (its library, voices designed from a
- * description, the person's own cloned voice), Kokoro once it's installed in Settings, and always the Mac's own voices.
- * Voice ids carry their provider: `elevenlabs:<voice id>`, `kokoro:af_heart`, `mac:com.apple.voice.premium.en-US.Zoe`.
+ * description, the person's own cloned voice), Kokoro once it's installed in Settings, and always the Mac's own voices
+ * (on Windows, Windows' own). Voice ids carry their provider: `elevenlabs:<voice id>`, `kokoro:af_heart`,
+ * `mac:com.apple.voice.premium.en-US.Zoe`, `windows:Microsoft Zira Desktop`.
  *
  * `speak` reads a line into an audio file and says when each word starts and ends, which is what lets shots and cuts
  * hang off words.
@@ -13,13 +14,14 @@ import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { voiceProvider, type Word } from "@beatsheet/schema";
 import { KOKORO_VOICES, kokoroReady, kokoroSpeak, kokoroStatus, type KokoroStatus } from "./kokoro.ts";
-import { swiftHelper } from "./native.ts";
+import { swiftHelper, windowsHelper } from "./native.ts";
+import { HERE, IS_WINDOWS } from "./platform.ts";
 import { probe } from "./probe.ts";
 import { getSecret, readSettings, SETTINGS_DIR, updateSettings } from "./settings.ts";
 
 export type VoiceInfo = {
   id: string;
-  provider: "elevenlabs" | "kokoro" | "mac";
+  provider: "elevenlabs" | "kokoro" | "mac" | "windows";
   name: string;
   /** Accent, gender, character: a few words. */
   detail?: string;
@@ -49,19 +51,23 @@ export type VoicesInfo = {
   models: typeof ELEVEN_MODELS;
   elevenlabs: { configured: boolean; error?: string };
   kokoro: KokoroStatus;
+  /** This computer's own voices: the Mac's, or on Windows, Windows'. */
   mac: { ok: boolean; detail?: string; language?: string };
 };
 
 const VOICES_DIR = join(SETTINGS_DIR, "voices");
 const SAMPLE = "Here's how I sound reading your video. Every cut lands right on the beat.";
 
-// ---- The Mac's voices
+// ---- The Mac's voices (on Windows, Windows' own, through a helper that answers the same way)
+
+/** Which provider this computer's own voices are. */
+const SYSTEM = IS_WINDOWS ? "windows" : "mac";
 
 type MacVoice = { id: string; name: string; language: string; quality: "default" | "enhanced" | "premium"; gender: string; novelty: boolean; personal: boolean };
 
 /** Runs the speech helper; resolves to its JSON answer. */
 async function speechHelper<T>(args: string[]): Promise<T> {
-  const bin = await swiftHelper("speech");
+  const bin = await (IS_WINDOWS ? windowsHelper("speech") : swiftHelper("speech"));
   return new Promise((ok, fail) => {
     const p = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
     let out = "", err = "";
@@ -99,11 +105,12 @@ const languageName = (code: string) => {
 };
 
 function macInfo(v: MacVoice): VoiceInfo {
-  // Eloquence voices (Eddy, Flo, Reed…) are the old synthesized kind; Apple's own read far better.
-  const old = v.id.includes(".eloquence.") || v.id.includes(".speech.synthesis.");
+  // Eloquence voices (Eddy, Flo, Reed…) are the old synthesized kind; Apple's own read far better. Windows' are all
+  // of that kind.
+  const old = IS_WINDOWS || v.id.includes(".eloquence.") || v.id.includes(".speech.synthesis.");
   return {
-    id: `mac:${v.id}`,
-    provider: "mac",
+    id: `${SYSTEM}:${v.id}`,
+    provider: SYSTEM,
     name: v.personal ? `${v.name} (your Personal Voice)` : v.name,
     detail: [languageName(v.language), v.gender, old ? "robotic" : ""].filter(Boolean).join(" · "),
     language: v.language,
@@ -218,7 +225,7 @@ function pickFrom(voices: VoiceInfo[], preferred: string | undefined, language =
   if (library) return library.id;
   if (voices.some((v) => v.id === "kokoro:af_heart")) return "kokoro:af_heart";
   const lang = language.split(/[-_]/)[0];
-  const mac = voices.filter((v) => v.provider === "mac" && (v.language ?? "").startsWith(lang!));
+  const mac = voices.filter((v) => v.provider === SYSTEM && (v.language ?? "").startsWith(lang!));
   const best = mac.find((v) => v.language === language) ?? mac[0];
   return best?.id;
 }
@@ -227,13 +234,14 @@ function pickFrom(voices: VoiceInfo[], preferred: string | undefined, language =
 export async function resolveVoice(wanted?: string): Promise<string> {
   if (wanted) {
     const p = voiceProvider(wanted);
-    if (!p) throw new Error(`"${wanted}" isn't a voice beatsheet can read with. Use one from list_voices (elevenlabs:…, kokoro:… or mac:…).`);
+    if (!p) throw new Error(`"${wanted}" isn't a voice beatsheet can read with. Use one from list_voices (elevenlabs:…, kokoro:… or ${SYSTEM}:…).`);
+    if ((p === "mac" || p === "windows") && p !== SYSTEM) throw new Error(`That's one of ${p === "mac" ? "the Mac's" : "Windows'"} own voices, which ${HERE} doesn't have. Pick another voice (list_voices).`);
     if (p === "kokoro" && !kokoroReady()) throw new Error("That's a Kokoro voice, and Kokoro isn't installed. Install it in Settings → Voices, or pick another voice.");
     if (p === "elevenlabs" && !readSettings().services.elevenlabs) throw new Error("That's an ElevenLabs voice, and there's no ElevenLabs key. Add one in Settings → Media services, or pick another voice.");
     return wanted;
   }
   const info = await listVoices();
-  if (!info.fallback) throw new Error("There's no voice to read with on this Mac. Add an ElevenLabs key or install Kokoro in Settings → Voices.");
+  if (!info.fallback) throw new Error(`There's no voice to read with on ${HERE}. Add an ElevenLabs key or install Kokoro in Settings → Voices.`);
   return info.fallback;
 }
 
@@ -250,7 +258,7 @@ export async function voiceName(id: string): Promise<string> {
   const info = await listVoices().catch(() => undefined);
   const v = info?.voices.find((x) => x.id === id);
   const p = voiceProvider(id);
-  return v ? `${v.name} (${p === "elevenlabs" ? "ElevenLabs" : p === "kokoro" ? "Kokoro" : "Mac"})` : id;
+  return v ? `${v.name} (${p === "elevenlabs" ? "ElevenLabs" : p === "kokoro" ? "Kokoro" : p === "windows" ? "Windows" : "Mac"})` : id;
 }
 
 // ---- Speaking
@@ -265,7 +273,7 @@ export async function speak(voice: string, text: string, out: string): Promise<S
   const provider = voiceProvider(voice);
   const id = voice.slice(voice.indexOf(":") + 1);
   mkdirSync(join(out, ".."), { recursive: true });
-  if (provider === "mac") {
+  if (provider === "mac" || provider === "windows") {
     const file = `${out}.wav`;
     const textFile = join(tmpdir(), `beatsheet-say-${process.pid}-${Date.now().toString(36)}.txt`);
     writeFileSync(textFile, text);

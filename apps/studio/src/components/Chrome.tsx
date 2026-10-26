@@ -4,6 +4,7 @@ import { AgentMenu } from "./AgentMenu";
 import { CutMenu } from "./Cuts";
 import { BriefDialog, ExportDialog } from "./Dialogs";
 import { TurnLine } from "./Turn";
+import { keys } from "../lib";
 
 /**
  * The top bar: back to the projects, which project and cut, whose turn it is (the one thing to look at), then the agent, the format, and
@@ -26,7 +27,7 @@ export function TopBar() {
   }, []);
   return (
     <header className="topbar">
-      <button className="icon home-back" onClick={() => void actions.goHome()} title="All projects (⇧⌘O)" aria-label="All projects">
+      <button className="icon home-back" onClick={() => void actions.goHome()} title={`All projects (${keys("⇧⌘O")})`} aria-label="All projects">
         <svg viewBox="0 0 16 16" aria-hidden>
           <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -59,10 +60,10 @@ export function TopBar() {
       <button className="primary" onClick={() => setDialog("export")} title="Render this cut">
         Export
       </button>
-      <button className="icon" onClick={actions.undo} disabled={!canUndo} title="Undo (⌘Z)">
+      <button className="icon" onClick={actions.undo} disabled={!canUndo} title={`Undo (${keys("⌘Z")})`}>
         ↶
       </button>
-      <button className="icon" onClick={actions.redo} disabled={!canRedo} title="Redo (⇧⌘Z)">
+      <button className="icon" onClick={actions.redo} disabled={!canRedo} title={`Redo (${keys("⇧⌘Z")})`}>
         ↷
       </button>
       <button className="icon" onClick={() => actions.setSettingsOpen(true)} title="Settings: agents, models and media services">

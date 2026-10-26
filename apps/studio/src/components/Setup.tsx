@@ -1,6 +1,6 @@
 import type { AgentCheck, AgentId, AgentInfo, SamStatus, ServiceInfo } from "@beatsheet/engine";
 import { useEffect, useState, type ReactNode } from "react";
-import { AGENT_NAMES, CAPABILITY_LABELS, timeAgo } from "../lib";
+import { AGENT_NAMES, CAPABILITY_LABELS, timeAgo, OS, WINDOWS } from "../lib";
 import { actions, useStore, type State } from "../store";
 import { Mark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
@@ -9,13 +9,16 @@ type SetupInfo = NonNullable<State["setup"]>;
 
 /** What every agent can do with beatsheet's own tools, before any service is added. */
 const BUILT_IN = ["Watch and log your footage", "Cut to the beat of a song", "Edit titles, crops and timing", "Check its work frame by frame", "Render the video"];
-/** Apple's Vision framework, through a helper built on this Mac the first time it's used. */
+/** Apple's Vision framework, through a helper built on this Mac the first time it's used (on Windows, SAM 3.1 or OpenCV). */
 const ON_THIS_MAC = ["Find and follow people", "Blur faces, name tags", "Keep someone in a vertical crop", "Cut people out of the picture"];
+/** Cutting people out needs SAM on Windows; OpenCV only finds them. */
+const localAbility = (setup: SetupInfo, x: string) => !!setup.vision?.ok && (!WINDOWS || x !== ON_THIS_MAC[3] || setup.sam?.state === "ready");
+const samName = (sam?: SamStatus) => (sam?.model === "sam3.1" ? "SAM 3.1" : "SAM 3");
 
 const ABOUT = {
   agent: "The agent edits your videos with you, on your own account. Make one the default; you can switch any time from the top bar.",
-  mac: "Free and private: these run on your Mac, and nothing leaves it.",
-  services: "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
+  mac: `Free and private: these run on your ${OS.computer}, and nothing leaves it.`,
+  services: WINDOWS ? "Each key you add gives the agent more to work with. Keys are checked, then kept in Windows Credential Manager." : "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
   abilities: "Everything the agent can do with what's set up now.",
 };
@@ -58,7 +61,7 @@ export function SetupScreen({ setup }: { setup: SetupInfo }) {
           <Step n={1} done={ready} title="Connect an agent" note="required" about={ABOUT.agent}>
             <AgentSection list={list} setup={setup} />
           </Step>
-          <Step n={2} title="On this Mac" note="optional" about={ABOUT.mac}>
+          <Step n={2} title={`On ${OS.here}`} note="optional" about={ABOUT.mac}>
             <LocalSection setup={setup} />
           </Step>
           <Step n={3} title="Media services" note="optional" about={ABOUT.services}>
@@ -106,7 +109,7 @@ function Step({ n, done, title, note, about, children }: { n: number; done?: boo
 
 const PANES = [
   { id: "agent", label: "Agent" },
-  { id: "mac", label: "On this Mac" },
+  { id: "mac", label: `On ${OS.here}` },
   { id: "voices", label: "Voices" },
   { id: "services", label: "Media services" },
   { id: "abilities", label: "What it can do" },
@@ -132,10 +135,10 @@ export function SettingsDialog() {
   const added = setup.services.filter((s) => s.configured).length;
   const status: Record<Pane, string> = {
     agent: (chosen && AGENT_NAMES[chosen.id]) ?? "None yet",
-    mac: setup.sam?.state === "ready" ? "SAM 3 installed" : setup.sam?.state === "installing" ? "Installing SAM 3…" : setup.vision?.ok ? "Apple Vision" : "",
+    mac: setup.sam?.state === "ready" ? `${samName(setup.sam)} installed` : setup.sam?.state === "installing" ? `Installing ${samName(setup.sam)}…` : setup.vision?.ok ? (WINDOWS ? "Faces and people" : "Apple Vision") : "",
     voices: voiceLabel(voices, voices?.default ?? voices?.fallback),
     services: added ? `${added} added` : "None added",
-    abilities: `${BUILT_IN.length + (setup.vision?.ok ? ON_THIS_MAC.length : 0) + setup.capabilities.length} things`,
+    abilities: `${BUILT_IN.length + ON_THIS_MAC.filter((x) => localAbility(setup, x)).length + setup.capabilities.length} things`,
   };
   const title = PANES.find((p) => p.id === pane)!.label;
   return (
@@ -189,7 +192,7 @@ export function SettingsDialog() {
 
 function AgentSection({ list, setup, autonomy }: { list?: AgentInfo[]; setup: SetupInfo; autonomy?: boolean }) {
   const chosen = setup.settings.agent;
-  if (!list) return <p className="dim small">Looking for Muse Code, Codex and Claude Code on this Mac…</p>;
+  if (!list) return <p className="dim small">Looking for Muse Code, Codex and Claude Code on {OS.here}…</p>;
   return (
     <>
       <div className="setup-agents">
@@ -283,12 +286,13 @@ function LocalSection({ setup }: { setup: SetupInfo }) {
     <div className="setup-services">
       <div className={`setup-service ${setup.vision?.ok ? "ok" : ""}`}>
         <div className="setup-service-head">
-          <strong>Apple Vision</strong>
+          <strong>{WINDOWS ? "Faces and people" : "Apple Vision"}</strong>
           <span className="pill">Find and follow people</span>
-          <span className="pill">Cut people out</span>
+          {(!WINDOWS || setup.sam?.state === "ready") && <span className="pill">Cut people out</span>}
           <span className="spacer" />
           <span className="small">{setup.vision?.ok ? <span className="good">✓ Built in</span> : <span className="warn">{setup.vision?.detail}</span>}</span>
         </div>
+        {WINDOWS && setup.vision?.ok && <div className="dim small">{setup.vision.detail}</div>}
       </div>
       <SamCard status={setup.sam} />
     </div>
@@ -315,7 +319,7 @@ function Abilities({ setup }: { setup: SetupInfo }) {
         </span>
       ))}
       {ON_THIS_MAC.map((x) => (
-        <span key={x} className={`ability ${setup.vision?.ok ? "on" : ""}`} title={setup.vision?.detail}>
+        <span key={x} className={`ability ${localAbility(setup, x) ? "on" : ""}`} title={setup.vision?.detail}>
           {x}
         </span>
       ))}
@@ -323,7 +327,7 @@ function Abilities({ setup }: { setup: SetupInfo }) {
         const on = setup.capabilities.includes(c);
         const by = setup.services.filter((s) => s.unlocks.includes(c)).map((s) => s.label);
         return (
-          <span key={c} className={`ability ${on ? "on" : ""}`} title={on ? undefined : c === "segment" ? `Install SAM 3 on this Mac, or add ${by.join(" or ")}` : by.length ? `Add ${by.join(" or ")}` : "Coming later"}>
+          <span key={c} className={`ability ${on ? "on" : ""}`} title={on ? undefined : c === "segment" ? `Install ${samName(setup.sam)} on ${OS.here}, or add ${by.join(" or ")}` : by.length ? `Add ${by.join(" or ")}` : "Coming later"}>
             {CAPABILITY_LABELS[c]}
           </span>
         );
@@ -398,11 +402,11 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
             <pre className="setup-log">{install.log.slice(-4).join("\n")}</pre>
           </>
         ) : !info.installed ? (
-          <span className="dim">{info.installCommand ? "Not installed on this Mac." : `Not installed. Install ${info.label}, then check again.`}</span>
+          <span className="dim">{info.installCommand ? `Not installed on ${OS.here}.` : `Not installed. Install ${info.label}, then check again.`}</span>
         ) : checking ? (
           <span className="dim">Checking…</span>
         ) : signingIn && !ok ? (
-          <span className="dim">Finish signing in in the Terminal window, then check again.</span>
+          <span className="dim">{WINDOWS ? "Finish signing in in the window that opened, then check again." : "Finish signing in in the Terminal window, then check again."}</span>
         ) : stored ? (
           <>
             <span className={stored.ok ? "good" : "warn"}>{stored.ok ? "✓" : "✕"}</span> {stored.detail} <span className="dim">· {timeAgo(stored.at)}</span>
@@ -434,7 +438,7 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
             {install?.status === "running" ? "Installing…" : install?.status === "error" ? "Try again" : "Install"}
           </button>
         ) : signedOut && !signingIn ? (
-          <button className="primary" onClick={() => void signIn()} title={`Opens Terminal running ${info.signInCommand}`}>
+          <button className="primary" onClick={() => void signIn()} title={`Opens ${OS.terminal} running ${info.signInCommand}`}>
             Sign in
           </button>
         ) : (
@@ -492,7 +496,7 @@ function ServiceRow({ service }: { service: ServiceInfo }) {
       <div className="dim small">{service.does}</div>
       {service.configured ? (
         <div className="setup-service-key small">
-          <span className="good">✓</span> {service.detail ?? "Key saved"} <span className="dim">· in your Keychain</span>
+          <span className="good">✓</span> {service.detail ?? "Key saved"} <span className="dim">· {WINDOWS ? "in Credential Manager" : "in your Keychain"}</span>
           <span className="spacer" />
           <button onClick={() => void remove()}>Remove</button>
         </div>
@@ -520,20 +524,29 @@ const gb = (bytes?: number) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
 
 /**
  * SAM 3, Meta's Segment Anything, running on this Mac: one button installs everything it needs into beatsheet's own
- * folder (about 4.5 GB, mostly the model), checks it works, and Remove takes it all away again.
+ * folder (about 4.5 GB, mostly the model), checks it works, and Remove takes it all away again. On Windows it's SAM 3.1
+ * on the PC's NVIDIA card, which first needs a Hugging Face token with access to Meta's model.
  */
 function SamCard({ status: initial }: { status?: SamStatus }) {
   const [status, setStatus] = useState(initial);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
   useEffect(() => setStatus(initial), [initial]);
-  const call = async (method: string, path: string) => {
+  const call = async (method: string, path: string, send?: unknown) => {
     setError("");
-    const res = await fetch(`/api/settings/sam${path}`, { method });
+    const res = await fetch(`/api/settings/sam${path}`, send === undefined ? { method } : { method, headers: { "content-type": "application/json" }, body: JSON.stringify(send) });
     const body = (await res.json()) as SamStatus & { error?: string };
     if (res.ok) setStatus(body);
     else setError(body.error ?? "That didn't work");
     if (method === "DELETE") void actions.loadSettings();
+  };
+  const addToken = async () => {
+    setBusy(true);
+    await call("POST", "/token", { key: token.trim() });
+    setBusy(false);
+    setToken("");
   };
   // While it installs, follow along; when it's done, the agent's abilities change.
   const installing = status?.state === "installing";
@@ -552,7 +565,7 @@ function SamCard({ status: initial }: { status?: SamStatus }) {
   return (
     <div className={`setup-service ${ready ? "ok" : ""}`}>
       <div className="setup-service-head">
-        <strong>SAM 3</strong>
+        <strong>{samName(status)}</strong>
         <span className="dim small">by Meta</span>
         <span className="pill">Cut out anything you describe</span>
         <span className="spacer" />
@@ -580,11 +593,33 @@ function SamCard({ status: initial }: { status?: SamStatus }) {
             <button onClick={() => setConfirming(true)}>Remove</button>
           ))}
       </div>
-      <div className="dim small">
-        Lifts out whatever you name (“the dog”, “the kids”, “the red kite”) from photos and stills from your clips, for pop-ins and titles tucked behind
-        things. Runs on your Mac’s GPU: free, private, about 4.5 GB.
-      </div>
+      {WINDOWS ? (
+        <div className="dim small">
+          Finds, follows and lifts out whatever you name (“the dog”, “the kids”, “the red kite”) in photos and in clips, for pop-ins, moving cut-outs and
+          titles tucked behind things. Meta’s own code on {status.gpu ? `your ${status.gpu}` : "your NVIDIA card"}: free, private, about 12 GB with PyTorch.
+        </div>
+      ) : (
+        <div className="dim small">
+          Lifts out whatever you name (“the dog”, “the kids”, “the red kite”) from photos and stills from your clips, for pop-ins and titles tucked behind
+          things. Runs on your Mac’s GPU: free, private, about 4.5 GB.
+        </div>
+      )}
       {status.state === "unsupported" && <div className="dim small">{status.detail}</div>}
+      {status.state === "token" && (
+        <>
+          <div className="small">
+            Meta shares SAM 3.1 with people who ask. <a href={status.links?.access} target="_blank" rel="noreferrer">Ask for access ↗</a> (signed in to Hugging Face; it&apos;s
+            usually a few minutes), then <a href={status.links?.token} target="_blank" rel="noreferrer">make a token ↗</a> (Read is enough) and paste it here. It&apos;s kept in
+            Credential Manager.
+          </div>
+          <div className="setup-service-key">
+            <input type="password" placeholder="Paste a Hugging Face token (hf_…)" value={token} onChange={(e) => setToken(e.target.value)} onKeyDown={(e) => e.key === "Enter" && token.trim() && void addToken()} />
+            <button onClick={() => void addToken()} disabled={!token.trim() || busy}>
+              {busy ? "Checking…" : "Verify & save"}
+            </button>
+          </div>
+        </>
+      )}
       {ready && (
         <div className="small">
           <span className="good">✓</span> {status.detail} <span className="dim">· {gb(status.bytes)} on disk</span>

@@ -43,9 +43,15 @@ import { generateSfx } from "./sounds.ts";
 import { narrate } from "./narrate.ts";
 import { cutOut, findSubjects, joinSubjects, trackSubject } from "./subjects.ts";
 import { listVoices, voiceName } from "./voices.ts";
+import { IS_WINDOWS } from "./platform.ts";
 import { cachePaths } from "./paths.ts";
 import { listProjects, loadProject, saveProject, updateFile, updateProject } from "./store.ts";
 import { yourTurn } from "./turns.ts";
+
+/** What add_font says about the fonts this computer already has. They draw only here; a Google font draws everywhere. */
+const SYSTEM_FONTS = IS_WINDOWS
+  ? "Windows' own fonts need nothing, but only draw on a PC, so prefer a Google font for anything the cut should look the same on everywhere (Segoe UI, Bahnschrift, Georgia, Cambria, Constantia, Corbel, Candara, Sitka, Gabriola, Ink Free, Segoe Print, Segoe Script, Impact…)."
+  : "The Mac's own fonts need nothing (Avenir Next, Futura, Gill Sans, Didot, Baskerville, American Typewriter, Rockwell, Marker Felt, Noteworthy, Snell Roundhand…).";
 
 const INSTRUCTIONS = `beatsheet is a video editor whose projects are JSON files that a person edits in the beatsheet studio while you edit them here. Start with get_project.
 
@@ -69,7 +75,7 @@ Pages behind a login (a Google Photos album, a dashboard, a private doc): the pe
 
 Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
 
-Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or the Mac's own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
+Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or ${IS_WINDOWS ? "Windows'" : "the Mac's"} own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
 
 Notes: the person pins notes on a cut and sends them as a batch. Call get_batch, handle each note with scoped edits, look at the result with frame when it's visual, resolve_note with a one-line reply saying what changed, then hand_off for a review.
 
@@ -498,7 +504,7 @@ server.registerTool(
   "add_font",
   {
     description:
-      "Get a font from Google Fonts for the look (any family on fonts.google.com: Fredoka or Nunito for round and friendly, Caveat or Kalam for handwriting, Playfair Display or DM Serif Display for elegant, Bricolage Grotesque or Space Grotesk for modern, Bebas Neue or Anton for tall and loud). It's saved in the project's fonts/ folder; put the entries it returns in the look's fontFiles and the family in fonts.display or fonts.body. The Mac's own fonts need nothing (Avenir Next, Futura, Gill Sans, Didot, Baskerville, American Typewriter, Rockwell, Marker Felt, Noteworthy, Snell Roundhand…).",
+      "Get a font from Google Fonts for the look (any family on fonts.google.com: Fredoka or Nunito for round and friendly, Caveat or Kalam for handwriting, Playfair Display or DM Serif Display for elegant, Bricolage Grotesque or Space Grotesk for modern, Bebas Neue or Anton for tall and loud). It's saved in the project's fonts/ folder; put the entries it returns in the look's fontFiles and the family in fonts.display or fonts.body. " + SYSTEM_FONTS,
     inputSchema: {
       project: projectArg,
       family: z.string().describe("As Google Fonts names it, e.g. Playfair Display"),
@@ -725,7 +731,9 @@ server.registerTool(
   "list_voices",
   {
     description:
-      "The voices narration can use on this Mac, best first: ElevenLabs (with the person's key: its library and their own designed or cloned voices), Kokoro (if installed) and the Mac's own. Each with its id, what it sounds like, and which is the person's default.",
+      IS_WINDOWS
+        ? "The voices narration can use on this PC, best first: ElevenLabs (with the person's key: its library and their own designed or cloned voices), Kokoro (if installed) and Windows' own (robotic; use them only when there's nothing else). Each with its id, what it sounds like, and which is the person's default."
+        : "The voices narration can use on this Mac, best first: ElevenLabs (with the person's key: its library and their own designed or cloned voices), Kokoro (if installed) and the Mac's own. Each with its id, what it sounds like, and which is the person's default.",
     inputSchema: {},
   },
   async () => {
@@ -782,7 +790,9 @@ server.registerTool(
   "find_subjects",
   {
     description:
-      "Find the faces and people in clips or photos and follow each through the clip (Apple Vision, on this Mac; about a second per clip). Each becomes a subject on the asset (face-1, person-2…) with its box over time. Use them for effects that follow someone (blur a face, a name tag, a spotlight), a vertical reframe that keeps someone in frame (reframe.<format>.follow), or a cut-out of just them. Rename subjects with edit_project once you know who they are.",
+      "Find the faces and people in clips or photos and follow each through the clip (" +
+      (IS_WINDOWS ? "SAM 3.1 on this PC's graphics card, or OpenCV before it's installed" : "Apple Vision, on this Mac; about a second per clip") +
+      "). Each becomes a subject on the asset (face-1, person-2…) with its box over time. Use them for effects that follow someone (blur a face, a name tag, a spotlight), a vertical reframe that keeps someone in frame (reframe.<format>.follow), or a cut-out of just them. Rename subjects with edit_project once you know who they are.",
     inputSchema: { project: projectArg, assets: z.array(z.string()).min(1).max(12) },
   },
   async ({ project: id, assets }) => {
@@ -832,7 +842,9 @@ server.registerTool(
   "cut_out",
   {
     description:
-      "Lift subjects out of a photo or clip into new transparent assets (Apple Vision on this Mac; with `prompt`, anything you describe, through SAM), saved in the project and added to the footage. A cut-out lines up exactly over its source when both are on screen, which makes these possible: a title tucked behind someone (picture: the clip; text: the title; an overlay track above: the cut-out), pieces of a photo popping in one by one on the beat (the photo on the picture track, then each piece on its own overlay track with transition {kind: \"pop\"}), or a person popping out of a freeze frame. For clips the cut-out is a clip (up to 30s; pick the stretch with from/to); a still of one moment of a clip with `still`.",
+      "Lift subjects out of a photo or clip into new transparent assets (" +
+      (IS_WINDOWS ? "SAM 3.1 on this PC's graphics card: people, a subject, a point, or with `prompt` anything you describe, in photos and clips alike" : "Apple Vision on this Mac; with `prompt`, anything you describe, through SAM") +
+      "), saved in the project and added to the footage. A cut-out lines up exactly over its source when both are on screen, which makes these possible: a title tucked behind someone (picture: the clip; text: the title; an overlay track above: the cut-out), pieces of a photo popping in one by one on the beat (the photo on the picture track, then each piece on its own overlay track with transition {kind: \"pop\"}), or a person popping out of a freeze frame. For clips the cut-out is a clip (up to 30s; pick the stretch with from/to); a still of one moment of a clip with `still`.",
     inputSchema: {
       project: projectArg,
       asset: z.string(),
@@ -846,7 +858,11 @@ server.registerTool(
       prompt: z
         .string()
         .optional()
-        .describe("Describe what to lift (SAM), e.g. \"the red kite\" or \"the kids\". Photos, or a clip with `still`. Needs SAM 3 installed on this Mac (Settings), or a fal key for photos"),
+        .describe(
+          IS_WINDOWS
+            ? "Describe what to lift (SAM 3.1), e.g. \"the red kite\" or \"the kids\". Photos, stills, or a moving cut-out of a clip. Needs SAM 3.1 installed on this PC (Settings), or a fal key for photos"
+            : "Describe what to lift (SAM), e.g. \"the red kite\" or \"the kids\". Photos, or a clip with `still`. Needs SAM 3 installed on this Mac (Settings), or a fal key for photos",
+        ),
     },
   },
   async ({ project: id, asset, ...opts }) => {

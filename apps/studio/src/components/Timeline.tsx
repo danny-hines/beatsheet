@@ -1,6 +1,6 @@
 import { anchorForTime, describeAnchor, formatTime, snapPoints, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { assetMap, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch } from "../lib";
+import { assetMap, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 
 const PAD = 48;
@@ -135,7 +135,7 @@ export function Timeline() {
       <div className="tl-toolbar">
         <span className="tl-title">Timeline</span>
         <span className="tl-hint">
-          Drag the left edge of a shot to move its cut. It snaps to {project.spine === "music" ? "bars and beats" : "words and lines"}; hold ⌥ to place it freely.
+          Drag the left edge of a shot to move its cut. It snaps to {project.spine === "music" ? "bars and beats" : "words and lines"}; hold {keys("⌥")} to place it freely.
         </span>
         <span className="spacer" />
         <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out">−</button>
@@ -155,7 +155,7 @@ export function Timeline() {
         </div>
         <div className="tl-scroll" ref={scroller}>
           <div className="tl-canvas" ref={canvas} style={{ width }} onPointerMove={moveDrag} onPointerUp={endDrag}>
-            <div className="tl-ruler" style={{ height: RULER_H }} onPointerDown={rulerDown} onPointerMove={rulerMove} onPointerUp={rulerUp} title="Click or drag to move the playhead; ⇧-drag to note a stretch of the cut">
+            <div className="tl-ruler" style={{ height: RULER_H }} onPointerDown={rulerDown} onPointerMove={rulerMove} onPointerUp={rulerUp} title={`Click or drag to move the playhead; ${WINDOWS ? "Shift-drag" : "⇧-drag"} to note a stretch of the cut`}>
               <Ruler z={z} duration={duration} />
               {stretch && Math.abs(stretch.to - stretch.from) > 0 && (
                 <div className="tl-stretch" style={{ left: x(Math.min(stretch.from, stretch.to)), width: Math.abs(x(stretch.to) - x(stretch.from)) }} />

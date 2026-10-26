@@ -146,6 +146,8 @@ export const CAPABILITY_LABELS = {
 /** What the Mac app adds when the studio runs inside it (see apps/desktop/src/preload.ts). */
 type Desktop = {
   desktop: true;
+  /** "darwin" or "win32". */
+  platform?: string;
   pick: (kind: PickKind) => Promise<string | null>;
   pathFor: (file: File) => string;
   /** Photos and videos, a folder of them, or several of either. */
@@ -162,6 +164,24 @@ type Desktop = {
   openFile?: (path: string) => Promise<string>;
 };
 export const desktop = (window as unknown as { beatsheet?: Desktop }).beatsheet;
+
+/** Windows, where the studio (and the engine beside it) runs on a PC: the app says, or the browser does. */
+export const WINDOWS = desktop?.platform ? desktop.platform === "win32" : /win/i.test(navigator.platform || navigator.userAgent);
+/** Words for the computer beatsheet runs on, so the Mac's read as they always have and a PC's read right. */
+export const OS = WINDOWS
+  ? { computer: "PC", here: "this PC", files: "File Explorer", keys: "Credential Manager", trash: "Recycle Bin", terminal: "a terminal window", settings: "Windows Settings", app: "app" }
+  : { computer: "Mac", here: "this Mac", files: "Finder", keys: "Keychain", trash: "Trash", terminal: "Terminal", settings: "System Settings", app: "Mac app" };
+
+/** A shortcut as the Mac writes it ("⇧⌘O", "⌥"), or on Windows as Windows does ("Ctrl+Shift+O", "Alt"). */
+export function keys(mac: string, windows = WINDOWS): string {
+  if (!windows) return mac;
+  const mods = [mac.includes("⌘") && "Ctrl", mac.includes("⇧") && "Shift", mac.includes("⌥") && "Alt"].filter(Boolean);
+  const rest = mac.replace(/[⌘⇧⌥]/g, "");
+  return [...mods, rest].filter(Boolean).join("+");
+}
+
+/** A path split into its folders and name (on Windows either slash separates them). */
+export const pathParts = (path: string) => path.split(WINDOWS ? /[\\/]/ : "/");
 
 /** What the pickers choose: a folder, a song or other audio, or any file. */
 export type PickKind = "folder" | "audio" | "file";

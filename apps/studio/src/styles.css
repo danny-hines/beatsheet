@@ -661,6 +661,9 @@ html.desktop .topbar button, html.desktop .topbar select, html.desktop .topbar .
 /* Anything you type in or pick from that opens inside the bar (the cut menu, its rename box, any dialog) isn't part of the handle. */
 html.desktop .topbar input, html.desktop .topbar textarea, html.desktop .topbar label, html.desktop .topbar .cut-panel, html.desktop .topbar .modal-back, html.desktop .modal-back { -webkit-app-region: no-drag; }
 html.desktop .home-bar { height: 38px; -webkit-app-region: drag; }
+/* In the Windows app the window keeps Windows' own title bar (and its menu), so nothing here makes room for it. */
+html.desktop.win .topbar { padding-left: 14px; -webkit-app-region: no-drag; }
+html.desktop.win .home-bar, html.desktop.win .setup-screen-bar { height: auto; -webkit-app-region: no-drag; }
 
 /* ---- A file up close (the asset inspector) */
 .asset-view { gap: 10px; }

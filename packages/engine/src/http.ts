@@ -5,7 +5,7 @@
 import { execFile } from "node:child_process";
 import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { dirname, extname, join, resolve, sep } from "node:path";
+import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type Rect } from "@beatsheet/schema";
 import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
@@ -15,6 +15,7 @@ import { readSettings, updateSettings } from "./settings.ts";
 import { answerMessage, currentTurn, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
 import { streamEvents } from "./events.ts";
 import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
+import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
@@ -24,6 +25,7 @@ import { cloneVoice, designVoice, listVoices, previewFile, removeVoice, saveDesi
 import { cutOut, findSubjects, joinSubjects, trackSubject, visionStatus, type CutOutOptions } from "./subjects.ts";
 import { addFootage, addSong, ensureCached, importFolder, scanFolder } from "./ingest.ts";
 import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, sourceRoot } from "./paths.ts";
+import { IS_WINDOWS, pickerCommand, revealCommand, run as runLaunch } from "./platform.ts";
 import { ConflictError, InvalidProjectError, listProjects, loadFile, loadProject, readRaw, saveFile, trashPlan, trashProject } from "./store.ts";
 
 const run = promisify(execFile);
@@ -140,6 +142,8 @@ function startJob(kind: Job["kind"], project: string, work: (job: Job) => Promis
 function said(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
   const tool = /spawn (ffmpeg|ffprobe|uv)\b.*ENOENT/.exec(msg)?.[1];
+  if (IS_WINDOWS && (tool === "ffmpeg" || tool === "ffprobe")) return "beatsheet needs ffmpeg to read and convert video, and it isn't on this PC. Install it (winget install Gyan.FFmpeg in a terminal), then restart beatsheet.";
+  if (IS_WINDOWS && tool === "uv") return "beatsheet needs uv (a Python tool) to analyse songs. Install it (winget install astral-sh.uv in a terminal), then try again.";
   if (tool === "ffmpeg" || tool === "ffprobe") return "beatsheet needs ffmpeg to read and convert video, and it isn't on this Mac. Install it with Homebrew (brew install ffmpeg), then try again.";
   if (tool === "uv") return "beatsheet needs uv (a Python tool) to analyse songs. Install it (brew install uv), then try again.";
   return msg;
@@ -165,8 +169,12 @@ export function freeId(title: string): string {
   return id;
 }
 
-/** macOS file and folder pickers, so the studio gets real paths. */
+/** macOS (or Windows) file and folder pickers, so the studio gets real paths. */
 async function pick(kind: "folder" | "audio" | "file"): Promise<string | null> {
+  if (IS_WINDOWS) {
+    const r = await runLaunch(pickerCommand(kind), { timeout: 10 * 60_000 }).catch(() => undefined);
+    return r?.out.trim() || null;
+  }
   const choose =
     kind === "folder"
       ? 'POSIX path of (choose folder with prompt "Choose a folder")'
@@ -179,6 +187,14 @@ async function pick(kind: "folder" | "audio" | "file"): Promise<string | null> {
   } catch {
     return null; // cancelled
   }
+}
+
+/** Shows a file in Finder (on Windows, File Explorer), selected. */
+async function reveal(path: string) {
+  const l = revealCommand(path);
+  // File Explorer answers 1 even when it worked, so only a failure to start counts.
+  if (IS_WINDOWS) await runLaunch(l);
+  else await run(l.command, l.args);
 }
 
 /** Connect-style handler for /api/* and /media/*; anything else goes to `next`. */
@@ -248,7 +264,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const body = JSON.parse((await readBody(req)) || "{}") as { project?: string; asset?: string };
     if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
     if (!body.asset) {
-      await run("open", ["-R", projectDir(body.project)]);
+      await reveal(projectDir(body.project));
       return json(res, 200, { ok: true });
     }
     const { project, dir } = loadProject(body.project);
@@ -256,7 +272,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!a) return json(res, 404, { error: `no asset ${body.asset}` });
     const path = assetPath(project, dir, a);
     if (!existsSync(path)) return json(res, 404, { error: `${path} isn't there any more` });
-    await run("open", ["-R", path]);
+    await reveal(path);
     return json(res, 200, { ok: true });
   }
   if (section === "scan" && req.method === "GET") {
@@ -316,6 +332,15 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // SAM 3 on this Mac: installed in the background; the page follows along by asking for the status.
     if (id === "sam" && req.method === "GET") return json(res, 200, samStatus());
     if (id === "sam" && action === "install" && req.method === "POST") return json(res, 202, installSam());
+    // Windows: the Hugging Face token Meta's SAM 3.1 downloads with, checked before it's kept.
+    if (id === "sam" && action === "token" && req.method === "POST") {
+      if (!IS_WINDOWS) return json(res, 400, { error: "This Mac's SAM 3 doesn't need a token" });
+      try {
+        return json(res, 200, await setSamToken(body.key ?? ""));
+      } catch (err) {
+        return json(res, 400, { error: said(err) });
+      }
+    }
     if (id === "sam" && action === "cancel" && req.method === "POST") {
       cancelSamInstall();
       return json(res, 200, samStatus());
@@ -544,7 +569,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   if (section === "projects" && id && action === "render" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; quality?: "proxy" | "original"; saveAs?: string };
     // Where the person chose in the save dialog: an .mp4 in a folder that exists.
-    if (body.saveAs !== undefined && (!body.saveAs.startsWith("/") || !/\.mp4$/i.test(body.saveAs) || !existsSync(dirname(body.saveAs))))
+    if (body.saveAs !== undefined && (!isAbsolute(body.saveAs) || !/\.mp4$/i.test(body.saveAs) || !existsSync(dirname(body.saveAs))))
       return json(res, 400, { error: "Save the video as an .mp4 in a folder that exists" });
     const job = startJob(
       "render",

@@ -17,6 +17,19 @@ async function ffmpeg(args: string[]) {
   await run("ffmpeg", ["-v", "error", "-y", ...args], { maxBuffer: 16 * 1024 * 1024 });
 }
 
+/** ffmpeg turning raw RGBA frames on its stdin into VP9 with alpha in a WebM: a moving cut-out. */
+export const alphaWebm = (size: string, fps: string, out: string) =>
+  ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", size, "-r", fps, "-i", "-", "-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p", "-crf", "32", "-b:v", "0", "-row-mt", "1", "-deadline", "good", "-cpu-used", "4", "-f", "webm", out];
+
+/**
+ * The hardware decoder and H.264 encoder to try first: VideoToolbox on the Mac, NVIDIA's on a PC (8-bit, which browsers
+ * play, whatever the phone shot).
+ */
+export function hardwareProxy(platform: NodeJS.Platform = process.platform): { decode: string[]; encode: string[] } {
+  if (platform === "win32") return { decode: ["-hwaccel", "cuda"], encode: ["-c:v", "h264_nvenc", "-preset", "p4", "-pix_fmt", "yuv420p", "-b:v", "3M", "-g", "15"] };
+  return { decode: ["-hwaccel", "videotoolbox"], encode: ["-c:v", "h264_videotoolbox", "-b:v", "3M", "-g", "15"] };
+}
+
 /** Short side 720, 30 fps, keyframe every 15 frames. Hardware encode, with a software fallback. */
 export async function makeVideoProxy(src: string, out: string): Promise<void> {
   if (existsSync(out)) return;
@@ -25,7 +38,8 @@ export async function makeVideoProxy(src: string, out: string): Promise<void> {
   const scale = "fps=30,scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)'";
   const audio = ["-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart"];
   try {
-    await ffmpeg(["-hwaccel", "videotoolbox", "-i", src, "-vf", scale, "-c:v", "h264_videotoolbox", "-b:v", "3M", "-g", "15", ...audio, tmp]);
+    const hw = hardwareProxy();
+    await ffmpeg([...hw.decode, "-i", src, "-vf", scale, ...hw.encode, ...audio, tmp]);
   } catch {
     await ffmpeg(["-i", src, "-vf", scale, "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "15", "-keyint_min", "15", "-sc_threshold", "0", ...audio, tmp]);
   }

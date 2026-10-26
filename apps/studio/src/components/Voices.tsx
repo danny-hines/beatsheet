@@ -1,7 +1,7 @@
 import type { DesignPreview, KokoroStatus, VoiceInfo, VoicesInfo } from "@beatsheet/engine";
 import { voiceProvider } from "@beatsheet/schema";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { pickPath } from "../lib";
+import { pickPath, pathParts, OS, WINDOWS } from "../lib";
 import { allow, captureError, cleanAudio, clock, stopStream, useLevel, useTake } from "../record";
 import { actions } from "../store";
 
@@ -37,7 +37,10 @@ export function useVoices(): VoicesInfo | undefined {
   return v;
 }
 
-export const PROVIDER_NAMES = { elevenlabs: "ElevenLabs", kokoro: "Kokoro", mac: "Mac" } as const;
+export const PROVIDER_NAMES = { elevenlabs: "ElevenLabs", kokoro: "Kokoro", mac: "Mac", windows: "Windows" } as const;
+/** This computer's own voices: the Mac's, or Windows'. */
+const SYSTEM = WINDOWS ? "windows" : "mac";
+const SYSTEM_VOICES = WINDOWS ? "Windows voices" : "Mac voices";
 
 /** "Rachel (ElevenLabs)": a voice id as a person reads it. */
 export function voiceLabel(info: VoicesInfo | undefined, id: string | undefined): string {
@@ -477,7 +480,7 @@ function ClonePanel({ onDone }: { onDone: () => void }) {
           {samples.map((s, i) => (
             <div key={s.key} className="voice-sample">
               {s.blob ? <PlayButton id={`s:${s.key}`} src={s.url} /> : <span className="dim">♪</span>}
-              <span className="small">{s.file ? s.file.split("/").pop() : `Take ${i + 1} · ${clock(s.seconds)}`}</span>
+              <span className="small">{s.file ? pathParts(s.file).pop() : `Take ${i + 1} · ${clock(s.seconds)}`}</span>
               <span className="spacer" />
               <button className="icon voice-row-x" title="Leave this one out" onClick={() => setSamples(samples.filter((x) => x !== s))}>
                 ✕
@@ -548,7 +551,7 @@ function KokoroCard({ status: initial, voices, current }: { status?: KokoroStatu
     <div className={`setup-service ${ready ? "ok" : ""}`}>
       <div className="setup-service-head">
         <strong>Kokoro</strong>
-        <span className="dim small">on this Mac</span>
+        <span className="dim small">on {OS.here}</span>
         <span className="pill">Natural voices, free and offline</span>
         <span className="spacer" />
         {status.state === "missing" && (
@@ -577,7 +580,9 @@ function KokoroCard({ status: initial, voices, current }: { status?: KokoroStatu
       </div>
       {!ready && (
         <div className="dim small">
-          An open voice model that reads far more naturally than the Mac's own voices, with a dozen English voices. It runs on your Mac: no key, no cost, nothing leaves it. Installs into beatsheet's own folder, about 1.5 GB.
+          {WINDOWS
+            ? "An open voice model that reads far more naturally than Windows' own voices, with a dozen English voices. It runs on your PC: no key, no cost, nothing leaves it. Installs into beatsheet's own folder, about 1.5 GB."
+            : "An open voice model that reads far more naturally than the Mac's own voices, with a dozen English voices. It runs on your Mac: no key, no cost, nothing leaves it. Installs into beatsheet's own folder, about 1.5 GB."}
         </div>
       )}
       {ready && <div className="small"><span className="good">✓</span> {status.detail} <span className="dim">· {gb(status.bytes)} on disk</span></div>}
@@ -608,7 +613,7 @@ function MacCard({ info, current }: { info: VoicesInfo; current?: string }) {
     return (
       <div className="setup-service">
         <div className="setup-service-head">
-          <strong>Mac voices</strong>
+          <strong>{SYSTEM_VOICES}</strong>
         </div>
         <div className="warn small">{info.mac.detail}</div>
       </div>
@@ -617,20 +622,25 @@ function MacCard({ info, current }: { info: VoicesInfo; current?: string }) {
   const lang = (info.mac.language ?? "en-US").split("-")[0]!;
   // This Mac's own language and region first (American English before British), then the rest, best first within each.
   const mac = info.voices
-    .filter((v) => v.provider === "mac" && (everyLanguage || (v.language ?? "").startsWith(lang)))
+    .filter((v) => v.provider === SYSTEM && (everyLanguage || (v.language ?? "").startsWith(lang)))
     .sort((a, b) => Number(a.language !== info.mac.language) - Number(b.language !== info.mac.language));
   const good = mac.some((v) => v.quality === "best" || v.quality === "good");
   return (
     <div className="setup-service ok">
       <div className="setup-service-head">
-        <strong>Mac voices</strong>
+        <strong>{SYSTEM_VOICES}</strong>
         <span className="dim small">built in</span>
         <span className="spacer" />
         <label className="check small">
           <input type="checkbox" checked={everyLanguage} onChange={(e) => setEveryLanguage(e.target.checked)} /> Every language
         </label>
       </div>
-      {!good && (
+      {!good && WINDOWS && (
+        <div className="dim small">
+          The voices that come with Windows sound robotic: for narration worth keeping, install Kokoro above (free, on this PC) or add an ElevenLabs key.
+        </div>
+      )}
+      {!good && !WINDOWS && (
         <div className="dim small">
           The voices that come with macOS sound robotic. Better ones are a free download: System Settings → Accessibility → Spoken Content → System voice → Manage Voices, then pick a Premium or Enhanced voice. They show up here.
         </div>
@@ -650,8 +660,8 @@ export function VoicePicker({ value, onChange }: { value: string | undefined; on
   const groups: [string, VoiceInfo[]][] = [
     ["Your ElevenLabs voices", info.voices.filter((v) => v.provider === "elevenlabs" && v.own)],
     ["ElevenLabs", info.voices.filter((v) => v.provider === "elevenlabs" && !v.own)],
-    ["Kokoro (on this Mac)", info.voices.filter((v) => v.provider === "kokoro")],
-    ["Mac voices", info.voices.filter((v) => v.provider === "mac" && ((v.language ?? "").startsWith(lang) || v.id === value))],
+    [`Kokoro (on ${OS.here})`, info.voices.filter((v) => v.provider === "kokoro")],
+    [SYSTEM_VOICES, info.voices.filter((v) => v.provider === SYSTEM && ((v.language ?? "").startsWith(lang) || v.id === value))],
   ];
   const known = !value || info.voices.some((v) => v.id === value);
   const fallback = info.default ?? info.fallback;

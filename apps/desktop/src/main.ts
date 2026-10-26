@@ -2,9 +2,13 @@
  * beatsheet's main process: starts the engine (the API, media, live events, the hosted agents) on a local port, opens
  * the studio in a window, and gives it native pickers and a menu. Run from the repo, it uses the repo's projects and
  * tools; with BEATSHEET_DEV_URL it opens the Vite dev server instead, for working on the studio with hot reload.
+ *
+ * On Windows the window keeps its own title bar (dark, to match), the menu is Windows' (Ctrl shortcuts, Exit), privacy
+ * links open Windows Settings, and recording asks which screen with a small dialog of its own.
  */
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, session, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
 
 // The engine finds projects, recipes and its MCP server relative to the repo.
 process.env.BEATSHEET_REPO ??= resolve(__dirname, "..", "..", "..");
@@ -13,6 +17,7 @@ const REPO = process.env.BEATSHEET_REPO;
 // download, for one) can't write; work from the repo instead.
 process.chdir(REPO);
 const DEV_URL = process.env.BEATSHEET_DEV_URL;
+const WINDOWS = process.platform === "win32";
 
 let win: BrowserWindow | null = null;
 let stopServer: (() => void) | undefined;
@@ -35,8 +40,7 @@ async function openWindow() {
     minHeight: 680,
     title: "beatsheet",
     backgroundColor: "#121317",
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 14, y: 17 },
+    ...(WINDOWS ? windowsFrame() : { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 14, y: 17 } }),
     webPreferences: { preload: join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
   // Links (API key pages, docs) open in the browser, never in the app window.
@@ -105,21 +109,26 @@ ipcMain.handle("beatsheet:pick-footage", async () => {
   return r.canceled || !r.filePaths.length ? null : r.filePaths;
 });
 
-// The camera and microphone: macOS asks the person once, and remembers.
+// The camera and microphone: macOS asks the person once, and remembers. Windows has one switch for desktop apps.
 ipcMain.handle("beatsheet:media-access", async (_e, kind: "camera" | "microphone") => {
+  if (WINDOWS) return systemPreferences.getMediaAccessStatus(kind) === "denied" ? "denied" : "granted";
   if (process.platform !== "darwin") return "granted";
   const status = systemPreferences.getMediaAccessStatus(kind);
   if (status === "not-determined") return (await systemPreferences.askForMediaAccess(kind)) ? "granted" : "denied";
   return status;
 });
 const PRIVACY = { camera: "Privacy_Camera", microphone: "Privacy_Microphone", screen: "Privacy_ScreenCapture" } as const;
-ipcMain.handle("beatsheet:open-privacy", (_e, kind: keyof typeof PRIVACY) => shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${PRIVACY[kind] ?? PRIVACY.camera}`));
+const WINDOWS_PRIVACY = { camera: "ms-settings:privacy-webcam", microphone: "ms-settings:privacy-microphone", screen: "ms-settings:privacy" } as const;
+ipcMain.handle("beatsheet:open-privacy", (_e, kind: keyof typeof PRIVACY) =>
+  shell.openExternal(WINDOWS ? (WINDOWS_PRIVACY[kind] ?? WINDOWS_PRIVACY.camera) : `x-apple.systempreferences:com.apple.preference.security?${PRIVACY[kind] ?? PRIVACY.camera}`),
+);
 
 /**
  * Recording the screen: macOS's own picker (a window, an app or a whole display), which needs no Screen Recording
  * permission for beatsheet. Before macOS 15, without that picker, it records the main display.
  */
 function screenCapture() {
+  if (WINDOWS) return windowsScreenCapture();
   session.defaultSession.setDisplayMediaRequestHandler(
     (_request, callback) => {
       void desktopCapturer
@@ -132,6 +141,7 @@ function screenCapture() {
 }
 
 function menu() {
+  if (WINDOWS) return windowsMenu();
   const send = (command: string) => () => win?.webContents.send("beatsheet:menu", command);
   const template: MenuItemConstructorOptions[] = [
     {
@@ -163,7 +173,69 @@ function menu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// ---- Windows
+
+/** Windows' own title bar, dark like the app, with beatsheet's icon when the app build has drawn it. */
+function windowsFrame(): Electron.BrowserWindowConstructorOptions {
+  nativeTheme.themeSource = "dark";
+  const icon = join(__dirname, "icon.png");
+  return { autoHideMenuBar: false, ...(existsSync(icon) ? { icon } : {}) };
+}
+
+/** The same commands as the Mac's menu, the Windows way: Ctrl shortcuts, Settings under File, Exit last. */
+function windowsMenu() {
+  const send = (command: string) => () => win?.webContents.send("beatsheet:menu", command);
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: "&File",
+      submenu: [
+        { label: "New Project…", accelerator: "Ctrl+N", click: send("new-project") },
+        { label: "New Cut…", accelerator: "Ctrl+Shift+N", click: send("new-cut") },
+        { label: "All Projects", accelerator: "Ctrl+Shift+O", click: send("home") },
+        { type: "separator" },
+        { label: "Add Footage…", accelerator: "Ctrl+Shift+I", click: send("add-footage") },
+        { label: "Record Screen…", accelerator: "Ctrl+Shift+R", click: send("record-screen") },
+        { label: "Record Camera…", click: send("record-camera") },
+        { label: "Record Voice…", click: send("record-voice") },
+        { type: "separator" },
+        { label: "Export…", accelerator: "Ctrl+E", click: send("export") },
+        { type: "separator" },
+        { label: "Settings…", accelerator: "Ctrl+,", click: send("settings") },
+        { type: "separator" },
+        { role: "quit", label: "Exit" },
+      ],
+    },
+    { role: "editMenu" },
+    {
+      label: "&View",
+      // Ctrl+Shift+I is Add Footage here, so the developer tools are F12.
+      submenu: [{ role: "reload" }, { role: "toggleDevTools", accelerator: "F12" }, { type: "separator" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" }],
+    },
+    { role: "windowMenu" },
+    { label: "&Help", submenu: [{ label: "About beatsheet", click: () => void dialog.showMessageBox({ title: "beatsheet", message: "beatsheet", detail: `Version ${app.getVersion()}\n${REPO}` }) }] },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+/**
+ * Recording the screen on Windows, which has no picker of its own for apps: one screen is recorded straight away; with
+ * several, a small dialog asks which.
+ */
+function windowsScreenCapture() {
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    void (async () => {
+      const screens = await desktopCapturer.getSources({ types: ["screen"] });
+      if (screens.length <= 1) return callback(screens[0] ? { video: screens[0] } : null);
+      const options = { type: "question" as const, title: "Record", message: "Which screen?", buttons: [...screens.map((s, i) => s.name || `Screen ${i + 1}`), "Cancel"], cancelId: screens.length, defaultId: 0 };
+      const { response } = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
+      callback(screens[response] ? { video: screens[response] } : null);
+    })().catch(() => callback(null));
+  });
+}
+
 app.setName("beatsheet");
+// Taskbar grouping and the icon Windows shows for the app.
+if (WINDOWS) app.setAppUserModelId("dev.beatsheet.studio");
 // The preview's sounds each get their own <audio> (see Preview.tsx); playback always starts from the person's click or key.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 app.whenReady().then(async () => {

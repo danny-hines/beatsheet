@@ -1,7 +1,7 @@
 import type { Reference } from "@beatsheet/schema";
 import { FORMAT_PRESETS } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
-import { desktop, pickPath } from "../lib";
+import { desktop, pickPath, pathParts } from "../lib";
 import { actions, getState, useStore } from "../store";
 import { keptReferences, ReferencesField } from "./References";
 
@@ -9,7 +9,7 @@ type Job = { id: string; status: "running" | "done" | "error"; progress: number;
 type Scan = { ok: boolean; videos: number; photos: number };
 
 const titleFromFolder = (path: string) =>
-  (path.split("/").filter(Boolean).pop() ?? "")
+  (pathParts(path).filter(Boolean).pop() ?? "")
     .replace(/^\d{4}[_-]/, "")
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());

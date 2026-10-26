@@ -108,10 +108,17 @@ export function studioSession(s: { id: string; updatedAt: string; name?: string;
  * Whether something an agent wants to run reads secrets: the Keychain, or an agent CLI's own sign-in file. These are
  * never approved on the person's behalf, whatever the autonomy setting.
  */
-export function touchesKeys(input: unknown): boolean {
+export function touchesKeys(input: unknown, windows = process.platform === "win32"): boolean {
   const text = typeof input === "string" ? input : JSON.stringify(input ?? "");
+  if (windows && WINDOWS_KEYS.test(text)) return true;
   return /\bsecurity\b[^\n]*(find-(generic|internet)-password|dump-keychain|export)|find-generic-password|find-internet-password|dump-keychain|Library\/Keychains|\.config\/muse\/auth\.json|\.codex\/auth\.json|\.claude\/\.credentials/i.test(text);
 }
+
+/**
+ * The same on Windows: Credential Manager (beatsheet's helper, PowerShell's ways in, its vault folders) and the CLIs'
+ * sign-in files with either slash (JSON doubles a backslash).
+ */
+const WINDOWS_KEYS = /beatsheet-credentials|\bCred(Read|Enumerate)|PasswordVault|Get-StoredCredential|\bvaultcmd\b|\bcmdkey\b[^\n]*\/list|Microsoft[\\/]+(Credentials|Vault)|\.config[\\/]+muse[\\/]+auth\.json|\.codex[\\/]+auth\.json|\.claude[\\/]+\.credentials/i;
 
 /** One hosted agent CLI. The manager keeps at most one running. */
 export abstract class AgentAdapter extends EventEmitter {

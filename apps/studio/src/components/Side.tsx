@@ -9,7 +9,7 @@ import {
   type Timeline,
 } from "@beatsheet/schema";
 import { useMemo, useState } from "react";
-import { AGENT_NAMES, assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, selectionForTarget, shotSummary, targetFromSelection } from "../lib";
+import { AGENT_NAMES, assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, selectionForTarget, shotSummary, targetFromSelection, WINDOWS, pathParts } from "../lib";
 import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
 import { AgentPanel } from "./AgentPanel";
 import { AssetView } from "./AssetView";
@@ -140,7 +140,7 @@ function Inspector() {
           <dd className="mono">{r ? `${formatTime(r.start)} → ${formatTime(r.end)}` : "not in this format"}</dd>
           <dt>Audio</dt>
           <dd className="mono small line-file" title={l.file}>
-            {l.file?.split("/").pop() ?? "none yet"}
+            {(l.file ? pathParts(l.file).pop() : undefined) ?? "none yet"}
           </dd>
         </dl>
         <h4>Words</h4>
@@ -249,7 +249,7 @@ function Notes() {
   return (
     <div className="notes">
       <p className="dim small notes-how">
-        Note anything: press N for what's selected, right-click a shot, ⇧-drag along the ruler for a stretch, draw on the frame, or ✎ a clip in Media. Notes go with your next message to the agent.
+        Note anything: press N for what's selected, right-click a shot, {WINDOWS ? "Shift-drag" : "⇧-drag"} along the ruler for a stretch, draw on the frame, or ✎ a clip in Media. Notes go with your next message to the agent.
       </p>
       <div className="note-groups">
         {groups.map(([title, list]) =>

@@ -174,8 +174,8 @@ export async function removeServiceKey(id: string) {
 /** What the agent can do beyond editing, given the services added and what's installed on this Mac. */
 export function capabilities(): Capability[] {
   const saved = readSettings().services;
-  // The Mac's own voices can always read narration; SAM 3 cuts out anything once it's installed.
-  const local: Capability[] = [...(samReady() ? (["segment"] as const) : []), ...(process.platform === "darwin" ? (["voice"] as const) : [])];
+  // The Mac's own voices (or Windows') can always read narration; SAM 3 cuts out anything once it's installed.
+  const local: Capability[] = [...(samReady() ? (["segment"] as const) : []), ...(process.platform === "darwin" || process.platform === "win32" ? (["voice"] as const) : [])];
   return [...new Set([...SERVICES.filter((s) => saved[s.id]).flatMap((s) => s.unlocks), ...local])];
 }
 

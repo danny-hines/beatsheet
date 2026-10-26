@@ -1,14 +1,16 @@
 /**
  * The person's setup: which agent they use by default and which optional services they've added. Preferences live in a
- * small file in Application Support; API keys live in the macOS Keychain and never touch disk in the clear.
+ * small file in Application Support (on Windows, %LOCALAPPDATA%\beatsheet); API keys live in the macOS Keychain (on
+ * Windows, Credential Manager) and never touch disk in the clear.
  */
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { AgentId } from "./agent/session.ts";
+import { windowsHelper } from "./native.ts";
+import { appDataDir, capture } from "./platform.ts";
 
-export const SETTINGS_DIR = process.env.BEATSHEET_HOME ?? join(homedir(), "Library", "Application Support", "beatsheet");
+export const SETTINGS_DIR = process.env.BEATSHEET_HOME ?? appDataDir();
 const FILE = join(SETTINGS_DIR, "settings.json");
 /** The Keychain service every beatsheet key is filed under; the account is the service id ("fal", "elevenlabs"). */
 const KEYCHAIN = "beatsheet";
@@ -35,6 +37,8 @@ export type Settings = {
   voice?: { default?: string; model?: string };
   /** Set once the first-launch setup is finished. */
   setupDone?: boolean;
+  /** On Windows: a Hugging Face token (in Credential Manager) that can download Meta's SAM 3.1, and whose it is. */
+  huggingface?: { name?: string; addedAt: string };
 };
 
 export function readSettings(): Settings {
@@ -77,6 +81,11 @@ const SAFE_NAME = /^[a-z0-9-]+$/;
 export async function setSecret(name: string, value: string) {
   if (!SAFE_NAME.test(name)) throw new Error(`Bad key name "${name}"`);
   if (!SAFE_KEY.test(value)) throw new Error("That doesn't look like an API key (unexpected characters)");
+  if (process.platform === "win32") {
+    const r = await credentials(["set", name], value);
+    if (r.code !== 0) throw new Error(`Couldn't save the key in Credential Manager: ${r.err}`);
+    return;
+  }
   // Interactive mode reads the command from stdin, keeping the key out of the process list.
   const r = await security(["-i"], `add-generic-password -U -s ${KEYCHAIN} -a ${name} -l "beatsheet: ${name}" -w "${value}"\n`);
   if (r.code !== 0 || /error/i.test(r.out)) throw new Error(`Couldn't save the key in the Keychain: ${r.out.trim()}`);
@@ -84,11 +93,26 @@ export async function setSecret(name: string, value: string) {
 
 export async function getSecret(name: string): Promise<string | undefined> {
   if (!SAFE_NAME.test(name)) return undefined;
+  if (process.platform === "win32") {
+    const r = await credentials(["get", name]);
+    return r.code === 0 ? r.out.trim() || undefined : undefined;
+  }
   const r = await security(["find-generic-password", "-s", KEYCHAIN, "-a", name, "-w"]);
   return r.code === 0 ? r.out.trim() || undefined : undefined;
 }
 
 export async function deleteSecret(name: string) {
   if (!SAFE_NAME.test(name)) return;
+  if (process.platform === "win32") {
+    await credentials(["delete", name]);
+    return;
+  }
   await security(["delete-generic-password", "-s", KEYCHAIN, "-a", name]);
+}
+
+// ---- On Windows, in Credential Manager through beatsheet's own small helper (native/credentials.cs).
+/** Runs the helper, the key (if any) on stdin so it never appears in a command line. */
+async function credentials(args: string[], input?: string): Promise<{ code: number; out: string; err: string }> {
+  const r = await capture(await windowsHelper("credentials"), args, { input });
+  return { ...r, err: r.err.replace(/^error /m, "").trim() };
 }

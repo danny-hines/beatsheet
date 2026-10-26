@@ -5,6 +5,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
+import { launch } from "../platform.ts";
 
 /** Command and turn ids both protocols want: UUIDv7. */
 export function uuid7(): string {
@@ -39,7 +40,9 @@ export class StdioRpc extends EventEmitter {
   }
 
   spawn(command: string, args: string[], opts: { cwd: string; env?: NodeJS.ProcessEnv }) {
-    const child = spawn(command, args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["pipe", "pipe", "pipe"] });
+    // On Windows an npm .cmd shim (codex) runs its script on Node instead.
+    const l = launch(command, args);
+    const child = spawn(l.command, l.args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, windowsVerbatimArguments: l.windowsVerbatimArguments });
     this.child = child;
     child.stdout!.setEncoding("utf8");
     child.stdout!.on("data", (chunk: string) => this.consume(chunk));

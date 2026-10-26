@@ -32,8 +32,11 @@ export function lineState(voice: string | undefined, line: { text: string; tts?:
   return key === voiceKey(voice, line) ? "voiced" : "changed";
 }
 
-/** Which provider a voice id belongs to: elevenlabs:…, kokoro:… or mac:…; anything else was named by hand. */
-export function voiceProvider(id: string | undefined): "elevenlabs" | "kokoro" | "mac" | undefined {
+/**
+ * Which provider a voice id belongs to: elevenlabs:…, kokoro:…, mac:… or windows:… (each computer's own voices);
+ * anything else was named by hand.
+ */
+export function voiceProvider(id: string | undefined): "elevenlabs" | "kokoro" | "mac" | "windows" | undefined {
   const p = id?.split(":")[0];
-  return p === "elevenlabs" || p === "kokoro" || p === "mac" ? p : undefined;
+  return p === "elevenlabs" || p === "kokoro" || p === "mac" || p === "windows" ? p : undefined;
 }

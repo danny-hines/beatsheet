@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync 
 import { join } from "node:path";
 import { cliEnv } from "./agent/cli.ts";
 import { REPO } from "./paths.ts";
-import { du, findUv, stream } from "./sam.ts";
+import { HERE, venvPython } from "./platform.ts";
+import { du, findUv, stream } from "./pyenv.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
 /** Pinned, so an install today matches one next month. Kokoro needs Python 3.10–3.12. */
@@ -28,7 +29,7 @@ const NEEDS_GB = 3;
 export const KOKORO_DIR = join(SETTINGS_DIR, "kokoro");
 const paths = {
   venv: join(KOKORO_DIR, "venv"),
-  python: join(KOKORO_DIR, "venv", "bin", "python"),
+  python: venvPython(join(KOKORO_DIR, "venv")),
   /** Hugging Face's cache, where the model lands. */
   hf: join(KOKORO_DIR, "hf"),
   ready: join(KOKORO_DIR, "ready.json"),
@@ -67,6 +68,8 @@ export type KokoroStatus = {
 };
 
 function supported(): string | undefined {
+  // On Windows it runs on the processor (PyTorch from PyPI): quick enough for a voice this small, and no 2 GB download.
+  if (process.platform === "win32") return process.arch === "x64" ? undefined : "Needs a 64-bit Intel or AMD PC";
   if (process.platform !== "darwin") return "Needs a Mac";
   if (process.arch !== "arm64") return "Needs a Mac with Apple silicon (M1 or later)";
 }
@@ -120,7 +123,7 @@ export function installKokoro(): KokoroStatus {
       mkdirSync(KOKORO_DIR, { recursive: true });
       const free = statfsSync(KOKORO_DIR);
       const gb = (free.bavail * free.bsize) / 1e9;
-      if (gb < NEEDS_GB) throw new Error(`Needs about ${NEEDS_GB} GB free; this Mac has ${gb.toFixed(1)} GB`);
+      if (gb < NEEDS_GB) throw new Error(`Needs about ${NEEDS_GB} GB free; ${HERE} has ${gb.toFixed(1)} GB`);
       stopKokoro();
       rmSync(paths.ready, { force: true });
 
@@ -184,7 +187,7 @@ async function selfCheck(log: (l: string) => void): Promise<{ load: number; spea
     const w = await worker();
     const load = (Date.now() - t) / 1000;
     log(`The model loaded in ${load.toFixed(1)}s`);
-    const r = await w.ask<{ seconds: number; words: unknown[] }>({ op: "speak", text: "Hello! This is Kokoro, reading on your Mac.", voice: "af_heart", out });
+    const r = await w.ask<{ seconds: number; words: unknown[] }>({ op: "speak", text: `Hello! This is Kokoro, reading on your ${HERE === "this PC" ? "PC" : "Mac"}.`, voice: "af_heart", out });
     if (!r.words.length) log("It spoke, but without word timings");
     return { load, speak: r.seconds };
   } finally {
@@ -270,7 +273,7 @@ export function stopKokoro() {
 
 /** Reads `text` in one of Kokoro's voices into a WAV file, with each word's time. */
 export async function kokoroSpeak(text: string, voice: string, out: string, speed = 1): Promise<{ duration: number; words: { w: string; s: number; e: number }[] }> {
-  if (!kokoroReady()) throw new Error("Kokoro isn't installed on this Mac. Install it in Settings → Voices.");
+  if (!kokoroReady()) throw new Error(`Kokoro isn't installed on ${HERE}. Install it in Settings → Voices.`);
   const w = await worker();
   return w.ask({ op: "speak", text, voice, out, speed });
 }
