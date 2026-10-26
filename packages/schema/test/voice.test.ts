@@ -27,6 +27,8 @@ describe("voiced lines", () => {
   it("knows which provider a voice id is", () => {
     expect(voiceProvider("elevenlabs:21m00Tcm4TlvDq8ikWAM")).toBe("elevenlabs");
     expect(voiceProvider("kokoro:af_heart")).toBe("kokoro");
+    expect(voiceProvider("mac:com.apple.voice.premium.en-US.Zoe")).toBe("mac");
+    expect(voiceProvider("windows:Microsoft Zira Desktop")).toBe("windows");
     expect(voiceProvider("Danny (ElevenLabs eleven_v4)")).toBeUndefined();
   });
 });

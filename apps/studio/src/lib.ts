@@ -1,5 +1,6 @@
 import type { AgentId, AgentInfo, AgentItem, AgentView } from "@beatsheet/engine";
 import type { Asset, Fidelity, Note, NoteTarget, Project, ResolvedShot, Shot, ShotKind, Timeline } from "@beatsheet/schema";
+import { shortcut, splitPath, words } from "./os";
 import { actions, getState, timelineFor, type Selection } from "./store";
 
 export const KIND_LABEL: Record<ShotKind, string> = {
@@ -167,21 +168,12 @@ export const desktop = (window as unknown as { beatsheet?: Desktop }).beatsheet;
 
 /** Windows, where the studio (and the engine beside it) runs on a PC: the app says, or the browser does. */
 export const WINDOWS = desktop?.platform ? desktop.platform === "win32" : /win/i.test(navigator.platform || navigator.userAgent);
-/** Words for the computer beatsheet runs on, so the Mac's read as they always have and a PC's read right. */
-export const OS = WINDOWS
-  ? { computer: "PC", here: "this PC", files: "File Explorer", keys: "Credential Manager", trash: "Recycle Bin", terminal: "a terminal window", settings: "Windows Settings", app: "app" }
-  : { computer: "Mac", here: "this Mac", files: "Finder", keys: "Keychain", trash: "Trash", terminal: "Terminal", settings: "System Settings", app: "Mac app" };
-
-/** A shortcut as the Mac writes it ("⇧⌘O", "⌥"), or on Windows as Windows does ("Ctrl+Shift+O", "Alt"). */
-export function keys(mac: string, windows = WINDOWS): string {
-  if (!windows) return mac;
-  const mods = [mac.includes("⌘") && "Ctrl", mac.includes("⇧") && "Shift", mac.includes("⌥") && "Alt"].filter(Boolean);
-  const rest = mac.replace(/[⌘⇧⌥]/g, "");
-  return [...mods, rest].filter(Boolean).join("+");
-}
-
+/** Words for the computer beatsheet runs on (see os.ts). */
+export const OS = words(WINDOWS);
+/** A shortcut as the Mac writes it ("⇧⌘O"), or on Windows as Windows does ("Ctrl+Shift+O"). */
+export const keys = (mac: string) => shortcut(mac, WINDOWS);
 /** A path split into its folders and name (on Windows either slash separates them). */
-export const pathParts = (path: string) => path.split(WINDOWS ? /[\\/]/ : "/");
+export const pathParts = (path: string) => splitPath(path, WINDOWS);
 
 /** What the pickers choose: a folder, a song or other audio, or any file. */
 export type PickKind = "folder" | "audio" | "file";

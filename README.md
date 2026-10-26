@@ -128,7 +128,84 @@ Song analysis (tempo, downbeat, sections) runs librosa through `uv`, so there's 
 | `packages/engine/sfx` | The built-in sound effects (made by `packages/engine/py/make_sfx.py`) |
 | `.agents/skills` | The recipes the agents follow: `montage` (cut to music), `story` (narrated showcases and explainers) and `motion` (designed scenes) |
 
-Settings live in `~/Library/Application Support/beatsheet/settings.json` (no secrets; keys are in the Keychain). The local server answers only on 127.0.0.1, and anything that changes something needs the studio's `x-beatsheet` header, so a web page can't drive it.
+Settings live in `~/Library/Application Support/beatsheet/settings.json` (no secrets; keys are in the Keychain); on Windows, `%LOCALAPPDATA%\beatsheet\settings.json`, with keys in Credential Manager. The local server answers only on 127.0.0.1, and anything that changes something needs the studio's `x-beatsheet` header, so a web page can't drive it.
+
+## Windows
+
+beatsheet runs on Windows 11 too, made for a PC with an NVIDIA card. Everything here is written and unit-tested, but none of it has run on a PC yet: the checklist at the end is how it gets proved. The Mac works as it always has.
+
+**What's different on a PC.**
+
+- **Subjects and cut-outs** come from **SAM 3.1**, Meta's own code ([facebookresearch/sam3](https://github.com/facebookresearch/sam3)) and its video model, on the graphics card. It finds and follows faces, people and anything you box or name, and cuts out photos, stills from clips and whole clips. A moving cut-out by description ("the dog", through a clip) is something the Mac can't do yet. Before SAM is installed, OpenCV finds faces and people and follows a box; cut-outs wait for SAM (or, for a photo described in words, a fal key).
+- **Keys** are kept in Windows Credential Manager (as `beatsheet:<service>`), through a small helper beatsheet compiles the first time, the way the Mac builds its Swift helpers.
+- **Voices:** ElevenLabs, Kokoro (on the processor; no CUDA download) and Windows' own voices (SAPI, with every word timed; they sound robotic).
+- **The app** keeps Windows' own title bar, dark, with a File, Edit, View, Window and Help menu. Shortcuts are Ctrl (Ctrl+N, Ctrl+Shift+O, Ctrl+E, Ctrl+Z, Ctrl+Y, Ctrl+,), and the developer tools are F12. Recording the screen records a whole screen, asking which when there are several; there's no window picker yet.
+- **Its own folder** is `%LOCALAPPDATA%\beatsheet` (settings, the helpers it builds, SAM and Kokoro). Deleting a project moves its folder to the Recycle Bin.
+
+**Before you start.** In a terminal:
+
+```powershell
+winget install OpenJS.NodeJS.LTS      # Node 24 or later
+winget install Gyan.FFmpeg            # ffmpeg and ffprobe, with NVENC and VP9
+winget install astral-sh.uv           # Python tools: song analysis; Settings fetches its own for SAM and Kokoro
+winget install Git.Git                # Claude Code's Bash tool uses Git Bash
+```
+
+Then at least one agent: Claude Code (`irm https://claude.ai/install.ps1 | iex` in PowerShell) or Codex (`npm install -g @openai/codex`). Setup can run either installer. Muse Code may not exist for Windows yet; Setup says if it can't find it.
+
+For SAM 3.1 you also need:
+
+- an RTX 30-series card or newer, with NVIDIA's driver 570 or later (the 4090, 3090 and 5070 all qualify);
+- Microsoft's Visual C++ runtime (`winget install Microsoft.VCRedist.2015+.x64`), which PyTorch needs;
+- about 14 GB free on the system drive, mostly PyTorch for CUDA and the 3.5 GB model;
+- a Hugging Face account that Meta has given access to [facebook/sam3.1](https://huggingface.co/facebook/sam3.1) (ask on that page; it's usually quick), and a Read token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+
+No Python or CUDA toolkit to install: uv brings Python 3.12, PyTorch brings CUDA 12.8, and `triton-windows` brings its own compiler.
+
+**Get the code with its links.** The recipes reach Claude Code through symlinks in `.claude/skills`. Windows makes real links only with Developer Mode on (Settings → System → For developers), and git only when asked:
+
+```powershell
+git clone -c core.symlinks=true <the repository> beatsheet
+```
+
+In a checkout made without that, run `git config core.symlinks true` and `git checkout -- .claude/skills AGENTS.md` (Developer Mode on). `node scripts/doctor.ts` says whether the links work.
+
+**Run it.**
+
+```powershell
+npm install
+node scripts/doctor.ts                # checks Node, ffmpeg, uv, the agents, the links and the card; changes nothing
+npm run desktop                       # the app, from this folder
+npm run app                           # makes apps\desktop\release\beatsheet-win32-x64\beatsheet.exe and a Start menu shortcut
+npm run dev                           # or the studio in a browser at http://localhost:5180
+npm run check                         # typecheck, tests, validate the examples
+```
+
+Like the Mac's `beatsheet.app`, the Windows build is a personal one linked to this folder: rebuild it after pulling changes. File Explorer shows Electron's icon on the `.exe` itself; the window, the taskbar and the shortcut show beatsheet's.
+
+**SAM 3.1, installed from Settings.** Settings → On this PC → SAM 3.1: paste the Hugging Face token (it's checked against the model before it's kept, in Credential Manager), then **Install**. In one go, inside `%LOCALAPPDATA%\beatsheet\sam3`: uv if there isn't one, Python 3.12, PyTorch 2.10 for CUDA 12.8, `triton-windows` 3.6, Meta's code at a pinned commit, and the model at a pinned revision, downloaded in resumable pieces and checked against Hugging Face's SHA-256. Then it cuts out the truck in one of Meta's demo pictures on the card. **Remove** deletes the folder (the token stays). The worker works around three things in Meta's code: `start_session` passing an argument SAM 3.1 doesn't take ([sam3#544](https://github.com/facebookresearch/sam3/issues/544)), a decoder that insists on Flash Attention, which PyTorch for Windows doesn't have ([#523](https://github.com/facebookresearch/sam3/issues/523), [#532](https://github.com/facebookresearch/sam3/issues/532)), and Triton. If `triton-windows` won't load or can't build a kernel on the card, the three small steps that need it run on the processor instead; the install log says which (`Triton: ok`, or why not). Clips are cut down with ffmpeg before SAM reads them: 1920 px and up to 30 s on a 24 GB card, 1280 px and 20 s on a 12 GB one like the 5070, which also keeps frames in the computer's memory and follows at most 8 things at once.
+
+**Test checklist (on the 4090).** Each step says what should happen; anything else is worth a note. `.beatsheet\studio.log` in this folder has the studio's errors.
+
+1. `node scripts/doctor.ts`: every line ✓ (or · for an optional thing), with the 4090, 24 GB and the driver version on the NVIDIA line.
+2. `npm run check` passes.
+3. `npm run desktop`: the window opens with a dark title bar and the menu. File → All Projects (Ctrl+Shift+O) goes home.
+4. Setup or Settings → Agent: Claude Code (and Codex, if installed) shows as installed. **Sign in** opens a console window running the CLI; after signing in, **Check again** says signed in.
+5. Settings → Media services: add an ElevenLabs key. It says "in Credential Manager", and Control Panel → Credential Manager → Windows Credentials lists `beatsheet:elevenlabs`. Remove it and add it again.
+6. New project (Ctrl+N) from a folder of phone footage with a 4K HEVC clip and a HEIC photo: preview copies, posters and filmstrips appear (Task Manager shows the GPU's Video Encode busy while they're made), and scrubbing a clip in Media plays smoothly.
+7. Choose a song: the BPM and sections appear (uv and librosa).
+8. Start the agent on the project: it logs the footage, sharpens the brief and hands off with directions. A shell command it wants shows an approval card. Then ask it to read the ElevenLabs key: it can't (the request is refused, or the card says so without an Allow on your behalf).
+9. Pick a direction: it builds a cut. Play it, drag a cut in the timeline (it snaps; Alt places it freely), leave notes and send them, Ctrl+Z and Ctrl+Y.
+10. Export (Ctrl+E): the save dialog opens in Videos, the MP4 plays, and **Show in File Explorer** selects it.
+11. Settings → Voices: Windows' voices (Zira, David…) are listed; **Listen** plays one. Narrate a line with one: captions land on the words. Install Kokoro, narrate with it.
+12. Record: Camera, Voice, and Screen (with two monitors it asks which). Each lands under Recordings.
+13. Without SAM: select a clip, find the people in it (face-1, person-1…), blur a face, and track a boxed object.
+14. SAM 3.1: paste the token, Install (expect 15–30 minutes, mostly downloads). It ends Ready, with `Triton: ok` (or the processor fallback) in the log. Then find subjects again (the subjects now say sam-3.1), cut out "the dog" (or whatever's in your footage) from a photo, from a still of a clip, and from a whole clip: the clip's cut-out is a WebM with see-through edges that lines up over its source in a shot. Track a boxed thing with it too.
+15. Home → ⋯ on a project → Move to the Recycle Bin: it goes, and Restore in the Recycle Bin brings it back.
+16. `npm run app`: beatsheet is in the Start menu and opens.
+17. On the 5070 (12 GB): install SAM 3.1 the same way and make a cut-out of a 20-second clip. It should finish without running out of memory.
+
+**Not proved yet on Windows:** all of the above. Things most likely to need a second look: Muse Code (it may not run on Windows), Codex's sandbox on Windows, Windows' voices' word timings, SAM 3.1's video path on `triton-windows`, and HEIC photos (ffmpeg 7.1 or later reads them). A project made on the Mac points at its footage by Mac paths, so on the PC it needs that footage added again (a "find the footage" step isn't built).
 
 ## Not built yet
 
@@ -136,7 +213,7 @@ Settings live in `~/Library/Application Support/beatsheet/settings.json` (no sec
 - Recording the Mac's own sound with the screen. Screen recordings take the microphone only for now.
 - ElevenLabs speech, voice design, cloning and music are written to their documentation and untested end to end (they spend credits); listing voices is tested. Kokoro's install (about 1.5 GB) is untested.
 - SAM for moving cut-outs. The MLX port does pictures, so SAM handles photos and stills, and Apple Vision handles clips. fal's SAM 3/3.1 video (about 0.5–1¢ per 16 frames) would bring it to any machine.
-- Windows, for PCs with an NVIDIA card. First the Mac-only plumbing: finding the agent CLIs and their PATH (`zsh`), sign-in in Terminal, keys in the Keychain, settings in Application Support, the app build, `sips`, and Cmd shortcuts. Then SAM 3.1 installed from Settings with Meta's own code on CUDA. That needs a Hugging Face token with access to the gated weights, and `triton-windows` (or Transformers' SAM 3, which doesn't need Triton). Its video model would find, follow and cut out anything you name, in place of Apple Vision. Projects store absolute footage folders, so one made on the Mac needs a "find the footage" step on the PC. Check whether Muse Code runs on Windows.
+- Proving Windows on a PC (see [Windows](#windows)): it's written and unit-tested, not yet run. Projects store absolute footage folders, so one made on the Mac needs a "find the footage" step on the PC. Recording a single window, and the PC's own sound with the screen (Electron can do both on Windows), aren't wired up yet.
 - Tracks of the same person aren't joined automatically: someone who leaves the frame and comes back is two subjects until they're joined (`join_subjects`, or in the studio).
 - Scenes written for another Remotion project (Sparkade's) run, but crash without that project's own context, so they show as cards. Giving them their context, or porting them, is next.
 - ElevenLabs sound effects (`generate_sfx`) are written to its documentation and untested (they spend credits). The built-in sounds are tested.
