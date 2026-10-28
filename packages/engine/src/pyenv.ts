@@ -199,6 +199,19 @@ export function stream(cmd: string, args: string[], opts: { cwd?: string; env: N
   });
 }
 
+/**
+ * Deletes an install's uv cache once its packages are in, before anything runs them: on Windows uv hard-links the
+ * packages to the cache, and a file a running Python has loaded can't be deleted under either name. Only tidying, so a
+ * failure is logged, not thrown.
+ */
+export function dropCache(dir: string, log: (l: string) => void) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  } catch (err) {
+    log(`Couldn't delete the download cache, ${dir} (${err instanceof Error ? err.message : String(err)}); it's safe to delete by hand`);
+  }
+}
+
 export async function du(dir: string): Promise<number> {
   if (IS_WINDOWS) return sizeOf(dir);
   try {

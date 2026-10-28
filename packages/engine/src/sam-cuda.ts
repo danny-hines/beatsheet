@@ -17,7 +17,7 @@ import { pipeline } from "node:stream/promises";
 import { cliEnv } from "./agent/cli.ts";
 import { REPO } from "./paths.ts";
 import { containerTrouble, inContainer, run as runLaunch, systemExe, untarCommand, venvPython } from "./platform.ts";
-import { download, du, findUv, stream } from "./pyenv.ts";
+import { download, dropCache, du, findUv, stream } from "./pyenv.ts";
 import type { SamCutout, SamStatus } from "./sam.ts";
 import { getSecret, readSettings, setSecret, SETTINGS_DIR, updateSettings } from "./settings.ts";
 
@@ -247,11 +247,11 @@ export function installSam(): SamStatus {
       const settled = await Promise.allSettled([env, weights]);
       for (const r of settled) if (r.status === "rejected") throw r.reason;
       weightsDone = 1;
+      dropCache(join(SAM_DIR, "cache"), log);
 
       job.stage = "Checking it works on the card";
       job.progress = 0.97;
       const check = await selfCheck(log);
-      rmSync(join(SAM_DIR, "cache"), { recursive: true, force: true });
       const bytes = await du(SAM_DIR);
       writeFileSync(
         paths.ready,
@@ -264,7 +264,7 @@ export function installSam(): SamStatus {
       log(job.error);
     } finally {
       job.done = true;
-      rmSync(join(SAM_DIR, "cache"), { recursive: true, force: true });
+      dropCache(join(SAM_DIR, "cache"), log);
     }
   })();
   return samStatus();

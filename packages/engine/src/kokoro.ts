@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { cliEnv } from "./agent/cli.ts";
 import { REPO } from "./paths.ts";
 import { containerTrouble, HERE, inContainer, venvPython } from "./platform.ts";
-import { du, findUv, stream } from "./pyenv.ts";
+import { dropCache, du, findUv, stream } from "./pyenv.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
 /** Pinned, so an install today matches one next month. Kokoro needs Python 3.10–3.12. */
@@ -150,9 +150,9 @@ export function installKokoro(): KokoroStatus {
         },
       });
       job.progress = 0.6;
+      dropCache(join(KOKORO_DIR, "cache"), log);
       job.stage = "Downloading the voice model (about 330 MB) and checking it speaks";
       const check = await selfCheck(log);
-      rmSync(join(KOKORO_DIR, "cache"), { recursive: true, force: true });
       const bytes = await du(KOKORO_DIR);
       writeFileSync(paths.ready, JSON.stringify({ version: PACKAGES[0]!, at: new Date().toISOString(), loadSeconds: check.load, checkSeconds: check.speak, bytes } satisfies Ready, null, 2));
       job.progress = 1;
@@ -162,7 +162,7 @@ export function installKokoro(): KokoroStatus {
       log(job.error);
     } finally {
       job.done = true;
-      rmSync(join(KOKORO_DIR, "cache"), { recursive: true, force: true });
+      dropCache(join(KOKORO_DIR, "cache"), log);
     }
   })();
   return kokoroStatus();
