@@ -1,6 +1,6 @@
 import { formatTime, type Asset, type Project } from "@beatsheet/schema";
 import { useEffect, useMemo, useState } from "react";
-import { desktop, hideBroken, pickFootage, posterUrl, stripUrl, pathParts } from "../lib";
+import { desktop, FOLDERS_APART, hideBroken, pickFootage, posterUrl, stripUrl, pathParts } from "../lib";
 import type { RecordKind } from "../record";
 import { actions, getState, useProject, useStore } from "../store";
 import { RecorderDialog, RecordMenu } from "./Recorder";
@@ -157,18 +157,23 @@ type Job = { id: string; status: "running" | "done" | "error"; progress: number;
 /** More footage into this project (files, folders, or both); when it's in, the agent is told so it can log the new files. */
 function AddFootage({ big, onRecord }: { big?: boolean; onRecord: (kind: RecordKind) => void }) {
   const [job, setJob] = useState<Job | null>(null);
-  // The app menu's Add Footage, and folders dropped on the media panel, come here too.
+  // The app menu's Add Footage (and on Windows its Add a Folder), and folders dropped on the media panel, come here too.
   useEffect(() => {
     const onAdd = (e: Event) => {
       const d = (e as CustomEvent<string | string[] | undefined>).detail;
       void add(typeof d === "string" ? [d] : d);
     };
+    const onFolder = () => void add(undefined, "folder");
     window.addEventListener("beatsheet:add-footage", onAdd);
-    return () => window.removeEventListener("beatsheet:add-footage", onAdd);
+    window.addEventListener("beatsheet:add-footage-folder", onFolder);
+    return () => {
+      window.removeEventListener("beatsheet:add-footage", onAdd);
+      window.removeEventListener("beatsheet:add-footage-folder", onFolder);
+    };
   });
-  const add = async (given?: string[]) => {
+  const add = async (given?: string[], kind?: "files" | "folder") => {
     if (job?.status === "running") return;
-    const paths = given?.length ? given : await pickFootage();
+    const paths = given?.length ? given : await pickFootage(kind);
     const projectId = getState().projectId;
     if (!paths?.length || !projectId) return;
     const res = await fetch(`/api/projects/${projectId}/footage`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paths }) });
@@ -206,6 +211,11 @@ function AddFootage({ big, onRecord }: { big?: boolean; onRecord: (kind: RecordK
         </button>
         <RecordMenu onPick={onRecord} big={big} />
       </div>
+      {FOLDERS_APART && (
+        <button className="link small add-folder" onClick={() => void add(undefined, "folder")}>
+          or add a whole folder…
+        </button>
+      )}
       {desktop && big && <p className="dim small">or drop files or a folder here</p>}
     </div>
   );

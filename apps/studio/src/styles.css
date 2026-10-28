@@ -816,6 +816,7 @@ html.desktop .home-page { padding-top: 10px; }
 .library-actions > button { flex: 1; }
 .library-foot.big .library-actions { justify-content: center; }
 .library-foot.big .library-actions > button { flex: none; }
+.library-foot .add-folder { align-self: center; }
 .record-menu { position: relative; }
 .record-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .record-button .caret { color: var(--dim); font-size: 10px; }

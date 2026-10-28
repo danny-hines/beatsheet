@@ -58,6 +58,7 @@ export function App() {
       else if (command === "home") void actions.goHome();
       else if (command === "settings") actions.setSettingsOpen(true);
       else if (command === "add-footage") window.dispatchEvent(new CustomEvent("beatsheet:add-footage"));
+      else if (command === "add-footage-folder") window.dispatchEvent(new CustomEvent("beatsheet:add-footage-folder"));
       else if (command === "export") window.dispatchEvent(new CustomEvent("beatsheet:export"));
       else if (command === "new-cut") window.dispatchEvent(new CustomEvent("beatsheet:new-cut"));
       else if (command.startsWith("record-")) window.dispatchEvent(new CustomEvent("beatsheet:record", { detail: command.slice("record-".length) }));

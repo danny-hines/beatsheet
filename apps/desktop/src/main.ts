@@ -85,7 +85,6 @@ ipcMain.handle("beatsheet:pick", async (_e, kind: "folder" | "audio" | "file") =
   return r.canceled ? null : (r.filePaths[0] ?? null);
 });
 
-// Footage: photos and videos, a folder of them, or several of either, in one picker.
 // Where an export goes: the person names it and picks the folder (the last one used, else Movies).
 ipcMain.handle("beatsheet:save-video", async (_e, opts: { name: string; dir?: string }) => {
   const options = {
@@ -101,14 +100,20 @@ ipcMain.handle("beatsheet:save-video", async (_e, opts: { name: string; dir?: st
 ipcMain.handle("beatsheet:reveal", (_e, path: string) => shell.showItemInFolder(path));
 ipcMain.handle("beatsheet:open-file", (_e, path: string) => shell.openPath(path));
 
-ipcMain.handle("beatsheet:pick-footage", async () => {
-  const options: Electron.OpenDialogOptions = {
-    title: "Add footage",
-    message: "Choose photos and videos, or a folder of them",
-    buttonLabel: "Add",
-    properties: ["openFile", "openDirectory", "multiSelections"],
-    filters: [{ name: "Photos and videos", extensions: ["mp4", "mov", "m4v", "webm", "jpg", "jpeg", "png", "heic", "heif", "webp"] }],
-  };
+// Footage: photos and videos, a folder of them, or several of either, in one picker on the Mac. Windows' picker chooses
+// files or folders, never both (asked for both, it only lets you choose a folder), so there the studio asks for one.
+ipcMain.handle("beatsheet:pick-footage", async (_e, kind: "files" | "folder" = "files") => {
+  const mac = process.platform === "darwin";
+  const options: Electron.OpenDialogOptions =
+    !mac && kind === "folder"
+      ? { title: "Add a folder of footage", buttonLabel: "Add", properties: ["openDirectory"] }
+      : {
+          title: "Add footage",
+          message: "Choose photos and videos, or a folder of them",
+          buttonLabel: "Add",
+          properties: mac ? ["openFile", "openDirectory", "multiSelections"] : ["openFile", "multiSelections"],
+          filters: [{ name: "Photos and videos", extensions: ["mp4", "mov", "m4v", "webm", "jpg", "jpeg", "png", "heic", "heif", "webp"] }],
+        };
   const r = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return r.canceled || !r.filePaths.length ? null : r.filePaths;
 });
@@ -220,6 +225,7 @@ function windowsMenu() {
         { label: "All Projects", accelerator: "Ctrl+Shift+O", click: send("home") },
         { type: "separator" },
         { label: "Add Footage…", accelerator: "Ctrl+Shift+I", click: send("add-footage") },
+        { label: "Add a Folder of Footage…", click: send("add-footage-folder") },
         { label: "Record Screen…", accelerator: "Ctrl+Shift+R", click: send("record-screen") },
         { label: "Record Camera…", click: send("record-camera") },
         { label: "Record Voice…", click: send("record-voice") },

@@ -151,8 +151,8 @@ type Desktop = {
   platform?: string;
   pick: (kind: PickKind) => Promise<string | null>;
   pathFor: (file: File) => string;
-  /** Photos and videos, a folder of them, or several of either. */
-  pickFootage?: () => Promise<string[] | null>;
+  /** Photos and videos, a folder of them, or several of either (on Windows, files or a folder: `kind`). */
+  pickFootage?: (kind?: "files" | "folder") => Promise<string[] | null>;
   onMenu: (fn: (command: string) => void) => () => void;
   /** Asks macOS for the camera or microphone; resolves to granted, denied, restricted or not-determined. */
   mediaAccess?: (kind: "camera" | "microphone") => Promise<string>;
@@ -172,6 +172,8 @@ export const WINDOWS = desktop?.platform ? desktop.platform === "win32" : /win/i
 export const OS = words(WINDOWS);
 /** A shortcut as the Mac writes it ("⇧⌘O"), or on Windows as Windows does ("Ctrl+Shift+O"). */
 export const keys = (mac: string) => shortcut(mac, WINDOWS);
+/** The Windows app's footage picker chooses files or a folder, not both, so folders get a way in of their own. */
+export const FOLDERS_APART = !!desktop?.pickFootage && WINDOWS;
 /** A path split into its folders and name (on Windows either slash separates them). */
 export const pathParts = (path: string) => splitPath(path, WINDOWS);
 
@@ -184,9 +186,12 @@ export async function pickPath(kind: PickKind): Promise<string | null> {
   return ((await res.json()) as { path: string | null }).path;
 }
 
-/** Footage to add: files and folders in the Mac app (one picker does both), a folder when the studio runs in a browser. */
-export async function pickFootage(): Promise<string[] | null> {
-  if (desktop?.pickFootage) return desktop.pickFootage();
+/**
+ * Footage to add: files and folders in the Mac app (one picker does both), files or a folder (`kind`) in the Windows
+ * app, a folder when the studio runs in a browser.
+ */
+export async function pickFootage(kind?: "files" | "folder"): Promise<string[] | null> {
+  if (desktop?.pickFootage) return desktop.pickFootage(kind);
   const folder = await pickPath("folder");
   return folder ? [folder] : null;
 }

@@ -9,7 +9,7 @@ contextBridge.exposeInMainWorld("beatsheet", {
   /** "darwin" or "win32": the studio words a few things (shortcuts, Finder or File Explorer) to match. */
   platform: process.platform,
   pick: (kind: "folder" | "audio" | "file") => ipcRenderer.invoke("beatsheet:pick", kind) as Promise<string | null>,
-  pickFootage: () => ipcRenderer.invoke("beatsheet:pick-footage") as Promise<string[] | null>,
+  pickFootage: (kind?: "files" | "folder") => ipcRenderer.invoke("beatsheet:pick-footage", kind) as Promise<string[] | null>,
   saveVideo: (opts: { name: string; dir?: string }) => ipcRenderer.invoke("beatsheet:save-video", opts) as Promise<string | null>,
   reveal: (path: string) => ipcRenderer.invoke("beatsheet:reveal", path),
   openFile: (path: string) => ipcRenderer.invoke("beatsheet:open-file", path) as Promise<string>,
