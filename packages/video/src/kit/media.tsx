@@ -373,6 +373,11 @@ export function ThreeCanvas<S>({
   const [error, setError] = useState("");
   const rendering = getRemotionEnvironment().isRendering;
   const [handle] = useState(() => (rendering ? delayRender("Setting up a three.js scene", { timeoutInMilliseconds: 60_000 }) : null));
+  const held = useRef(handle !== null);
+  const release = () => {
+    if (held.current) continueRender(handle!);
+    held.current = false;
+  };
   // Each mount gets its own canvas and gives its WebGL context back when it goes: a shot unmounts whenever the playhead
   // leaves it, and browsers drop the oldest contexts (drawing black) once a page holds too many.
   useEffect(() => {
@@ -419,12 +424,11 @@ export function ThreeCanvas<S>({
         if (!gone) setReady({ state, ctx });
       } catch (err) {
         if (!gone) setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (handle !== null) continueRender(handle);
       }
     })();
     return () => {
       gone = true;
+      release();
       renderer?.dispose();
       renderer?.forceContextLoss();
       el.remove();
@@ -432,9 +436,12 @@ export function ThreeCanvas<S>({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // Posed while rendering (it depends only on t), so labels from it are drawn in the same frame as the picture.
   const labels = ready ? (draw(ready.state, s.t, ready.ctx) ?? []) : [];
+  // The render is held until the first picture (or the error) is committed, not just until setup resolves: Remotion
+  // can capture the frame as soon as the hold goes, before React has drawn anything, leaving an empty canvas.
   useLayoutEffect(() => {
     if (ready) ready.ctx.renderer.render(ready.ctx.scene, ready.ctx.camera);
-  }, [ready, s.frame]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (ready || error) release();
+  }, [ready, error, s.frame]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <AbsoluteFill style={style}>
       <div ref={holder} style={{ position: "absolute", inset: 0 }} />

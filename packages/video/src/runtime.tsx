@@ -4,7 +4,7 @@
  * Ready-made kit scenes (`kit:Name`) need no code at all. A scene that fails to compile or throws shows what went
  * wrong in its place, which is what the agent sees when it looks at the frame.
  */
-import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useLayoutEffect, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import * as React from "react";
 import * as JSX from "react/jsx-runtime";
 import * as Remotion from "remotion";
@@ -103,6 +103,11 @@ function LoadedScene({ component, codeBase, codeVersion, props, fallback }: { co
   const url = `${codeBase}/${path!.split("/").map(encodeURIComponent).join("/")}${codeVersion ? `?v=${encodeURIComponent(codeVersion)}` : ""}`;
   const [state, setState] = useState<{ url: string; C?: React.FC<Record<string, unknown>>; error?: string }>({ url });
   const [handle] = useState(() => (getRemotionEnvironment().isRendering ? delayRender(`Loading ${component}`, { timeoutInMilliseconds: 60_000 }) : null));
+  const held = useRef(handle !== null);
+  const release = () => {
+    if (held.current) continueRender(handle!);
+    held.current = false;
+  };
   useEffect(() => {
     let gone = false;
     loadScene(url)
@@ -111,12 +116,18 @@ function LoadedScene({ component, codeBase, codeVersion, props, fallback }: { co
         const C = (m[name] ?? (name === "default" ? m.default : undefined)) as React.FC<Record<string, unknown>> | undefined;
         setState(C ? { url, C } : { url, error: `${path} has no export "${name}". It exports: ${Object.keys(m).join(", ") || "nothing"}` });
       })
-      .catch((err: unknown) => !gone && setState({ url, error: err instanceof Error ? err.message : String(err) }))
-      .finally(() => handle !== null && continueRender(handle));
+      .catch((err: unknown) => !gone && setState({ url, error: err instanceof Error ? err.message : String(err) }));
     return () => {
       gone = true;
     };
   }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Held until the scene has been committed, so its own holds (a three.js setup, say) are already in place: releasing
+  // when the module arrives let Remotion capture the frame before the scene was on it.
+  const settled = state.url === url && (state.C !== undefined || state.error !== undefined);
+  useLayoutEffect(() => {
+    if (settled) release();
+  }, [settled]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => release, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (state.error) return <SceneProblem fallback={fallback} title={`${component} didn't load`} message={state.error} />;
   if (!state.C || state.url !== url) return null;
   return (
