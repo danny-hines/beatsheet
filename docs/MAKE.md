@@ -38,6 +38,36 @@ The person works where it suits them: the story and its timing in Edit, the cast
 
 The stages run in a different order from a footage project's: `material` (the cast and sets) comes after `structure`, because the cast comes out of the story.
 
+## An old film, remastered
+
+The example: home movies made as kids. A fight film shot on a camcorder, with homemade costumes, a backyard for a set, and choreography nobody rehearsed. The goal is the same film, with the same people, lines and structure, made to look as if a studio made it.
+
+The old film is already the structure: its shots, its timing and its lines. So this is [A video from nothing](#a-video-from-nothing) with the board already done. Every shot is a clip shot, and the remaster is its `version`.
+
+1. **Bring it in.** Import the files: DV, MPEG-2 from a DVD, a copy of a VHS tape. Old video is often interlaced, and import doesn't handle that yet: it needs deinterlacing (ffmpeg's `bwdif`) whenever the probe says a file is interlaced, or every fast move shows combing.
+2. **Log it.** Split the file into shots at its cuts, transcribe the lines, and find the people. Neither splitting nor transcription exists yet (the `transcript` spine does); Whisper on the PC, or a service, can do the transcribing. The transcript is the spine, so the remaster keeps the original's timing, line for line.
+3. **Cast from the film.** Each kid is a subject in many shots: Make a character from one, then link their subjects across the film (`seen`). At camcorder resolution a face is a few dozen pixels, so the film alone makes a weak likeness. Photos from the same years (school photos, family albums) make the real references, and people who knew them check the sheet. Then the variants for the remaster: `@me/armor`, `@jake/villain`. Sets work the same way: the backyard becomes `@temple-ruins`, made from frames of the backyard so its layout (the fence where the fight ends) carries over.
+4. **Choose how far each shot goes.** There are three levels:
+   - **Restore:** upscale, clean up the noise, steady the camera, fill in frames, grade. Faithful and cheap; it's still the real footage.
+   - **Enhance:** the real footage with effects drawn over it, using parts beatsheet already has. Cut out the plastic sword over the whole clip (`cut_out` with "the sword") and a designed scene draws a glowing blade on it. Add sparks, a flash and a shake on each hit, and a sound on every swing.
+   - **Remaster:** the shot made again. A motion-transfer model (SCAIL-2, Wan Animate) keeps each kid's movements and the framing, and replaces them with their variant. The set is swapped for its new one, and the frame can be widened from 4:3 to 16:9. The lines stay in sync because the timing never moves, and lip-sync fixes the mouths where a face changed.
+
+   It's a choice for each shot, not a filter over the whole film: the blooper you want to keep real stays restored. Fast fights at low resolution are the hardest thing to hand these models, so some remastered shots will take several tries, and some will fall back to Enhance.
+5. **Recut it.** Much of what makes a fight look good is editing and sound, which beatsheet already does: cutting on the hit, a speed change into the impact, a flash frame, a shake, a whoosh on every swing. Bad choreography cut well reads better than good choreography cut badly.
+6. **Start with a trailer.** A whole film is a lot of video to make again. Ten minutes is hundreds of shots, and through a service a lot of money. The recipe remasters the best minute as a trailer first, then runs the whole film on the PC over a few nights.
+
+The voices stay their own. The original sound, separated from the hiss and the wind, is the point, and nothing separates voices from noise yet either.
+
+### Someone who's gone
+
+The same tools make tributes: a late cousin's own films remastered, or a new scene with him in it (a wizard in an old-world battle, a hooded knight with a glowing blade) for his family.
+
+- **The family decides.** For someone who's died, the people closest to him stand in for his agreement, and the cut is theirs to approve. What delights one sibling can be hard for another, so it's worth asking before making it.
+- **His real voice.** Rather than cloning his voice to say new things, the agent searches the transcripts of his films for lines that fit the new scene and builds the scene around what he actually said. A cloned voice only if the family wants one, and within the service's rules on cloning.
+- **His age.** Variants by age: him at fourteen, as he is in the films, or as an adult, from later photos.
+- **Kept private.** Family photos and footage of someone who's died are a good reason to run the models on the PC (see [Running models yourself](#running-models-yourself)). Some services won't take pictures of real people at all.
+- **Describe, don't name.** Services often refuse the names and characters of famous films, so the agent describes the look instead ("a hooded knight with a glowing blue blade").
+
 ## Prior art
 
 - **Pages over shared media.** DaVinci Resolve splits the work into pages (Media, Cut, Edit, Fusion, Color, Fairlight, Deliver), and the media pool is the same on every page. That's the model for Edit and Make.
@@ -188,6 +218,7 @@ Verbs on a clip shot, from Inspect's Change it menu and from the timeline:
 - **Relight, new angle, restyle, remove.** A short prompt each, sent to a model that edits video. A note with a frame region drawn on it ("take this sign out") is already the right request for a removal, so the agent can do these from a batch.
 - **Replace someone.** Pick a tracked subject, then a cast member. The subject's boxes are what swap models want as a mask.
 - **Lip-sync.** A shot of a character and the voice line it covers.
+- **Widen.** 4:3 to 16:9, or a vertical shot to landscape: the model fills in the sides.
 
 Each makes a derived asset (its provenance `from` says which footage and which range), and the clip shot plays it in place of its footage: `version: "<asset id>"`. Clearing `version` goes back to the original. The derived asset covers the same source time, so moments and `sync` still line up. Effects that follow a subject keep working after a relight or a restyle (the picture's geometry is the same), but need the subject found again after a new angle or a replacement.
 
@@ -206,7 +237,8 @@ A short, fixed list of what can be asked for. The verbs above are presets of the
 - `edit-video`: a clip, changed by an instruction (relight, angle, restyle, remove)
 - `swap`: a clip with a subject replaced by a cast member
 - `lipsync`: a clip made to speak a voice line
-- `upscale`
+- `restore`: a clip or still made sharper and cleaner (upscaled, denoised, steadied, more frames)
+- `isolate`: voices separated from noise and music
 - and the ones there are already: `voice`, `music`, `sfx`, `segment`
 
 ### The catalog
@@ -231,7 +263,7 @@ Data, curated by hand: a short list of good models for each operation, not a mir
 
 (The ids and prices are placeholders.)
 
-A route is where a model runs: fal, Replicate, Runway, Gemini, OpenAI, ElevenLabs, or `local` (a worker on the machine's own GPU, installed from Settings like SAM). A model is available when any of its routes is. fal comes first: one key covers most video and image models, and its queue suits jobs that outlive a process. Each route has an adapter per input shape, so a new model that takes the same inputs as one already there is a catalog entry, not code.
+A route is where a model runs: fal, Replicate, Runway, Gemini, OpenAI, ElevenLabs, or `comfy`, a ComfyUI workflow run on this machine, another machine or RunPod (see [Running models yourself](#running-models-yourself)). A model is available when any of its routes is. fal comes first: one key covers most video and image models, and its queue suits jobs that outlive a process. Each route has an adapter per input shape, so a new model that takes the same inputs as one already there is a catalog entry, not code.
 
 The catalog and the fit check are pure, so they live in `packages/schema`, shared by the studio, the engine and the MCP server, with tests like the resolver's. Routes, keys, balances and adapters belong to the engine.
 
@@ -247,7 +279,7 @@ type Fit =
 type Why =
   | { kind: "fit"; reason: string; fix?: "split" | "drop-refs" | "via-start-frame" } // "Makes up to 10s; this shot is 12.4s"
   | { kind: "connect"; services: string[] }                // "Runs on fal or Replicate"
-  | { kind: "install"; what: string }                      // "Install Wan for your RTX card"
+  | { kind: "install"; what: string }                      // "Download 3 model files (26 GB) for ComfyUI on this PC"
   | { kind: "funds"; balanceUsd: number; needUsd: number } // "fal has $0.40; this is about $1.20"
   | { kind: "policy"; detail: string }                     // "Won't take pictures of real people"
   | { kind: "failing"; detail: string };                   // key refused, service down
@@ -265,6 +297,85 @@ The picker groups them:
 
 Auto is the default: the first ready model in a ranking for each operation, which you reorder in Settings → What it can do. Picking a model overrides Auto for that request. A project can pin a model for an operation, since mixing models across shots changes how they look, and the agent keeps to the pin. Every take records its model, so "Try this in Veo" on a take is one click.
 
+## Running models yourself
+
+Open-weights models (Wan, LTX-2, SCAIL-2, Qwen-Image, Flux) can run on your own graphics card or a rented one instead of through a service. That can be much cheaper, it's private (photos of your family never leave the machine), and sometimes it's the only way: an open model often runs in ComfyUI the day it's released, before any service hosts it. What it costs is setup and, on most home cards, time.
+
+### ComfyUI as the runtime
+
+beatsheet doesn't write a worker for each model, as it did for SAM. New open models get ComfyUI support at release or soon after (SCAIL-2 shipped with built-in nodes), so ComfyUI is the runtime, and beatsheet drives it through its HTTP API:
+
+- `POST /prompt` with a workflow in ComfyUI's API format, then progress over its websocket and the result from `/history/<id>`
+- inputs uploaded to it, and outputs downloaded into `made/` and added with `add_asset` as usual
+- `/system_stats` for the card and its memory, and `/object_info` for which nodes are installed
+
+SAM, Apple Vision and Kokoro keep their own workers: they're built, and they work.
+
+### Where it runs
+
+The same workflow runs anywhere ComfyUI does, so a route through ComfyUI is a workflow plus a host:
+
+- **This machine.** A ComfyUI that's already installed (the desktop app or a portable one), found where it usually listens, or one beatsheet installs in its own folder (`%LOCALAPPDATA%\beatsheet\comfy`, the way SAM 3.1 is installed, with its own Python). The person's own has their nodes and models already; beatsheet's own is pinned to a version its workflows are tested with. The card comes from `gpu()` in [sam-cuda.ts](../packages/engine/src/sam-cuda.ts), or from the Mac's chip and memory, where video is slow enough that the fit check usually says so.
+- **Another machine.** Any ComfyUI by its URL: a box on the network, or a RunPod pod. ComfyUI has no sign-in of its own, so the URL is kept like a key, and beatsheet warns when it's open to anyone.
+- **RunPod serverless.** An endpoint running RunPod's worker-comfyui. It bills by the second while it works and scales to nothing when idle, so the first job after a quiet spell waits for a cold start. Requests have size limits (10 MB for `/run`), so big inputs go up as URLs, and videos come back through a bucket (S3) rather than in the response. Model files live on a network volume attached to the endpoint.
+- **A RunPod pod** is another machine that bills by the hour, idle or not. With the RunPod key, beatsheet starts it for a batch and stops it after.
+
+Settings gets a pane for these (This PC, RunPod, other machines), with a card for each in the style of SAM's and the agents'. Other hosts (Modal, Vast.ai, Comfy Cloud) can fit the same shape later.
+
+### Workflows in the catalog
+
+A route through ComfyUI names a workflow file kept with the catalog:
+
+```ts
+{ via: "comfy", workflow: "scail2-replace" }
+```
+
+The workflow carries what it takes to run it and to check it:
+
+- **Slots:** which node inputs are the prompt, the start frame, the references, the source clip, the length, the size and the seed, and which node is the output.
+- **Needs:** node types (built in for SCAIL-2; custom nodes pinned to a commit when not), and model files with their folder, size, hash and where to get them.
+- **Variants** by precision (fp16, fp8, GGUF), each with the graphics memory it needs.
+- **Speed:** seconds of work per second of video at each size, for a few classes of card, replaced by the machine's own numbers once it has run them.
+
+**Bring your own.** A workflow exported from ComfyUI becomes a model when its nodes are titled with slots (`beatsheet:prompt`, `beatsheet:image`, `beatsheet:video`, `beatsheet:output`) and you say which operation it does. It shows in the picker like any other, marked as yours. That covers whatever's new before the catalog has it.
+
+### Ready, or why not
+
+A route through ComfyUI gets the same kinds of reason as any other, each with its button:
+
+- "Needs 20 GB of graphics memory; this card has 12 GB" (the GGUF variant, or RunPod)
+- "ComfyUI isn't running" (Start)
+- "ComfyUI is older than this workflow" (Update)
+- "Missing 3 model files, 26 GB" (Download, after checking the disk has room)
+- "Needs the X nodes" (Install, at the pinned commit)
+- "Needs a Hugging Face token" for gated weights (the same step as SAM's)
+
+Time on this machine is estimated from its own past runs: "about 12 minutes a take on this card".
+
+### Choosing between routes
+
+The picker shows one model on each route that can run it, side by side:
+
+| Wan 2.2, 5s at 720p | Cost | Time |
+|---|---|---|
+| fal | ~$0.50 | ~2 min |
+| RunPod serverless, A100 | ~$0.14 | ~3 min, plus a cold start |
+| This PC, RTX 5070 | nothing | ~12 min |
+
+(Placeholders, except RunPod's: an A100 80 GB flex worker is listed at $0.00076 a second, so three minutes is about 14¢.)
+
+Auto's ranking can prefer the cheapest, the fastest, or this machine first. A batch can also wait: **Tonight** queues it on this machine and keeps the computer awake while it works through them. ComfyUI runs one job at a time, so the queue shows each job's place in line.
+
+### The agent suggests it, and guides the setup
+
+When a project reaches a point where running a model yourself would help, the agent says so, rather than quietly paying more or giving up:
+
+- **Something only an open model does.** Replacing someone with SCAIL-2 when nothing connected can.
+- **A big pass that would cost much less.** "16 finals: about $14 on fal, about $4 on RunPod, or nothing tonight on this PC, in about 3 hours."
+- **Only when it would work.** The card fits the model (from the fit check), or there's a RunPod key or the person could add one.
+
+It offers this as a `choose` hand-off with each option's cost and time and what setting it up takes (downloads, disk space, roughly how long), and keeps the current route as one of the options. Picking one that needs setting up becomes a `provide` hand-off with a new need, `setup`, naming the card to open (ComfyUI on this PC, RunPod). The studio opens Settings on that card, which walks through it with progress and a log, like SAM's. Downloads, installs and keys are the person's clicks: the agent never installs software or handles keys. When the card says ready, the turn goes back to the agent, which checks `list_models` and carries on from where it was. A suggestion the person turns down isn't made again in that project unless they ask.
+
 ## Jobs
 
 Video takes minutes and costs money, so a job can't live in one process's memory.
@@ -275,6 +386,7 @@ Video takes minutes and costs money, so a job can't live in one process's memory
 - A job aimed at a shot adds its takes as pending straight away ("2 coming · about a minute"), so the shot shows what's on the way.
 - Results go into `project.json` through the same validated, version-checked writes the tools use, so they never clobber an edit made in the meantime.
 - Cancel, where the service allows it.
+- A job through ComfyUI records its host and ComfyUI's prompt id, or RunPod's job id. A local ComfyUI forgets its queue when it restarts, so a local job it no longer knows is sent again (that costs nothing). RunPod keeps results only for a limited time, so they're fetched as soon as they're done.
 
 ## Provenance
 
@@ -303,8 +415,9 @@ Both keep their anchors; nothing about time changes.
 - **`jobs`**: the status of jobs, with an optional `wait` in seconds, so the agent can wait without owning the job.
 - Cast edits go through `edit_project`.
 - A **budget** (in Settings). Spending within it goes ahead; a pass that would go over it is asked for in `hand_off`, with its estimate, and `generate` refuses past it and says why. A `choose` option can show what it would cost.
-- `provide` gets a `cast` need: pictures of someone or somewhere that only the person has.
+- `provide` gets a `cast` need, for pictures of someone or somewhere that only the person has, and a `setup` need, for a card in Settings only the person can complete (see [The agent suggests it](#the-agent-suggests-it-and-guides-the-setup)).
 - A **film recipe** (`.agents/skills/film`) for videos made from nothing, beside montage and story: directions, beats as placeholders, cast and sets from the beats, boards, rough, final, as in [A video from nothing](#a-video-from-nothing). This is the cinematic recipe [DESIGN.md](DESIGN.md) plans for.
+- A **remaster recipe** for old footage, as in [An old film, remastered](#an-old-film-remastered): logging the film, cast from it and from photos, a level for each shot, recutting, and a trailer first.
 - A **make skill** that every recipe uses: when to make footage and when to use what's there, how to write prompts for image and video models, keeping to one model per project, and making two or three takes a shot, then handing off a `choose` with their key frames.
 
 ## Order
@@ -312,8 +425,9 @@ Both keep their anchors; nothing about time changes.
 1. **The pipeline, on one shot.** The catalog and fit check (in schema, with tests), fal as the first route for images and video, jobs on disk, the new provenance fields, the take strip in Inspect, and `list_models`, `generate` and `jobs`. Done when Make 2 on a placeholder with Auto gives two takes through fal, a studio restart in the middle doesn't lose them, and the agent can do the same and hand off a choice.
 2. **A video from nothing.** Cast & sets from the story, from a description and from photos (the Library's right-click menu with Make a character, Make a set and Add to), with cut-outs, descriptions, sheets and variants in Make; references through a start frame; boards, rough and final; estimates for a whole pass; the `cast` need; and the film recipe. Done when the cat video goes from a brief to a watchable rough cut with the agent driving and the person only answering hand-offs and leaving notes.
 3. **The rest of Make mode.** The board of loose takes, the queue, the full composer, cast from subjects and clips, the agent grouping the Library into a cast, selecting several things at once, speakers on lines, and dragging from the Library onto the timeline.
-4. **Changing footage.** Extend by dragging, relight, new angle, restyle, remove, replace someone.
-5. **More routes.** Local models on the NVIDIA card (Wan, LTX) through a worker like SAM's, Runway and Gemini directly, and lip-sync.
+4. **Changing footage.** Extend by dragging, relight, new angle, restyle, remove, replace someone, widen. With it, what old films need: deinterlacing on import, splitting a file at its cuts, transcription, separating voices from noise, restoring (upscale, clean-up, steadying), and effects drawn over cut-outs.
+5. **Running models yourself.** ComfyUI on this PC (found or installed), with SCAIL-2 and Wan as the first workflows; bring-your-own workflows; Tonight; and the agent's suggestion with the `setup` hand-off. Then RunPod: serverless endpoints, and pods started and stopped for a batch. The remaster recipe comes with this phase, since its remade shots lean on motion transfer and long runs overnight.
+6. **More services.** Runway and Gemini directly, and lip-sync.
 
 ## Open questions
 
@@ -323,6 +437,8 @@ Both keep their anchors; nothing about time changes.
 - How much handle is worth paying for.
 - A budget per turn, per project, or both?
 - Does a video made from nothing time its shots by their own lengths (the `shots` spine) until there's music, then move to `music`?
+- beatsheet's own ComfyUI, the person's, or both? (Both, I think: look for theirs first.)
+- Does beatsheet set up a RunPod endpoint for the person through RunPod's API, or guide them through RunPod's own console first?
 - Names: Make or Generate; Cast & sets; the film recipe.
 
 ## Sources
@@ -330,3 +446,7 @@ Both keep their anchors; nothing about time changes.
 - [LTX: Elements and the storyboard update](https://ltx.io/blog/ltx-storyboard-generator-update)
 - [TV Tech: Generative Extend launches in Premiere Pro](https://www.tvtechnology.com/news/nab-show-adobe-launches-generative-extend-ai-for-premiere-pro)
 - [PetaPixel: Runway Aleph](https://petapixel.com/2025/07/29/runways-new-model-can-transform-existing-video-footage-using-just-a-prompt)
+- [ComfyUI: SCAIL-2](https://docs.comfy.org/tutorials/video/zai/scail2)
+- [ComfyUI: server routes](https://docs.comfy.org/development/comfyui-server/comms_routes)
+- [RunPod: ComfyUI on Serverless](https://docs.runpod.io/tutorials/serverless/comfyui)
+- [RunPod: Serverless pricing](https://docs.runpod.io/serverless/pricing)
