@@ -3,7 +3,7 @@ import type { HandOff } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, desktop, hideBroken, pickPath, posterUrl, timeAgo, OS, keys, WINDOWS } from "../lib";
 import { actions, useStore, type ProjectSummary } from "../store";
-import { Mark } from "./ui";
+import { Mark, PopMenu } from "./ui";
 
 /**
  * Where the app opens: start a project (from a folder, picked or dropped anywhere on the window, or from scratch),
@@ -183,32 +183,12 @@ function ProjectCard({ p, now, onMenu }: { p: ProjectSummary; now: number; onMen
 
 /** A project's menu, from its ⋯ or a right-click. */
 function CardMenu({ p, x, y, onClose, onTrash }: { p: ProjectSummary; x: number; y: number; onClose: () => void; onTrash: () => void }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    ref.current?.querySelector("button")?.focus();
-    const outside = (e: Event) => !ref.current?.contains(e.target as Node) && onClose();
-    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("pointerdown", outside, true);
-    window.addEventListener("keydown", key);
-    window.addEventListener("blur", onClose);
-    window.addEventListener("resize", onClose);
-    document.addEventListener("scroll", onClose, true);
-    return () => {
-      window.removeEventListener("pointerdown", outside, true);
-      window.removeEventListener("keydown", key);
-      window.removeEventListener("blur", onClose);
-      window.removeEventListener("resize", onClose);
-      document.removeEventListener("scroll", onClose, true);
-    };
-  }, [onClose]);
   const pick = (fn: () => void) => () => {
     onClose();
     fn();
   };
-  // Opens leftward near the right edge (and always from the ⋯, which sits there).
-  const place = x > window.innerWidth - 240 ? { right: window.innerWidth - x, top: y } : { left: x, top: y };
   return (
-    <div className="card-menu" style={place} ref={ref} role="menu">
+    <PopMenu x={x} y={y} onClose={onClose}>
       <button role="menuitem" onClick={pick(() => void actions.open(p.id))}>
         Open
       </button>
@@ -219,7 +199,7 @@ function CardMenu({ p, x, y, onClose, onTrash }: { p: ProjectSummary; x: number;
       <button role="menuitem" className="danger" onClick={pick(onTrash)}>
         {WINDOWS ? "Move to the Recycle Bin…" : "Move to Trash…"}
       </button>
-    </div>
+    </PopMenu>
   );
 }
 
@@ -300,7 +280,7 @@ const tilde = (path: string) => (WINDOWS ? path.replace(/^[a-z]:\\Users\\[^\\]+(
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : "under 1 MB");
 
 const askWords = (ask: HandOff) =>
-  ask.kind === "choose" ? "pick a direction" : ask.kind === "review" ? "watch the cut" : ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : "reply";
+  ask.kind === "choose" ? "pick a direction" : ask.kind === "review" ? "watch the cut" : ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : ask.need === "cast" ? "add pictures" : "reply";
 
 /** The time, every half minute, so "edited 3m ago" stays true while the list is open. */
 function useNow() {

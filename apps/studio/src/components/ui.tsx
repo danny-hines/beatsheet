@@ -1,5 +1,5 @@
 import { describeAnchor, formatTime, resolveAnchor, type Anchor, type Fidelity } from "@beatsheet/schema";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FIDELITY_LABEL } from "../lib";
 import { useProject, useStore } from "../store";
 
@@ -113,6 +113,37 @@ export function NumberField({
       />
       {suffix && <span className="suffix">{suffix}</span>}
     </span>
+  );
+}
+
+/**
+ * A small menu at a point (a right-click, a ⋯): it takes the focus, and closes on a click outside, Escape, or the
+ * window moving under it. Opens leftward near the right edge.
+ */
+export function PopMenu({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector("button")?.focus();
+    const outside = (e: Event) => !ref.current?.contains(e.target as Node) && onClose();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("pointerdown", outside, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("blur", onClose);
+    window.addEventListener("resize", onClose);
+    document.addEventListener("scroll", onClose, true);
+    return () => {
+      window.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("blur", onClose);
+      window.removeEventListener("resize", onClose);
+      document.removeEventListener("scroll", onClose, true);
+    };
+  }, [onClose]);
+  const place = x > window.innerWidth - 240 ? { right: window.innerWidth - x, top: y } : { left: x, top: y };
+  return (
+    <div className="card-menu" style={place} ref={ref} role="menu">
+      {children}
+    </div>
   );
 }
 

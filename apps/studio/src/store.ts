@@ -21,7 +21,13 @@ import {
 } from "@beatsheet/schema";
 import { useSyncExternalStore } from "react";
 
-export type Selection = { kind: "shot"; id: string } | { kind: "asset"; id: string } | { kind: "line"; id: string } | { kind: "cue"; id: string } | { kind: "note"; id: string };
+export type Selection =
+  | { kind: "shot"; id: string }
+  | { kind: "asset"; id: string }
+  | { kind: "line"; id: string }
+  | { kind: "cue"; id: string }
+  | { kind: "note"; id: string }
+  | { kind: "cast"; id: string };
 
 export type { ProjectSummary };
 

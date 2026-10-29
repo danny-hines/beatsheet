@@ -153,6 +153,10 @@ export const Look = z.object({
   grain: z.number().min(0).max(1).optional().describe("Film grain over the whole picture; 0.06 is subtle"),
   grade: Grade.optional(),
   logo: z.string().optional().describe("Asset id of the logo"),
+  style: z
+    .string()
+    .optional()
+    .describe("The style made shots are drawn in: the id of a style in the cast (@hand-drawn). Sheets and boards follow it unless a cast member has its own; without one, they're photographs"),
 });
 export type Look = z.infer<typeof Look>;
 
@@ -219,6 +223,7 @@ export const Provenance = z.object({
   op: z.string().optional().describe("What was asked for: image, video"),
   params: z.record(z.string(), z.unknown()).optional().describe("Enough to ask again: the catalog model, length, aspect"),
   job: z.string().optional().describe("The job that made it"),
+  cast: z.array(z.string()).optional().describe("The cast and sets it was made with"),
 });
 export type Provenance = z.infer<typeof Provenance>;
 
@@ -427,6 +432,7 @@ export const ShotContent = z.discriminatedUnion("kind", [
     provider: z.string().optional(),
     model: z.string().optional(),
     refs: z.array(z.string()).optional(),
+    cast: z.array(z.string()).optional().describe("Cast and sets in it beyond the ones its prompt names (@cat): cat, or cat/heist for a variant"),
     start: z.string().optional().describe("Asset id of the picture a video take starts from (usually the shot's board)"),
     end: z.string().optional().describe("Asset id of the picture a video take ends on"),
     in: z.number().optional().describe("Seconds into the take: takes are made a little longer than the shot, so it can be retimed"),
@@ -580,7 +586,9 @@ export const HandOff = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("provide"),
     message: z.string(),
-    need: z.enum(["song", "footage", "text", "chrome"]).describe("chrome: the person's own signed-in Chrome, which they let the agent use with one click"),
+    need: z
+      .enum(["song", "footage", "text", "chrome", "cast"])
+      .describe("chrome: the person's own signed-in Chrome, which they let the agent use with one click; cast: pictures of someone or somewhere only they have"),
   }),
 ]);
 export type HandOff = z.infer<typeof HandOff>;
@@ -600,6 +608,29 @@ export const Turn = z.object({
 });
 export type Turn = z.infer<typeof Turn>;
 
+/**
+ * A character, place, prop or style that made shots keep the same from shot to shot: who or what it is, in words that
+ * go into every prompt that names it (@cat), and pictures that models are given to match. Shared by every cut.
+ */
+export const CastMember = z.object({
+  id: z.string().describe("What prompts call it: @cat"),
+  name: z.string(),
+  kind: z.enum(["character", "place", "prop", "style"]),
+  about: z.string().optional().describe("A short, specific description: orange tabby, white chest and paws, green eyes, a notch in the left ear"),
+  seen: z
+    .array(z.object({ asset: z.string(), subject: z.string().optional().describe("Which of the asset's subjects it is; default the whole picture") }))
+    .optional()
+    .describe("Where it is in the project's own media: the photos and clips it was made from"),
+  images: z.array(z.string()).optional().describe("Asset ids of the pictures models are given (its sheet, or cut-outs); the first is the main one"),
+  variants: z
+    .array(z.object({ id: z.string(), about: z.string().describe("What's different: wearing a tiny black eye mask"), images: z.array(z.string()).optional() }))
+    .optional()
+    .describe("The same one in another outfit, state or time of day: @cat/heist"),
+  voice: z.string().optional().describe("For a character: the voice that reads its lines"),
+  style: z.string().optional().describe("For one drawn unlike the rest (a cartoon cat in a photographed street): the id of a style in the cast. Default the look's"),
+});
+export type CastMember = z.infer<typeof CastMember>;
+
 /** What every cut shares. */
 const shared = {
   id: z.string(),
@@ -609,6 +640,7 @@ const shared = {
   look: Look.optional(),
   brief: Brief,
   assets: z.array(Asset),
+  cast: z.array(CastMember).optional().describe("Cast and sets: the characters, places, props and styles made shots keep"),
 };
 
 /** The file on disk. */

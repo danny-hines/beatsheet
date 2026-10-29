@@ -3,6 +3,7 @@ import { NEUTRAL } from "@beatsheet/video";
 import { useState } from "react";
 import { actions } from "../store";
 import { TextField } from "./ui";
+import { StyleSelect } from "./Cast";
 
 const MOVES: Record<string, Motion | undefined> = {
   none: undefined,
@@ -115,6 +116,10 @@ export function LookPanel({ p }: { p: Project }) {
         {Object.entries(colors).map(([name, value]) => (
           <Swatch key={name} name={name} value={value} onCommit={(v) => set((l) => void (l.colors = { ...(l.colors ?? {}), [name]: v }))} />
         ))}
+      </div>
+      <div className="insp-row" title="The style made shots and cast sheets are drawn in, unless a cast member has its own">
+        <span>Made shots</span>
+        <StyleSelect value={look.style} fallback="None (photographs)" onChange={(s) => set((l) => void (s ? (l.style = s) : delete l.style))} />
       </div>
       <div className="insp-row">
         <span>Display font</span>

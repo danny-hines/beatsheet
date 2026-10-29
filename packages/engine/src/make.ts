@@ -11,6 +11,9 @@ import { extname, join } from "node:path";
 import {
   aspectOf,
   CATALOG,
+  castOf,
+  castPictures,
+  castPrompt,
   chooseModels,
   FIDELITY,
   fitModel,
@@ -18,11 +21,15 @@ import {
   shapeOf,
   shotNeeds,
   type Asset,
+  type CastMember,
   type Choices,
   type FitOk,
   type MakeOp,
   type MakeRequest,
+  type Project,
+  type Quality,
   type ServiceState,
+  type Shot,
   type ShotContent,
 } from "@beatsheet/schema";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
@@ -31,7 +38,7 @@ import { assetPath, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { SERVICES } from "./services.ts";
 import { getSecret, readSettings } from "./settings.ts";
-import { loadFile, loadProject, updateProject } from "./store.ts";
+import { loadFile, loadProject, updateFile, updateProject } from "./store.ts";
 
 export type MakeJob = {
   id: string;
@@ -39,14 +46,31 @@ export type MakeJob = {
   batch: string;
   cut?: string;
   shot?: string;
+  /** The cast member (or variant) it's a sheet for. */
+  sheet?: string;
   op: MakeOp;
+  quality?: Quality;
   /** The catalog model, and where it runs: the service, its endpoint, and which adapter fills in the inputs. */
   model: string;
   route: string;
   endpoint: string;
   shape: string;
-  /** What was asked: pictures by asset id, the length and aspect to make, and the shot's own length. */
-  request: { prompt: string; start?: string; end?: string; refs?: string[]; seconds?: number; aspect?: string; seed?: number; shotSeconds?: number };
+  /**
+   * What was asked, as written (`prompt`, with its @cast) and as the model reads it (`sent`, when that's different);
+   * pictures by asset id, the length and aspect to make, and the shot's own length.
+   */
+  request: {
+    prompt: string;
+    sent?: string;
+    cast?: string[];
+    start?: string;
+    end?: string;
+    refs?: string[];
+    seconds?: number;
+    aspect?: string;
+    seed?: number;
+    shotSeconds?: number;
+  };
   /** Estimated cost of this take, in US dollars. */
   usd?: number;
   status: "queued" | "running" | "done" | "failed" | "canceled";
@@ -113,29 +137,106 @@ export function serviceStates(): Record<string, ServiceState> {
   return Object.fromEntries(SERVICES.map((s) => [s.id, saved[s.id] ? { label: s.label, state: "ready" } : { label: s.label, state: "missing" }]));
 }
 
-/** Something to make, as the agent's tools and the studio ask for it: a shot to make it for fills in what's missing. */
-export type MakeAsk = Partial<Omit<MakeRequest, "op">> & { op: MakeOp; cut?: string; shot?: string; model?: string };
+/** Something to make, as the agent's tools and the studio ask for it. */
+export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start">> & {
+  op: MakeOp;
+  cut?: string;
+  /** A placeholder or generated shot it's for: its length, the cut's shape and its description fill in what's missing, and the takes land on it. */
+  shot?: string;
+  /** A cast member (or variant: cat/heist) it's a sheet for: the stills join its pictures. */
+  sheet?: string;
+  /** Cast and sets in it beyond the ones the prompt names. */
+  cast?: string[];
+  /** Asset id of the picture a clip starts from, or "board": the shot's chosen still. */
+  start?: string;
+  model?: string;
+};
 
-/** The request in full: the shot's length (for video), the cut's shape and the shot's description, unless given. */
-export function requestFor(projectId: string, ask: MakeAsk): MakeRequest {
+/** A request in full, with what goes to the model: the prompt with its cast described, and the cast it names. */
+export type FullRequest = MakeRequest & { sent: string; cast: string[] };
+
+/**
+ * The prompt a sheet is made from when none is given: clean views of one cast member, to give models later, in its
+ * style (its own, else the look's). Without a style, a photograph, said in so many words: "reference sheet" alone
+ * gets a drawing, and the boards made from a drawn sheet come out drawn too.
+ */
+function sheetPrompt(member: CastMember, id: string, style: string | undefined): string {
+  if (member.kind === "style") return `A single still that shows the look of @${id}.`;
+  if (member.kind === "place")
+    return style
+      ? `A wide establishing view of @${id}, empty of people, nothing else in the picture, in the style of @${style}.`
+      : `A wide establishing photograph of @${id} in even daylight, empty of people, nothing else in the picture.`;
+  return style
+    ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture, in the style of @${style}.`
+    : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture.`;
+}
+
+/** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
+function boardOf(project: Project, shot: Shot | undefined): string | undefined {
+  const c = shot?.content;
+  if (c?.kind !== "generated") return undefined;
+  return project.assets.find((a) => a.id === c.take)?.kind === "image" ? c.take : c.start;
+}
+
+/**
+ * The request in full. A shot fills in its length (for video), the cut's shape and its description; a sheet, a
+ * prompt for clean views of its cast member. Cast named with @ are described in what the model reads, and stills are
+ * given their pictures (a sheet with no pictures yet, the photos it was made from). A clip from a board doesn't need
+ * them: they're in the board.
+ */
+export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
   const { project } = loadProject(projectId, ask.cut);
-  const needs = ask.shot ? shotNeeds(project, ask.shot) : undefined;
-  if (ask.shot && !project.shots.some((s) => s.id === ask.shot)) throw new Error(`No shot "${ask.shot}" in this cut`);
+  const shot = ask.shot ? project.shots.find((s) => s.id === ask.shot) : undefined;
+  if (ask.shot && !shot) throw new Error(`No shot "${ask.shot}" in this cut`);
+  const [castId, variantId] = (ask.sheet ?? "").split("/");
+  const member = ask.sheet ? project.cast?.find((m) => m.id === castId) : undefined;
+  if (ask.sheet && (!member || (variantId && !member.variants?.some((v) => v.id === variantId)))) throw new Error(`No cast member "${ask.sheet}"`);
+  const needs = shot ? shotNeeds(project, shot.id) : undefined;
   const format = project.formats[0]!;
+  // The style made shots are drawn in; a sheet takes its member's own when it has one, and names it in its prompt.
+  const style = (id: string | undefined) => (id && project.cast?.some((m) => m.id === id && m.kind === "style") ? id : undefined);
+  const lookStyle = style(project.look?.style);
+  const prompt = (ask.prompt ?? needs?.prompt ?? (member ? sheetPrompt(member, ask.sheet!, style(member.style) ?? lookStyle) : "")).trim();
+  const shotCast = shot?.content.kind === "generated" ? (shot.content.cast ?? []) : [];
+  const uses = castOf(prompt, project.cast, [...(ask.cast ?? []), ...shotCast, ...(!member && lookStyle ? [lookStyle] : [])]);
+  const start = ask.start === "board" ? boardOf(project, shot) : ask.start;
+  if (ask.start === "board" && !start) throw new Error(`Shot "${ask.shot}" has no board yet: make stills for it first`);
+
+  let refs = ask.refs?.length ? ask.refs : undefined;
+  let sent = castPrompt(prompt, uses);
+  if (!refs && ask.op === "image") {
+    const photos = member && !member.images?.length ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image") : [];
+    if (photos.length) {
+      refs = photos.slice(0, 4);
+      // What to keep from the photos, whatever the style: a drawn cat is still this cat.
+      const keep = member!.kind === "place" ? "its layout, colors and details" : `${member!.name}'s features, markings, colors and shape`;
+      sent = `${sent.replace(/[.!?]?\s*$/, ".")} The reference photos show ${member!.name}: keep ${keep} exactly.`;
+    } else {
+      const pictures = castPictures(uses);
+      if (pictures.length) {
+        refs = pictures.map((p) => p.asset);
+        sent = castPrompt(prompt, uses, pictures.map((p) => p.use));
+      }
+    }
+  }
+  const sheetAspect = member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   return {
     op: ask.op,
-    prompt: (ask.prompt ?? needs?.prompt ?? "").trim(),
-    start: ask.start,
+    prompt,
+    sent,
+    cast: [...new Set([...(ask.sheet ? [ask.sheet] : []), ...uses.map((u) => u.id)])],
+    quality: ask.quality ?? (ask.op === "video" ? "rough" : undefined),
+    start,
     end: ask.end,
-    refs: ask.refs?.length ? ask.refs : undefined,
+    refs,
     seconds: ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined),
-    aspect: ask.aspect ?? aspectOf(format.width, format.height),
+    aspect: ask.aspect ?? sheetAspect ?? aspectOf(format.width, format.height),
     count: ask.count,
   };
 }
 
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
-export function makeChoices(projectId: string, ask: MakeAsk): { req: MakeRequest; choices: Choices } {
+export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest; choices: Choices } {
   const req = requestFor(projectId, ask);
   return { req, choices: chooseModels(CATALOG, req, serviceStates(), readSettings().make?.ranking?.[req.op] ?? []) };
 }
@@ -153,76 +254,128 @@ export function spentThisTurn(projectId: string): number {
 /** How much the agent may spend in a turn before asking. */
 export const turnBudget = () => readSettings().make?.turnBudgetUsd ?? 5;
 
-/**
- * Starts the takes a request asks for: checks it, picks the model (the one asked for, else Auto), saves a job for each
- * take and sets them going. Returns at once; the takes land in the project as they finish. With `spendable`, a
- * request estimated to cost more than that is refused before anything is sent.
- */
-export function startMake(projectId: string, ask: MakeAsk, opts: { spendable?: number } = {}): { fit: FitOk; jobs: MakeJob[] } {
+/** A request checked and ready to start: what it asks, the model it goes to, and where that runs. */
+type Plan = { ask: MakeAsk; req: FullRequest; fit: FitOk; shape: string };
+
+/** Checks a request and picks its model (the one asked for, else Auto), without starting anything. */
+function plan(projectId: string, ask: MakeAsk): Plan {
   const { req, choices } = makeChoices(projectId, ask);
-  if (!req.prompt) throw new Error("Say what to make: a prompt, or a shot whose description says it");
+  const where = ask.shot ? `Shot "${ask.shot}": ` : "";
+  if (!req.prompt) throw new Error(`${where}say what to make: a prompt, or a shot whose description says it`);
   const { project } = loadProject(projectId, ask.cut);
   for (const id of [req.start, req.end, ...(req.refs ?? [])].filter((x): x is string => !!x)) {
     const a = project.assets.find((x) => x.id === id);
-    if (!a) throw new Error(`No asset "${id}"`);
-    if (a.kind !== "image") throw new Error(`"${id}" is a ${a.kind}; start frames, end frames and references are pictures`);
+    if (!a) throw new Error(`${where}no asset "${id}"`);
+    if (a.kind !== "image") throw new Error(`${where}"${id}" is a ${a.kind}; start frames, end frames and references are pictures`);
   }
   if (ask.shot) {
     const c = project.shots.find((s) => s.id === ask.shot)!.content;
     if (c.kind !== "placeholder" && c.kind !== "generated") throw new Error(`Shot "${ask.shot}" is a ${c.kind} shot; takes are for placeholder and generated shots`);
   }
-
   let fit: FitOk | undefined;
   if (ask.model) {
     const model = CATALOG.find((m) => m.id === ask.model);
     if (!model) throw new Error(`No model "${ask.model}"; list_models names them`);
     const f = fitModel(model, req, serviceStates());
-    if (!f.ok) throw new Error(`${model.label} can't make this: ${f.why.reason}`);
+    if (!f.ok) throw new Error(`${where}${model.label} can't make this: ${f.why.reason}`);
     fit = f;
   } else {
     fit = choices.auto;
     if (!fit) {
       const why = [...choices.setup, ...choices.unfit].map((f) => (f.ok ? "" : `${f.label}: ${f.why.reason}`)).filter(Boolean);
-      throw new Error(why.length ? `Nothing can make this now. ${why.join(". ")}.` : `No model makes ${req.op === "image" ? "images" : "video"}`);
+      throw new Error(why.length ? `${where}nothing can make this now. ${why.join(". ")}.` : `No model makes ${req.op === "image" ? "images" : "video"}`);
     }
   }
-  if (opts.spendable !== undefined && fit.usd !== undefined && fit.usd > opts.spendable + 1e-9)
-    throw new Error(
-      `This is about $${fit.usd.toFixed(2)}, and only $${Math.max(0, opts.spendable).toFixed(2)} more can be spent this turn without asking (the person allows $${turnBudget().toFixed(2)} a turn). Ask first: a choose hand-off that says what it would cost.`,
-    );
   const route = CATALOG.find((m) => m.id === fit.model)!.routes.find((r) => r.via === fit.route && r.endpoints[shapeOf(req)] === fit.endpoint)!;
-  const count = Math.max(1, req.count ?? 1);
-  const batch = newId("b");
+  return { ask, req, fit, shape: route.shape };
+}
+
+/** What a set of requests would cost, by model, without starting them: for a whole pass over a cut's shots. */
+export function estimate(
+  projectId: string,
+  asks: MakeAsk[],
+): { rows: { model: string; label: string; usd: number; made: number; unfit: { shot?: string; reason: string }[] }[]; problems: { shot?: string; reason: string }[] } {
+  const out = new Map<string, { model: string; label: string; usd: number; made: number; unfit: { shot?: string; reason: string }[] }>();
+  // A shot that can't be asked for at all (no board yet to start from) is a problem with that shot, not the pass.
+  const problems: { shot?: string; reason: string }[] = [];
+  for (const ask of asks) {
+    let choices: Choices;
+    try {
+      choices = makeChoices(projectId, ask).choices;
+    } catch (err) {
+      problems.push({ shot: ask.shot, reason: err instanceof Error ? err.message : String(err) });
+      continue;
+    }
+    for (const f of [...choices.ready, ...choices.setup, ...choices.unfit]) {
+      const row = out.get(f.model) ?? { model: f.model, label: f.label, usd: 0, made: 0, unfit: [] };
+      if (f.ok) {
+        row.usd = Math.round((row.usd + (f.usd ?? 0)) * 1000) / 1000;
+        row.made++;
+      } else row.unfit.push({ shot: ask.shot, reason: f.why.reason });
+      out.set(f.model, row);
+    }
+  }
+  return { rows: [...out.values()], problems };
+}
+
+/**
+ * Starts the takes requests ask for: checks every one first (so a pass over many shots starts all or nothing), then
+ * saves a job for each take and sets them going. Returns at once; the takes land in the project as they finish. With
+ * `spendable`, requests estimated to cost more than that in all are refused before anything is sent.
+ */
+export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendable?: number } = {}): { plans: (Plan & { jobs: MakeJob[] })[]; usd: number } {
+  const plans = asks.map((ask) => plan(projectId, ask));
+  const usd = Math.round(plans.reduce((sum, p) => sum + (p.fit.usd ?? 0), 0) * 1000) / 1000;
+  if (opts.spendable !== undefined && usd > opts.spendable + 1e-9)
+    throw new Error(
+      `This is about $${usd.toFixed(2)}, and only $${Math.max(0, opts.spendable).toFixed(2)} more can be spent this turn without asking (the person allows $${turnBudget().toFixed(2)} a turn). Ask first: a choose hand-off that says what it would cost.`,
+    );
+  const cut = loadProject(projectId, asks[0]?.cut).project.cut.id;
   const now = new Date().toISOString();
-  const jobs = Array.from({ length: count }, () =>
-    saveJob(projectId, {
-      id: newId("j"),
-      batch,
-      cut: project.cut.id,
-      shot: ask.shot,
-      op: req.op,
-      model: fit.model,
-      route: fit.route,
-      endpoint: fit.endpoint,
-      shape: route.shape,
-      request: {
-        prompt: req.prompt,
-        start: req.start,
-        end: req.end,
-        refs: req.refs,
-        seconds: fit.seconds,
-        aspect: fit.aspect,
-        seed: takesSeed(route.shape) ? randomInt(2 ** 31) : undefined,
-        shotSeconds: req.seconds,
-      },
-      usd: fit.usd === undefined ? undefined : Math.round((fit.usd / count) * 1000) / 1000,
-      status: "queued",
-      createdAt: now,
-      updatedAt: now,
-    }),
-  );
+  const started = plans.map((p) => {
+    const count = Math.max(1, p.req.count ?? 1);
+    const batch = newId("b");
+    const jobs = Array.from({ length: count }, () =>
+      saveJob(projectId, {
+        id: newId("j"),
+        batch,
+        cut: p.ask.cut ?? cut,
+        shot: p.ask.shot,
+        sheet: p.ask.sheet,
+        op: p.req.op,
+        quality: p.req.op === "video" ? p.req.quality : undefined,
+        model: p.fit.model,
+        route: p.fit.route,
+        endpoint: p.fit.endpoint,
+        shape: p.shape,
+        request: {
+          prompt: p.req.prompt,
+          sent: p.req.sent !== p.req.prompt ? p.req.sent : undefined,
+          cast: p.req.cast.length ? p.req.cast : undefined,
+          start: p.req.start,
+          end: p.req.end,
+          refs: p.req.refs,
+          seconds: p.fit.seconds,
+          aspect: p.fit.aspect,
+          seed: takesSeed(p.shape) ? randomInt(2 ** 31) : undefined,
+          shotSeconds: p.req.seconds,
+        },
+        usd: p.fit.usd === undefined ? undefined : Math.round((p.fit.usd / count) * 1000) / 1000,
+        status: "queued",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+    return { ...p, jobs };
+  });
   void driveJobs(projectId);
-  return { fit, jobs };
+  return { plans: started, usd };
+}
+
+/** Starts the takes one request asks for (see startMakeAll). */
+export function startMake(projectId: string, ask: MakeAsk, opts: { spendable?: number } = {}): { fit: FitOk; jobs: MakeJob[] } {
+  const { plans } = startMakeAll(projectId, [ask], opts);
+  return { fit: plans[0]!.fit, jobs: plans[0]!.jobs };
 }
 
 /** Stops jobs that haven't finished. The service is asked to drop them too; one already running may still bill. */
@@ -351,7 +504,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
     };
     const r = job.request;
     const input = falInput(job.shape, {
-      prompt: r.prompt,
+      prompt: r.sent ?? r.prompt,
       seconds: r.seconds,
       aspect: r.aspect,
       seed: r.seed,
@@ -394,20 +547,21 @@ async function bringIn(projectId: string, job: MakeJob, out: { url: string; cont
   writeFileSync(file, Buffer.from(await res.arrayBuffer()));
   const r = job.request;
   return addAsset(projectId, file, {
-    id: `${job.shot ?? job.op}-take`,
+    id: job.sheet ? `${job.sheet.replace("/", "-")}-sheet` : `${job.shot ?? job.op}-take`,
     label: r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt,
-    tags: ["take"],
+    tags: [job.sheet ? "sheet" : "take"],
     provenance: {
       source: "generated",
       provider: job.route,
       model: job.endpoint,
-      prompt: r.prompt,
+      prompt: r.sent ?? r.prompt,
+      ...(r.cast?.length ? { cast: r.cast } : {}),
       seed: out.seed ?? r.seed,
       ...(r.start || r.end || r.refs?.length ? { refs: [r.start, r.end, ...(r.refs ?? [])].filter((x): x is string => !!x) } : {}),
       costUsd: job.usd,
       createdAt: new Date().toISOString(),
       op: job.op,
-      params: { model: job.model, ...(r.seconds !== undefined ? { seconds: r.seconds } : {}), ...(r.aspect ? { aspect: r.aspect } : {}) },
+      params: { model: job.model, ...(r.seconds !== undefined ? { seconds: r.seconds } : {}), ...(r.aspect ? { aspect: r.aspect } : {}), ...(job.quality ? { quality: job.quality } : {}) },
       job: job.id,
     },
   });
@@ -415,11 +569,24 @@ async function bringIn(projectId: string, job: MakeJob, out: { url: string; cont
 
 type Generated = Extract<ShotContent, { kind: "generated" }>;
 
+/** The quality a take was made at: a final, a rough, or neither (a still, or made before there were tiers). */
+const qualityOf = (a: Asset | undefined) => a?.provenance?.params?.quality as Quality | undefined;
+
 /**
- * Makes the take one of its shot's takes. The first take is the one the shot shows, and so is the first video over a
- * board (a still), trimmed to the middle of the little extra it was made with. The shot's fidelity moves up to match.
+ * Puts what a job made where it was asked for. A sheet joins its cast member's pictures (the first becomes the main
+ * one). A take joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a
+ * still) and the first final over a rough, trimmed to the middle of the little extra it was made with. The shot's
+ * fidelity moves up to match.
  */
 function attach(projectId: string, job: MakeJob, asset: Asset) {
+  if (job.sheet) {
+    const [id, variant] = job.sheet.split("/");
+    updateFile(projectId, (d) => {
+      const m = d.cast?.find((x) => x.id === id);
+      const target = variant ? m?.variants?.find((v) => v.id === variant) : m;
+      if (target && !target.images?.includes(asset.id)) target.images = [...(target.images ?? []), asset.id];
+    });
+  }
   if (!job.shot) return;
   updateProject(
     projectId,
@@ -431,7 +598,8 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
       if (g.takes?.includes(asset.id)) return;
       g.takes = [...(g.takes ?? []), asset.id];
       const showing = g.take ? p.assets.find((a) => a.id === g.take) : undefined;
-      if (!showing || (asset.kind === "video" && showing.kind === "image")) {
+      const better = asset.kind === "video" && (showing?.kind === "image" || (job.quality === "final" && qualityOf(showing) !== "final"));
+      if (!showing || better) {
         const r = job.request;
         const spare = asset.kind === "video" && asset.duration && r.shotSeconds ? Math.min(HANDLE, Math.max(0, (asset.duration - r.shotSeconds) / 2)) : 0;
         const { start: _s, end: _e, in: _i, refs: _r, ...rest } = g;
@@ -447,7 +615,7 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
         });
         s.content = rest;
       } else s.content = g;
-      const level = asset.kind === "video" ? "rough" : "board";
+      const level = asset.kind === "video" ? (job.quality === "final" ? "final" : "rough") : "board";
       if (FIDELITY.indexOf(s.fidelity) < FIDELITY.indexOf(level)) s.fidelity = level;
     },
     job.cut,
@@ -459,7 +627,7 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
 /** One line about a job, for the agent's tools. */
 export function describeJob(j: MakeJob): string {
   const model = CATALOG.find((m) => m.id === j.model)?.label ?? j.model;
-  const what = [j.shot ? `shot ${j.shot}` : j.op, model, j.request.seconds ? `${j.request.seconds}s` : "", j.request.aspect ?? ""].filter(Boolean).join(" · ");
+  const what = [j.shot ? `shot ${j.shot}` : j.sheet ? `sheet for @${j.sheet}` : j.op, model, j.quality ?? "", j.request.seconds ? `${j.request.seconds}s` : "", j.request.aspect ?? ""].filter(Boolean).join(" · ");
   const where =
     j.status === "done"
       ? `done: ${j.asset}`

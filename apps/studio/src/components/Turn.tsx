@@ -1,6 +1,6 @@
-import type { HandOff } from "@beatsheet/schema";
+import type { HandOff, ProjectFile } from "@beatsheet/schema";
 import { useState } from "react";
-import { AGENT_NAMES, pickPath, posterUrl, projectFileUrl, sessionActivity } from "../lib";
+import { AGENT_NAMES, pickFootage, pickPath, posterUrl, projectFileUrl, runJob, sessionActivity } from "../lib";
 import { actions, getState, setState, useStore } from "../store";
 
 /**
@@ -29,7 +29,7 @@ export function useTurn() {
 }
 
 const askLine = (ask: HandOff) =>
-  ask.kind === "choose" ? `pick ${ask.multiple ? "one or more" : "one"}: ${ask.message}` : ask.kind === "review" ? "watch the cut and leave notes" : `${ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : "reply"}: ${ask.message}`;
+  ask.kind === "choose" ? `pick ${ask.multiple ? "one or more" : "one"}: ${ask.message}` : ask.kind === "review" ? "watch the cut and leave notes" : `${ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : ask.need === "cast" ? "add pictures" : "reply"}: ${ask.message}`;
 
 /** One line in the top bar: whose turn it is and what that means right now. */
 export function TurnLine() {
@@ -300,11 +300,45 @@ function UseChromeAnswer() {
   );
 }
 
+/** Pictures of someone or somewhere only the person has (their cat, themselves, their street), for the cast. */
+function CastPictures() {
+  const [busy, setBusy] = useState("");
+  const add = async () => {
+    const paths = await pickFootage("files");
+    if (!paths?.length) return;
+    const { projectId, doc } = getState();
+    const before = new Set(doc?.assets.map((a) => a.id));
+    setBusy("Adding the pictures…");
+    try {
+      await runJob(`/api/projects/${projectId}/footage`, { paths });
+      // The job only counts what it added; the project says which they are.
+      const res = await fetch(`/api/projects/${projectId}`);
+      const { project } = (await res.json()) as { project: ProjectFile };
+      const added = project.assets.filter((a) => !before.has(a.id)).map((a) => a.id);
+      await answer({ provided: added.length ? `I added ${added.length} picture${added.length === 1 ? "" : "s"}: ${added.join(", ")}.` : "Those pictures were already in the project." });
+    } catch (err) {
+      setState({ notice: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div className="turn-actions">
+      <span className="dim small">They're added to the project's footage, and the agent makes the cast from them.</span>
+      <span className="spacer" />
+      <button className="primary" disabled={!!busy} onClick={() => void add()}>
+        {busy || "Add pictures…"}
+      </button>
+    </div>
+  );
+}
+
 function Provide({ ask }: { ask: Extract<HandOff, { kind: "provide" }> }) {
   const [busy, setBusy] = useState("");
   // With ElevenLabs set up, the agent can make the song it described instead.
   const canMake = useStore((s) => !!s.setup?.services.find((x) => x.id === "elevenlabs")?.configured);
   if (ask.need === "chrome") return <UseChromeAnswer />;
+  if (ask.need === "cast") return <CastPictures />;
   if (ask.need !== "song") return <p className="dim small">Reply below.</p>;
   const makeSong = async () => {
     setBusy("Asking for a song…");

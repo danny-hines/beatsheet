@@ -118,6 +118,15 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
         ...(ask.start ? { image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
         ...(ask.end ? { tail_image_url: ask.end } : {}),
       };
+    case "kling-3":
+      // Its own sound is off: a cut's sound comes from its music, voice and effects.
+      return {
+        prompt: ask.prompt,
+        duration: String(ask.seconds ?? 5),
+        start_image_url: ask.start,
+        ...(ask.end ? { end_image_url: ask.end } : {}),
+        generate_audio: false,
+      };
     case "wan":
       return {
         prompt: ask.prompt,

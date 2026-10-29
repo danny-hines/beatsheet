@@ -5,6 +5,7 @@ import type { RecordKind } from "../record";
 import { actions, getState, useProject, useStore } from "../store";
 import { RecorderDialog, RecordMenu } from "./Recorder";
 import { answer } from "./Turn";
+import { AssetMenu, CastList } from "./Cast";
 
 type Filter = "all" | "keepers" | "unrated" | "used" | "rejected";
 const FILTERS: [Filter, string][] = [
@@ -35,6 +36,7 @@ export function Library() {
   const used = useMemo(() => usedIn(p), [p]);
   const [hover, setHover] = useState<{ a: Asset; top: number; fx: number } | null>(null);
   const [recording, setRecording] = useState<RecordKind | null>(null);
+  const [menu, setMenu] = useState<{ a: Asset; x: number; y: number }>();
   // The app menu's Record Screen/Camera/Voice come here.
   useEffect(() => {
     const onRecord = (e: Event) => setRecording((e as CustomEvent<RecordKind>).detail);
@@ -86,11 +88,23 @@ export function Library() {
         ))}
       </div>
       <div className="library-list">
+        {(footage.length > 0 || !!p.cast?.length) && <CastList />}
         {groups.map((g) => (
           <div key={g.key}>
             {g.label && <div className="library-group dim small">{g.label}</div>}
             {g.items.map((a) => (
-              <AssetRow key={a.id} a={a} projectId={projectId} used={used.has(a.id)} selected={selection?.kind === "asset" && selection.id === a.id} onHover={setHover} />
+              <AssetRow
+                key={a.id}
+                a={a}
+                projectId={projectId}
+                used={used.has(a.id)}
+                selected={selection?.kind === "asset" && selection.id === a.id}
+                onHover={setHover}
+                onMenu={(x, y) => {
+                  setHover(null);
+                  setMenu({ a, x, y });
+                }}
+              />
             ))}
           </div>
         ))}
@@ -107,6 +121,7 @@ export function Library() {
       </div>
       {footage.length > 0 && <AddFootage onRecord={setRecording} />}
       {hover && <HoverCard {...hover} projectId={projectId} />}
+      {menu && <AssetMenu {...menu} onClose={() => setMenu(undefined)} />}
       {recording && <RecorderDialog kind={recording} onClose={() => setRecording(null)} />}
     </aside>
   );
@@ -223,7 +238,21 @@ function AddFootage({ big, onRecord }: { big?: boolean; onRecord: (kind: RecordK
 
 type Hover = { a: Asset; top: number; fx: number };
 
-function AssetRow({ a, projectId, used, selected, onHover }: { a: Asset; projectId: string; used: boolean; selected: boolean; onHover?: (h: Hover | null) => void }) {
+function AssetRow({
+  a,
+  projectId,
+  used,
+  selected,
+  onHover,
+  onMenu,
+}: {
+  a: Asset;
+  projectId: string;
+  used: boolean;
+  selected: boolean;
+  onHover?: (h: Hover | null) => void;
+  onMenu?: (x: number, y: number) => void;
+}) {
   const generic = !a.label || /^(Photo|Video \d+s|Screen recording|Camera|Voice recording) ·/.test(a.label);
   // Moving across the row scrubs the clip in the preview card beside the panel.
   const track = (e: React.MouseEvent) => {
@@ -235,6 +264,14 @@ function AssetRow({ a, projectId, used, selected, onHover }: { a: Asset; project
     <button
       className={`asset-row ${selected ? "sel" : ""} ${a.rating === -1 ? "rejected" : ""}`}
       onClick={() => actions.select({ kind: "asset", id: a.id })}
+      onContextMenu={
+        onMenu &&
+        ((e) => {
+          e.preventDefault();
+          actions.select({ kind: "asset", id: a.id });
+          onMenu(e.clientX, e.clientY);
+        })
+      }
       onMouseMove={track}
       onMouseLeave={() => onHover?.(null)}
     >

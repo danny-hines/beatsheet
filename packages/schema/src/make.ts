@@ -4,7 +4,7 @@
  * themselves are in catalog.ts; the engine knows which services are connected and runs the jobs.
  */
 import { resolveTimeline } from "./resolve.ts";
-import type { Project } from "./types.ts";
+import type { CastMember, Project } from "./types.ts";
 
 /** What can be asked for. More join as they're wired up: extend, edit-video, swap, lipsync, restore, isolate. */
 export const MAKE_OPS = ["image", "video"] as const;
@@ -33,6 +33,8 @@ export type CatalogModel = {
   /** One line on what it's good for. */
   note: string;
   ops: MakeOp[];
+  /** For video: whether it's for roughs (fast and cheap, to judge the cut) or finals (the best there is). */
+  tier?: Quality;
   /** What it can be given besides a prompt: a picture to start from, one to end on, and how many references. */
   takes: { start?: boolean; end?: boolean; refs?: number };
   /** For video: the lengths it makes, as a list or a range, in seconds. */
@@ -46,10 +48,15 @@ export type CatalogModel = {
   routes: ModelRoute[];
 };
 
+/** A video take is a rough (to judge the cut cheaply) or a final (made again with the best model, once the cut holds). */
+export type Quality = "rough" | "final";
+
 /** Something to make: the operation, its inputs (asset ids), and what the shot it's for needs. */
 export type MakeRequest = {
   op: MakeOp;
   prompt: string;
+  /** For video: Auto prefers models of this tier. */
+  quality?: Quality;
   start?: string;
   end?: string;
   refs?: string[];
@@ -212,13 +219,15 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
 export type Choices = { auto?: FitOk; ready: FitOk[]; setup: Fit[]; unfit: Fit[] };
 
 /**
- * Every model that makes this kind of thing, checked against the request. Auto is the first ready one in `ranking`
- * (model ids, best first), then in catalog order, which is curated best first.
+ * Every model that makes this kind of thing, checked against the request. Auto is the first ready one of the tier
+ * asked for (a rough or a final), in `ranking` (model ids, best first), then in catalog order.
  */
 export function chooseModels(catalog: CatalogModel[], req: MakeRequest, services: Record<string, ServiceState>, ranking: string[] = []): Choices {
   const order = (id: string) => {
+    const m = catalog.find((x) => x.id === id);
+    const offTier = req.quality && m?.tier && m.tier !== req.quality ? 1000 : 0;
     const i = ranking.indexOf(id);
-    return i === -1 ? ranking.length + catalog.findIndex((m) => m.id === id) : i;
+    return offTier + (i === -1 ? ranking.length + catalog.indexOf(m!) : i);
   };
   const fits = catalog
     .filter((m) => m.ops.includes(req.op))
@@ -231,6 +240,67 @@ export function chooseModels(catalog: CatalogModel[], req: MakeRequest, services
     setup: fits.filter((f) => !f.ok && f.why.kind !== "fit"),
     unfit: fits.filter((f) => !f.ok && f.why.kind === "fit"),
   };
+}
+
+// ---- Cast and sets in prompts.
+
+/** A cast member a prompt names, the variant when it names one (@cat/heist), and its own style when it has one. */
+export type CastUse = { id: string; member: CastMember; variant?: NonNullable<CastMember["variants"]>[number]; style?: CastMember };
+
+const MENTION = /@([a-z0-9][a-z0-9-]*)(?:\/([a-z0-9][a-z0-9-]*))?/g;
+
+/** The cast and sets a prompt names (@cat, @cat/heist), then any others listed (as "cat" or "cat/heist"), each once. */
+export function castOf(prompt: string, cast: CastMember[] | undefined, also: string[] = []): CastUse[] {
+  const out: CastUse[] = [];
+  const add = (id: string, v?: string) => {
+    const member = cast?.find((m) => m.id === id);
+    const variant = v ? member?.variants?.find((x) => x.id === v) : undefined;
+    const style = member?.style && member.kind !== "style" ? cast?.find((m) => m.id === member.style && m.kind === "style") : undefined;
+    const key = variant ? `${id}/${variant.id}` : id;
+    if (member && !out.some((u) => u.id === key)) out.push({ id: key, member, ...(variant ? { variant } : {}), ...(style ? { style } : {}) });
+  };
+  for (const m of prompt.matchAll(MENTION)) add(m[1]!, m[2]);
+  for (const x of also) add(...(x.split("/") as [string, string?]));
+  return out;
+}
+
+/** A cast member as the model reads it: its name, then what it looks like, and its own style unless the prompt names that style anyway. */
+const described = (u: CastUse, uses: CastUse[]) => {
+  const own = u.style && !uses.some((x) => x.id === u.style!.id) ? `in the style of ${u.style.name}${u.style.about ? `: ${u.style.about}` : ""}` : "";
+  const about = [u.member.about, u.variant?.about, own].filter(Boolean).join("; ");
+  return about ? `${u.member.name} (${about})` : u.member.name;
+};
+
+/**
+ * The prompt as a model reads it: each @mention becomes the name, described the first time, and cast listed but not
+ * named in the prompt are added at the end (a style as "In the style of…"). With reference pictures, it says which
+ * picture is whom.
+ */
+export function castPrompt(prompt: string, uses: CastUse[], pictured: CastUse[] = []): string {
+  const seen = new Set<string>();
+  let text = prompt.replace(MENTION, (whole, id: string, v?: string) => {
+    const u = uses.find((x) => x.id === (v ? `${id}/${v}` : id)) ?? uses.find((x) => x.id === id);
+    if (!u) return whole;
+    const first = !seen.has(u.id);
+    seen.add(u.id);
+    return first ? described(u, uses) : u.member.name;
+  });
+  const sentence = (t: string) => (/[.!?]\s*$/.test(t) ? t.trimEnd() : `${t.trimEnd()}.`);
+  const rest = uses.filter((u) => !seen.has(u.id));
+  const others = rest.filter((u) => u.member.kind !== "style");
+  const styles = rest.filter((u) => u.member.kind === "style");
+  if (others.length) text = `${sentence(text)} With ${others.map((u) => described(u, uses)).join(", ")}.`;
+  if (styles.length) text = `${sentence(text)} In the style of ${styles.map((u) => described(u, uses)).join(" and ")}.`;
+  if (pictured.length) text = `${sentence(text)} Reference pictures, in order: ${pictured.map((u) => u.member.name).join(", ")}. Keep each one's features, markings and colors as they are there; draw them in the style asked for.`;
+  return text;
+}
+
+/** The cast that have a picture to give a model, with the picture: the variant's own if it has one, else the main one. */
+export function castPictures(uses: CastUse[]): { use: CastUse; asset: string }[] {
+  return uses.flatMap((use) => {
+    const asset = use.variant?.images?.[0] ?? use.member.images?.[0];
+    return asset ? [{ use, asset }] : [];
+  });
 }
 
 /** What a shot asks of a take: how long it plays (in the cut's first format), that format's shape, and a first prompt. */

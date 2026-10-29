@@ -189,6 +189,10 @@ Because `seen` points at real media, the agent can use real footage where there 
 
 In a prompt a cast member is `@cat` (or `@cat/heist` for a variant), shown as a chip. Models take references differently: some take four images, some one, some none. When a model can't take the references, Auto goes through a start frame: an image model makes a still with the cast in it, and the video model animates that. Then any model that can animate a picture keeps the character.
 
+### Style
+
+What everything is drawn in is a choice, not a default to fight: photographed, hand-drawn, stop-motion, a comic book. A style is a cast entry of kind `style` (a name, an `about` the model reads, and maybe a picture), and the project's look names the one made shots are drawn in (`look.style`). Sheets and boards follow it without each prompt saying so; with none set, they're photographs. A cast member drawn unlike the rest, like a cartoon cat in a photographed street, has its own `style`, which its sheet is made in and its description carries into every board. The studio offers presets (Photographic, Hand-drawn, 3D animated, Stop-motion, Watercolor, Comic book, Film noir) that become style entries when picked. Set the style before making sheets: boards follow their sheets, so a sheet drawn in the wrong style makes the cast look pasted into the world.
+
 A character's `voice` reads their lines. `Line` gets `speaker` (a cast id): that character's voice reads the line, and lines without one use the cut's voice. A line's fingerprint (`lineState`) uses the voice it resolves to, so changing a character's voice re-reads only their lines.
 
 Making a character from a real person, or putting someone into footage, is for people who've agreed to it. Each service's own rules apply on top, and a model that won't take pictures of real people shows that as its reason for being grayed out.
@@ -423,11 +427,30 @@ Both keep their anchors; nothing about time changes.
 ## Order
 
 1. **The pipeline, on one shot** (done: run for real through fal on 2026-10-29, boards from the agent's `generate` and a Kling clip from Inspect). The catalog and fit check (in schema, with tests), fal as the first route for images and video, jobs on disk, the new provenance fields, the take strip in Inspect, and `list_models`, `generate` and `jobs`. Done when Make 2 on a placeholder with Auto gives two takes through fal, a studio restart in the middle doesn't lose them, and the agent can do the same and hand off a choice.
-2. **A video from nothing.** Cast & sets from the story, from a description and from photos (the Library's right-click menu with Make a character, Make a set and Add to), with cut-outs, descriptions, sheets and variants in Make; references through a start frame; boards, rough and final; estimates for a whole pass; the `cast` need; and the film recipe. Done when the cat video goes from a brief to a watchable rough cut with the agent driving and the person only answering hand-offs and leaving notes.
+2. **A video from nothing** (built; a sheet from a photo, a board with a cast variant and a Kling 3 final ran for real through fal on 2026-10-29, but not the whole film end to end: cast & sets in the project, in prompts and in the studio's Library and Inspect, with sheets and variants; boards, roughs and finals, with Kling 3 Pro for finals; estimates for a whole pass; the `cast` hand-off; the film recipe and the make skill. Cut-outs and Make mode itself moved to phase 3). Cast & sets from the story, from a description and from photos (the Library's right-click menu with Make a character, Make a set and Add to), with cut-outs, descriptions, sheets and variants in Make; references through a start frame; boards, rough and final; estimates for a whole pass; the `cast` need; and the film recipe. Done when the cat video goes from a brief to a watchable rough cut with the agent driving and the person only answering hand-offs and leaving notes.
 3. **The rest of Make mode.** The board of loose takes, the queue, the full composer, cast from subjects and clips, the agent grouping the Library into a cast, selecting several things at once, speakers on lines, and dragging from the Library onto the timeline.
 4. **Changing footage.** Extend by dragging, relight, new angle, restyle, remove, replace someone, widen. With it, what old films need: deinterlacing on import, splitting a file at its cuts, transcription, separating voices from noise, restoring (upscale, clean-up, steadying), and effects drawn over cut-outs.
 5. **Running models yourself.** ComfyUI on this PC (found or installed), with SCAIL-2 and Wan as the first workflows; bring-your-own workflows; Tonight; and the agent's suggestion with the `setup` hand-off. Then RunPod: serverless endpoints, and pods started and stopped for a batch. The remaster recipe comes with this phase, since its remade shots lean on motion transfer and long runs overnight.
 6. **More services.** Runway and Gemini directly, and lip-sync.
+
+## Gaps
+
+What's built but thin, or set aside for later, as it turns up. Each comes off the list when it's done.
+
+- **Image models.** Only Nano Banana. GPT Image (with the OpenAI key) and Muse Image (with the Meta key) belong beside it. They run on those services directly, so each needs its own adapter rather than fal's.
+- **Wan 2.2** is wired up and tested against a stand-in for fal, but hasn't made a real take.
+- **Formats.** A generated shot can't be reframed for a cut's other formats the way a clip can.
+- **Settings.** The agent's turn budget and Auto's ranking can only be changed in `settings.json`.
+- **The cat video end to end.** Phase 2 is done when it goes from a brief to a watchable rough cut with the agent driving; that run (about $5–8) hasn't happened.
+- **Describing a cast member.** Written by hand or by the agent (from `look_at_assets`); there's no Describe button that asks a vision model.
+- **Cut-outs for cast pictures.** A cast member's photos go to the model whole, sofa and all; cutting the subject out first comes with phase 3.
+- **Cast from clips and subjects.** Only photos can make or join a cast member; a clip's frames and the faces found in it come with phase 3.
+- **Variant ids** made in the studio come from the description (`@tabby/tiny-black-eye-mask`) and can't be renamed there.
+- **A clip from cast pictures with no board** isn't chained for you (make a still with them, then animate it). The film recipe always boards first.
+- **A style's picture** is given to models with boards, but a sheet made from photos gets its style in words only (the photos take the reference slots).
+- **Kling 3's own character references** (its `elements`) aren't used; the board carries the cast instead.
+- **Estimates for a whole pass** are the agent's (`list_models` with `shots`); the studio prices one shot at a time.
+- **Older processes drop new fields.** An engine started before an update (an agent's MCP server, a studio left running) doesn't know fields like `cast`, and leaves them out when it writes the project. Restart them after updating.
 
 ## Open questions
 

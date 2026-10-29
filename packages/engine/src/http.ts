@@ -470,11 +470,25 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const q = new URL(req.url ?? "", "http://local").searchParams;
     const op = q.get("op") === "video" ? "video" : "image";
     const seconds = Number(q.get("seconds"));
-    return json(
-      res,
-      200,
-      makeChoices(id, { op, cut: q.get("cut") ?? undefined, shot: q.get("shot") ?? undefined, start: q.get("start") ?? undefined, count: Number(q.get("count")) || undefined, ...(seconds > 0 ? { seconds } : {}) }),
-    );
+    const quality = q.get("quality");
+    try {
+      return json(
+        res,
+        200,
+        makeChoices(id, {
+          op,
+          cut: q.get("cut") ?? undefined,
+          shot: q.get("shot") ?? undefined,
+          sheet: q.get("sheet") ?? undefined,
+          start: q.get("start") ?? undefined,
+          count: Number(q.get("count")) || undefined,
+          ...(quality === "rough" || quality === "final" ? { quality } : {}),
+          ...(seconds > 0 ? { seconds } : {}),
+        }),
+      );
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
   }
   if (section === "projects" && id && action === "make" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as MakeAsk;

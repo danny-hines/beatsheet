@@ -17,6 +17,7 @@ import { LookPanel, SceneProps } from "./Designed";
 import { LineVoice, NarrationOverview } from "./Narration";
 import { ShotLook } from "./Subjects";
 import { Takes } from "./Takes";
+import { CastView } from "./Cast";
 import { AnchorChip, Empty, TextField } from "./ui";
 
 export function SidePanel() {
@@ -125,6 +126,9 @@ function Inspector() {
       </>
     );
   }
+
+  // Not keyed by id: naming a new member changes its id, and the panel stays put while you go on typing.
+  if (sel?.kind === "cast") return <CastView id={sel.id} />;
 
   if (sel?.kind === "line") {
     const l = p.voice?.lines.find((x) => x.id === sel.id);

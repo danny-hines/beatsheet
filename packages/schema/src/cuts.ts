@@ -55,7 +55,7 @@ export function cutView(file: ProjectFile, cutId?: string): Project {
 
 /** Writes a cut's view back into the file: its shared parts over the file's, its own parts over that cut. */
 export function withCut(file: ProjectFile, view: Project): ProjectFile {
-  const { cut, id, title, sources, codeRoot, look, brief, assets, ...body } = view;
+  const { cut, id, title, sources, codeRoot, look, brief, assets, cast, ...body } = view;
   const next = defined({ id: cut.id, name: cut.name, origin: cut.origin, ...body }) as Cut;
   const i = file.cuts.findIndex((c) => c.id === cut.id);
   return defined({
@@ -67,6 +67,7 @@ export function withCut(file: ProjectFile, view: Project): ProjectFile {
     look,
     brief,
     assets,
+    cast,
     cuts: i < 0 ? [...file.cuts, next] : file.cuts.map((c, j) => (j === i ? next : c)),
     turn: file.turn,
   }) as ProjectFile;

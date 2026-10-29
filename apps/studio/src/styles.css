@@ -951,3 +951,18 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 @keyframes take-pulse { 50% { opacity: 0.5; } }
 .make-row { display: flex; gap: 6px; align-items: center; }
 .make-row select:last-child { flex: 1; min-width: 0; }
+
+/* Cast & sets: at the top of the Library, and a cast member in Inspect (its pictures, where it's seen, its variants). */
+.cast-head { display: flex; align-items: center; justify-content: space-between; }
+.cast-row .asset-row-thumb { background: var(--panel-2); }
+.cast-line { margin: -2px 0 0; }
+.cast-pic { position: relative; flex: none; }
+.cast-pic .take { height: 72px; aspect-ratio: 16 / 9; }
+.cast-pic .take:disabled { opacity: 1; }
+.cast-pic-remove { position: absolute; top: 3px; right: 3px; padding: 0 5px; font-size: 11px; line-height: 16px; border: none; border-radius: 8px; background: rgba(0, 0, 0, 0.65); color: #fff; opacity: 0; }
+.cast-pic:hover .cast-pic-remove, .cast-pic-remove:focus-visible { opacity: 1; }
+.variant-row { display: flex; align-items: center; gap: 6px; }
+.variant-row > :nth-child(2) { flex: 1; min-width: 0; }
+.make-row input { flex: 1; min-width: 0; }
+.cast-remove { margin-top: 10px; }
+.card-menu button:disabled { opacity: 0.45; }

@@ -2,15 +2,22 @@ import { describe, expect, it } from "vitest";
 import {
   aspectOf,
   CATALOG,
+  castOf,
+  castPictures,
+  castPrompt,
   checkCut,
   chooseModels,
+  cutView,
   fitModel,
   HANDLE,
+  parseFile,
   Project,
   resolveTimeline,
   SCHEMA_VERSION,
   shotNeeds,
   STAGE_IDS,
+  withCut,
+  type CastMember,
   type CatalogModel,
   type ProjectInput,
   type ServiceState,
@@ -200,5 +207,126 @@ describe("what a shot asks of a take", () => {
     expect(checkCut(p)).toEqual([]);
     const missing = make({ ...p, assets: [take], shots: p.shots });
     expect(checkCut(missing).map((i) => i.message)).toContain('unknown asset "board1"');
+  });
+});
+
+describe("roughs and finals", () => {
+  it("picks a rough model for a rough and Kling 3 for a final, from the shot's board", () => {
+    const board = { op: "video" as const, prompt: "the cat leaves", start: "board", seconds: 3.2 };
+    expect(chooseModels(CATALOG, { ...board, quality: "rough" }, services).auto).toMatchObject({ model: "kling-2.5-turbo" });
+    expect(chooseModels(CATALOG, { ...board, quality: "final" }, services).auto).toMatchObject({ model: "kling-3", seconds: 5, usd: 0.56 });
+  });
+
+  it("falls back to a rough model when no final can make it, and says why the final can't", () => {
+    const c = chooseModels(CATALOG, { op: "video", prompt: "the cat leaves", seconds: 3.2, quality: "final" }, services);
+    expect(c.auto?.model).toBe("kling-2.5-turbo");
+    expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Nowhere runs Kling 3 Pro with only a prompt" } });
+  });
+});
+
+describe("cast and sets in prompts", () => {
+  const cast: CastMember[] = [
+    {
+      id: "cat",
+      name: "the cat",
+      kind: "character",
+      about: "orange tabby, white chest, a notch in the left ear",
+      images: ["cat-sheet"],
+      variants: [{ id: "heist", about: "wearing a tiny black eye mask", images: ["cat-heist"] }],
+    },
+    { id: "alley", name: "the alley", kind: "place", about: "narrow, wet brick, steam from a grate" },
+    { id: "noir", name: "noir", kind: "style", about: "black and white, hard shadows", images: ["noir-ref"] },
+  ];
+
+  it("finds who a prompt names, with a variant, then the others listed, each once", () => {
+    const uses = castOf("@cat/heist slinks down @alley, past @dog, and @cat/heist looks back", cast, ["noir", "alley"]);
+    expect(uses.map((u) => u.id)).toEqual(["cat/heist", "alley", "noir"]);
+    expect(uses[0]!.variant?.about).toBe("wearing a tiny black eye mask");
+  });
+
+  it("names each one in words the model reads, described the first time, and says which picture is whom", () => {
+    const uses = castOf("@cat/heist slinks down @alley, and @cat/heist looks back", cast, ["noir"]);
+    const pictured = castPictures(uses);
+    expect(pictured.map((p) => p.asset)).toEqual(["cat-heist", "noir-ref"]);
+    expect(castPrompt("@cat/heist slinks down @alley, and @cat/heist looks back", uses, pictured.map((p) => p.use))).toBe(
+      "the cat (orange tabby, white chest, a notch in the left ear; wearing a tiny black eye mask) slinks down the alley (narrow, wet brick, steam from a grate), and the cat looks back." +
+        " In the style of noir (black and white, hard shadows). Reference pictures, in order: the cat, noir. Keep each one's features, markings and colors as they are there; draw them in the style asked for.",
+    );
+    // Someone not in the cast is left as written.
+    expect(castPrompt("@dog barks", castOf("@dog barks", cast))).toBe("@dog barks");
+  });
+
+  it("draws a cast member in its own style when it has one, unless the prompt names that style anyway", () => {
+    const drawn: CastMember[] = [
+      ...cast.map((m) => (m.id === "cat" ? { ...m, style: "toon" } : m)),
+      { id: "toon", name: "hand-drawn", kind: "style", about: "2D animation, clean ink lines" },
+    ];
+    // A cartoon cat in a noir alley: the cat says its own style, and the shot is in the project's.
+    const uses = castOf("@cat strolls down @alley", drawn, ["noir"]);
+    expect(castPrompt("@cat strolls down @alley", uses)).toBe(
+      "the cat (orange tabby, white chest, a notch in the left ear; in the style of hand-drawn: 2D animation, clean ink lines) strolls down the alley (narrow, wet brick, steam from a grate)." +
+        " In the style of noir (black and white, hard shadows).",
+    );
+    // A sheet of the cat in its style names the style itself, so the cat's description doesn't say it again.
+    const sheet = "A reference sheet of @cat, in the style of @toon";
+    expect(castPrompt(sheet, castOf(sheet, drawn))).toBe(
+      "A reference sheet of the cat (orange tabby, white chest, a notch in the left ear), in the style of hand-drawn (2D animation, clean ink lines)",
+    );
+  });
+
+  const make = (over: Partial<ProjectInput> = {}): Project =>
+    Project.parse({
+      schema: SCHEMA_VERSION,
+      id: "t",
+      title: "test",
+      recipe: "film",
+      brief: { goal: "test" },
+      formats: [{ id: "port", label: "9:16", width: 1080, height: 1920, fps: 30 }],
+      stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])),
+      spine: "shots",
+      assets: [{ id: "cat-sheet", kind: "image", path: "made/cat.jpg" }],
+      tracks: [{ id: "pic", kind: "picture", label: "Picture" }],
+      shots: [],
+      notes: [],
+      ...over,
+    });
+
+  it("checks cast pictures are the project's own, ids can follow an @, and shots name cast that exists", () => {
+    const p = make({
+      cast: [
+        { id: "cat", name: "the cat", kind: "character", images: ["cat-sheet"], variants: [{ id: "heist", about: "a mask" }], seen: [{ asset: "cat-sheet", subject: "face-1" }] },
+        { id: "The Alley", name: "the alley", kind: "place", images: ["alley-photo"] },
+      ],
+      shots: [{ id: "s1", track: "pic", duration: 2, content: { kind: "generated", prompt: "x", cast: ["cat/heist", "dog"] }, fidelity: "idea" }],
+    });
+    expect(checkCut(p).map((i) => `${i.path}: ${i.message}`)).toEqual([
+      'cast.0.seen.0: "cat-sheet" has no subject "face-1"',
+      `cast.1.id: "The Alley" can't follow an @: use lowercase letters, numbers and dashes`,
+      'cast.1: unknown asset "alley-photo"',
+      'shots.0.content.cast: no cast member "dog"',
+    ]);
+  });
+
+  it("checks a style is a style in the cast, for the look and for a cast member", () => {
+    const p = make({
+      look: { style: "cat" },
+      cast: [
+        { id: "cat", name: "the cat", kind: "character", style: "toon" },
+        { id: "toon", name: "hand-drawn", kind: "style" },
+      ],
+    });
+    expect(checkCut(p).map((i) => `${i.path}: ${i.message}`)).toEqual(['look.style: no style "cat" in the cast']);
+    expect(checkCut({ ...p, look: { style: "toon" }, cast: [{ ...p.cast![0]!, style: "noir" }, p.cast![1]!] }).map((i) => i.message)).toEqual(['no style "noir" in the cast']);
+  });
+
+  it("is kept with the project, not a cut, when a cut is written back", () => {
+    const r = parseFile({ ...withCut({ schema: SCHEMA_VERSION, cuts: [], ...make() } as never, make()), schema: SCHEMA_VERSION });
+    expect(r.ok).toBe(true);
+    const file = r.ok ? r.file : undefined!;
+    const view = cutView(file);
+    view.cast = [{ id: "cat", name: "the cat", kind: "character" }];
+    const back = withCut(file, view);
+    expect(back.cast?.map((m) => m.id)).toEqual(["cat"]);
+    expect("cast" in back.cuts[0]!).toBe(false);
   });
 });

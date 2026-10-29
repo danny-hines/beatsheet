@@ -66,6 +66,26 @@ export function checkCut(p: Project): CheckIssue[] {
   dupes("notes", p.notes);
   dupes("markers", p.markers ?? []);
   dupes("sfx", p.sfx ?? []);
+  dupes("cast", p.cast ?? []);
+
+  // Cast and sets: their pictures and where they're seen are the project's own, and a variant is named once.
+  const castIds = new Set<string>();
+  p.cast?.forEach((m, i) => {
+    castIds.add(m.id);
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(m.id)) add(`cast.${i}.id`, `"${m.id}" can't follow an @: use lowercase letters, numbers and dashes`);
+    [...(m.images ?? []), ...(m.variants ?? []).flatMap((v) => v.images ?? [])].forEach((a) => ids.assets.has(a) || add(`cast.${i}`, `unknown asset "${a}"`));
+    m.seen?.forEach((s, j) => {
+      const a = p.assets.find((x) => x.id === s.asset);
+      if (!a) add(`cast.${i}.seen.${j}`, `unknown asset "${s.asset}"`);
+      else if (s.subject && !a.subjects?.some((x) => x.id === s.subject)) add(`cast.${i}.seen.${j}`, `"${s.asset}" has no subject "${s.subject}"`);
+    });
+    dupes(`cast.${i}.variants`, m.variants ?? []);
+    m.variants?.forEach((v) => castIds.add(`${m.id}/${v.id}`));
+  });
+  // A style is named by a style entry in the cast: the look's, and any cast member's own.
+  const isStyle = (id: string) => p.cast?.some((m) => m.id === id && m.kind === "style");
+  p.cast?.forEach((m, i) => m.style && !isStyle(m.style) && add(`cast.${i}.style`, `no style "${m.style}" in the cast`));
+  if (p.look?.style && !isStyle(p.look.style)) add("look.style", `no style "${p.look.style}" in the cast`);
 
   const formats = (path: string, list: string[] | undefined) => {
     for (const f of list ?? []) if (!ids.formats.has(f)) add(path, `unknown format "${f}"`);
@@ -112,6 +132,7 @@ export function checkCut(p: Project): CheckIssue[] {
       for (const a of [...(c.takes ?? []), ...(c.take ? [c.take] : []), ...(c.refs ?? []), ...(c.start ? [c.start] : []), ...(c.end ? [c.end] : [])])
         if (!ids.assets.has(a)) add(path, `unknown asset "${a}"`);
       if (c.take && c.takes && !c.takes.includes(c.take)) add(path, `take "${c.take}" is not in takes`);
+      c.cast?.forEach((id) => castIds.has(id) || add(`${path}.content.cast`, `no cast member "${id}"`));
     }
   });
   p.sfx?.forEach((c, i) => {

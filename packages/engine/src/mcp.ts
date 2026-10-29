@@ -38,7 +38,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { cancelJobs, describeJob, driveJobs, isOpen, listJobs, makeChoices, spentThisTurn, startMake, turnBudget } from "./make.ts";
+import { cancelJobs, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -77,7 +77,7 @@ Designed scenes: a shot doesn't have to be footage. Coded shots draw anything: k
 
 Pages behind a login (a Google Photos album, a dashboard, a private doc): the person's Chrome is signed in, so use it when you can reach it: the claude-in-chrome tools (Claude Code), your own browser tool's chrome backend (Codex), or the chrome-devtools tools (attached to their running Chrome; if they can't connect, ask the person to turn on remote debugging once at chrome://inspect/#remote-debugging and allow the connection Chrome asks about). The person is asked before you act on each site. To bring media in from there, download it in Chrome (it lands in ~/Downloads; Google Photos zips a multi-photo download) and pass the files or zip to import_media, which skips what the project already has: compare with list_assets first rather than downloading everything. Without those tools, your own browsers aren't signed in to anything: hand_off with kind "provide" and need "chrome", saying what you'll do there; the card gives the person a button that lets you use their Chrome (or they can download the files and tell you where they are). Never read a browser's saved logins or cookies.
 
-Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's fal key): give it a placeholder or generated shot and it makes takes for that shot, with the shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle each shot cheaply as a board, then video from the chosen board (op "video", start: the board's asset id). list_models says which models could make something, about what each costs, and why the others can't. generate returns at once and the takes land on the shot as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off that says what it would cost. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
+Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's fal key): give it a placeholder or generated shot (or several, with shots) and it makes takes for them, with each shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle each shot cheaply as a board, then rough clips from each shot's chosen board (op "video", start "board"), then finals with the best model once the cut holds (quality "final"). Cast and sets (/cast: characters, places, props, styles) keep made shots consistent: name them in prompts with @id (@cat, @cat/heist for a variant) and they're described to the model, and stills are given their pictures. Make a cast member's pictures with generate's sheet (from the photos it's seen in, or from its description), and ask for photos only the person has with a provide hand-off (need "cast"). list_models says which models could make something, about what each costs, and why the others can't; with shots, what a whole pass would cost. generate returns at once and the takes land as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off that says what it would cost. The film recipe skill is the whole process for a video made from nothing. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
 
 Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or ${IS_WINDOWS ? "Windows'" : "the Mac's"} own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
 
@@ -549,18 +549,25 @@ server.registerTool(
 const makeArgs = {
   project: projectArg,
   cut: cutArg,
-  op: z.enum(MAKE_OPS).describe("image: a still (a shot's board, a character's sheet); video: a clip"),
+  op: z.enum(MAKE_OPS).describe("image: a still (a shot's board, a cast member's sheet); video: a clip"),
   shot: z
     .string()
     .optional()
     .describe("A placeholder or generated shot to make it for: the shot's length, the cut's shape and the shot's description fill in what isn't given, and the takes land on the shot"),
-  prompt: z.string().optional().describe("What to make; default the shot's description. For video, say what moves and how the camera does"),
-  start: z.string().optional().describe("Asset id of the picture a video starts from: the shot's chosen board"),
+  shots: z.array(z.string()).optional().describe("Several shots at once, the same request for each: a pass of boards, or clips from each one's board (start: \"board\")"),
+  sheet: z.string().optional().describe("A cast member (cat, or cat/heist for a variant) to make a reference sheet for: the stills join its pictures. Without a prompt, clean views of it"),
+  prompt: z.string().optional().describe("What to make; default the shot's description. Name cast and sets with @id (@cat, @cat/heist): they're described to the model, and stills are given their pictures. For video, say what moves and how the camera does"),
+  cast: z.array(z.string()).optional().describe("Cast and sets in it that the prompt doesn't name"),
+  quality: z.enum(["rough", "final"]).optional().describe("For video: rough (default; fast and cheap, to judge the cut) or final (the best model, once the cut holds)"),
+  start: z.string().optional().describe('The picture a video starts from: an asset id, or "board" for each shot\'s chosen still'),
   end: z.string().optional().describe("Asset id of a picture a video ends on"),
-  refs: z.array(z.string()).optional().describe("Asset ids of reference pictures: a character, a place"),
+  refs: z.array(z.string()).optional().describe("Asset ids of reference pictures, instead of the cast's own"),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
 };
+type MakeToolArgs = { cut?: string; op: (typeof MAKE_OPS)[number]; shot?: string; shots?: string[]; sheet?: string; prompt?: string; cast?: string[]; quality?: "rough" | "final"; start?: string; end?: string; refs?: string[]; seconds?: number; aspect?: string; count?: number; model?: string };
+/** One request per shot when there are several, else the one. */
+const asksFor = ({ shots, ...ask }: MakeToolArgs): MakeAsk[] => (shots?.length ? shots.map((shot) => ({ ...ask, shot })) : [ask]);
 const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
 const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
 const fitLine = (f: Fit) => {
@@ -573,13 +580,28 @@ server.registerTool(
   "list_models",
   {
     description:
-      "Which models could make a picture or a clip (for a shot, or as described), checked against the person's services: the ones ready to use with what each would cost and how long it takes, the ones that need a key the person hasn't added, and the ones that can't make this (too short, the wrong shape, no start frame) with why. generate uses the first ready one unless you name another.",
+      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against the person's services: the ones ready to use with what each would cost and how long it takes, the ones that need a key the person hasn't added, and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one unless you name another.",
     inputSchema: { ...makeArgs, count: z.number().int().min(1).max(4).optional().describe("How many takes, for the estimate (default 1)") },
   },
-  async ({ project: id, ...ask }) => {
-    const { req, choices } = makeChoices(id, ask);
+  async ({ project: id, ...args }) => {
+    const asks = asksFor(args);
+    if (asks.length > 1) {
+      const { rows, problems } = estimate(id, asks);
+      const can = asks.length - problems.length;
+      const all = (n: number) => (n === can ? (n === 2 ? "both" : `all ${n}`) : `${n} of them`);
+      return text(
+        [
+          `For ${asks.length} shots, ${args.count ?? 1} take${(args.count ?? 1) === 1 ? "" : "s"} each${args.op === "video" ? `, ${args.quality ?? "rough"}` : ""}:`,
+          ...rows
+            .sort((a, b) => b.made - a.made || a.usd - b.usd)
+            .map((r) => `- ${r.label} (${r.model}): ${r.made ? `${usd(r.usd)} for ${all(r.made)}` : "none of them"}${r.unfit.length ? `; can't make ${r.unfit.map((u) => `${u.shot} (${u.reason})`).join(", ")}` : ""}`),
+          ...(problems.length ? ["Not counted:", ...problems.map((p) => `- ${p.reason}`)] : []),
+        ].join("\n"),
+      );
+    }
+    const { req, choices } = makeChoices(id, asks[0]!);
     const out = [
-      `For ${req.op === "image" ? "a still" : "video"}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.start ? "from a start frame" : req.aspect}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.start ? "from a start frame" : req.aspect}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
     ];
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
     if (choices.setup.length) out.push("Needs something the person has to set up (Settings → Media services):", ...choices.setup.map(fitLine));
@@ -592,24 +614,23 @@ server.registerTool(
   "generate",
   {
     description:
-      "Make pictures or video with the person's services, usually takes for a shot: a placeholder shot becomes a generated shot as its first take lands, and the first take (or the first video over a still) is the one it shows. Settle a shot as a still first (op image, a board, cents each), then make video from the board you pick (op video, start: its asset id). Makes 2 takes unless you say otherwise. Returns at once with the jobs; the takes land in the project as they finish (a still in seconds, a clip in a few minutes), and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking.",
+      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
     inputSchema: {
       ...makeArgs,
-      count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2)"),
-      model: z.string().optional().describe("A model id from list_models; default Auto, the first ready one"),
+      count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),
+      model: z.string().optional().describe("A model id from list_models; default Auto, the first ready one of the quality asked for"),
     },
   },
-  async ({ project: id, ...ask }) => {
+  async ({ project: id, ...args }) => {
     const spendable = turnBudget() - spentThisTurn(id);
-    const { fit, jobs } = startMake(id, { ...ask, count: ask.count ?? 2 }, { spendable });
-    const what = ask.shot ? `shot ${ask.shot}` : ask.op === "image" ? "a still" : "a clip";
-    return text(
-      [
-        `Making ${jobs.length} take${jobs.length === 1 ? "" : "s"} of ${what} with ${fit.label} on ${fit.route}: ${[fit.seconds && `${fit.seconds}s`, fit.aspect, usd(fit.usd) && `${usd(fit.usd)} in all`, minutes(fit.wait)].filter(Boolean).join(", ")}.`,
-        `Jobs: ${jobs.map((j) => j.id).join(", ")} (together: ${jobs[0]!.batch}).`,
-        ask.shot ? "They land on the shot as its takes as they finish. Call jobs with wait to see them come in." : "They land in the project's assets as they finish. Call jobs with wait to see them come in.",
-      ].join("\n"),
+    const { plans, usd: total } = startMakeAll(id, asksFor({ ...args, count: args.count ?? 2 }), { spendable });
+    const what = (p: (typeof plans)[number]) => (p.ask.shot ? `shot ${p.ask.shot}` : p.ask.sheet ? `a sheet for @${p.ask.sheet}` : args.op === "image" ? "a still" : "a clip");
+    const lines = plans.map(
+      (p) =>
+        `- ${p.jobs.length} take${p.jobs.length === 1 ? "" : "s"} of ${what(p)} with ${p.fit.label}: ${[p.fit.seconds && `${p.fit.seconds}s`, p.fit.aspect, usd(p.fit.usd)].filter(Boolean).join(", ")}. Jobs ${p.jobs.map((j) => j.id).join(", ")}.`,
     );
+    const where = args.sheet ? "They join its pictures as they finish." : args.shot || args.shots?.length ? "They land on the shots as their takes as they finish." : "They land in the project's assets as they finish.";
+    return text([`Making ${usd(total) || "it"} in all, ${minutes(Math.max(...plans.map((p) => p.fit.wait ?? 0)))}:`, ...lines, `${where} Call jobs with wait to see them come in.`].join("\n"));
   },
 );
 
@@ -646,7 +667,7 @@ server.registerTool(
   "edit_project",
   {
     description:
-      'Change a cut with JSON Patch operations (add, remove, replace, move, copy, test). Paths are into the cut as get_project shows it: its own parts (/shots, /music, /voice, /captions, /sfx, /formats, /stages, /notes, /spec, /end) and the shared ones (/assets, /brief, /title, /look). Array elements can be addressed by id instead of index: "/shots/id=s07/start". Validated before writing; refused edits change nothing. Returns the resulting timing.',
+      'Change a cut with JSON Patch operations (add, remove, replace, move, copy, test). Paths are into the cut as get_project shows it: its own parts (/shots, /music, /voice, /captions, /sfx, /formats, /stages, /notes, /spec, /end) and the shared ones (/assets, /brief, /title, /look, /cast). Array elements can be addressed by id instead of index: "/shots/id=s07/start". Validated before writing; refused edits change nothing. Returns the resulting timing.',
     inputSchema: {
       project: projectArg,
       cut: cutArg,
@@ -989,7 +1010,10 @@ server.registerTool(
         .max(2)
         .optional()
         .describe('For "choose": more questions on the same card, answered together, e.g. {id: "look", message: "And which look?", options: [...each with image]}'),
-      need: z.enum(["song", "footage", "text", "chrome"]).optional().describe('For "provide". "chrome" puts a button on the card that lets you use their Chrome; say what you\'ll do there'),
+      need: z
+        .enum(["song", "footage", "text", "chrome", "cast"])
+        .optional()
+        .describe('For "provide". "chrome" puts a button on the card that lets you use their Chrome; say what you\'ll do there. "cast": pictures of someone or somewhere only they have (their cat, themselves, their street); say whom'),
     },
   },
   async ({ project: id, cut, kind, message, options, multiple, questions, need }) => {
@@ -1033,6 +1057,14 @@ function overview(id: string, cut?: string, format?: string): string {
     lines.push("References (with what the person said about each):");
     for (const r of p.brief.references) lines.push(`- ${r.kind} ${r.label ? `"${r.label}" ` : ""}${r.value}${r.note ? ` — ${r.note}` : ""}`);
   }
+  if (p.cast?.length) {
+    lines.push("Cast & sets (name them in prompts with @id):");
+    for (const m of p.cast)
+      lines.push(
+        `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"} · ${m.images?.length ? `pictures ${m.images.join(", ")}` : "no pictures yet"}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · variants ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about})`).join(", ")}` : ""}`,
+      );
+  }
+  if (p.cast?.length || p.look?.style) lines.push(`Made shots are drawn ${p.look?.style ? `in the style @${p.look.style} (/look/style)` : "as photographs (no /look/style set)"}`);
   const specLine = (c: { spec: typeof p.spec }) =>
     [c.spec.purpose, c.spec.targetLength ? `target ${c.spec.targetLength}s` : "", c.spec.audience ? `for ${c.spec.audience}` : "", c.spec.tone?.join(", ")].filter(Boolean).join(" · ");
   lines.push(`Cuts: ${doc.cuts.map((c) => `${c.id} "${c.name}"${c.id === p.cut.id ? " (shown below)" : ""}${specLine(c) ? ` [${specLine(c)}]` : ""}${c.origin?.from ? ` branched from ${c.origin.from}${c.origin.note ? `: ${c.origin.note}` : ""}` : ""}`).join("; ")}`);
