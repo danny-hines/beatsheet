@@ -34,6 +34,7 @@ import {
   type Project,
   type SubjectTrack,
 } from "@beatsheet/schema";
+import { castFromSubject } from "./castfrom.ts";
 import { presenceFromEnv, removePresence, writePresence, type Presence } from "./agents.ts";
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
@@ -970,6 +971,19 @@ server.registerTool(
   async ({ project: id, asset, keep, others }) => {
     const t = joinSubjects(id, asset, keep, others);
     return text(`Joined into ${subjectLine(t)}`);
+  },
+);
+
+server.registerTool(
+  "cast_from_subject",
+  {
+    description:
+      "Put someone (or something) found in a clip or photo into the cast: a new character (a prop for a thing), or more of one already there (`into`). A still of them is cut from the frame where they're largest, with room around a face, and the member is seen in both the clip and the still, so sheets and boards keep them. Find them first with find_subjects (or track_subject), and name the subject if you know who it is: a named subject gives the member its name and @id.",
+    inputSchema: { project: projectArg, asset: z.string(), subject: z.string().describe("Subject id in the asset"), into: z.string().optional().describe("A cast member's id to add them to, instead of making a new one") },
+  },
+  async ({ project: id, asset, subject, into }) => {
+    const r = await castFromSubject(id, { asset, subject, into });
+    return text(`@${r.member} is seen in ${asset} and in the still ${r.still}. Describe them in /cast (about), then make their sheet with generate (sheet: "${r.member}").`);
   },
 );
 
