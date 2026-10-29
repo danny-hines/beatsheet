@@ -29,7 +29,8 @@ export class AgentStudio extends EventEmitter {
   /** Reopen the Claude Code session when it's next idle, so it starts with the current permission flags. */
   private relaunch = false;
   private current?: AgentAdapter;
-  private models = new Map<AgentId, AgentModel[]>();
+  /** Each CLI's models, asked once: the answer, or the asking still under way. */
+  private models = new Map<AgentId, Promise<AgentModel[]>>();
 
   get view(): AgentView {
     return this.current?.view ?? offView();
@@ -178,15 +179,26 @@ export class AgentStudio extends EventEmitter {
     return { resumed };
   }
 
-  /** Which CLIs are installed, and the models each offers (asked once, then remembered). */
-  async agents(): Promise<AgentInfo[]> {
+  /**
+   * Which CLIs are installed, and the models each offers (asked once, then remembered). Asking starts each CLI, which
+   * takes a while (Antigravity's server most of all), so `quick` answers at once, with only the models that came
+   * straight away; the rest are still being asked for, and the next full answer has them.
+   */
+  async agents(quick = false): Promise<AgentInfo[]> {
     return Promise.all(
       AGENT_IDS.map(async (id) => {
         const info: AgentInfo = { id, label: AGENT_LABELS[id], installed: !!(await findCli(id)), installCommand: SETUP[id].install, signInCommand: SETUP[id].signIn };
         if (!info.installed) return info;
+        let asking = this.models.get(id);
+        if (!asking) {
+          const started = this.adapter(id).models();
+          this.models.set(id, started);
+          // A failed ask is forgotten, so the next one asks again.
+          started.catch(() => this.models.get(id) === started && this.models.delete(id));
+          asking = started;
+        }
         try {
-          if (!this.models.has(id)) this.models.set(id, await this.adapter(id).models());
-          info.models = this.models.get(id);
+          info.models = await (quick ? Promise.race([asking, new Promise<undefined>((r) => setTimeout(r, 250))]) : asking);
         } catch (err) {
           info.error = message(err);
         }

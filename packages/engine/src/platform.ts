@@ -128,10 +128,12 @@ export function cliGuesses(name: string, platform: Platform = process.platform, 
     const appData = env.APPDATA ?? w(home, "AppData", "Roaming");
     const local = env.LOCALAPPDATA ?? w(home, "AppData", "Local");
     return [
-      // The native installers (Claude Code's install.ps1) put an .exe in ~\.local\bin; npm -g puts a .cmd shim in %APPDATA%\npm.
+      // The native installers put an .exe in ~\.local\bin (Claude Code's) or a .cmd launcher in %LOCALAPPDATA%\Programs
+      // (Muse Code's); npm -g puts a .cmd shim in %APPDATA%\npm.
       w(home, ".local", "bin", `${name}.exe`),
       w(appData, "npm", `${name}.cmd`),
       w(local, "Programs", name, `${name}.exe`),
+      w(local, "Programs", name, `${name}.cmd`),
       w(home, ".claude", "local", `${name}.exe`),
       w(home, ".npm-global", `${name}.cmd`),
     ];

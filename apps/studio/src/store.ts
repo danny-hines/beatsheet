@@ -245,10 +245,15 @@ export const actions = {
     const res = await fetch("/api/agent");
     if (res.ok) setState({ agent: (await res.json()) as AgentView });
   },
-  /** Checks which agent CLIs are installed and what models they offer. Starting each CLI to ask takes a moment. */
+  /**
+   * Checks which agent CLIs are installed, then what models they offer. The first answer comes at once; the models
+   * follow, since starting each CLI to ask takes a moment.
+   */
   async loadAgentList() {
-    const res = await fetch("/api/agent/list");
-    if (res.ok) setState({ agentList: (await res.json()) as AgentInfo[] });
+    for (const path of ["/api/agent/list?quick", "/api/agent/list"]) {
+      const res = await fetch(path);
+      if (res.ok) setState({ agentList: (await res.json()) as AgentInfo[] });
+    }
   },
   applyAgent(change: AgentChange) {
     setState((s) => ({ agent: applyAgentChange(s.agent, change) }));

@@ -1,6 +1,6 @@
 import type { AgentCheck, AgentId, AgentInfo, SamStatus, ServiceInfo } from "@beatsheet/engine";
 import { useEffect, useState, type ReactNode } from "react";
-import { AGENT_NAMES, CAPABILITY_LABELS, timeAgo, OS, WINDOWS } from "../lib";
+import { AGENT_NAMES, AGENT_ORDER, CAPABILITY_LABELS, timeAgo, OS, WINDOWS } from "../lib";
 import { actions, useStore, type State } from "../store";
 import { Mark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
@@ -192,13 +192,21 @@ export function SettingsDialog() {
 
 function AgentSection({ list, setup, autonomy }: { list?: AgentInfo[]; setup: SetupInfo; autonomy?: boolean }) {
   const chosen = setup.settings.agent;
-  if (!list) return <p className="dim small">Looking for Muse Code, Codex, Claude Code and Antigravity on {OS.here}…</p>;
   return (
     <>
       <div className="setup-agents">
-        {list.map((a) => (
-          <AgentCard key={a.id} info={a} isDefault={chosen?.id === a.id} defaultModel={chosen?.id === a.id ? chosen.model : undefined} />
-        ))}
+        {list
+          ? list.map((a) => <AgentCard key={a.id} info={a} isDefault={chosen?.id === a.id} defaultModel={chosen?.id === a.id ? chosen.model : undefined} />)
+          : AGENT_ORDER.map((id) => (
+              <div key={id} className={`setup-agent ${id}`}>
+                <div className="setup-agent-head">
+                  <strong>{AGENT_NAMES[id]}</strong>
+                </div>
+                <div className="small setup-status">
+                  <span className="dim looking">Looking on {OS.here}…</span>
+                </div>
+              </div>
+            ))}
       </div>
       {autonomy && <Autonomy level={setup.settings.autonomy ?? "ask"} />}
       {autonomy && <UseChrome on={!!setup.settings.chrome} />}
@@ -348,6 +356,10 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
   const [install, setInstall] = useState<InstallJob | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [model, setModel] = useState(defaultModel ?? info.models?.find((m) => m.default)?.id ?? info.models?.[0]?.id);
+  // The models arrive after the card does; start on the default one.
+  useEffect(() => {
+    if (!model && info.models) setModel(defaultModel ?? info.models.find((m) => m.default)?.id ?? info.models[0]?.id);
+  }, [info.models]); // eslint-disable-line react-hooks/exhaustive-deps
   const post = (path: string, body: unknown) => fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
   const check = async () => {
@@ -424,6 +436,7 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
         )}
       </div>
       <div className="setup-agent-actions">
+        {ok && !info.models && !info.error && <span className="dim small looking">Loading models…</span>}
         {ok && info.models && (
           <select
             value={model}

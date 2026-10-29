@@ -390,7 +390,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   if (section === "agent") {
     const agent = agentStudio();
     if (!id && req.method === "GET") return json(res, 200, agent.view);
-    if (id === "list" && req.method === "GET") return json(res, 200, await agent.agents());
+    if (id === "list" && req.method === "GET") return json(res, 200, await agent.agents(new URL(req.url ?? "", "http://local").searchParams.has("quick")));
     if (id === "sessions" && req.method === "GET") {
       const params = new URL(req.url ?? "", "http://local").searchParams;
       const which = params.get("agent") as AgentId;

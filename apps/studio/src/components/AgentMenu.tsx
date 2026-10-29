@@ -1,6 +1,6 @@
 import type { AgentId, AgentSessionSummary, Presence } from "@beatsheet/engine";
 import { useEffect, useRef, useState } from "react";
-import { AGENT_NAMES, agentActivity, modelName, sessionActivity, timeAgo, OS } from "../lib";
+import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, timeAgo, OS } from "../lib";
 import { actions, useStore } from "../store";
 
 /** Re-renders every `ms` so "12s ago" stays true. */
@@ -163,7 +163,19 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
     onChosen?.();
   };
 
-  if (!list) return <p className="dim small">Looking for Muse Code, Codex, Claude Code and Antigravity…</p>;
+  if (!list)
+    return (
+      <div className="agent-chooser">
+        <div className="agent-pick">
+          {AGENT_ORDER.map((id) => (
+            <button key={id} className={`${id} missing`} disabled>
+              {AGENT_NAMES[id]}
+            </button>
+          ))}
+        </div>
+        <p className="dim small looking">Looking for agents on {OS.here}…</p>
+      </div>
+    );
   // Not the one open here, and not one already running in a terminal.
   const busy = new Set([view.sessionId, ...presence.map((a) => a.museSession)]);
   const resumable = sessions?.filter((s) => !busy.has(s.id));
@@ -190,6 +202,7 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
           <section>
             <h4>New session</h4>
             <div className="model-list">
+              {!agent.models && <p className="dim small looking">Loading {agent.label}'s models…</p>}
               {agent.models?.map((m) => (
                 <button key={m.id} className="model-option" onClick={() => go("start", { model: m.id === "default" ? undefined : m.id })}>
                   <strong>

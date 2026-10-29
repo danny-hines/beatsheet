@@ -105,6 +105,8 @@ describe("finding the agent CLIs", () => {
     const g = cliGuesses("codex", "win32", { APPDATA: "C:\\Users\\me\\AppData\\Roaming", LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" }, "C:\\Users\\me");
     expect(g).toContain("C:\\Users\\me\\.local\\bin\\codex.exe");
     expect(g).toContain("C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd");
+    // Muse Code's install.ps1 puts a .cmd launcher in %LOCALAPPDATA%\Programs\muse.
+    expect(cliGuesses("muse", "win32", { LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" }, "C:\\Users\\me")).toContain("C:\\Users\\me\\AppData\\Local\\Programs\\muse\\muse.cmd");
   });
 
   it("takes a real program over a script shim anywhere on the PATH, and nothing that isn't a program", () => {

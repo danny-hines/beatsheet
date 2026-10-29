@@ -197,6 +197,8 @@ export async function pickFootage(kind?: "files" | "folder"): Promise<string[] |
 }
 
 export const AGENT_NAMES: Record<string, string> = { muse: "Muse Code", codex: "Codex", claude: "Claude Code", antigravity: "Antigravity", other: "Agent" };
+/** The agents the studio can host, in the engine's order (AGENT_IDS), for showing them before the list arrives. */
+export const AGENT_ORDER: AgentId[] = ["muse", "codex", "claude", "antigravity"];
 
 /** A model's name for display, from the agent's own list when it's loaded. */
 export function modelName(list: AgentInfo[] | undefined, agent: AgentId | undefined, id?: string): string | undefined {

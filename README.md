@@ -152,7 +152,7 @@ winget install astral-sh.uv           # Python tools: song analysis; Settings fe
 winget install Git.Git                # Claude Code's Bash tool uses Git Bash
 ```
 
-Then at least one agent: Claude Code (`irm https://claude.ai/install.ps1 | iex` in PowerShell), Codex (`npm install -g @openai/codex`) or Antigravity (Setup downloads it). Setup can install any of them. Muse Code may not exist for Windows yet; Setup says if it can't find it.
+Then at least one agent: Claude Code (`irm https://claude.ai/install.ps1 | iex` in PowerShell), Codex (`npm install -g @openai/codex`) or Antigravity (Setup downloads it). Setup can install any of them, and Muse Code too (Meta's `irm https://dev.meta.ai/install.ps1 | iex`; it runs natively on Windows since 1.4).
 
 For SAM 3.1 you also need:
 
@@ -214,7 +214,7 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 16. `npm run app`: beatsheet is in the Start menu and opens.
 17. On the 5070 (12 GB): install SAM 3.1 the same way and make a cut-out of a 20-second clip. It should finish without running out of memory.
 
-**Not proved yet on Windows:** all of the above. Things most likely to need a second look: Muse Code (it may not run on Windows), Codex's sandbox on Windows, Windows' voices' word timings, SAM 3.1's video path on `triton-windows`, and HEIC photos (ffmpeg 7.1 or later reads them). A project made on the Mac points at its footage by Mac paths, so on the PC it needs that footage added again (a "find the footage" step isn't built).
+**Not proved yet on Windows:** all of the above. Things most likely to need a second look: Muse Code (hosting it on Windows, through its PowerShell launcher, isn't tried yet), Codex's sandbox on Windows, Windows' voices' word timings, SAM 3.1's video path on `triton-windows`, and HEIC photos (ffmpeg 7.1 or later reads them). A project made on the Mac points at its footage by Mac paths, so on the PC it needs that footage added again (a "find the footage" step isn't built).
 
 ## Not built yet
 

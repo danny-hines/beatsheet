@@ -536,7 +536,7 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 .settings-pane-head .icon { padding: 3px 8px; background: none; border-color: transparent; color: var(--dim); }
 .settings-pane-body { flex: 1; overflow: auto; padding: 18px 22px 22px; }
 .settings-pane-foot { border-top: 1px solid var(--line); padding: 10px 22px; }
-.setup-agents { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.setup-agents { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
 @media (max-width: 760px) { .setup-agents { grid-template-columns: 1fr; } }
 .setup-agent { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; min-height: 132px; }
 .setup-agent.ok { border-color: var(--agent-line); }
@@ -545,6 +545,8 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 .setup-status { flex: 1; overflow-wrap: anywhere; }
 .setup-agent-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .setup-agent-actions select { max-width: 150px; }
+/* Still finding out: an agent before the list arrives, models before their CLI answers. */
+.looking { animation: blink 1.6s ease-in-out infinite; }
 .setup-services { display: flex; flex-direction: column; gap: 8px; }
 .setup-service { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
 .setup-service.ok { border-color: #2d5a40; }

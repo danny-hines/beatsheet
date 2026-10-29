@@ -22,17 +22,18 @@ export type CliName = "muse" | "codex" | "claude" | "antigravity";
  * Getting each CLI working: the official install command (when there's one beatsheet can run for you) and the command
  * that signs in. Sign-in happens in the CLI itself, in a terminal, or for Antigravity on Google's own page in the
  * browser (it has no sign-in command); beatsheet never sees the credentials. On Windows the installers are
- * PowerShell's (Claude Code's install.ps1) or npm's. Antigravity is Google's ACP server, which beatsheet downloads.
+ * PowerShell's (Claude Code's and Muse Code's install.ps1) or npm's. Antigravity is Google's ACP server, which
+ * beatsheet downloads.
  */
 export const SETUP: Record<CliName, { install?: string; signIn: string }> = WINDOWS
   ? {
-      muse: { signIn: "muse" },
+      muse: { install: "irm https://dev.meta.ai/install.ps1 | iex", signIn: "muse" },
       codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
       claude: { install: "irm https://claude.ai/install.ps1 | iex", signIn: "claude" },
       antigravity: { install: "Downloads Google's Antigravity ACP server (about 130 MB) from dl.google.com", signIn: "" },
     }
   : {
-      muse: { signIn: "muse" },
+      muse: { install: "curl -fsSL https://dev.meta.ai/install.sh | bash", signIn: "muse" },
       codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
       claude: { install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
       antigravity: { install: "Downloads Google's Antigravity ACP server (about 130 MB) from dl.google.com", signIn: "" },
