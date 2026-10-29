@@ -163,7 +163,7 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
     onChosen?.();
   };
 
-  if (!list) return <p className="dim small">Looking for Muse Code, Codex and Claude Code…</p>;
+  if (!list) return <p className="dim small">Looking for Muse Code, Codex, Claude Code and Antigravity…</p>;
   // Not the one open here, and not one already running in a terminal.
   const busy = new Set([view.sessionId, ...presence.map((a) => a.museSession)]);
   const resumable = sessions?.filter((s) => !busy.has(s.id));

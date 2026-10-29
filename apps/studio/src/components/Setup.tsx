@@ -192,7 +192,7 @@ export function SettingsDialog() {
 
 function AgentSection({ list, setup, autonomy }: { list?: AgentInfo[]; setup: SetupInfo; autonomy?: boolean }) {
   const chosen = setup.settings.agent;
-  if (!list) return <p className="dim small">Looking for Muse Code, Codex and Claude Code on {OS.here}…</p>;
+  if (!list) return <p className="dim small">Looking for Muse Code, Codex, Claude Code and Antigravity on {OS.here}…</p>;
   return (
     <>
       <div className="setup-agents">
@@ -273,7 +273,7 @@ function UseChrome({ on }: { on: boolean }) {
           <strong>Codex</strong> uses OpenAI's own Chrome plugin when it has it (it comes with the ChatGPT app), whether this is on or not.
         </li>
         <li>
-          <strong>Muse Code</strong>, and Codex without that plugin, connect through Chrome's DevTools: turn on remote debugging once at chrome://inspect/#remote-debugging, and
+          <strong>Muse Code</strong> and <strong>Antigravity</strong>, and Codex without that plugin, connect through Chrome's DevTools: turn on remote debugging once at chrome://inspect/#remote-debugging, and
           Chrome asks you to allow each connection.
         </li>
       </ul>
@@ -355,6 +355,8 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
     try {
       await post("/api/agent/check", { agent: info.id }).then((r) => r.json() as Promise<AgentCheck>);
       await Promise.all([actions.loadSettings(), actions.loadAgentList()]);
+      // Whatever the check found replaces "finish signing in"; still signed out, the card offers Sign in again.
+      setSigningIn(false);
     } finally {
       setChecking(false);
     }
@@ -406,7 +408,13 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
         ) : checking ? (
           <span className="dim">Checking…</span>
         ) : signingIn && !ok ? (
-          <span className="dim">{WINDOWS ? "Finish signing in in the window that opened, then check again." : "Finish signing in in the Terminal window, then check again."}</span>
+          <span className="dim">
+            {!info.signInCommand
+              ? "Finish signing in in your browser, then check again."
+              : WINDOWS
+                ? "Finish signing in in the window that opened, then check again."
+                : "Finish signing in in the Terminal window, then check again."}
+          </span>
         ) : stored ? (
           <>
             <span className={stored.ok ? "good" : "warn"}>{stored.ok ? "✓" : "✕"}</span> {stored.detail} <span className="dim">· {timeAgo(stored.at)}</span>
@@ -438,7 +446,7 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
             {install?.status === "running" ? "Installing…" : install?.status === "error" ? "Try again" : "Install"}
           </button>
         ) : signedOut && !signingIn ? (
-          <button className="primary" onClick={() => void signIn()} title={`Opens ${OS.terminal} running ${info.signInCommand}`}>
+          <button className="primary" onClick={() => void signIn()} title={info.signInCommand ? `Opens ${OS.terminal} running ${info.signInCommand}` : "Opens Google's sign-in in your browser"}>
             Sign in
           </button>
         ) : (

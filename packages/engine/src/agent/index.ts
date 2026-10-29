@@ -1,5 +1,5 @@
 /**
- * The agent the studio hosts: Muse Code, Codex or Claude Code, one at a time, each on the person's own CLI and sign-in.
+ * The agent the studio hosts: Muse Code, Codex, Claude Code or Antigravity, one at a time, each on the person's own CLI and sign-in.
  * Whichever is running, the studio sees the same view and changes.
  */
 import { EventEmitter } from "node:events";
@@ -7,6 +7,7 @@ import { openingPrompt } from "../agents.ts";
 import { readSettings } from "../settings.ts";
 import { loadFile } from "../store.ts";
 import { agentsTurn, currentTurn, yourTurn } from "../turns.ts";
+import { AntigravityAdapter } from "./antigravity.ts";
 import { ClaudeAdapter } from "./claude.ts";
 import { findCli, installCli, openSignIn, SETUP } from "./cli.ts";
 import { CodexAdapter } from "./codex.ts";
@@ -16,11 +17,12 @@ import { AGENT_LABELS, message, offView, touchesKeys, type AgentAdapter, type Ag
 export * from "./session.ts";
 export { uuid7 } from "./rpc.ts";
 
-export const AGENT_IDS: AgentId[] = ["muse", "codex", "claude"];
+export const AGENT_IDS: AgentId[] = ["muse", "codex", "claude", "antigravity"];
 /** An agent CLI: whether it's here, how to get it working, and its models once it is. */
 export type AgentInfo = { id: AgentId; label: string; installed: boolean; installCommand?: string; signInCommand: string; models?: AgentModel[]; error?: string };
 
-const make = (id: AgentId): AgentAdapter => (id === "muse" ? new MuseAdapter() : id === "codex" ? new CodexAdapter() : new ClaudeAdapter());
+const make = (id: AgentId): AgentAdapter =>
+  id === "muse" ? new MuseAdapter() : id === "codex" ? new CodexAdapter() : id === "antigravity" ? new AntigravityAdapter() : new ClaudeAdapter();
 
 export class AgentStudio extends EventEmitter {
   private adapters = new Map<AgentId, AgentAdapter>();
@@ -210,7 +212,8 @@ export class AgentStudio extends EventEmitter {
 
   signIn(id: AgentId) {
     this.models.delete(id);
-    return openSignIn(id);
+    const a = this.adapter(id);
+    return a.signIn ? a.signIn() : openSignIn(id);
   }
 
   /**

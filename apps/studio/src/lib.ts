@@ -196,7 +196,7 @@ export async function pickFootage(kind?: "files" | "folder"): Promise<string[] |
   return folder ? [folder] : null;
 }
 
-export const AGENT_NAMES: Record<string, string> = { muse: "Muse Code", codex: "Codex", claude: "Claude Code", other: "Agent" };
+export const AGENT_NAMES: Record<string, string> = { muse: "Muse Code", codex: "Codex", claude: "Claude Code", antigravity: "Antigravity", other: "Agent" };
 
 /** A model's name for display, from the agent's own list when it's loaded. */
 export function modelName(list: AgentInfo[] | undefined, agent: AgentId | undefined, id?: string): string | undefined {
@@ -226,7 +226,7 @@ const TOOL_WORDS: Record<string, string> = {
   "received batch": "got your notes",
 };
 
-/** The agents' own tools (Claude Code's, Codex's, Muse's), in words. */
+/** The agents' own tools (Claude Code's, Codex's, Muse's, Antigravity's), in words. */
 const OWN_TOOL_WORDS: Record<string, string> = {
   shell: "ran",
   Bash: "ran",

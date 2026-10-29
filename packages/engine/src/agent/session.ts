@@ -5,8 +5,8 @@
 import { EventEmitter } from "node:events";
 import { OPENING } from "../agents.ts";
 
-export type AgentId = "muse" | "codex" | "claude";
-export const AGENT_LABELS: Record<AgentId, string> = { muse: "Muse Code", codex: "Codex", claude: "Claude Code" };
+export type AgentId = "muse" | "codex" | "claude" | "antigravity";
+export const AGENT_LABELS: Record<AgentId, string> = { muse: "Muse Code", codex: "Codex", claude: "Claude Code", antigravity: "Antigravity" };
 
 export type AgentItem = {
   id: string;
@@ -111,14 +111,14 @@ export function studioSession(s: { id: string; updatedAt: string; name?: string;
 export function touchesKeys(input: unknown, windows = process.platform === "win32"): boolean {
   const text = typeof input === "string" ? input : JSON.stringify(input ?? "");
   if (windows && WINDOWS_KEYS.test(text)) return true;
-  return /\bsecurity\b[^\n]*(find-(generic|internet)-password|dump-keychain|export)|find-generic-password|find-internet-password|dump-keychain|Library\/Keychains|\.config\/muse\/auth\.json|\.codex\/auth\.json|\.claude\/\.credentials/i.test(text);
+  return /\bsecurity\b[^\n]*(find-(generic|internet)-password|dump-keychain|export)|find-generic-password|find-internet-password|dump-keychain|Library\/Keychains|\.config\/muse\/auth\.json|\.codex\/auth\.json|\.claude\/\.credentials|\.gemini\/oauth_creds\.json|\bacp_token\.json/i.test(text);
 }
 
 /**
  * The same on Windows: Credential Manager (beatsheet's helper, PowerShell's ways in, its vault folders) and the CLIs'
  * sign-in files with either slash (JSON doubles a backslash).
  */
-const WINDOWS_KEYS = /beatsheet-credentials|\bCred(Read|Enumerate)|PasswordVault|Get-StoredCredential|\bvaultcmd\b|\bcmdkey\b[^\n]*\/list|Microsoft[\\/]+(Credentials|Vault)|\.config[\\/]+muse[\\/]+auth\.json|\.codex[\\/]+auth\.json|\.claude[\\/]+\.credentials/i;
+const WINDOWS_KEYS = /beatsheet-credentials|\bCred(Read|Enumerate)|PasswordVault|Get-StoredCredential|\bvaultcmd\b|\bcmdkey\b[^\n]*\/list|Microsoft[\\/]+(Credentials|Vault)|\.config[\\/]+muse[\\/]+auth\.json|\.codex[\\/]+auth\.json|\.claude[\\/]+\.credentials|\.gemini[\\/]+oauth_creds\.json|\bacp_token\.json/i;
 
 /** One hosted agent CLI. The manager keeps at most one running. */
 export abstract class AgentAdapter extends EventEmitter {
@@ -139,6 +139,8 @@ export abstract class AgentAdapter extends EventEmitter {
   abstract decide(approvalId: string, choiceId: string): Promise<void>;
   /** Lets the session go (it stays on disk to resume) and stops the CLI. */
   abstract stop(): void;
+  /** Signs in from beatsheet itself, when the agent can (in the browser); otherwise its CLI does it in a terminal. */
+  signIn?(): Promise<void>;
 
   /** When the CLI last said anything, and when the studio was last told. */
   protected lastHeard = 0;

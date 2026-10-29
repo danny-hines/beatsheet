@@ -2,7 +2,7 @@
 
 A video editor where an AI agent does the editing and you direct it. Drop in a folder of footage and the agent takes the first turn: it watches and logs every clip, sharpens the brief, and comes back with a few directions to pick from. Pick one and it builds a playable cut. From then on you take turns. You watch, leave notes on anything, and send them; it makes the changes and hands the cut back.
 
-The agent is one you already have, on your own sign-in: **Muse Code**, **Codex** (your ChatGPT plan) or **Claude Code** (your Claude plan). beatsheet runs it inside the app and gives it the tools to edit, look at frames and render.
+The agent is one you already have, on your own sign-in: **Muse Code**, **Codex** (your ChatGPT plan), **Claude Code** (your Claude plan) or **Antigravity** (your Google account: free, Google AI Pro or Ultra). beatsheet runs it inside the app and gives it the tools to edit, look at frames and render.
 
 Under the hood, **nothing is placed at a fixed time unless it has to be**. A shot starts on a word, a beat, a bar of a section, a moment inside a clip, or another shot. Swap the song or re-record a line, and everything that depends on it re-times itself. Dragging a cut in the timeline snaps to those anchors too.
 
@@ -92,16 +92,17 @@ Listen to any of them, and choose the one new narration uses. Each cut can pick 
 | Muse Code | `muse serve` (Muse Session Protocol) | `muse`, signed in |
 | Codex | `codex app-server` | `codex`, signed in to ChatGPT |
 | Claude Code | `claude -p` with stream-json in and out | `claude`, signed in with your Claude plan |
+| Antigravity | Google's ACP server for it (`agy_acp_server`, the Agent Client Protocol) | the server, which Setup downloads from dl.google.com, signed in with Google (Setup's **Sign in** opens Google's page) |
 
-beatsheet's own tools are allowed without asking, and so is looking around (listing folders, reading a file's media details). Anything else the agent wants to run (a shell command that changes something, a file edit outside the project, the web) comes up as an approval card, with the command's first lines and **Show all**. Settings → Agent → **Let it work without asking** (or **Stop asking…** on any card) lets it run commands and edit files on its own; an open Claude Code session picks that up straight away. Services are used through beatsheet's tools (`narrate`, `generate_music`), which hold the keys. Claude Code is kept away from the Keychain by its permission rules; Codex's sandbox doesn't stop a shell command reading it, which is on the list below.
+beatsheet's own tools are allowed without asking, and so is looking around (listing folders, reading a file's media details). Anything else the agent wants to run (a shell command that changes something, a file edit outside the project, the web) comes up as an approval card, with the command's first lines and **Show all**. Settings → Agent → **Let it work without asking** (or **Stop asking…** on any card) lets it run commands and edit files on its own; an open Claude Code session picks that up straight away. Services are used through beatsheet's tools (`narrate`, `generate_music`), which hold the keys. Claude Code is kept away from the Keychain by its permission rules. Antigravity asks beatsheet before any command, and before reading or writing outside this folder, and beatsheet never says yes to one that reads keys; Codex's sandbox doesn't stop a shell command reading it, which is on the list below.
 
-**Pages you're signed in to.** The agent's own browsers aren't signed in to anything. Settings → Agent → **Use my Chrome** has it work in your Chrome instead, and you're asked before it acts on each site. Claude Code goes through the Claude in Chrome extension (installed and signed in). Codex uses OpenAI's Chrome plugin, which comes with the ChatGPT app, when it has it. Muse Code (and Codex without that plugin) attach through Chrome DevTools MCP: turn on remote debugging once at chrome://inspect/#remote-debugging, and Chrome asks you to allow each connection. Muse Code also has computer use of its own; beatsheet passes on its requests to control an app, and never says yes to them for you. It can open a Google Photos album, download what the project doesn't have yet, and bring it in with `import_media`: files, folders or zips are copied into the project's `imported/` folder, and anything already there (the same file, a browser's "(1)" copy, the same shot under another name) is skipped. Without it, download the files yourself and tell the agent where they are.
+**Pages you're signed in to.** The agent's own browsers aren't signed in to anything. Settings → Agent → **Use my Chrome** has it work in your Chrome instead, and you're asked before it acts on each site. Claude Code goes through the Claude in Chrome extension (installed and signed in). Codex uses OpenAI's Chrome plugin, which comes with the ChatGPT app, when it has it. Muse Code and Antigravity (and Codex without that plugin) attach through Chrome DevTools MCP: turn on remote debugging once at chrome://inspect/#remote-debugging, and Chrome asks you to allow each connection. Muse Code also has computer use of its own; beatsheet passes on its requests to control an app, and never says yes to them for you. It can open a Google Photos album, download what the project doesn't have yet, and bring it in with `import_media`: files, folders or zips are copied into the project's `imported/` folder, and anything already there (the same file, a browser's "(1)" copy, the same shot under another name) is skipped. Without it, download the files yourself and tell the agent where they are.
 
 **Music.** When a cut needs a song, the agent asks for one: **Choose a song…** from your Mac, or, with an ElevenLabs key, **Make one** and the agent makes the song it described (`generate_music`, about a minute, using your ElevenLabs credits). Made songs are analysed for beats and sections like any other and kept in the project's `music/` folder. Conversations belong to a cut: opening a cut brings back its last conversation, with its history (after a restart too), and the agent menu lists that cut's other sessions to **Resume** (and ones from before cuts had their own).
 
 Agents started yourself in a terminal in this folder load beatsheet's tools too (`.mcp.json`; `muse --trust-workspace`) and show up under "In a terminal".
 
-`node scripts/agent-smoke.ts <muse|codex|claude> [model] [--project <id>]` checks the hosting end to end: it starts a session on a project (july-4 unless you say) and asks for one beatsheet tool call.
+`node scripts/agent-smoke.ts <muse|codex|claude|antigravity> [model] [--project <id>]` checks the hosting end to end: it starts a session on a project (july-4 unless you say) and asks for one beatsheet tool call.
 
 ## From the terminal
 
@@ -151,7 +152,7 @@ winget install astral-sh.uv           # Python tools: song analysis; Settings fe
 winget install Git.Git                # Claude Code's Bash tool uses Git Bash
 ```
 
-Then at least one agent: Claude Code (`irm https://claude.ai/install.ps1 | iex` in PowerShell) or Codex (`npm install -g @openai/codex`). Setup can run either installer. Muse Code may not exist for Windows yet; Setup says if it can't find it.
+Then at least one agent: Claude Code (`irm https://claude.ai/install.ps1 | iex` in PowerShell), Codex (`npm install -g @openai/codex`) or Antigravity (Setup downloads it). Setup can install any of them. Muse Code may not exist for Windows yet; Setup says if it can't find it.
 
 For SAM 3.1 you also need:
 
@@ -198,7 +199,7 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 1. `node scripts/doctor.ts`: every line ✓ (or · for an optional thing), with the 4090, 24 GB and the driver version on the NVIDIA line.
 2. `npm run check` passes.
 3. `npm run desktop`: the window opens with a dark title bar and the menu. File → All Projects (Ctrl+Shift+O) goes home.
-4. Setup or Settings → Agent: Claude Code (and Codex, if installed) shows as installed. **Sign in** opens a console window running the CLI; after signing in, **Check again** says signed in.
+4. Setup or Settings → Agent: Claude Code (and Codex or Antigravity, if installed) shows as installed. **Sign in** opens a console window running the CLI; after signing in, **Check again** says signed in.
 5. Settings → Media services: add an ElevenLabs key. It says "in Credential Manager", and Control Panel → Credential Manager → Windows Credentials lists `beatsheet:elevenlabs`. Remove it and add it again.
 6. New project (Ctrl+N) from a folder of phone footage with a 4K HEVC clip and a HEIC photo: preview copies, posters and filmstrips appear (Task Manager shows the GPU's Video Encode busy while they're made), and scrubbing a clip in Media plays smoothly.
 7. Choose a song: the BPM and sections appear (uv and librosa).

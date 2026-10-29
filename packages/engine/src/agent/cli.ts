@@ -10,34 +10,39 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { REPO } from "../paths.ts";
+import { antigravityServer, installAntigravity } from "./antigravity-server.ts";
 import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, registryPath, systemExe, withPath } from "../platform.ts";
 
 const run = promisify(execFile);
 const WINDOWS = process.platform === "win32";
 
-export type CliName = "muse" | "codex" | "claude";
+export type CliName = "muse" | "codex" | "claude" | "antigravity";
 
 /**
  * Getting each CLI working: the official install command (when there's one beatsheet can run for you) and the command
- * that signs in. Sign-in always happens in the CLI itself, in a terminal; beatsheet never sees the credentials. On
- * Windows the installers are PowerShell's (Claude Code's install.ps1) or npm's.
+ * that signs in. Sign-in happens in the CLI itself, in a terminal, or for Antigravity on Google's own page in the
+ * browser (it has no sign-in command); beatsheet never sees the credentials. On Windows the installers are
+ * PowerShell's (Claude Code's install.ps1) or npm's. Antigravity is Google's ACP server, which beatsheet downloads.
  */
 export const SETUP: Record<CliName, { install?: string; signIn: string }> = WINDOWS
   ? {
       muse: { signIn: "muse" },
       codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
       claude: { install: "irm https://claude.ai/install.ps1 | iex", signIn: "claude" },
+      antigravity: { install: "Downloads Google's Antigravity ACP server (about 130 MB) from dl.google.com", signIn: "" },
     }
   : {
       muse: { signIn: "muse" },
       codex: { install: "npm install -g @openai/codex", signIn: "codex login" },
       claude: { install: "curl -fsSL https://claude.ai/install.sh | bash", signIn: "claude" },
+      antigravity: { install: "Downloads Google's Antigravity ACP server (about 130 MB) from dl.google.com", signIn: "" },
     };
 
 const found = new Map<CliName, { at: number; path: string | null }>();
 /** Look again next time, e.g. right after installing. */
 export const forgetCli = (name: CliName) => found.delete(name);
 export async function findCli(name: CliName): Promise<string | null> {
+  if (name === "antigravity") return antigravityServer()?.command ?? null;
   const hit = found.get(name);
   if (hit && Date.now() - hit.at < 60_000) return hit.path;
   let path: string | null = null;
@@ -134,6 +139,7 @@ export function codexHasChrome(): boolean {
 
 /** Runs the CLI's official installer in a login shell, passing each line of output on. */
 export async function installCli(name: CliName, onLine: (line: string) => void): Promise<void> {
+  if (name === "antigravity") return installAntigravity(onLine);
   const command = SETUP[name].install;
   if (!command) throw new Error(`beatsheet can't install ${name} for you`);
   onLine(`$ ${command}`);

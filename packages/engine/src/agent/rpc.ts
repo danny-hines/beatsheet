@@ -1,5 +1,6 @@
 /**
- * JSON-RPC 2.0 over a child process's stdio, one message per line. `muse serve` and `codex app-server` both speak it.
+ * JSON-RPC 2.0 over a child process's stdio, one message per line. `muse serve`, `codex app-server` and Antigravity's
+ * ACP server all speak it.
  * Notifications and the server's own requests come out as events; the adapter answers requests with `respond`.
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -120,7 +121,8 @@ export class StdioRpc extends EventEmitter {
     this.fail(new Error("closed"));
     const child = this.child;
     if (process.platform === "win32" && child?.pid) {
-      // npm's codex is node starting codex.exe: ending node alone would leave codex.exe (and its MCP servers) running.
+      // npm's codex is node starting codex.exe, and Antigravity's server starts a copy of itself and its harness: ending
+      // the first alone would leave the rest (and their MCP servers) running.
       child.stdin?.end();
       spawn(systemExe("taskkill.exe"), ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true }).on("error", () => child.kill());
       return;

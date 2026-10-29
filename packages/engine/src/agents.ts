@@ -17,7 +17,7 @@ export const RUNTIME = join(REPO, ".beatsheet");
 export const AGENTS_DIR = join(RUNTIME, "agents");
 const SESSIONS_DIR = join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "muse", "sessions");
 
-export type AgentKind = "muse" | "codex" | "claude" | "other";
+export type AgentKind = "muse" | "codex" | "claude" | "antigravity" | "other";
 export type Presence = {
   pid: number;
   kind: AgentKind;
@@ -38,7 +38,8 @@ export type Presence = {
 export function presenceFromEnv(client: { name?: string; version?: string } | undefined): Omit<Presence, "pid" | "startedAt"> {
   const museSession = process.env.MUSE_SESSION_ID ?? process.env.MUSE_THREAD_ID;
   const name = client?.name ?? "";
-  const kind: AgentKind = museSession || /muse|^tbh$/i.test(name) ? "muse" : /codex/i.test(name) ? "codex" : /claude/i.test(name) ? "claude" : "other";
+  const kind: AgentKind =
+    museSession || /muse|^tbh$/i.test(name) ? "muse" : /codex/i.test(name) ? "codex" : /antigravity|agy/i.test(name) ? "antigravity" : /claude/i.test(name) ? "claude" : "other";
   return { kind, client: name || "unknown", version: client?.version, museSession, hosted: process.env.BEATSHEET_HOSTED === "1" || undefined };
 }
 

@@ -1,5 +1,5 @@
 // End-to-end check of a hosted agent: start a session on the person's own CLI, ask for one beatsheet tool call, print
-// what streams back. Usage: node scripts/agent-smoke.ts <muse|codex|claude> [model] [--project <id>] (july-4 by default)
+// what streams back. Usage: node scripts/agent-smoke.ts <muse|codex|claude|antigravity> [model] [--project <id>] (july-4 by default)
 import { AgentStudio, type AgentChange, type AgentId } from "../packages/engine/src/agent/index.ts";
 
 const args = process.argv.slice(2);

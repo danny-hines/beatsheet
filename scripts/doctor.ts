@@ -57,9 +57,9 @@ if (ffmpeg && WINDOWS) {
 const uv = version("uv", ["--version"]);
 say(uv ? true : "maybe", "uv", uv ?? "not found (needed to analyse songs; Settings fetches its own for SAM and Kokoro)", install("brew install uv", "winget install astral-sh.uv"));
 
-for (const name of ["claude", "codex", "muse"] as const) {
+for (const name of ["claude", "codex", "antigravity", "muse"] as const) {
   const at = await findCli(name);
-  say(at ? true : "maybe", `${name} CLI`, at ?? "not installed (one agent is enough)", name === "claude" ? install("curl -fsSL https://claude.ai/install.sh | bash", "irm https://claude.ai/install.ps1 | iex   (in PowerShell)") : name === "codex" ? "npm install -g @openai/codex" : undefined);
+  say(at ? true : "maybe", `${name} CLI`, at ?? "not installed (one agent is enough)", name === "claude" ? install("curl -fsSL https://claude.ai/install.sh | bash", "irm https://claude.ai/install.ps1 | iex   (in PowerShell)") : name === "codex" ? "npm install -g @openai/codex" : name === "antigravity" ? "Settings → Agent → Install (downloads Google's ACP server)" : undefined);
 }
 if (WINDOWS) {
   const git = version("git", ["--version"]);

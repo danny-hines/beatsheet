@@ -426,6 +426,7 @@ pre.job-log { background: #0e0f12; border: 1px solid var(--line); border-radius:
 .muse { --agent: #2673e8; --agent-bg: #14233b; --agent-line: #2a4f86; }
 .codex { --agent: #10a37f; --agent-bg: #10261f; --agent-line: #1f5a48; }
 .claude { --agent: #d97757; --agent-bg: #2a1a14; --agent-line: #6a3a2a; }
+.antigravity { --agent: #9b72cb; --agent-bg: #1f1a2b; --agent-line: #4a3b66; }
 .dot.idle { background: var(--agent); box-shadow: 0 0 6px var(--agent); }
 .agent-button:not(.connected) { border-color: var(--agent-line); }
 .model-tag { font-size: 11px; background: var(--agent-bg); color: var(--text); border: 1px solid var(--agent-line); border-radius: 9px; padding: 0 7px; margin-left: 2px; }
