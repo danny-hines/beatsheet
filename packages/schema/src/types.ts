@@ -262,6 +262,13 @@ export const Asset = z.object({
   provenance: Provenance.optional(),
   color: z.string().optional().describe("Stand-in swatch when no thumbnail exists yet"),
   subjects: z.array(SubjectTrack).optional().describe("Faces, people and things found or followed in it, for effects that follow them"),
+  playable: z
+    .object({
+      deinterlace: z.boolean().optional().describe("Interlaced (tape, DV, a DVD): each field becomes a frame, so it plays at twice its frame rate"),
+      sar: z.number().optional().describe("Its pixels aren't square (DV, DVD): this wide, made square"),
+    })
+    .optional()
+    .describe("Old video beatsheet plays from a copy of (media/<id>.mp4 in the project): deinterlaced, square pixels, H.264. The original stays where it is"),
   cutout: z
     .object({
       of: z.string().describe("The asset it was lifted from"),

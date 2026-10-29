@@ -112,7 +112,7 @@ ipcMain.handle("beatsheet:pick-footage", async (_e, kind: "files" | "folder" = "
           message: "Choose photos and videos, or a folder of them",
           buttonLabel: "Add",
           properties: mac ? ["openFile", "openDirectory", "multiSelections"] : ["openFile", "multiSelections"],
-          filters: [{ name: "Photos and videos", extensions: ["mp4", "mov", "m4v", "webm", "jpg", "jpeg", "png", "heic", "heif", "webp"] }],
+          filters: [{ name: "Photos and videos", extensions: ["mp4", "mov", "m4v", "webm", "dv", "avi", "mpg", "mpeg", "vob", "mts", "m2ts", "mod", "tod", "3gp", "wmv", "mkv", "flv", "jpg", "jpeg", "png", "heic", "heif", "webp"] }],
         };
   const r = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
   return r.canceled || !r.filePaths.length ? null : r.filePaths;

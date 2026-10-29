@@ -559,6 +559,17 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!body.from || !body.to) return json(res, 400, { error: "Renamed from what, to what?" });
     return json(res, 200, { moved: renameInJobs(id, body.from, body.to) });
   }
+  // A long file (a tape, a DVD) split into its shots, as moments.
+  if (section === "projects" && id && action === "split" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; threshold?: number };
+    if (!body.asset) return json(res, 400, { error: "Split which clip?" });
+    try {
+      const { splitAtCuts } = await import("./shotsplit.ts");
+      return json(res, 200, { shots: await splitAtCuts(id, body.asset, { threshold: body.threshold }) });
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
   // A still of a clip's last frame (or of a moment in it), to start the next clip from.
   if (section === "projects" && id && action === "frame" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; at?: number };

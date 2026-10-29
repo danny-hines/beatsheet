@@ -8,11 +8,11 @@ import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, 
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { autoAssemble, formatPreset, SCHEMA_VERSION, STAGE_IDS, type Asset, type Brief, type Cut, type CutSpec, type Format, type Project, type ProjectFile } from "@beatsheet/schema";
-import { averageColor, makeImageProxy, makePoster, makeStrip, makeVideoProxy, pool } from "./media.ts";
+import { averageColor, makeImageProxy, makePlayable, makePoster, makeStrip, makeVideoProxy, pool } from "./media.ts";
 import { analyzeMusic } from "./music.ts";
-import { assetPath, cachePaths, expandHome, ROOTS, samePath } from "./paths.ts";
+import { assetPath, cachePaths, expandHome, originalPath, playablePath, ROOTS, samePath } from "./paths.ts";
 import { unzipCommand } from "./platform.ts";
-import { kindOf, probe } from "./probe.ts";
+import { kindOf, PLAYABLE_EXT, probe, type Probe } from "./probe.ts";
 import { createProject, loadFile, loadProject, saveProject, updateFile } from "./store.ts";
 
 export type ImportOptions = {
@@ -117,6 +117,7 @@ async function readFiles(folder: string, files: string[], source: string, used: 
   await pool(files, 8, async (file) => {
     const info = await probe(join(folder, file));
     const kind = info.kind === "image" ? "image" : "video";
+    const playable = kind === "video" ? playableFor(file, info) : undefined;
     assets.push({
       id: assetId(file, kind, info.capturedAt, used),
       kind,
@@ -126,10 +127,12 @@ async function readFiles(folder: string, files: string[], source: string, used: 
       duration: info.duration,
       width: info.width,
       height: info.height,
-      fps: info.fps,
+      // A deinterlaced copy has a frame for every field.
+      fps: playable?.deinterlace && info.fps ? Math.round(info.fps * 2 * 1000) / 1000 : info.fps,
       capturedAt: info.capturedAt,
       tags: tagsFor(file, info),
       provenance: { source: "import" },
+      ...(playable ? { playable } : {}),
     });
   });
   return assets.sort((a, b) => (a.capturedAt ?? "").localeCompare(b.capturedAt ?? "") || a.path.localeCompare(b.path));
@@ -346,6 +349,8 @@ export async function addSong(
 /** Makes every missing preview copy, poster and filmstrip. Safe to run again; finished files are skipped. */
 /** One file's preview copy, poster and (for video) filmstrip; anything already made is kept. */
 export async function ensureCached(project: { sources: Project["sources"] }, dir: string, a: Asset): Promise<void> {
+  // Old video plays from its copy, which everything else (the previews too) is then made from.
+  if (a.playable) await makePlayable(originalPath(project, dir, a), playablePath(dir, a.id), a.playable);
   const src = assetPath(project, dir, a);
   const c = cachePaths(dir, a.id);
   // Cut-outs keep their transparency: the file itself plays (it's small already), and only thumbnails are made.
@@ -445,8 +450,18 @@ function labelFor(kind: string, capturedAt: string | undefined, duration: number
   return when ? `${what} · ${when}` : what;
 }
 
-function tagsFor(file: string, info: { width?: number; height?: number; fps?: number; duration?: number }): string[] {
+/**
+ * Whether a video needs a copy to play well, and what the copy fixes: interlaced fields, pixels that aren't square, or a
+ * file browsers and the renderer can't read as it is (DV, AVI, MPEG-2…).
+ */
+export function playableFor(file: string, info: Pick<Probe, "interlaced" | "sar">): Asset["playable"] | undefined {
+  const fix = { ...(info.interlaced ? { deinterlace: true } : {}), ...(info.sar ? { sar: info.sar } : {}) };
+  return Object.keys(fix).length || !PLAYABLE_EXT.has(extname(file).toLowerCase()) ? fix : undefined;
+}
+
+function tagsFor(file: string, info: { width?: number; height?: number; fps?: number; duration?: number; interlaced?: boolean }): string[] {
   const tags: string[] = [];
+  if (info.interlaced) tags.push("interlaced");
   if (info.width && info.height) tags.push(info.height > info.width ? "portrait" : info.width > info.height ? "landscape" : "square");
   if ((info.fps ?? 0) >= 100) tags.push("high frame rate");
   if (/^dji/i.test(file)) tags.push("drone");

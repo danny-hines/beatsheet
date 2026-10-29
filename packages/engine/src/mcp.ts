@@ -997,6 +997,24 @@ server.registerTool(
 );
 
 server.registerTool(
+  "split_at_cuts",
+  {
+    description:
+      "Find the shots inside one long clip (a tape transferred whole, a DVD, an old film): where the picture changes all at once is a cut, and each stretch between cuts becomes a moment on the clip, shot-1, shot-2… Splitting again replaces those and keeps moments marked by hand. Log each shot like a file of its own (look_at_assets shows the clip; label the moments), and start clip shots on them with moment anchors.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      threshold: z.number().min(0.05).max(0.9).optional().describe("How sudden a change counts as a cut, 0..1; default 0.3. Lower finds more (soft cuts, dissolves), higher fewer (noisy tape)"),
+    },
+  },
+  async ({ project: id, asset, threshold }) => {
+    const { splitAtCuts } = await import("./shotsplit.ts");
+    const shots = await splitAtCuts(id, asset, { threshold });
+    return text(`${shots.length} shot${shots.length === 1 ? "" : "s"} in ${asset}:\n${shots.map((s) => `- ${s.id}: ${formatTime(s.t)}–${formatTime(s.end!)}`).join("\n")}`);
+  },
+);
+
+server.registerTool(
   "still_from_clip",
   {
     description:

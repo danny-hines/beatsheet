@@ -231,6 +231,7 @@ export function AssetView({ a }: { a: Asset }) {
               }}
             />
           )}
+          {(a.duration ?? 0) >= 20 && <SplitAtCuts a={a} />}
           {moments.length ? (
             <ul className="moment-list">
               {moments.map((m) => {
@@ -358,6 +359,41 @@ export function AssetView({ a }: { a: Asset }) {
         </dl>
       </details>
     </div>
+  );
+}
+
+/**
+ * A long file (a tape transferred whole, a DVD) split into its shots, as moments: where the picture changes all at once
+ * is a cut.
+ */
+function SplitAtCuts({ a }: { a: Asset }) {
+  const projectId = useStore((s) => s.projectId)!;
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState("");
+  const split = async () => {
+    setBusy(true);
+    setSaid("");
+    try {
+      await actions.flushSave();
+      const res = await fetch(`/api/projects/${projectId}/split`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset: a.id }) });
+      const out = (await res.json()) as { shots?: unknown[]; error?: string };
+      if (!res.ok) throw new Error(out.error ?? "Couldn't split it");
+      await actions.reload();
+      setSaid(`${out.shots!.length} shot${out.shots!.length === 1 ? "" : "s"}`);
+    } catch (err) {
+      setSaid(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const split1 = (a.moments ?? []).some((m) => /^shot-\d+$/.test(m.id));
+  return (
+    <p className="small">
+      <button className="link small" disabled={busy} onClick={() => void split()} title="Find where the picture changes all at once, and mark each shot between as a moment">
+        {busy ? "Finding its cuts…" : split1 ? "Split it at its cuts again" : "Split it at its cuts"}
+      </button>
+      {said && <span className="dim"> {said}</span>}
+    </p>
   );
 }
 

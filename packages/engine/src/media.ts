@@ -46,6 +46,19 @@ export async function makeVideoProxy(src: string, out: string): Promise<void> {
   renameSync(tmp, out);
 }
 
+/**
+ * A copy of old video that plays like new: each interlaced field made a frame (bwdif, so motion stays as smooth as on
+ * the tape, at twice the frame rate), pixels made square, in H.264 at a quality that keeps what tape has.
+ */
+export async function makePlayable(src: string, out: string, how: { deinterlace?: boolean; sar?: number }): Promise<void> {
+  if (existsSync(out)) return;
+  ensureDir(out);
+  const tmp = tmpFor(out);
+  const vf = [...(how.deinterlace ? ["bwdif=mode=send_field:deint=all"] : []), ...(how.sar ? [`scale=trunc(iw*${how.sar}/2)*2:ih`] : []), "setsar=1", "format=yuv420p"].join(",");
+  await ffmpeg(["-i", src, "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp]);
+  renameSync(tmp, out);
+}
+
 /** A screen-sized, upright JPEG of a photo (browsers can't show HEIC, and 50 MP photos scrub badly). */
 export async function makeImageProxy(src: string, out: string): Promise<void> {
   if (existsSync(out)) return;

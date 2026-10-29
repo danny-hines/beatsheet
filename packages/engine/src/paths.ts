@@ -49,7 +49,17 @@ export function mediaPath(project: HasSources, dir: string, path: string, source
   return isAbsolute(p) ? p : resolve(sourceRoot(project, dir, source), p);
 }
 
-export const assetPath = (project: HasSources, dir: string, a: Asset) => mediaPath(project, dir, a.path, a.source);
+/** Where beatsheet keeps the playable copy of old video (deinterlaced, square pixels, H.264). */
+export const playablePath = (dir: string, assetId: string) => join(dir, "media", `${assetId}.mp4`);
+
+/** The file to read for an asset: its playable copy once there is one (old video), else the file itself. */
+export const assetPath = (project: HasSources, dir: string, a: Asset) => {
+  const copy = a.playable ? playablePath(dir, a.id) : undefined;
+  return copy && existsSync(copy) ? copy : mediaPath(project, dir, a.path, a.source);
+};
+
+/** The file itself, never a copy: where it came from. */
+export const originalPath = (project: HasSources, dir: string, a: Asset) => mediaPath(project, dir, a.path, a.source);
 
 /** Derived files for an asset, all under the project's .cache folder. */
 export function cachePaths(dir: string, assetId: string) {
