@@ -1,6 +1,6 @@
 # Making new footage
 
-Design notes for making footage that doesn't exist yet (characters, places, clips, voices and sounds), for changing footage you already have, and for how all of it reaches the timeline. None of it is built beyond what [Today](#today) lists. The reasoning behind beatsheet as a whole is in [DESIGN.md](DESIGN.md).
+Design notes for making footage that doesn't exist yet (characters, places, clips, voices and sounds), for changing footage you already have, and for how all of it reaches the timeline. Phase 1 of the [order](#order) is built; the rest is plans. [What there was to build on](#what-there-was-to-build-on) lists what existed before it. The reasoning behind beatsheet as a whole is in [DESIGN.md](DESIGN.md).
 
 ## The problem
 
@@ -77,9 +77,9 @@ The same tools make tributes: a late cousin's own films remastered, or a new sce
 - **Node canvases.** Figma Weave (once Weavy), Freepik Spaces, Krea Nodes and ComfyUI wire models together as a graph. In beatsheet the agent wires the steps together, so there's no graph.
 - **Many models in one picker.** Krea and Higgsfield put dozens of models in one picker, some of them gated by plan and credits.
 
-## Today
+## What there was to build on
 
-What there is to build on:
+Before phase 1:
 
 - **A generated shot.** `ShotContent` has `kind: "generated"` with `prompt`, `take`, `takes`, `provider`, `model` and `refs` ([types.ts](../packages/schema/src/types.ts)). It's validated, and it plays its take through the same picture path as footage, with the project's grade. Nothing makes one yet. [examples/lisbon-montage](../examples/lisbon-montage/project.json) shows the intended shape, with two Kling takes from fal.
 - **Provenance.** Every asset has `provenance`: `source`, `provider`, `model`, `prompt`, `seed`, `refs`, `costUsd` and `createdAt`. Nothing sets `seed` or `costUsd` yet.
@@ -422,7 +422,7 @@ Both keep their anchors; nothing about time changes.
 
 ## Order
 
-1. **The pipeline, on one shot** (in progress: the catalog and fit check, jobs on disk, fal, the provenance fields and the agent's tools are done; the take strip in Inspect and a real run are next). The catalog and fit check (in schema, with tests), fal as the first route for images and video, jobs on disk, the new provenance fields, the take strip in Inspect, and `list_models`, `generate` and `jobs`. Done when Make 2 on a placeholder with Auto gives two takes through fal, a studio restart in the middle doesn't lose them, and the agent can do the same and hand off a choice.
+1. **The pipeline, on one shot** (done: run for real through fal on 2026-10-29, boards from the agent's `generate` and a Kling clip from Inspect). The catalog and fit check (in schema, with tests), fal as the first route for images and video, jobs on disk, the new provenance fields, the take strip in Inspect, and `list_models`, `generate` and `jobs`. Done when Make 2 on a placeholder with Auto gives two takes through fal, a studio restart in the middle doesn't lose them, and the agent can do the same and hand off a choice.
 2. **A video from nothing.** Cast & sets from the story, from a description and from photos (the Library's right-click menu with Make a character, Make a set and Add to), with cut-outs, descriptions, sheets and variants in Make; references through a start frame; boards, rough and final; estimates for a whole pass; the `cast` need; and the film recipe. Done when the cat video goes from a brief to a watchable rough cut with the agent driving and the person only answering hand-offs and leaving notes.
 3. **The rest of Make mode.** The board of loose takes, the queue, the full composer, cast from subjects and clips, the agent grouping the Library into a cast, selecting several things at once, speakers on lines, and dragging from the Library onto the timeline.
 4. **Changing footage.** Extend by dragging, relight, new angle, restyle, remove, replace someone, widen. With it, what old films need: deinterlacing on import, splitting a file at its cuts, transcription, separating voices from noise, restoring (upscale, clean-up, steadying), and effects drawn over cut-outs.

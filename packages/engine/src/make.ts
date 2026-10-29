@@ -403,7 +403,7 @@ async function bringIn(projectId: string, job: MakeJob, out: { url: string; cont
       model: job.endpoint,
       prompt: r.prompt,
       seed: out.seed ?? r.seed,
-      refs: [r.start, r.end, ...(r.refs ?? [])].filter((x): x is string => !!x),
+      ...(r.start || r.end || r.refs?.length ? { refs: [r.start, r.end, ...(r.refs ?? [])].filter((x): x is string => !!x) } : {}),
       costUsd: job.usd,
       createdAt: new Date().toISOString(),
       op: job.op,

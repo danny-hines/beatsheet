@@ -16,6 +16,7 @@ import { AssetView } from "./AssetView";
 import { LookPanel, SceneProps } from "./Designed";
 import { LineVoice, NarrationOverview } from "./Narration";
 import { ShotLook } from "./Subjects";
+import { Takes } from "./Takes";
 import { AnchorChip, Empty, TextField } from "./ui";
 
 export function SidePanel() {
@@ -100,6 +101,7 @@ function Inspector() {
             )}
           </dl>
         )}
+        {(shot.content.kind === "placeholder" || shot.content.kind === "generated") && <Takes key={shot.id} shot={shot} seconds={r ? r.end - r.start : undefined} />}
         <SceneProps shot={shot} />
         <label>
           Intent

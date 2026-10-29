@@ -18,7 +18,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
-import { driveJobs } from "./make.ts";
+import { cancelJobs, driveJobs, listJobs, makeChoices, startMake, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -464,6 +464,35 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     }
   }
   if (section === "projects" && id && action === "trash" && req.method === "GET") return json(res, 200, trashPlan(id));
+  // Making takes from the studio: which models could make one (and why the others can't), making them, and the jobs.
+  // The person asks here themselves, so there's no turn budget; each button says what it costs.
+  if (section === "projects" && id && action === "make" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const op = q.get("op") === "video" ? "video" : "image";
+    const seconds = Number(q.get("seconds"));
+    return json(
+      res,
+      200,
+      makeChoices(id, { op, cut: q.get("cut") ?? undefined, shot: q.get("shot") ?? undefined, start: q.get("start") ?? undefined, count: Number(q.get("count")) || undefined, ...(seconds > 0 ? { seconds } : {}) }),
+    );
+  }
+  if (section === "projects" && id && action === "make" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as MakeAsk;
+    if (body.op !== "image" && body.op !== "video") return json(res, 400, { error: "Make a still or a video?" });
+    try {
+      return json(res, 200, startMake(id, body));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "jobs" && req.method === "GET") {
+    void driveJobs(id);
+    return json(res, 200, listJobs(id));
+  }
+  if (section === "projects" && id && action === "jobs" && parts[3] === "cancel" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { ids?: string[] };
+    return json(res, 200, await cancelJobs(id, body.ids ?? []));
+  }
   if (section === "projects" && id && action === "footage" && req.method === "POST") {
     // Folders, single files, or both (what was picked or dropped).
     const body = JSON.parse((await readBody(req)) || "{}") as { folder?: string; paths?: string[] };
