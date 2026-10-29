@@ -20,6 +20,7 @@ import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
 import { castFromSubject } from "./castfrom.ts";
+import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
 import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, spentSince, startMake, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
@@ -543,6 +544,16 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, await cancelJobs(id, body.ids ?? []));
   }
   // Someone found in a clip or photo becomes a cast member (or joins one), with a still of them cut from it.
+  // A still of a clip's last frame (or of a moment in it), to start the next clip from.
+  if (section === "projects" && id && action === "frame" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; at?: number };
+    if (!body.asset) return json(res, 400, { error: "From which clip?" });
+    try {
+      return json(res, 200, await stillFromClip(id, body.asset, typeof body.at === "number" ? body.at : undefined));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
   if (section === "projects" && id && action === "cast" && parts[3] === "from-subject" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; subject?: string; into?: string };
     if (!body.asset || !body.subject) return json(res, 400, { error: "Which asset, and which subject in it?" });

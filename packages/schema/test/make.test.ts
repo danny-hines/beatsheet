@@ -358,7 +358,13 @@ describe("cast and sets in prompts", () => {
     expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ prompt: "@cat/masked sneaks past @cat-flap and @catnip, then @cat naps", cast: ["cat", "noir"] });
     expect(f.assets[0]).toMatchObject({ label: "@cat/masked in @alley", provenance: { prompt: "@cat/masked in @alley", cast: ["cat/masked", "alley"] } });
 
+    f.cuts[0]!.voice = { leadIn: 0.3, defaultGap: 0.5, tail: 1, lines: [{ id: "meow", text: "Meow.", duration: 0, words: [], speaker: "cat" }] };
+    expect(checkReferences(f).filter((i) => i.path.includes("speaker"))).toEqual([]);
     expect(renameCast(f, "cat", "marmalade")).toBe(true);
+    expect(f.cuts[0]!.voice!.lines[0]!.speaker).toBe("marmalade");
+    f.cuts[0]!.voice!.lines[0]!.speaker = "alley";
+    expect(checkReferences(f).filter((i) => i.path.includes("speaker")).map((i) => i.message)).toEqual(['no character "alley" in the cast']);
+    f.cuts[0]!.voice!.lines[0]!.speaker = "marmalade";
     expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ prompt: "@marmalade/masked sneaks past @cat-flap and @catnip, then @marmalade naps", cast: ["marmalade", "noir"] });
     expect(f.assets[0]!.provenance!.cast).toEqual(["marmalade/masked", "alley"]);
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lineState, spokenText, voiceKey, voiceProvider } from "@beatsheet/schema";
+import { lineState, lineVoice, spokenText, voiceKey, voiceProvider } from "@beatsheet/schema";
 
 describe("voiced lines", () => {
   const line = { text: "It wants your face.", tts: undefined as string | undefined };
@@ -22,6 +22,21 @@ describe("voiced lines", () => {
     expect(lineState(voice, line)).toBe("silent");
     // Audio made elsewhere carries no fingerprint and counts as voiced.
     expect(lineState(voice, { ...line, file: "vo/hookA.wav" })).toBe("voiced");
+  });
+
+  it("reads a character's line in its voice, and the rest in the cut's", () => {
+    const cast = [
+      { id: "cat", voice: "kokoro:bm_lewis" },
+      { id: "dog" },
+    ];
+    expect(lineVoice(voice, { speaker: "cat" }, cast)).toBe("kokoro:bm_lewis");
+    expect(lineVoice(voice, { speaker: "dog" }, cast)).toBe(voice);
+    expect(lineVoice(voice, { speaker: "ghost" }, cast)).toBe(voice);
+    expect(lineVoice(voice, {}, cast)).toBe(voice);
+    // A voice change for the cat leaves the narrator's lines voiced.
+    const said = { ...line, speaker: "cat", file: `/p/vo/main/a-${voiceKey("kokoro:bm_lewis", line)}.wav` };
+    expect(lineState(lineVoice(voice, said, cast), said)).toBe("voiced");
+    expect(lineState(lineVoice(voice, said, [{ id: "cat", voice: "kokoro:am_puck" }]), said)).toBe("changed");
   });
 
   it("knows which provider a voice id is", () => {

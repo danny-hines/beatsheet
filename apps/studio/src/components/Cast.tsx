@@ -9,6 +9,7 @@ import { hideBroken, posterUrl } from "../lib";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { Failed, money, useChoices, useMake, WhyNot } from "./Takes";
 import { PopMenu, TextField } from "./ui";
+import { VoicePicker } from "./Voices";
 
 type Kind = CastMember["kind"];
 const KINDS: [Kind, string][] = [
@@ -36,22 +37,23 @@ const castIdFor = (name: string, taken: string[], fallback: string) => {
 /** The id a member gets before it has a name; naming it gives it one from the name. */
 const UNNAMED = /^(character|place|prop|style)(-\d+)?$/;
 
-/** Makes a cast member (from a picture, when there's one) and selects it, so its name can be typed straight away. */
-function newMember(kind: Kind, from?: Asset) {
+/** Makes a cast member (from pictures, when there are some) and selects it, so its name can be typed straight away. */
+function newMember(kind: Kind, from: Asset[] = []) {
   let id = "";
   actions.edit((d) => {
     const cast = (d.cast ??= []);
     id = castIdFor("", cast.map((m) => m.id), kind);
-    cast.push({ id, name: "", kind, ...(from ? { seen: [{ asset: from.id }] } : {}) });
+    cast.push({ id, name: "", kind, ...(from.length ? { seen: from.map((a) => ({ asset: a.id })) } : {}) });
   });
   actions.select({ kind: "cast", id });
 }
 
-/** Adds a picture to where a cast member is seen. */
-function addTo(id: string, a: Asset) {
+/** Adds pictures to where a cast member is seen. */
+function addTo(id: string, as: Asset[]) {
   actions.edit((d) => {
     const m = d.cast?.find((x) => x.id === id);
-    if (m && !m.seen?.some((s) => s.asset === a.id)) m.seen = [...(m.seen ?? []), { asset: a.id }];
+    if (!m) return;
+    for (const a of as) if (!m.seen?.some((s) => s.asset === a.id)) m.seen = [...(m.seen ?? []), { asset: a.id }];
   });
 }
 
@@ -196,38 +198,47 @@ export function CastList() {
 }
 
 /** A Library item's right-click menu: make a cast member or a set from a photo, or add it to one. */
-export function AssetMenu({ a, x, y, onClose }: { a: Asset; x: number; y: number; onClose: () => void }) {
+/** Right-click on a picture in the Library, or on several picked together: the cast made from them, or a note. */
+export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: number; onClose: () => void }) {
   const p = useProject();
   const pick = (fn: () => void) => () => {
     onClose();
     fn();
   };
-  const photo = a.kind === "image";
+  // A cast member is made from photos; clips picked with them are left out.
+  const photos = as.filter((a) => a.kind === "image");
+  const these = photos.length === 1 ? "this" : `these ${photos.length}`;
+  const one = as.length === 1 ? as[0] : undefined;
   return (
     <PopMenu x={x} y={y} onClose={onClose}>
-      {photo && (
+      {photos.length > 0 && (
         <>
-          <button role="menuitem" onClick={pick(() => newMember("character", a))}>
-            Make a character from this
+          <button role="menuitem" onClick={pick(() => newMember("character", photos))}>
+            Make a character from {these}
           </button>
-          <button role="menuitem" onClick={pick(() => newMember("place", a))}>
-            Make a set from this
+          <button role="menuitem" onClick={pick(() => newMember("place", photos))}>
+            Make a set from {these}
           </button>
-          <button role="menuitem" onClick={pick(() => newMember("prop", a))}>
-            Make a prop from this
+          <button role="menuitem" onClick={pick(() => newMember("prop", photos))}>
+            Make a prop from {these}
           </button>
           {!!p.cast?.length && <hr />}
-          {p.cast?.map((m) => (
-            <button key={m.id} role="menuitem" disabled={m.seen?.some((s) => s.asset === a.id)} onClick={pick(() => addTo(m.id, a))}>
-              Add to {label(m)} <span className="dim mono">@{m.id}</span>
-            </button>
-          ))}
-          <hr />
+          {p.cast
+            ?.filter((m) => m.kind !== "style")
+            .map((m) => (
+              <button key={m.id} role="menuitem" disabled={photos.every((a) => m.seen?.some((s) => s.asset === a.id))} onClick={pick(() => addTo(m.id, photos))}>
+                Add {photos.length === 1 ? "" : `these ${photos.length} `}to {label(m)} <span className="dim mono">@{m.id}</span>
+              </button>
+            ))}
+          {one && <hr />}
         </>
       )}
-      <button role="menuitem" onClick={pick(() => actions.noteOn({ kind: "asset", asset: a.id }, { x: x + 160, y: y - 20 }))}>
-        Note about this…
-      </button>
+      {one && (
+        <button role="menuitem" onClick={pick(() => actions.noteOn({ kind: "asset", asset: one.id }, { x: x + 160, y: y - 20 }))}>
+          Note about this…
+        </button>
+      )}
+      {!photos.length && !one && <p className="dim small menu-note">Pick photos to make a cast member from them.</p>}
     </PopMenu>
   );
 }
@@ -314,6 +325,12 @@ export function CastView({ id }: { id: string }) {
         <div className="insp-row">
           <span>Style</span>
           <StyleSelect value={m.style} fallback={`The project's: ${lookStyleName(p)}`} onChange={(s) => edit((x) => void (s ? (x.style = s) : delete x.style))} />
+        </div>
+      )}
+      {m.kind === "character" && (
+        <div className="insp-row" title="The lines it says (a line's Said by) are read in this voice">
+          <span>Voice</span>
+          <VoicePicker value={m.voice} onChange={(v) => edit((x) => void (v ? (x.voice = v) : delete x.voice))} unset="The narrator's" />
         </div>
       )}
       <p className="dim small">

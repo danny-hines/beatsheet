@@ -80,6 +80,9 @@ p { margin: 6px 0; }
 .asset-row { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; background: none; border: 1px solid transparent; border-radius: 7px; padding: 4px 6px; position: relative; }
 .asset-row:hover { background: var(--panel-2); }
 .asset-row.sel { background: var(--panel-2); border-color: var(--line-2); }
+.asset-row.picked { background: #2a2210; border-color: var(--accent); }
+.library-picked { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--accent-2); }
+.menu-note { margin: 4px 10px; max-width: 220px; }
 .asset-row.rejected { opacity: 0.45; }
 .asset-row-thumb { width: 46px; height: 46px; border-radius: 6px; overflow: hidden; flex: none; position: relative; display: flex; align-items: center; justify-content: center; }
 .asset-row-thumb img { width: 100%; height: 100%; object-fit: cover; }

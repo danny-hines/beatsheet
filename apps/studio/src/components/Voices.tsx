@@ -652,8 +652,11 @@ function MacCard({ info, current }: { info: VoicesInfo; current?: string }) {
 
 // ---- Choosing a cut's voice
 
-/** A cut's voice: its own choice, or the default. Grouped by where each voice comes from. */
-export function VoicePicker({ value, onChange }: { value: string | undefined; onChange: (id: string | undefined) => void }) {
+/**
+ * A cut's voice (its own choice, or the default), or a character's (`unset` says what it falls back to). Grouped by
+ * where each voice comes from.
+ */
+export function VoicePicker({ value, onChange, unset }: { value: string | undefined; onChange: (id: string | undefined) => void; unset?: string }) {
   const info = useVoices();
   if (!info) return <select disabled><option>Loading voices…</option></select>;
   const lang = (info.mac.language ?? "en-US").split("-")[0]!;
@@ -667,7 +670,7 @@ export function VoicePicker({ value, onChange }: { value: string | undefined; on
   const fallback = info.default ?? info.fallback;
   return (
     <select value={value ?? ""} onChange={(e) => onChange(e.target.value || undefined)}>
-      <option value="">{fallback ? `Default: ${voiceLabel(info, fallback)}` : "Default"}</option>
+      <option value="">{unset ?? (fallback ? `Default: ${voiceLabel(info, fallback)}` : "Default")}</option>
       {!known && <option value={value}>{voiceLabel(info, value)}</option>}
       {groups
         .filter(([, list]) => list.length)

@@ -291,6 +291,7 @@ export const Line = z.object({
   gaps: z.record(z.string(), z.number()).optional().describe("Per-format pause overrides, by format id"),
   holdBefore: z.number().optional().describe("Extra time before the line (title cards, breathers)"),
   only: z.array(z.string()).optional().describe("Format ids this line appears in; default all"),
+  speaker: z.string().optional().describe("Who says it: a character in the cast, read in its voice when it has one; default the narrator, in the cut's voice"),
 });
 export type Line = z.infer<typeof Line>;
 

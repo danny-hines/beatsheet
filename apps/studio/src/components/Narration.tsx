@@ -1,4 +1,4 @@
-import { lineState, type Line, type Project } from "@beatsheet/schema";
+import { lineState, lineVoice, type Line, type Project } from "@beatsheet/schema";
 import { useState } from "react";
 import { AGENT_NAMES, runJob } from "../lib";
 import { actions, getState, useStore } from "../store";
@@ -52,7 +52,7 @@ export function NarrationOverview({ p }: { p: Project }) {
   const v = info?.voices.find((x) => x.id === voice);
   const { busy, error, run } = useVoicing();
   const lines = p.voice?.lines ?? [];
-  const states = lines.map((l) => lineState(voice, l));
+  const states = lines.map((l) => lineState(lineVoice(voice, l, p.cast), l));
   const stale = states.filter((s) => s !== "voiced").length;
   const spoken = lines.reduce((n, l) => n + l.duration, 0);
   const locked = !!p.stages.structure?.locked;
@@ -123,16 +123,42 @@ export function NarrationOverview({ p }: { p: Project }) {
   );
 }
 
-/** For a selected line: its words (editable), how it's said, and its voice, with a button to voice it again. */
+/**
+ * For a selected line: who says it (the narrator, or a character in the cast, in its own voice), its voice, and a
+ * button to voice it again.
+ */
 export function LineVoice({ p, l }: { p: Project; l: Line }) {
-  const voice = useCutVoice(p);
+  const narrator = useCutVoice(p);
+  const voice = lineVoice(narrator, l, p.cast);
   const info = useVoices();
   const projectId = useStore((s) => s.projectId)!;
   const { busy, error, run } = useVoicing();
   const state = lineState(voice, l);
   const locked = !!p.stages.structure?.locked;
+  const characters = (p.cast ?? []).filter((m) => m.kind === "character");
+  const speaker = characters.find((m) => m.id === l.speaker);
+  const setSpeaker = (id: string) =>
+    actions.edit((d) => {
+      const line = d.voice?.lines.find((x) => x.id === l.id);
+      if (line) line.speaker = id || undefined;
+    });
   return (
     <div className="line-voice">
+      {(characters.length > 0 || l.speaker) && (
+        <label className="row small">
+          Said by
+          <select value={l.speaker ?? ""} onChange={(e) => setSpeaker(e.target.value)} disabled={locked} aria-label="Who says this line">
+            <option value="">The narrator</option>
+            {characters.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name || `@${m.id}`}
+                {m.voice ? "" : " (no voice yet: the narrator's)"}
+              </option>
+            ))}
+            {l.speaker && !speaker && <option value={l.speaker}>@{l.speaker} (not in the cast)</option>}
+          </select>
+        </label>
+      )}
       <div className="row">
         {l.file && <PlayButton id={`l:${l.file}`} src={`/media/${projectId}/file/${encodeURIComponent(l.file)}`} title="Play this line" />}
         <span className={`small ${state === "voiced" ? "dim" : "warn"}`}>

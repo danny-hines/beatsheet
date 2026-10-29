@@ -103,6 +103,7 @@ export function checkCut(p: Project): CheckIssue[] {
   p.voice?.lines.forEach((l, i) => {
     formats(`voice.lines.${i}.only`, l.only);
     formats(`voice.lines.${i}.gaps`, Object.keys(l.gaps ?? {}));
+    if (l.speaker && !p.cast?.some((m) => m.id === l.speaker && m.kind === "character")) add(`voice.lines.${i}.speaker`, `no character "${l.speaker}" in the cast`);
   });
   p.music?.cues.forEach((c, i) => {
     const path = `music.cues.${i}`;

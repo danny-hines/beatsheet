@@ -345,7 +345,7 @@ export const CAST_ID = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
  * Gives a cast member, or one of its variants ("cat/heist"), a new id everywhere it's used: the prompts and cast lists
- * of made shots in every cut, what takes were made with and their labels, and the styles that name it. Changes `file`
+ * of made shots in every cut, the lines it speaks, what takes were made with and their labels, and the styles that name it. Changes `file`
  * in place; false (and nothing changed) when there's nothing by that id, or the new one is taken or can't follow an @.
  */
 export function renameCast(file: ProjectFile, from: string, to: string): boolean {
@@ -374,13 +374,15 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
       const next = map(key);
       return next === key ? whole : `@${next}`;
     });
-  for (const cut of file.cuts)
+  for (const cut of file.cuts) {
     for (const shot of cut.shots) {
       const c = shot.content;
       if (c?.kind !== "generated") continue;
       c.prompt = inPrompt(c.prompt);
       if (c.cast) c.cast = c.cast.map(map);
     }
+    if (!variant) for (const l of cut.voice?.lines ?? []) if (l.speaker === id) l.speaker = to;
+  }
   for (const a of file.assets) {
     if (a.label) a.label = inPrompt(a.label);
     const p = a.provenance;

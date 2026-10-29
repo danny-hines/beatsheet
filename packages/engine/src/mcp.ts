@@ -24,6 +24,7 @@ import {
   fitSong,
   freshCut,
   lineState,
+  lineVoice,
   MAKE_OPS,
   SFX_SOUNDS,
   resolveTimeline,
@@ -910,6 +911,7 @@ server.registerTool(
             gapAfter: z.number().optional().describe("Seconds of quiet after it; default the cut's (0.5)"),
             holdBefore: z.number().optional().describe("Extra quiet before it, e.g. to let a title breathe"),
             only: z.array(z.string()).optional().describe("Format ids it's in; default all"),
+            speaker: z.string().optional().describe('Who says it: a character\'s cast id, read in that character\'s voice (its cast entry\'s voice); "" for the narrator. Default: the narrator, in the cut\'s voice'),
           }),
         )
         .optional(),
@@ -991,6 +993,20 @@ server.registerTool(
   async ({ project: id, asset, subject, into }) => {
     const r = await castFromSubject(id, { asset, subject, into });
     return text(`@${r.member} is seen in ${asset} and in the still ${r.still}. Describe them in /cast (about), then make their sheet with generate (sheet: "${r.member}").`);
+  },
+);
+
+server.registerTool(
+  "still_from_clip",
+  {
+    description:
+      "Cut a still from a clip into the project: its last frame (to carry a clip on, start the next one from it with generate's start), or a moment in it (at) to animate or give a sheet. Asked twice for the same frame, it gives back the still it already made.",
+    inputSchema: { project: projectArg, asset: z.string().describe("The clip"), at: z.number().nonnegative().optional().describe("Seconds into the clip; default its last frame") },
+  },
+  async ({ project: id, asset, at }) => {
+    const { stillFromClip } = await import("./frames.ts");
+    const still = await stillFromClip(id, asset, at);
+    return text(`${still.id}: ${still.label}. Start a clip from it with generate (op "video", start "${still.id}").`);
   },
 );
 
@@ -1154,8 +1170,8 @@ function overview(id: string, cut?: string, format?: string): string {
     lines.push(`Voice${p.voice.voice ? ` (${p.voice.voice})` : ""}: ${p.voice.lines.length} lines${tl.lines.length ? `, ${formatTime(tl.lines[0]!.start)}–${formatTime(tl.lines.at(-1)!.end)}` : ""}`);
     for (const l of p.voice.lines) {
       const r = tl.lines.find((x) => x.id === l.id);
-      const state = lineState(p.voice.voice, l);
-      lines.push(`- ${l.id} · ${r ? `${formatTime(r.start)}–${formatTime(r.end)}` : "not in this format"} · "${l.text}"${state === "voiced" ? "" : state === "changed" ? " (changed since it was voiced: narrate again)" : " (not voiced yet)"}`);
+      const state = lineState(lineVoice(p.voice.voice, l, p.cast), l);
+      lines.push(`- ${l.id}${l.speaker ? ` (@${l.speaker})` : ""} · ${r ? `${formatTime(r.start)}–${formatTime(r.end)}` : "not in this format"} · "${l.text}"${state === "voiced" ? "" : state === "changed" ? " (changed since it was voiced: narrate again)" : " (not voiced yet)"}`);
     }
   }
   lines.push("");

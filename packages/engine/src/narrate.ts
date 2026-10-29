@@ -6,11 +6,11 @@
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cutOf, lineState, slugify, spokenText, voiceKey, type Line, type ProjectFile, type Voice, type Word } from "@beatsheet/schema";
+import { cutOf, lineState, lineVoice, slugify, spokenText, voiceKey, type Line, type ProjectFile, type Voice, type Word } from "@beatsheet/schema";
 import { loadFile, updateFile } from "./store.ts";
 import { resolveVoice, speak } from "./voices.ts";
 
-export type LineInput = { id?: string; text: string; tts?: string; gapAfter?: number; holdBefore?: number; only?: string[] };
+export type LineInput = { id?: string; text: string; tts?: string; gapAfter?: number; holdBefore?: number; only?: string[]; speaker?: string };
 export type NarrateOptions = {
   cut?: string;
   /** Lines to write (new ids are added after the others, in order). Without them, the cut's lines are voiced as they are. */
@@ -49,6 +49,8 @@ function writeLines(existing: Line[], input: LineInput[] | undefined, replace?: 
       ...(given.gapAfter !== undefined ? { gapAfter: given.gapAfter } : {}),
       ...(given.holdBefore !== undefined ? { holdBefore: given.holdBefore } : {}),
       ...(given.only ? { only: given.only } : {}),
+      // "" goes back to the narrator.
+      ...(given.speaker !== undefined ? { speaker: given.speaker || undefined } : {}),
     };
     const at = out.findIndex((l) => l.id === id);
     if (at >= 0) out[at] = line;
@@ -69,16 +71,24 @@ export async function narrate(projectId: string, opts: NarrateOptions = {}): Pro
   const voice = await resolveVoice(opts.voice ?? cut.voice?.voice);
   const lines = writeLines(cut.voice?.lines ?? [], opts.lines, opts.replace);
   if (!lines.length) throw new Error("There's nothing to read yet: pass the lines to voice.");
+  // A character's lines are read in its own voice, when it has one; the rest (and any whose speaker has gone) in the cut's.
+  const voices = new Map<string, string>([[voice, voice]]);
+  for (const l of lines) {
+    const own = lineVoice(undefined, l, doc.cast);
+    if (own && !voices.has(own)) voices.set(own, await resolveVoice(own));
+  }
+  const voiceOf = (l: Line) => voices.get(lineVoice(voice, l, doc.cast)!) ?? voice;
 
-  const todo = lines.filter((l) => (!opts.only || opts.only.includes(l.id)) && (opts.force || lineState(voice, l) !== "voiced" || !l.file || !l.words.length));
+  const todo = lines.filter((l) => (!opts.only || opts.only.includes(l.id)) && (opts.force || lineState(voiceOf(l), l) !== "voiced" || !l.file || !l.words.length));
   const voiced = new Map<string, { file: string; duration: number; words: Word[]; spoken: string }>();
   for (const [i, l] of todo.entries()) {
     opts.onProgress?.(i / todo.length, l.id);
-    const base = join(dir, "vo", cut.id, `${l.id}-${voiceKey(voice, l)}`);
+    const lv = voiceOf(l);
+    const base = join(dir, "vo", cut.id, `${l.id}-${voiceKey(lv, l)}`);
     // The same words in the same voice were read before (an undone turn, say): use that.
     const sidecar = `${base}.json`;
     const before = existsSync(sidecar) ? (JSON.parse(readFileSync(sidecar, "utf8")) as { file: string; duration: number; words: Word[] }) : undefined;
-    const r = before && existsSync(before.file) && !opts.force ? before : await speak(voice, spokenText(l), base);
+    const r = before && existsSync(before.file) && !opts.force ? before : await speak(lv, spokenText(l), base);
     writeFileSync(sidecar, JSON.stringify(r));
     // Captions show the line as written, so words come from the text when it reads the same number of words.
     const written = l.text.split(/\s+/).filter(Boolean);

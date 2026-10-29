@@ -36,7 +36,16 @@ export function Library() {
   const used = useMemo(() => usedIn(p), [p]);
   const [hover, setHover] = useState<{ a: Asset; top: number; fx: number } | null>(null);
   const [recording, setRecording] = useState<RecordKind | null>(null);
-  const [menu, setMenu] = useState<{ a: Asset; x: number; y: number }>();
+  const [menu, setMenu] = useState<{ as: Asset[]; x: number; y: number }>();
+  // Several picked at once (Ctrl or ⌘-click, Shift-click for a run), for what's done to them together: right-click.
+  const [picked, setPicked] = useState<string[]>([]);
+  const [anchor, setAnchor] = useState<string>();
+  useEffect(() => {
+    if (!picked.length) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPicked([]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [picked.length]);
   // The app menu's Record Screen/Camera/Voice come here.
   useEffect(() => {
     const onRecord = (e: Event) => setRecording((e as CustomEvent<RecordKind>).detail);
@@ -62,6 +71,24 @@ export function Library() {
     { key: "cutouts", label: "Cut-outs", items: footage.filter((a) => a.cutout && keep(a)) },
     { key: "made", label: "Made here", items: footage.filter((a) => madeHere(a) && !a.cutout && keep(a)) },
   ].filter((g) => (g.key === "all" && imported.length) || g.items.length);
+  const order = groups.flatMap((g) => g.items.map((a) => a.id));
+  const pick = (a: Asset, e: React.MouseEvent) => {
+    const shown = selection?.kind === "asset" ? selection.id : undefined;
+    const from = anchor ?? shown;
+    if (e.shiftKey && from && order.includes(from)) {
+      const [i, j] = [order.indexOf(from), order.indexOf(a.id)].sort((x, y) => x - y) as [number, number];
+      setPicked(order.slice(i, j + 1));
+    } else if (e.metaKey || e.ctrlKey) {
+      // The one already selected comes along, so Ctrl-clicking a second picks both.
+      const base = picked.length ? picked : shown && order.includes(shown) ? [shown] : [];
+      setPicked(base.includes(a.id) ? base.filter((x) => x !== a.id) : [...base, a.id]);
+      setAnchor(a.id);
+    } else {
+      setPicked([]);
+      setAnchor(a.id);
+    }
+    actions.select({ kind: "asset", id: a.id });
+  };
 
   return (
     <aside
@@ -99,10 +126,15 @@ export function Library() {
                 projectId={projectId}
                 used={used.has(a.id)}
                 selected={selection?.kind === "asset" && selection.id === a.id}
+                picked={picked.includes(a.id)}
+                onPick={(e) => pick(a, e)}
                 onHover={setHover}
                 onMenu={(x, y) => {
                   setHover(null);
-                  setMenu({ a, x, y });
+                  // On one of several picked, the menu is for all of them.
+                  const several = picked.length > 1 && picked.includes(a.id);
+                  if (!several) setPicked([]);
+                  setMenu({ as: several ? picked.flatMap((id) => p.assets.find((x) => x.id === id) ?? []) : [a], x, y });
                 }}
               />
             ))}
@@ -119,6 +151,14 @@ export function Library() {
           </div>
         )}
       </div>
+      {picked.length > 1 && (
+        <div className="library-picked small">
+          <span>{picked.length} picked · right-click one for what to do with them</span>
+          <button className="link small" onClick={() => setPicked([])}>
+            Clear
+          </button>
+        </div>
+      )}
       {footage.length > 0 && <AddFootage onRecord={setRecording} />}
       {hover && <HoverCard {...hover} projectId={projectId} />}
       {menu && <AssetMenu {...menu} onClose={() => setMenu(undefined)} />}
@@ -243,6 +283,8 @@ function AssetRow({
   projectId,
   used,
   selected,
+  picked,
+  onPick,
   onHover,
   onMenu,
 }: {
@@ -250,6 +292,8 @@ function AssetRow({
   projectId: string;
   used: boolean;
   selected: boolean;
+  picked?: boolean;
+  onPick?: (e: React.MouseEvent) => void;
   onHover?: (h: Hover | null) => void;
   onMenu?: (x: number, y: number) => void;
 }) {
@@ -262,8 +306,8 @@ function AssetRow({
   };
   return (
     <button
-      className={`asset-row ${selected ? "sel" : ""} ${a.rating === -1 ? "rejected" : ""}`}
-      onClick={() => actions.select({ kind: "asset", id: a.id })}
+      className={`asset-row ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${a.rating === -1 ? "rejected" : ""}`}
+      onClick={(e) => (onPick ? onPick(e) : actions.select({ kind: "asset", id: a.id }))}
       onContextMenu={
         onMenu &&
         ((e) => {

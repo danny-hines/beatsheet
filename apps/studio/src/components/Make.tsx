@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
 import { aspectOf, CATALOG, castOf, type Asset, type MakeOp, type Project, type Quality, type Shot } from "@beatsheet/schema";
 import { ASSET_DRAG, hideBroken, posterUrl, proxyUrl, putInShot, round2, timeAgo } from "../lib";
-import { actions, useProject, useStore, useTimeline } from "../store";
+import { actions, setState, useProject, useStore, useTimeline } from "../store";
 import { AssetMenu } from "./Cast";
 import { useMakeSummary } from "./MakeSettings";
 import { cost, fitOf, money, ModelSelect, pickOf, useChoices, WhyNot } from "./Takes";
@@ -340,6 +340,7 @@ function Card({ job, use, retry }: { job: MakeJob; use: (d: Partial<Draft>) => v
   const p = useProject();
   const [hover, setHover] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number }>();
+  const [continuing, setContinuing] = useState(false);
   const a = job.asset ? p.assets.find((x) => x.id === job.asset) : undefined;
   const style = { aspectRatio: ratio(a?.width && a.height ? `${a.width}:${a.height}` : job.request.aspect) };
   if (!a) {
@@ -362,6 +363,21 @@ function Card({ job, use, retry }: { job: MakeJob; use: (d: Partial<Draft>) => v
   }
   const video = a.kind === "video";
   const final = a.provenance?.params?.quality === "final";
+  // The next clip starts where this one ends: its last frame becomes a still, and the composer starts from it.
+  const carryOn = async () => {
+    setContinuing(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/frame`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset: a.id }) });
+      const out = (await res.json()) as Asset & { error?: string };
+      if (!res.ok) throw new Error(out.error ?? "Couldn't take its last frame");
+      await actions.reload();
+      use({ op: "video", start: out.id, prompt: "", shot: undefined, model: "", count: 1, ...(job.quality ? { quality: job.quality } : {}) });
+    } catch (err) {
+      setState({ notice: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setContinuing(false);
+    }
+  };
   return (
     <div
       className={`make-card ${selected === a.id ? "sel" : ""}`}
@@ -388,9 +404,14 @@ function Card({ job, use, retry }: { job: MakeJob; use: (d: Partial<Draft>) => v
             Animate
           </button>
         )}
+        {video && (
+          <button disabled={continuing} onClick={() => void carryOn()} title="Make a clip that starts where this one ends, from its last frame">
+            {continuing ? "…" : "Continue"}
+          </button>
+        )}
         <UseInShot asset={a} />
       </div>
-      {menu && <AssetMenu a={a} x={menu.x} y={menu.y} onClose={() => setMenu(undefined)} />}
+      {menu && <AssetMenu as={[a]} x={menu.x} y={menu.y} onClose={() => setMenu(undefined)} />}
     </div>
   );
 }

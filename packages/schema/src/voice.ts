@@ -24,7 +24,11 @@ const keyIn = (file: string) => /-([0-9a-f]{8})\.[a-z0-9]+$/i.exec(file)?.[1];
 
 export type LineState = "voiced" | "changed" | "silent";
 
-/** Whether a line's audio matches its words and the cut's voice: voiced, changed since, or not voiced at all. */
+/** The voice a line is read in: its speaker's, when the cast gives them one, else the cut's. */
+export const lineVoice = (cutVoice: string | undefined, line: { speaker?: string }, cast?: { id: string; voice?: string }[]) =>
+  (line.speaker ? cast?.find((m) => m.id === line.speaker)?.voice : undefined) ?? cutVoice;
+
+/** Whether a line's audio matches its words and the voice that reads it: voiced, changed since, or not voiced at all. */
 export function lineState(voice: string | undefined, line: { text: string; tts?: string; file?: string }): LineState {
   if (!line.file) return "silent";
   const key = keyIn(line.file);
