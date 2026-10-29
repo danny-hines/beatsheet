@@ -65,6 +65,15 @@ export const offView = (): AgentView => ({ status: "off", items: [], approvals: 
 export const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
+ * What an agent's card says once it's signed in, the same for every agent: the plan, when the agent says, and never
+ * who ("Signed in · Claude Max", "Signed in · Google AI Ultra").
+ */
+export const signedIn = (plan?: string) => (plan ? `Signed in · ${plan}` : "Signed in");
+
+/** A plan's id as its maker names the plan ("prolite" → "Pro Lite"), or the id in title case. */
+export const planName = (id: string, names: Record<string, string>) => names[id.toLowerCase()] ?? id.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+/**
  * A message as the person should see it in the transcript: what they typed (`text`, empty when they typed nothing),
  * a few words for the studio's own messages (`display`: the opening, a pick, "looks good"), and how many notes went
  * with it.

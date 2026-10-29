@@ -6,11 +6,13 @@ import { inRepo, REPO } from "../paths.ts";
 import { readSettings } from "../settings.ts";
 import { CHROME_DEVTOOLS, cliEnv, codexHasChrome, findCli, MCP_SERVER } from "./cli.ts";
 import { StdioRpc, uuid7, type RpcId } from "./rpc.ts";
-import { AgentAdapter, message, readStudioMessage, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
+import { AgentAdapter, message, planName, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
 
 type CodexItem = { type: string; id: string; [k: string]: unknown };
 type Turn = { id: string; items: CodexItem[]; status: string; error: { message: string } | null };
 type Thread = { id: string; preview: string; name: string | null; model: string | null; updatedAt: number; turns?: Turn[] };
+/** ChatGPT's plan ids, as OpenAI names the plans. */
+const PLANS: Record<string, string> = { free: "Free", go: "Go", plus: "Plus", pro: "Pro", prolite: "Pro Lite", team: "Team", business: "Business", enterprise: "Enterprise", edu: "Edu" };
 /**
  * A request from Codex waiting on the person, with what answering each choice sends back (or, for one of several
  * questions, what to do with the answer).
@@ -115,8 +117,8 @@ export class CodexAdapter extends AgentAdapter {
     const rpc = await this.host();
     const r = await rpc.request<{ account: { type: string; email?: string; planType?: string } | null; requiresOpenaiAuth: boolean }>("account/read", { refreshToken: false });
     if (!r.account) return { ok: !r.requiresOpenaiAuth, detail: r.requiresOpenaiAuth ? "Not signed in" : "Ready" };
-    const who = r.account.type === "chatgpt" ? `ChatGPT${r.account.planType ? ` ${r.account.planType}` : ""}` : "API key";
-    return { ok: true, detail: `Signed in${r.account.email ? ` as ${r.account.email}` : ""} · ${who}` };
+    const plan = r.account.type === "chatgpt" ? (r.account.planType ? `ChatGPT ${planName(r.account.planType, PLANS)}` : "ChatGPT") : "API key";
+    return { ok: true, detail: signedIn(plan) };
   }
 
   async sessions(): Promise<AgentSessionSummary[]> {

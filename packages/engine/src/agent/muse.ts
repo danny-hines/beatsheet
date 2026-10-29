@@ -6,9 +6,9 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { REPO } from "../paths.ts";
 import { readSettings } from "../settings.ts";
-import { CHROME_DEVTOOLS, findCli } from "./cli.ts";
+import { CHROME_DEVTOOLS, cliEnv, findCli, spawnCli } from "./cli.ts";
 import { StdioRpc, uuid7 } from "./rpc.ts";
-import { AgentAdapter, message, readStudioMessage, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
+import { AgentAdapter, message, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
 
 type MspItem = {
   itemId: string;
@@ -97,6 +97,34 @@ function sessionConfig() {
   return { mcpServers: { "chrome-devtools": { transport: "stdio" as const, command: CHROME_DEVTOOLS.command, args: CHROME_DEVTOOLS.args, mode: "optional" as const } } };
 }
 
+/**
+ * The plan Muse Code is signed in on, by name ("Muse Code Power Usage"), from `muse usage` (which makes no model call;
+ * the session protocol only has the plan's id).
+ */
+async function plan(): Promise<string | undefined> {
+  const muse = await findCli("muse");
+  if (!muse) return undefined;
+  const env = await cliEnv();
+  const out = await new Promise<string>((resolve) => {
+    const child = spawnCli(muse, ["usage", "--json"], { cwd: REPO, env, stdio: ["ignore", "pipe", "ignore"] });
+    let text = "";
+    child.stdout!.on("data", (d) => (text += d));
+    const timer = setTimeout(() => child.kill(), 30_000);
+    child.on("error", () => resolve(""));
+    child.on("close", () => (clearTimeout(timer), resolve(text)));
+  });
+  return planOf(out);
+}
+
+/** The plan in `muse usage --json`. */
+export function planOf(json: string): string | undefined {
+  try {
+    return (JSON.parse(json.slice(json.indexOf("{"))) as { allowance?: { tier?: string } | null }).allowance?.tier || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class MuseAdapter extends AgentAdapter {
   readonly id = "muse" as const;
   private rpc?: StdioRpc;
@@ -132,12 +160,12 @@ export class MuseAdapter extends AgentAdapter {
 
   async check(): Promise<AgentCheck> {
     const rpc = await this.host();
-    const used = async () => (await rpc.request<{ usage?: { window?: { usedPercent: number } } }>("usage/read", {})).usage;
+    const onPlan = plan();
+    const used = async () => (await rpc.request<{ usage?: unknown }>("usage/read", {})).usage;
     // Usage is only known once this host has talked to the model, so first time round ask for one word, in a scratch
     // session outside the project so it doesn't show up as a beatsheet session. (Muse refuses a workspace that is a
     // symlink, and /tmp is one, so the real path.)
-    let usage = await used();
-    if (!usage) {
+    if (!(await used())) {
       const r = await rpc.request<{ session: { sessionId: string } }>("session/start", { commandId: uuid7(), workspaceRoot: realpathSync(tmpdir()) });
       const id = r.session.sessionId;
       const done = new Promise<{ terminal?: string; error?: { message?: string } }>((resolve) => {
@@ -151,9 +179,8 @@ export class MuseAdapter extends AgentAdapter {
       await rpc.request("turn/start", { commandId: uuid7(), sessionId: id, input: [{ type: "text", text: "Reply with just the word OK." }] });
       const end = await Promise.race([done, new Promise<{ terminal: string; error: { message: string } }>((r) => setTimeout(() => r({ terminal: "failed", error: { message: "Muse didn't answer in time" } }), 60_000))]);
       if (end.terminal !== "completed") return { ok: false, detail: /auth|login|sign|token|credential/i.test(end.error?.message ?? "") ? "Not signed in" : (end.error?.message ?? "Muse couldn't answer") };
-      usage = await used();
     }
-    return { ok: true, detail: usage?.window ? `Signed in · ${usage.window.usedPercent}% of your current usage window used` : "Signed in" };
+    return { ok: true, detail: signedIn(await onPlan) };
   }
 
   async sessions(): Promise<AgentSessionSummary[]> {

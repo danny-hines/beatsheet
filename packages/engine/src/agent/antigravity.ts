@@ -14,7 +14,7 @@ import { readSettings } from "../settings.ts";
 import { antigravityServer } from "./antigravity-server.ts";
 import { CHROME_DEVTOOLS, cliEnv, MCP_SERVER } from "./cli.ts";
 import { StdioRpc, type RpcId } from "./rpc.ts";
-import { AgentAdapter, message, readStudioMessage, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
+import { AgentAdapter, message, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
 
 type Content = { type: string; text?: string };
 /** A tool call as the server describes it (`tool_call`, `tool_call_update`, and in a permission request). */
@@ -49,6 +49,17 @@ const TURN_MS = 12 * 60 * 60 * 1000;
 /** Antigravity's folder (GEMINI_HOME moves it, as the server allows), where it keeps its conversations. */
 const geminiHome = () => process.env.GEMINI_HOME ?? join(homedir(), ".gemini");
 const conversation = (id: string) => join(geminiHome(), "antigravity-acp", "conversations", `${id}.db`);
+
+/** How the server signs in, from its settings: oauth-personal for a Google account, gemini-api-key… */
+export function authType(home = geminiHome()): string | undefined {
+  try {
+    return (JSON.parse(readFileSync(join(home, "antigravity-acp", "settings.json"), "utf8")) as { auth?: { type?: string } }).auth?.type;
+  } catch {
+    return undefined;
+  }
+}
+/** What the other ways in are, as a plan. */
+const KEYED: Record<string, string> = { "gemini-api-key": "Gemini API key", "oauth-business": "Gemini Enterprise", "agent-platform": "Gemini Enterprise Agent Platform" };
 
 /**
  * The sessions beatsheet started, with their first message (which names the project and cut) and model: the server
@@ -235,7 +246,22 @@ export class AntigravityAdapter extends AgentAdapter {
     } catch (err) {
       return { ok: false, detail: signedOut(err) ? "Not signed in" : message(err) };
     }
-    return { ok: true, detail: "Signed in with Google" };
+    return { ok: true, detail: signedIn(await this.plan()) };
+  }
+
+  /**
+   * The plan a Google account is on ("Google AI Ultra"). The server names it when asked to sign in again the way it
+   * already is, which opens nothing once the probe has shown the sign-in works.
+   */
+  private async plan(): Promise<string | undefined> {
+    const how = authType();
+    if (how !== "oauth-personal") return how && KEYED[how];
+    try {
+      const r = await this.rpc!.request<{ _meta?: { antigravity?: { tier?: { name?: string } } } }>("authenticate", { methodId: how }, 30_000);
+      return r._meta?.antigravity?.tier?.name;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Google's sign-in in the browser. It runs until the person finishes there; Check again picks it up. */

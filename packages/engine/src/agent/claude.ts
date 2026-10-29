@@ -12,7 +12,7 @@ import { inRepo, REPO } from "../paths.ts";
 import { IS_WINDOWS } from "../platform.ts";
 import { readSettings } from "../settings.ts";
 import { cliEnv, findCli, MCP_SERVER, spawnCli } from "./cli.ts";
-import { AgentAdapter, message, readStudioMessage, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
+import { AgentAdapter, message, planName, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
 
 /** Claude Code keeps each workspace's transcripts in a folder named after its path. */
 const TRANSCRIPTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", REPO.replace(/[^a-zA-Z0-9]/g, "-"));
@@ -89,6 +89,33 @@ export function permissionArgs(autonomy: "ask" | "free" = "ask", chrome = false,
 /** What reads keys out of Windows Credential Manager. */
 const WINDOWS_KEY_READERS = ["beatsheet-credentials", "CredRead", "CredEnumerate", "PasswordVault", "Get-StoredCredential", "vaultcmd"];
 
+/** Claude's plan ids, as Anthropic names the plans. */
+const PLANS: Record<string, string> = { free: "Free", pro: "Pro", max: "Max", team: "Team", enterprise: "Enterprise" };
+
+/** The plan Claude Code is signed in on, from `claude auth status` (which makes no model call). */
+async function plan(claude: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
+  const out = await new Promise<string>((resolve) => {
+    const child = spawnCli(claude, ["auth", "status", "--json"], { cwd: REPO, env, stdio: ["ignore", "pipe", "ignore"] });
+    let text = "";
+    child.stdout!.on("data", (d) => (text += d));
+    const timer = setTimeout(() => child.kill(), 30_000);
+    child.on("error", () => resolve(""));
+    child.on("close", () => (clearTimeout(timer), resolve(text)));
+  });
+  return planOf(out);
+}
+
+/** The plan in `claude auth status --json`: "Claude Max", or "API key" for a key. */
+export function planOf(json: string): string | undefined {
+  try {
+    const s = JSON.parse(json.slice(json.indexOf("{"))) as { loggedIn?: boolean; subscriptionType?: string; authMethod?: string };
+    if (!s.loggedIn) return undefined;
+    return s.subscriptionType ? `Claude ${planName(s.subscriptionType, PLANS)}` : s.authMethod && s.authMethod !== "claude.ai" ? "API key" : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export class ClaudeAdapter extends AgentAdapter {
   readonly id = "claude" as const;
   private child?: ChildProcess;
@@ -107,11 +134,15 @@ export class ClaudeAdapter extends AgentAdapter {
     return MODELS;
   }
 
-  /** The CLI has no status call, so ask it for one word; a signed-out CLI answers with what to do instead. */
+  /**
+   * Asks the CLI for one word, which proves the sign-in works (a signed-out CLI answers with what to do instead), and
+   * meanwhile which plan it's on.
+   */
   async check(): Promise<AgentCheck> {
     const claude = await findCli("claude");
     if (!claude) return { ok: false, detail: "Not installed" };
     const env = await cliEnv();
+    const onPlan = plan(claude, env);
     const out = await new Promise<string>((resolve, reject) => {
       const child = spawnCli(claude, ["-p", "Reply with just the word OK.", "--output-format", "json", "--max-turns", "1", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
       let text = "";
@@ -124,7 +155,7 @@ export class ClaudeAdapter extends AgentAdapter {
     try {
       const r = JSON.parse(out.slice(out.indexOf("{"))) as { is_error?: boolean; result?: string };
       if (r.is_error) return { ok: false, detail: /login|log in|sign in|api key|auth/i.test(r.result ?? "") ? "Not signed in" : (r.result ?? "Claude Code couldn't answer") };
-      return { ok: true, detail: "Signed in" };
+      return { ok: true, detail: signedIn(await onPlan) };
     } catch {
       return { ok: false, detail: out.trim().split("\n").pop() || "Claude Code couldn't answer" };
     }

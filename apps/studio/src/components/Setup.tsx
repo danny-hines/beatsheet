@@ -249,7 +249,7 @@ function Autonomy({ level }: { level: "ask" | "free" }) {
           </button>
         ))}
       </div>
-      <p className="dim small">The media services are used only through beatsheet. Muse Code's own reviewer still looks first.</p>
+      <p className="dim small">Either way, the agent never sees your keys: it uses the media services only through beatsheet.</p>
     </div>
   );
 }
