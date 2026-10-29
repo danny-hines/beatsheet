@@ -18,6 +18,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
+import { castFromSubject } from "./castfrom.ts";
 import { describeCast } from "./describe.ts";
 import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, spentSince, startMake, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
@@ -527,6 +528,16 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   if (section === "projects" && id && action === "jobs" && parts[3] === "cancel" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { ids?: string[] };
     return json(res, 200, await cancelJobs(id, body.ids ?? []));
+  }
+  // Someone found in a clip or photo becomes a cast member (or joins one), with a still of them cut from it.
+  if (section === "projects" && id && action === "cast" && parts[3] === "from-subject" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; subject?: string; into?: string };
+    if (!body.asset || !body.subject) return json(res, 400, { error: "Which asset, and which subject in it?" });
+    try {
+      return json(res, 200, await castFromSubject(id, { asset: body.asset, subject: body.subject, into: body.into }));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
   }
   // A cast member's description, written from its pictures by a vision model; the studio puts it in the field to edit.
   if (section === "projects" && id && action === "cast" && parts[3] && parts[4] === "describe" && req.method === "POST") {

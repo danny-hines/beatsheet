@@ -100,6 +100,24 @@ export function SubjectTools({
     const res = await fetch(`/api/projects/${projectId}/subjects/join`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset: a.id, keep, others: [other] }) });
     if (!res.ok) setError(((await res.json()) as { error?: string }).error ?? "Couldn't join them");
   };
+  // Someone found here into the cast: a new character (or prop), or more of one already there, with a still of them.
+  const cast = (useStore((s) => s.project?.cast) ?? []).filter((m) => m.kind !== "style");
+  const castAs = async (subject: string, into: string) => {
+    setError("");
+    setBusy({ what: "Making a still of them", progress: 0 });
+    try {
+      await actions.flushSave();
+      const res = await fetch(`/api/projects/${projectId}/cast/from-subject`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset: a.id, subject, ...(into !== "new" ? { into } : {}) }) });
+      const j = (await res.json()) as { member?: string; error?: string };
+      if (!j.member) throw new Error(j.error ?? "Couldn't add them to the cast");
+      await actions.reload();
+      actions.select({ kind: "cast", id: j.member });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
   const rename = (id: string, label: string) => actions.edit((d) => void (d.assets.find((x) => x.id === a.id)!.subjects!.find((s) => s.id === id)!.label = label));
   const remove = (id: string) =>
     actions.edit((d) => {
@@ -150,6 +168,15 @@ export function SubjectTools({
                       ))}
                   </select>
                 )}
+                <select className="same-as" value="" disabled={!!busy} title="Put them in the cast, to make shots with: a still of them is cut from here" onChange={(e) => e.target.value && void castAs(s.id, e.target.value)}>
+                  <option value="">Cast…</option>
+                  <option value="new">{s.kind === "object" ? "A new prop" : "A new character"}</option>
+                  {cast.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      More of {m.name || `@${m.id}`}
+                    </option>
+                  ))}
+                </select>
                 <button className="link danger small" disabled={used.length > 0} title={used.length ? `Used by ${used.join(", ")}` : "Remove"} onClick={() => remove(s.id)}>
                   ✕
                 </button>
