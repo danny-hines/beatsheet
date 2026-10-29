@@ -500,6 +500,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           shot: q.get("shot") ?? undefined,
           sheet: q.get("sheet") ?? undefined,
           start: q.get("start") ?? undefined,
+          prompt: q.get("prompt") ?? undefined,
+          aspect: q.get("aspect") ?? undefined,
           count: Number(q.get("count")) || undefined,
           ...(quality === "rough" || quality === "final" ? { quality } : {}),
           ...(seconds > 0 ? { seconds } : {}),

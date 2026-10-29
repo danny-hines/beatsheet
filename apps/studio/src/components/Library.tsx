@@ -1,6 +1,6 @@
 import { formatTime, type Asset, type Project } from "@beatsheet/schema";
 import { useEffect, useMemo, useState } from "react";
-import { desktop, FOLDERS_APART, hideBroken, pickFootage, posterUrl, stripUrl, pathParts } from "../lib";
+import { ASSET_DRAG, desktop, FOLDERS_APART, hideBroken, pickFootage, posterUrl, stripUrl, pathParts } from "../lib";
 import type { RecordKind } from "../record";
 import { actions, getState, useProject, useStore } from "../store";
 import { RecorderDialog, RecordMenu } from "./Recorder";
@@ -274,6 +274,12 @@ function AssetRow({
       }
       onMouseMove={track}
       onMouseLeave={() => onHover?.(null)}
+      draggable={a.kind === "video" || a.kind === "image"}
+      onDragStart={(e) => {
+        onHover?.(null);
+        e.dataTransfer.setData(ASSET_DRAG, a.id);
+        e.dataTransfer.effectAllowed = "copy";
+      }}
     >
       <span className={`asset-row-thumb ${a.cutout ? "checker" : ""}`} style={{ background: a.cutout ? undefined : a.color ?? "#2a2e36" }}>
         {(a.kind === "video" || a.kind === "image") && <img src={a.cutout && a.kind === "image" ? `/media/${projectId}/asset/${a.id}/image` : posterUrl(projectId, a.id)} loading="lazy" alt="" onError={hideBroken} />}

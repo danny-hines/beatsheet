@@ -980,3 +980,42 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-ranking ol { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
 .make-ranking li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 10px; align-items: baseline; }
 .make-ranking-move { white-space: nowrap; }
+
+/* Make mode: the composer, the board of takes (a row per request, what was made from a take nested under it) and the
+   queue. It takes the middle of the window over, where the player and the timeline are in Edit. */
+.app.make { grid-template-areas: "top top top" "lib main side" "lib main side"; }
+.mode-switch button { padding: 3px 12px; }
+.make-view { grid-area: main; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.make-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 24px; display: flex; flex-direction: column; gap: 14px; }
+.make-composer { display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.make-composer .make-row { flex-wrap: wrap; }
+.make-prompt { width: 100%; resize: vertical; font-size: 14px; line-height: 1.45; }
+.cast-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.cast-chips .chip { cursor: pointer; font-family: var(--mono); font-size: 11.5px; }
+.cast-chips .chip.on { border-color: #4f7ea3; background: #22364a; }
+.make-composer .seconds { display: inline-flex; align-items: center; gap: 2px; }
+.make-composer .seconds input { width: 54px; }
+.start-frame img { height: 44px; border-radius: 4px; }
+.board-empty { padding: 30px; text-align: center; }
+.make-board { display: flex; flex-direction: column; gap: 16px; }
+.batch { display: flex; flex-direction: column; gap: 6px; }
+.batch-head { display: flex; align-items: baseline; gap: 8px; }
+.batch-prompt { margin: 0; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.batch-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+.batch-children { margin-left: 14px; padding-left: 12px; border-left: 2px solid var(--line-2); display: flex; flex-direction: column; gap: 12px; }
+.make-card { position: relative; height: 168px; max-width: 320px; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden; background: #0d0e11; cursor: pointer; flex: none; }
+.make-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.make-card img, .make-card video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.make-card .badge { position: absolute; left: 4px; top: 4px; font-size: 10px; padding: 0 4px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: #fff; }
+.make-card.pending { display: grid; place-items: center; color: var(--dim); font-size: 11px; border-style: dashed; animation: take-pulse 1.4s ease-in-out infinite; cursor: default; }
+.make-card.failed { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 8px; text-align: center; color: var(--warn); border-style: dashed; cursor: default; overflow-y: auto; }
+.card-actions { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 4px; padding: 6px; background: linear-gradient(transparent, rgba(0, 0, 0, 0.75)); opacity: 0; transition: opacity 0.12s; }
+.make-card:hover .card-actions, .card-actions:focus-within { opacity: 1; }
+.card-actions button, .card-actions select { font-size: 11px; padding: 2px 6px; max-width: 50%; }
+.make-queue { display: flex; align-items: center; gap: 12px; padding: 8px 18px; border-top: 1px solid var(--line); background: var(--panel); min-height: 38px; }
+.queue-jobs { flex: 1; min-width: 0; display: flex; gap: 14px; overflow-x: auto; white-space: nowrap; }
+.queue-job { display: inline-flex; align-items: center; gap: 6px; }
+.queue-job .dots { width: 18px; height: 5px; background: radial-gradient(circle, var(--accent) 2px, transparent 2.5px) 0 0 / 6px 5px repeat-x; animation: blink 1.2s infinite; }
+.lane.dropping { background: rgba(242, 181, 68, 0.08); box-shadow: inset 0 0 0 1px rgba(242, 181, 68, 0.45); }
+.make-card { min-width: 132px; }
+.card-actions { flex-wrap: wrap; }

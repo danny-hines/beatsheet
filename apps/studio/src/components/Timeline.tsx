@@ -1,6 +1,6 @@
 import { anchorForTime, describeAnchor, formatTime, snapPoints, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { assetMap, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
+import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 
 const PAD = 48;
@@ -128,6 +128,37 @@ export function Timeline() {
     setDrag(null);
   };
 
+  // ---- A picture dragged in from the Library: where it would go, then putting it there.
+  const [dropAt, setDropAt] = useState<{ track: string; t: number; label: string; snapped: boolean } | null>(null);
+  const dropHandlers = (track: string) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (!e.dataTransfer.types.includes(ASSET_DRAG)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      const t = timeAt(e.clientX);
+      if (!dragPoints.current.length || dropAt === null) dragPoints.current = snapPoints(tl);
+      const res = anchorForTime(t, dragPoints.current, e.altKey ? 0 : 8 / z);
+      const at = res.snapped && res.point ? res.point.t : t;
+      if (dropAt?.track !== track || Math.abs(dropAt.t - at) > 0.001) setDropAt({ track, t: at, label: describeAnchor(res.anchor, project), snapped: res.snapped });
+    },
+    onDragLeave: (e: React.DragEvent) => {
+      if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setDropAt(null);
+    },
+    onDrop: (e: React.DragEvent) => {
+      const id = e.dataTransfer.getData(ASSET_DRAG);
+      const a = id ? project.assets.find((x) => x.id === id) : undefined;
+      setDropAt(null);
+      dragPoints.current = [];
+      if (!a) return;
+      e.preventDefault();
+      const t = timeAt(e.clientX);
+      const res = anchorForTime(t, snapPoints(tl), e.altKey ? 0 : 8 / z);
+      let placed: string | undefined;
+      actions.edit((d) => void (placed = dropAsset(d, tl, track, res.snapped && res.point ? res.point.t : t, res.anchor, a)));
+      if (placed) actions.select({ kind: "shot", id: placed });
+    },
+  });
+
   const formatNotes = project.notes.filter((n) => n.status !== "dismissed" && (!n.format || n.format === format));
 
   return (
@@ -135,7 +166,7 @@ export function Timeline() {
       <div className="tl-toolbar">
         <span className="tl-title">Timeline</span>
         <span className="tl-hint">
-          Drag the left edge of a shot to move its cut. It snaps to {project.spine === "music" ? "bars and beats" : "words and lines"}; hold {keys("⌥")} to place it freely.
+          Drag the left edge of a shot to move its cut, or a picture from the Library onto a shot. It snaps to {project.spine === "music" ? "bars and beats" : "words and lines"}; hold {keys("⌥")} to place it freely.
         </span>
         <span className="spacer" />
         <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out">−</button>
@@ -244,7 +275,7 @@ export function Timeline() {
             )}
 
             {project.tracks.map((track) => (
-              <div key={track.id} className={`lane track-${track.kind}`} style={{ height: H[track.kind] }} {...lane}>
+              <div key={track.id} className={`lane track-${track.kind} ${dropAt?.track === track.id ? "dropping" : ""}`} style={{ height: H[track.kind] }} {...lane} {...(track.kind === "picture" || track.kind === "overlay" ? dropHandlers(track.id) : {})}>
                 {tl.shots
                   .filter((s) => s.track === track.id && Number.isFinite(s.start) && Number.isFinite(s.end))
                   .map((r) => {
@@ -301,6 +332,14 @@ export function Timeline() {
               <div key={m.id} className="marker" style={{ left: x(m.t) }} title={m.label} />
             ))}
             <Playhead z={z} />
+            {dropAt && (
+              <div className={`drag-ghost ${dropAt.snapped ? "snapped" : ""}`} style={{ left: x(dropAt.t) }}>
+                <span className="drag-label">
+                  {dropAt.snapped ? `at ${dropAt.label} · ` : ""}
+                  {formatTime(dropAt.t)}
+                </span>
+              </div>
+            )}
             {drag && (
               <div className={`drag-ghost ${drag.snapped ? "snapped" : ""}`} style={{ left: x(drag.t) }}>
                 <span className="drag-label">

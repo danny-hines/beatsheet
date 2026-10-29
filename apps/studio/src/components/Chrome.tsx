@@ -19,6 +19,7 @@ export function TopBar() {
   const saveError = useStore((s) => s.saveError);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
+  const mode = useStore((s) => s.mode);
   const [dialog, setDialog] = useState<"brief" | "export" | null>(null);
   useEffect(() => {
     const onExport = () => setDialog("export");
@@ -36,6 +37,14 @@ export function TopBar() {
         {title}
       </span>
       <CutMenu />
+      <div className="segmented mode-switch" role="tablist" aria-label="Mode">
+        <button role="tab" aria-selected={mode === "edit"} className={mode === "edit" ? "on" : ""} onClick={() => actions.setMode("edit")} title="Put the cut together">
+          Edit
+        </button>
+        <button role="tab" aria-selected={mode === "make"} className={mode === "make" ? "on" : ""} onClick={() => actions.setMode("make")} title="Make stills and clips with your services">
+          Make
+        </button>
+      </div>
       <span className="spacer" />
       <TurnLine />
       <span className="spacer" />

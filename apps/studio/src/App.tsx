@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { TopBar } from "./components/Chrome";
 import { Home } from "./components/Home";
 import { Library } from "./components/Library";
+import { MakeView } from "./components/Make";
 import { Shortcuts } from "./components/Dialogs";
 import { NotePopover } from "./components/NoteEditor";
 import { NewProjectDialog } from "./components/NewProject";
@@ -21,17 +22,21 @@ export function App() {
   const settingsOpen = useStore((s) => s.settingsOpen);
   const setup = useStore((s) => s.setup);
   const settingsLoaded = useStore((s) => s.settingsLoaded);
+  const mode = useStore((s) => s.mode);
 
   useEffect(() => {
-    // The app opens on the list of projects; a link to one (#project or #project/cut, as after a reload) opens it.
+    // The app opens on the list of projects; a link to one (#project, #project/cut or #project/cut/make, as after a
+    // reload) opens it.
     void actions.loadList();
-    const [hashId, hashCut] = location.hash.slice(1).split("/");
-    if (hashId) void actions.open(hashId, hashCut);
+    const modeOf = (m?: string) => (m === "make" ? "make" : "edit");
+    const [hashId, hashCut, hashMode] = location.hash.slice(1).split("/");
+    if (hashId) void actions.open(hashId, hashCut, modeOf(hashMode));
     const onHash = () => {
-      const [id, cut] = location.hash.slice(1).split("/");
+      const [id, cut, mode] = location.hash.slice(1).split("/");
       if (!id) return void (getState().projectId && actions.goHome());
-      if (id !== getState().projectId) actions.open(id, cut);
-      else if (cut && cut !== getState().cutId) actions.setCut(cut);
+      if (id !== getState().projectId) return void actions.open(id, cut, modeOf(mode));
+      if (cut && cut !== getState().cutId) actions.setCut(cut);
+      actions.setMode(modeOf(mode));
     };
     window.addEventListener("hashchange", onHash);
     // Live updates from the engine: project files changed on disk, agent sessions, the hosted agent's progress.
@@ -104,7 +109,21 @@ export function App() {
       </>
     );
   }
-  // Media on the left, the cut in the middle, the agent and notes on the right.
+  // Media on the left, the cut in the middle, the agent and notes on the right. Making stills and clips takes the
+  // middle over: what to make, what's been made, and what's on the way.
+  if (mode === "make") {
+    return (
+      <div className="app make">
+        <TopBar />
+        <Library />
+        <MakeView />
+        <aside className="side">
+          <SidePanel />
+        </aside>
+        {overlays}
+      </div>
+    );
+  }
   return (
     <div className="app">
       <TopBar />

@@ -48,6 +48,8 @@ export type State = {
   doc?: ProjectFile;
   /** The cut on screen. */
   cutId?: string;
+  /** Editing the cut, or making stills and clips for it (the hash carries it: #project/cut/make). */
+  mode: "edit" | "make";
   /** The cut on screen together with the shared material; what views and edits work on. Always `cutView(doc, cutId)`. */
   project?: Project;
   /** Version of the file the open project came from; saves are refused if the file moved on. */
@@ -100,6 +102,7 @@ let state: State = {
   future: [],
   save: "saved",
   format: "",
+  mode: "edit",
   playhead: 0,
   playing: false,
   zoom: 0,
@@ -224,7 +227,7 @@ const showCut = (projectId: string, cutId: string) => {
   } catch {
     // private window; it just won't remember
   }
-  history.replaceState(null, "", `#${projectId}/${cutId}`);
+  history.replaceState(null, "", `#${projectId}/${cutId}${state.mode === "make" ? "/make" : ""}`);
 };
 
 /** Puts a new version of the file on screen, keeping the cut and format when they still exist. */
@@ -296,7 +299,7 @@ export const actions = {
     setState({ list: await res.json(), listed: true });
   },
 
-  async open(id: string, cut?: string) {
+  async open(id: string, cut?: string, mode: State["mode"] = "edit") {
     clearTimeout(saveTimer);
     const res = await fetch(`/api/projects/${id}`);
     // Gone since it was linked (deleted, or renamed on disk): stay on the list.
@@ -326,6 +329,7 @@ export const actions = {
       playhead: 0,
       playing: false,
       zoom: 0,
+      mode,
     });
     showCut(id, cutId);
     pickUpCut(id, cutId);
@@ -364,6 +368,13 @@ export const actions = {
     await actions.loadList();
   },
 
+  /** Edit the cut, or make stills and clips for it. */
+  setMode(mode: State["mode"]) {
+    if (mode === state.mode || !state.projectId) return;
+    if (mode === "make") player?.pause();
+    setState({ mode, playing: false });
+    showCut(state.projectId, state.cutId!);
+  },
   /** Shows another cut of the open project. */
   setCut(cutId: string) {
     const { doc, projectId } = state;

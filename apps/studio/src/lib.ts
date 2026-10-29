@@ -93,12 +93,17 @@ export function targetFromSelection(sel: Selection | undefined, p: Project, tl: 
 
 export const round2 = (x: number) => Math.round(x * 100) / 100;
 
+/** What a picture dragged from the Library (or the board) carries: its asset id. */
+export const ASSET_DRAG = "application/x-beatsheet-asset";
+export { dropAsset, putInShot } from "./place";
+
 export function nextId(prefix: string, existing: { id: string }[]): string {
   let n = existing.length + 1;
   const ids = new Set(existing.map((x) => x.id));
   while (ids.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
 }
+
 
 export function noteMatches(n: Note, sel: Selection | undefined): boolean {
   if (!sel) return false;
