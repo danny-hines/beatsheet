@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { SCHEMA_VERSION, STAGE_IDS, type Asset, type ProjectFile } from "@beatsheet/schema";
+import { renameCast, SCHEMA_VERSION, STAGE_IDS, type Asset, type ProjectFile } from "@beatsheet/schema";
 
 // The engine reads where projects live (and settings) when its modules load, so they're imported after this is set.
 const root = mkdtempSync(join(tmpdir(), "beatsheet-make-"));
@@ -359,6 +359,8 @@ describe("roughs, finals and whole passes", () => {
   it("checks a whole pass against what may be spent before starting any of it", () => {
     const asks = ["s1", "s2"].map((shot) => ({ op: "image" as const, shot, count: 2 }));
     expect(make.estimate(PROJECT, asks).rows.find((r) => r.model === "nano-banana")).toMatchObject({ usd: 0.16, made: 2, unfit: [] });
+    // With each shot's Auto pick (Nano Banana here, the first ready one).
+    expect(make.estimate(PROJECT, asks).auto).toEqual({ usd: 0.16, made: 2 });
     // A shot that has no board to start from is set aside, and the rest is still estimated.
     expect(make.estimate(PROJECT, ["s1", "s2"].map((shot) => ({ op: "video" as const, shot, start: "board" }))).problems).toEqual([
       { shot: "s1", reason: 'Shot "s1" has no board yet: make stills for it first' },
@@ -448,7 +450,7 @@ describe("takes that finish together, and trying again", () => {
 describe("stills from services that answer in one request", () => {
   it("makes a board with GPT Image at the shot's shape, saves the picture, and counts what it actually cost", async () => {
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    expect(fit).toMatchObject({ model: "gpt-image", route: "openai", endpoint: "gpt-image-2.5-flare", aspect: "9:16", usd: 0.053 });
+    expect(fit).toMatchObject({ model: "gpt-image", route: "openai", endpoint: "gpt-image-2.5-flare", aspect: "9:16", usd: 0.03 });
     await make.driveJobs(PROJECT);
 
     expect(seen.submits).toHaveLength(0);
@@ -466,7 +468,7 @@ describe("stills from services that answer in one request", () => {
   it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and with the key when asked", async () => {
     plans.ready = ["chatgpt"];
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.053 }] });
+    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.03 }] });
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(plans.asks).toEqual([{ route: "chatgpt", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);
@@ -480,6 +482,47 @@ describe("stills from services that answer in one request", () => {
     expect(seen.direct).toHaveLength(1);
     expect(make.listJobs(PROJECT)[1]).toMatchObject({ status: "done", route: "openai" });
     expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", model: "muse-image", via: "muse-code" })).toThrow("Muse Image can't make this: Runs on Muse Code plan");
+  });
+
+  it("brings a sheet in as the renamed one's when its cast member is renamed while it's made", async () => {
+    // Nano Banana on fal: it waits in the queue a while.
+    make.startMake(PROJECT, { op: "image", sheet: "cat", model: "nano-banana", count: 1 });
+    store.updateFile(PROJECT, (d) => void renameCast(d, "cat", "marmalade"));
+    expect(make.renameInJobs(PROJECT, "cat", "marmalade")).toBe(1);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ sheet: "marmalade", request: { cast: ["marmalade"] } });
+    expect(make.listJobs(PROJECT)[0]!.request.prompt).toMatch(/^A photographic reference sheet of @marmalade:/);
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", sheet: "marmalade", asset: "marmalade-sheet" });
+    expect(store.loadFile(PROJECT).doc.cast!.find((m) => m.id === "marmalade")!.images).toEqual(["marmalade-sheet"]);
+  });
+
+  it("gives a model that takes more pictures more of the cast's, once it's picked", async () => {
+    // Five characters with pictures: every still model takes four, Muse Image ten.
+    store.updateFile(PROJECT, (d) => {
+      for (const n of ["a", "b", "c", "d", "e"]) {
+        d.assets.push({ id: `${n}-pic`, kind: "image", path: d.assets[0]!.path });
+        d.cast!.push({ id: n, name: n.toUpperCase(), kind: "character", images: [`${n}-pic`] });
+      }
+    });
+    const prompt = "@a, @b, @c, @d and @e at the table";
+    expect(make.makeChoices(PROJECT, { op: "image", prompt }).req.refs).toEqual(["a-pic", "b-pic", "c-pic", "d-pic"]);
+    const { jobs } = make.startMake(PROJECT, { op: "image", prompt, model: "muse-image", count: 1 });
+    expect(jobs[0]!.request.refs).toEqual(["a-pic", "b-pic", "c-pic", "d-pic", "e-pic"]);
+    expect(jobs[0]!.request.sent).toContain("Reference pictures, in order: A, B, C, D, E.");
+    await make.driveJobs(PROJECT);
+    expect(JSON.parse(seen.direct[0]!.body).images).toHaveLength(5);
+  });
+
+  it("gives a sheet made from photos its style's picture too, when there's room", async () => {
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push({ id: "noir-pic", kind: "image", path: d.assets[0]!.path });
+      d.cast!.push({ id: "noir", name: "Film noir", kind: "style", about: "black and white", images: ["noir-pic"] });
+      d.look = { ...(d.look ?? {}), style: "noir" };
+    });
+    const { jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", model: "muse-image", count: 1 });
+    expect(jobs[0]!.request.refs).toEqual(["cat-photo", "noir-pic"]);
+    expect(jobs[0]!.request.sent).toMatch(/The reference photos show the cat: keep .* exactly\. The last reference picture shows the style to draw it in, not who or what it is\.$/);
+    await make.driveJobs(PROJECT);
   });
 
   it("gives Muse Image the cast's pictures as data in JSON, and GPT Image as files in a form", async () => {
@@ -539,7 +582,7 @@ describe("stills from services that answer in one request", () => {
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "failed", charged: true, error: expect.stringMatching(/^The engine stopped while this was being made/) });
-    expect(make.spentSince(since)).toBeCloseTo(0.053, 3);
+    expect(make.spentSince(since)).toBeCloseTo(0.03, 3);
 
     // Trying again makes it again.
     make.retryJobs(PROJECT, [job!.id]);

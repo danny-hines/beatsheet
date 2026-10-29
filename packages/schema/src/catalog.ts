@@ -24,8 +24,7 @@ export const CATALOG: CatalogModel[] = [
     by: "Meta",
     note: "Cheap stills and boards; keeps a character from reference pictures.",
     ops: ["image"],
-    // It takes up to 10; 4 like the others, since a request gives every still model the same pictures.
-    takes: { refs: 4 },
+    takes: { refs: 10 },
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 20,
     // dev.meta.ai/docs/image-generation: $0.01 an image, whatever its size. Muse Code's own image tool makes it on the
@@ -41,14 +40,16 @@ export const CATALOG: CatalogModel[] = [
     by: "OpenAI",
     note: "Follows long, exact prompts and draws legible text; slower.",
     ops: ["image"],
-    takes: { refs: 4 },
+    // Its edits take up to 16 pictures.
+    takes: { refs: 10 },
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 60,
-    // developers.openai.com/api/docs/guides/image-generation: billed by the token, about 4 to 5¢ a picture at medium
-    // quality; the take records what it actually cost. Codex makes it on the person's ChatGPT plan instead, from its
-    // allowance rather than by the token.
+    // developers.openai.com/api/docs/guides/image-generation: billed by the token ($5 a million in, $8 for pictures
+    // in, $30 out). At medium quality a 9:16 board from one picture cost 1.7¢; 3¢ leaves room for more pictures and
+    // wider shapes. The take records what it actually cost. Codex makes it on the person's ChatGPT plan instead,
+    // from its allowance rather than by the token.
     routes: [
-      { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.5-flare", refs: "gpt-image-2.5-flare" }, price: { perImage: 0.053 } },
+      { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.5-flare", refs: "gpt-image-2.5-flare" }, price: { perImage: 0.03 } },
       { via: "chatgpt", shape: "plan", endpoints: { text: "gpt-image", refs: "gpt-image" }, price: { perImage: 0 } },
     ],
   },

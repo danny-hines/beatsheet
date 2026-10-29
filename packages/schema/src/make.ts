@@ -352,28 +352,17 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
   const [id, variant] = from.split("/") as [string, string?];
   const member = file.cast?.find((m) => m.id === id);
   if (!member || !CAST_ID.test(to)) return false;
-  let map: (key: string) => string;
   if (variant) {
     const v = member.variants?.find((x) => x.id === variant);
     if (!v || (to !== variant && member.variants!.some((x) => x.id === to))) return false;
     v.id = to;
-    map = (key) => (key === from ? `${id}/${to}` : key);
   } else {
     if (to !== id && file.cast!.some((m) => m.id === to)) return false;
     member.id = to;
-    map = (key) => {
-      const [a, b] = key.split("/");
-      return a === id ? (b ? `${to}/${b}` : to) : key;
-    };
     for (const m of file.cast!) if (m.style === id) m.style = to;
     if (file.look?.style === id) file.look.style = to;
   }
-  const inPrompt = (text: string) =>
-    text.replace(MENTION, (whole, a: string, b?: string) => {
-      const key = b ? `${a}/${b}` : a;
-      const next = map(key);
-      return next === key ? whole : `@${next}`;
-    });
+  const { key: map, text: inPrompt } = castRenaming(from, to);
   for (const cut of file.cuts) {
     for (const shot of cut.shots) {
       const c = shot.content;
@@ -420,8 +409,36 @@ export function keepCast(file: ProjectFile, proposals: CastProposal[], keep: str
   return out;
 }
 
+/**
+ * How the keys ("cat", "cat/heist") and @mentions that name a cast member or a variant change when `from` becomes
+ * `to`: for the project (renameCast) and for whatever else holds them, like the jobs still being made.
+ */
+export function castRenaming(from: string, to: string): { key: (key: string) => string; text: (text: string) => string } {
+  const [id, variant] = from.split("/") as [string, string?];
+  const key = variant
+    ? (k: string) => (k === from ? `${id}/${to}` : k)
+    : (k: string) => {
+        const [a, b] = k.split("/");
+        return a === id ? (b ? `${to}/${b}` : to) : k;
+      };
+  const text = (t: string) =>
+    t.replace(MENTION, (whole, a: string, b?: string) => {
+      const k = b ? `${a}/${b}` : a;
+      const next = key(k);
+      return next === k ? whole : `@${next}`;
+    });
+  return { key, text };
+}
+
 /** The most reference pictures any model in a catalog takes for stills. */
 export const maxStillRefs = (catalog: CatalogModel[]) => Math.max(0, ...catalog.filter((m) => m.ops.includes("image")).map((m) => m.takes.refs ?? 0));
+
+/**
+ * The reference pictures every model for stills takes, which a request is built with before a model is picked (so each
+ * one can be offered); the one picked is then given as many as it takes.
+ */
+export const fewestStillRefs = (catalog: CatalogModel[]) =>
+  Math.min(...catalog.filter((m) => m.ops.includes("image") && (m.takes.refs ?? 0) > 0).map((m) => m.takes.refs!), Infinity) || 0;
 
 /** What a shot asks of a take: how long it plays (in the cut's first format), that format's shape, and a first prompt. */
 export function shotNeeds(project: Project, shotId: string): { seconds?: number; aspect: string; prompt?: string } {

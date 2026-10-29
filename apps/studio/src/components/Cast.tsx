@@ -267,6 +267,9 @@ export function CastView({ id }: { id: string }) {
   };
 
   const edit = (fn: (m: CastMember) => void) => actions.edit((d) => fn(d.cast!.find((x) => x.id === id)!));
+  // A sheet or a take still being made follows a rename, so it comes in as the renamed one's.
+  const moveJobs = (from: string, to: string) =>
+    void fetch(`/api/projects/${projectId}/jobs/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from, to }) }).catch(() => {});
   // A member without a name of its own takes its id from the name it's given; a named one keeps its id, which
   // prompts already use.
   const rename = (name: string) => {
@@ -275,17 +278,22 @@ export function CastView({ id }: { id: string }) {
       f.cast!.find((c) => c.id === id)!.name = name.trim();
       if (newId !== id) renameCast(f, id, newId);
     });
-    if (newId !== id) actions.select({ kind: "cast", id: newId });
+    if (newId !== id) {
+      moveJobs(id, newId);
+      actions.select({ kind: "cast", id: newId });
+    }
   };
   // A new id on purpose: every prompt and shot that names the old one follows.
   const reId = (to: string) => {
     if (p.cast?.some((x) => x.id === to)) return `@${to} is taken`;
     actions.editFile((f) => void renameCast(f, id, to));
+    moveJobs(id, to);
     actions.select({ kind: "cast", id: to });
   };
   const reIdVariant = (from: string) => (to: string) => {
     if (m.variants?.some((x) => x.id === to)) return `@${id}/${to} is taken`;
     actions.editFile((f) => void renameCast(f, `${id}/${from}`, to));
+    moveJobs(`${id}/${from}`, to);
     if (sheetOf === `${id}/${from}`) setSheetOf(`${id}/${to}`);
   };
   const remove = () => {

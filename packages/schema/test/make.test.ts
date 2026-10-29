@@ -11,6 +11,7 @@ import {
   cutView,
   fitModel,
   HANDLE,
+  fewestStillRefs,
   maxStillRefs,
   parseFile,
   pictureOf,
@@ -119,8 +120,8 @@ describe("whether a model can make a shot", () => {
     const gpt = CATALOG.find((m) => m.id === "gpt-image")!;
     const both = { openai: { label: "OpenAI", state: "ready" }, chatgpt: { label: "ChatGPT plan", state: "ready" } } satisfies Record<string, ServiceState>;
     // The plan costs nothing more, so it comes first; the key is the other choice.
-    expect(fitModel(gpt, { op: "image", prompt: "x", aspect: "9:16" }, both)).toMatchObject({ ok: true, route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", where: "OpenAI", usd: 0.053 }] });
-    expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).toMatchObject({ ok: true, route: "openai", endpoint: "gpt-image-2.5-flare", usd: 0.053 });
+    expect(fitModel(gpt, { op: "image", prompt: "x", aspect: "9:16" }, both)).toMatchObject({ ok: true, route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", where: "OpenAI", usd: 0.03 }] });
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).toMatchObject({ ok: true, route: "openai", endpoint: "gpt-image-2.5-flare", usd: 0.03 });
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).not.toHaveProperty("also");
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "chatgpt" }, { openai: both.openai })).toMatchObject({ ok: false, why: { kind: "connect", reason: "Runs on chatgpt" } });
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "fal" }, both)).toMatchObject({ ok: false, why: { kind: "fit", reason: "GPT Image doesn't run on fal" } });
@@ -425,9 +426,11 @@ describe("more cast than a model takes pictures of", () => {
     const cast = [pic("kitchen", "place"), pic("mom", "character"), pic("dad", "character"), pic("kid", "character"), pic("cat", "character"), pic("mug", "prop")];
     const prompt = "@mom, @dad, @kid and @cat at breakfast in @kitchen, a @mug on the table";
     const uses = castOf(prompt, cast);
-    const pictured = castPictures(uses, maxStillRefs(CATALOG));
-    expect(maxStillRefs(CATALOG)).toBe(4);
+    const pictured = castPictures(uses, fewestStillRefs(CATALOG));
+    // Nano Banana takes 4; Muse Image and GPT Image take more, and are given more once picked.
+    expect([fewestStillRefs(CATALOG), maxStillRefs(CATALOG)]).toEqual([4, 10]);
     expect(pictured.map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic"]);
+    expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic", "mug-pic", "kitchen-pic"]);
     // Everyone is still described; only the pictured are named as references.
     expect(castPrompt(prompt, uses, pictured.map((p) => p.use))).toMatch(/in kitchen \(kitchen look\), a mug \(mug look\) on the table\. Reference pictures, in order: mom, dad, kid, cat\./);
   });

@@ -74,6 +74,135 @@ function shotsToMake(p: Project): Shot[] {
 }
 const shotPrompt = (s: Shot) => (s.content.kind === "placeholder" ? s.content.description : s.content.kind === "generated" ? s.content.prompt : "");
 
+/** "For" set to this makes takes for every shot that still needs one, each from its own description. */
+const PASS = "*";
+
+/**
+ * The shots a pass makes takes for: for stills, the ones with no still yet; for clips, the ones with a still to start
+ * from and no clip yet (or, for finals, no final).
+ */
+function passShots(p: Project, op: MakeOp, quality: Quality): Shot[] {
+  const kindOf = (id: string | undefined) => p.assets.find((a) => a.id === id);
+  return shotsToMake(p).filter((s) => {
+    const c = s.content;
+    const takes = c.kind === "generated" ? (c.takes ?? (c.take ? [c.take] : [])).map(kindOf) : [];
+    if (op === "image") return !takes.some((a) => a?.kind === "image");
+    const board = c.kind === "generated" && (kindOf(c.take)?.kind === "image" || !!c.start);
+    const clips = takes.filter((a) => a?.kind === "video");
+    return board && (quality === "final" ? !clips.some((a) => a?.provenance?.params?.quality === "final") : !clips.length);
+  });
+}
+
+type Estimate = { rows: { model: string; label: string; usd: number; made: number; unfit: { shot?: string; reason: string }[] }[]; auto: { usd: number; made: number }; problems: { shot?: string; reason: string }[] };
+
+/**
+ * A pass over the cut: takes for every shot that needs one, each from its own description, at the shot's length and
+ * the cut's shape. What it would cost with each model is asked first; it starts all or nothing.
+ */
+function Pass({ draft, set, onStarted, forSelect }: { draft: Draft; set: (d: Partial<Draft>) => void; onStarted: (jobs: MakeJob[]) => void; forSelect: React.ReactNode }) {
+  const projectId = useStore((s) => s.projectId)!;
+  const cutId = useStore((s) => s.cutId);
+  const p = useProject();
+  const video = draft.op === "video";
+  const shots = passShots(p, draft.op, draft.quality);
+  const model = pickOf(draft.model).model;
+  const asks: MakeAsk[] = shots.map((s) => ({ op: draft.op, cut: cutId, shot: s.id, count: draft.count, ...(model ? { model } : {}), ...(video ? { quality: draft.quality, start: "board" } : {}) }));
+  const key = JSON.stringify(asks.map((a) => ({ ...a, model: undefined })));
+  const [est, setEst] = useState<Estimate>();
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    setEst(undefined);
+    const plain = JSON.parse(key) as MakeAsk[];
+    if (!plain.length) return;
+    let live = true;
+    void fetch(`/api/projects/${projectId}/make/estimate`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asks: plain }) })
+      .then((r) => r.json() as Promise<Estimate>)
+      .then((e) => live && setEst(e))
+      .catch(() => {});
+    return () => void (live = false);
+  }, [projectId, key]);
+  const row = model ? est?.rows.find((r) => r.model === model) : undefined;
+  const all = shots.length;
+  // Only a model that can make every shot in the pass; Auto picks per shot.
+  const ok = !!est && (model ? row?.made === all : est.auto.made === all);
+  const usd = model ? row?.usd : est?.auto.usd;
+  const make = async () => {
+    setError("");
+    setSending(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asks }) });
+      const j = (await res.json()) as { jobs?: MakeJob[]; error?: string };
+      if (!res.ok || !j.jobs) throw new Error(j.error ?? `${res.status}`);
+      onStarted(j.jobs);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSending(false);
+    }
+  };
+  const what = video ? `${draft.quality} ${draft.count === 1 ? "clip" : "clips"}` : draft.count === 1 ? "still" : "stills";
+  const short = (r: Estimate["rows"][number]) => `${r.label} · ${r.made === all ? money(r.usd) : `can make ${r.made} of ${all}`}`;
+  return (
+    <section className="make-composer">
+      {forSelect}
+      <p className="small">
+        {all
+          ? `${all} shot${all === 1 ? "" : "s"} ${video ? `with a still and no ${draft.quality === "final" ? "final" : "clip"} yet` : "with no still yet"}: ${shots.map((s) => s.id).join(", ")}. Each one's own description is its prompt${video ? ", from its chosen still" : ""}.`
+          : video
+            ? `Every shot with a still already has a ${draft.quality === "final" ? "final" : "clip"}.`
+            : "Every shot already has a still."}
+      </p>
+      <div className="make-row">
+        <div className="segmented">
+          <button className={!video ? "on" : ""} onClick={() => set({ op: "image", model: "" })} title="Stills: boards, cents each">
+            Stills
+          </button>
+          <button className={video ? "on" : ""} onClick={() => set({ op: "video", model: "" })} title="Clips, from each shot's chosen still">
+            Video
+          </button>
+        </div>
+        {video && (
+          <select value={draft.quality} onChange={(e) => set({ quality: e.target.value as Quality, model: "" })} aria-label="Quality" title="Roughs to judge, or finals once the cut holds">
+            <option value="rough">Rough</option>
+            <option value="final">Final</option>
+          </select>
+        )}
+        <select value={draft.count} onChange={(e) => set({ count: Number(e.target.value) })} aria-label="How many" title="How many takes a shot">
+          {[1, 2, 3, 4].map((n) => (
+            <option key={n} value={n}>
+              {n} a shot
+            </option>
+          ))}
+        </select>
+        <select value={model ?? ""} onChange={(e) => set({ model: e.target.value })} aria-label="Model" title="Which model makes them">
+          <option value="">{est ? `Auto · ${est.auto.made === all ? money(est.auto.usd) : `can make ${est.auto.made} of ${all}`}` : "Auto"}</option>
+          {est?.rows
+            .filter((r) => r.made > 0)
+            .sort((a, b) => b.made - a.made || a.usd - b.usd)
+            .map((r) => (
+              <option key={r.model} value={r.model} disabled={r.made !== all}>
+                {short(r)}
+              </option>
+            ))}
+        </select>
+      </div>
+      {est && !ok && all > 0 && (
+        <p className="warn small">
+          {[...est.problems, ...(row?.unfit ?? [])].map((x) => `${x.shot ? `Shot ${x.shot}: ` : ""}${x.reason}`).join(". ") || "Nothing can make all of them now."}
+        </p>
+      )}
+      <div className="make-row">
+        <button className="primary" disabled={!all || !ok || sending} onClick={() => void make()}>
+          Make {draft.count} {what} for each of {all} shot{all === 1 ? "" : "s"}
+          {usd !== undefined && ok ? ` · ${usd === 0 ? "on your plan" : money(usd)}` : ""}
+        </button>
+        {error && <span className="warn small">{error}</span>}
+      </div>
+    </section>
+  );
+}
+
 function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn: (d: Draft) => Draft) => void; onStarted: (jobs: MakeJob[]) => void }) {
   const projectId = useStore((s) => s.projectId)!;
   const cutId = useStore((s) => s.cutId);
@@ -84,7 +213,8 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
   const [error, setError] = useState("");
   const area = useRef<HTMLTextAreaElement>(null);
 
-  const shot = draft.shot ? p.shots.find((s) => s.id === draft.shot) : undefined;
+  const pass = draft.shot === PASS;
+  const shot = draft.shot && !pass ? p.shots.find((s) => s.id === draft.shot) : undefined;
   const resolved = shot ? tl.shots.find((r) => r.id === shot.id) : undefined;
   const shotSeconds = resolved && Number.isFinite(resolved.end - resolved.start) ? round2(resolved.end - resolved.start) : undefined;
   // The prompt the models are checked against lags the typing a little, so each key doesn't ask the engine again.
@@ -98,7 +228,7 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
   const { choices, problem } = useChoices({
     op: draft.op,
     cut: cutId,
-    shot: draft.shot,
+    shot: pass ? undefined : draft.shot,
     prompt: settled,
     count: draft.count,
     start: video ? draft.start : undefined,
@@ -161,20 +291,26 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
   const aspects = [...new Set([...p.formats.map((f) => aspectOf(f.width, f.height)), "16:9", "9:16", "1:1", "4:5"])];
   const what = video ? `${draft.quality} ${draft.count === 1 ? "clip" : "clips"}` : draft.count === 1 ? "still" : "stills";
 
+  const forSelect = (
+    <div className="make-row">
+      <span className="dim small">For</span>
+      <select value={draft.shot ?? ""} onChange={(e) => (e.target.value === PASS ? set({ shot: PASS, model: "" }) : pickShot(e.target.value))} aria-label="What it's for" title="A shot it's for gets the takes; otherwise they go to the Library">
+        <option value="">The Library</option>
+        {shotsToMake(p).length > 1 && <option value={PASS}>Every shot that needs one</option>}
+        {shotsToMake(p).map((s) => (
+          <option key={s.id} value={s.id}>
+            Shot {s.id}: {shotPrompt(s).slice(0, 48)}
+          </option>
+        ))}
+      </select>
+      {shot && <span className="dim small">{[shotSeconds !== undefined ? `${shotSeconds}s` : "", p.formats.map((f) => f.label).join(" and ")].filter(Boolean).join(" · ")}</span>}
+    </div>
+  );
+  if (pass) return <Pass draft={draft} set={set} onStarted={onStarted} forSelect={forSelect} />;
+
   return (
     <section className="make-composer">
-      <div className="make-row">
-        <span className="dim small">For</span>
-        <select value={draft.shot ?? ""} onChange={(e) => pickShot(e.target.value)} aria-label="What it's for" title="A shot it's for gets the takes; otherwise they go to the Library">
-          <option value="">The Library</option>
-          {shotsToMake(p).map((s) => (
-            <option key={s.id} value={s.id}>
-              Shot {s.id}: {shotPrompt(s).slice(0, 48)}
-            </option>
-          ))}
-        </select>
-        {shot && <span className="dim small">{[shotSeconds !== undefined ? `${shotSeconds}s` : "", p.formats.map((f) => f.label).join(" and ")].filter(Boolean).join(" · ")}</span>}
-      </div>
+      {forSelect}
       <textarea
         ref={area}
         className="make-prompt"

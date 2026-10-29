@@ -13,8 +13,9 @@ import {
   CATALOG,
   castOf,
   castPictures,
+  castRenaming,
   castPrompt,
-  maxStillRefs,
+  fewestStillRefs,
   chooseModels,
   FIDELITY,
   fitModel,
@@ -131,6 +132,14 @@ function readJob(projectId: string, id: string): MakeJob | undefined {
   }
 }
 
+/**
+ * Changes a few things about a job as it is on disk now, not as it was when `job` was read: what it's for may have
+ * moved on meanwhile (a cast member renamed, see renameInJobs).
+ */
+function updateJob(projectId: string, job: MakeJob, patch: Partial<MakeJob>): MakeJob {
+  return saveJob(projectId, { ...(readJob(projectId, job.id) ?? job), ...patch });
+}
+
 function saveJob(projectId: string, job: MakeJob): MakeJob {
   const next = { ...job, updatedAt: new Date().toISOString() };
   mkdirSync(jobsDir(projectId), { recursive: true });
@@ -195,10 +204,11 @@ function boardOf(project: Project, shot: Shot | undefined): string | undefined {
 /**
  * The request in full. A shot fills in its length (for video), the cut's shape and its description; a sheet, a
  * prompt for clean views of its cast member. Cast named with @ are described in what the model reads, and stills are
- * given their pictures (a sheet with no pictures yet, the photos it was made from). A clip from a board doesn't need
- * them: they're in the board.
+ * given their pictures (a sheet with no pictures yet, the photos it was made from, and its style's picture when there's
+ * room): as many as `pictures`, which is what every still model takes until one is picked. A clip from a board doesn't
+ * need them: they're in the board.
  */
-export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
+export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestStillRefs(CATALOG)): FullRequest {
   const { project } = loadProject(projectId, ask.cut);
   const shot = ask.shot ? project.shots.find((s) => s.id === ask.shot) : undefined;
   if (ask.shot && !shot) throw new Error(`No shot "${ask.shot}" in this cut`);
@@ -221,16 +231,24 @@ export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
   if (!refs && ask.op === "image") {
     const photos = member && !member.images?.length ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image") : [];
     if (photos.length) {
-      refs = photos.slice(0, 4);
+      // A style's picture goes last, when there's room for it after the photos.
+      const styled = style(member!.style) ?? lookStyle;
+      const stylePic = styled ? project.cast?.find((m) => m.id === styled)?.images?.[0] : undefined;
+      const room = stylePic ? pictures - 1 : pictures;
+      refs = photos.slice(0, Math.max(1, room));
       // What to keep from the photos, whatever the style: a drawn cat is still this cat.
       const keep = member!.kind === "place" ? "its layout, colors and details" : `${member!.name}'s features, markings, colors and shape`;
       sent = `${sent.replace(/[.!?]?\s*$/, ".")} The reference photos show ${member!.name}: keep ${keep} exactly.`;
+      if (stylePic && refs.length < pictures) {
+        refs = [...refs, stylePic];
+        sent += " The last reference picture shows the style to draw it in, not who or what it is.";
+      }
     } else {
-      // As many pictures as a model for stills takes, characters first; the rest are described in words.
-      const pictures = castPictures(uses, maxStillRefs(CATALOG));
-      if (pictures.length) {
-        refs = pictures.map((p) => p.asset);
-        sent = castPrompt(prompt, uses, pictures.map((p) => p.use));
+      // As many pictures as the model takes, characters first; the rest are described in words.
+      const pictured = castPictures(uses, pictures);
+      if (pictured.length) {
+        refs = pictured.map((p) => p.asset);
+        sent = castPrompt(prompt, uses, pictured.map((p) => p.use));
         // Given a sheet of views, a model can copy its layout and give back a grid of the scene (Muse Image did).
         if (!member) sent += " The picture is one single frame of the scene, not a sheet, a grid or panels.";
       }
@@ -316,16 +334,32 @@ function plan(projectId: string, ask: MakeAsk): Plan {
       throw new Error(why.length ? `${where}nothing can make this now. ${why.join(". ")}.` : `No model makes ${req.op === "image" ? "images" : "video"}`);
     }
   }
-  const route = CATALOG.find((m) => m.id === fit.model)!.routes.find((r) => r.via === fit.route && r.endpoints[shapeOf(req)] === fit.endpoint)!;
-  return { ask, req, fit, shape: route.shape };
+  // Picked: a model that takes more pictures than every still model does is given more of the cast's.
+  let full = req;
+  const model = CATALOG.find((m) => m.id === fit!.model)!;
+  if (req.op === "image" && !ask.refs?.length && (model.takes.refs ?? 0) > fewestStillRefs(CATALOG)) {
+    const more = requestFor(projectId, ask, model.takes.refs);
+    const f = fitModel(model, { ...more, via: fit!.route }, serviceStates());
+    if ((more.refs?.length ?? 0) > (req.refs?.length ?? 0) && f.ok) [full, fit] = [more, f];
+  }
+  const route = model.routes.find((r) => r.via === fit!.route && r.endpoints[shapeOf(full)] === fit!.endpoint)!;
+  return { ask, req: full, fit, shape: route.shape };
 }
 
-/** What a set of requests would cost, by model, without starting them: for a whole pass over a cut's shots. */
+/**
+ * What a set of requests would cost, by model, without starting them: for a whole pass over a cut's shots. `auto` is
+ * what it'd cost with each shot's Auto pick.
+ */
 export function estimate(
   projectId: string,
   asks: MakeAsk[],
-): { rows: { model: string; label: string; usd: number; made: number; unfit: { shot?: string; reason: string }[] }[]; problems: { shot?: string; reason: string }[] } {
+): {
+  rows: { model: string; label: string; usd: number; made: number; unfit: { shot?: string; reason: string }[] }[];
+  auto: { usd: number; made: number };
+  problems: { shot?: string; reason: string }[];
+} {
   const out = new Map<string, { model: string; label: string; usd: number; made: number; unfit: { shot?: string; reason: string }[] }>();
+  const auto = { usd: 0, made: 0 };
   // A shot that can't be asked for at all (no board yet to start from) is a problem with that shot, not the pass.
   const problems: { shot?: string; reason: string }[] = [];
   for (const ask of asks) {
@@ -336,6 +370,10 @@ export function estimate(
       problems.push({ shot: ask.shot, reason: err instanceof Error ? err.message : String(err) });
       continue;
     }
+    if (choices.auto) {
+      auto.usd = Math.round((auto.usd + (choices.auto.usd ?? 0)) * 1000) / 1000;
+      auto.made++;
+    }
     for (const f of [...choices.ready, ...choices.setup, ...choices.unfit]) {
       const row = out.get(f.model) ?? { model: f.model, label: f.label, usd: 0, made: 0, unfit: [] };
       if (f.ok) {
@@ -345,7 +383,7 @@ export function estimate(
       out.set(f.model, row);
     }
   }
-  return { rows: [...out.values()], problems };
+  return { rows: [...out.values()], auto, problems };
 }
 
 /**
@@ -427,6 +465,26 @@ export async function cancelJobs(projectId: string, ids: string[]): Promise<Make
     out.push(saveJob(projectId, { ...job, status: "canceled" }));
   }
   return out;
+}
+
+/**
+ * Moves the jobs still being made along with a cast member (or variant) that was renamed: a sheet comes in as the
+ * renamed one's picture, and takes say who's in them by the new id.
+ */
+export function renameInJobs(projectId: string, from: string, to: string): number {
+  const { key, text } = castRenaming(from, to);
+  let moved = 0;
+  for (const job of listJobs(projectId).filter(isOpen)) {
+    const sheet = job.sheet && key(job.sheet);
+    const cast = job.request.cast?.map(key);
+    const prompt = text(job.request.prompt);
+    if (sheet === job.sheet && prompt === job.request.prompt && cast?.join() === job.request.cast?.join()) continue;
+    // Read again just before writing: the job may have moved on since the list was read.
+    const now = readJob(projectId, job.id) ?? job;
+    saveJob(projectId, { ...now, ...(sheet ? { sheet } : {}), request: { ...now.request, prompt, ...(cast ? { cast } : {}) } });
+    moved++;
+  }
+  return moved;
 }
 
 /**
@@ -574,17 +632,17 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       refs: r.refs && (await Promise.all(r.refs.map(upload))),
     });
     const remote = await falSubmit(key, job.endpoint, input);
-    saveJob(projectId, { ...job, status: "running", remote });
+    updateJob(projectId, job, { status: "running", remote });
     return;
   }
   const s = await falStatus(key, job.remote);
   if (s.state !== "done") {
     const position = s.state === "queued" ? s.position : undefined;
-    if (position !== job.position || job.status !== "running") saveJob(projectId, { ...job, status: "running", position });
+    if (position !== job.position || job.status !== "running") updateJob(projectId, job, { status: "running", position });
     return;
   }
   if (s.error) throw new FalError(s.error, true);
-  if (!job.charged) job = saveJob(projectId, { ...job, charged: true });
+  if (!job.charged) job = updateJob(projectId, job, { charged: true });
   const out = falOutput(await falResult(key, job.remote!));
   if (!out) throw new FalError("fal finished but didn't send a file", true);
   await finish(projectId, job, out);
@@ -600,7 +658,7 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
   const plan = PLAN_ROUTES.includes(job.route);
   // Sent by a process that stopped before the answer came: the picture is lost, and may have been paid for (a plan's comes out of its allowance).
   if (job.status === "running") {
-    if (!plan) saveJob(projectId, { ...job, charged: true });
+    if (!plan) updateJob(projectId, job, { charged: true });
     throw new FalError(`The engine stopped while this was being made, so the picture was lost${plan ? "" : " (and may have been charged)"}. Try again to make it again.`, true);
   }
   const { project, dir } = loadProject(projectId, job.cut);
@@ -611,7 +669,7 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
   };
   const r = job.request;
   const refs = r.refs?.map(fileOf);
-  job = saveJob(projectId, { ...job, status: "running" });
+  job = updateJob(projectId, job, { status: "running" });
   const beat = setInterval(() => {
     try {
       utimesSync(lockFile(projectId, job.id), new Date(), new Date());
@@ -650,9 +708,12 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
 function finish(projectId: string, job: MakeJob, out: Taken) {
   return oneAtATime(projectId, async () => {
     try {
+      // Who it's for as the job says now: a cast member renamed while it was made has moved it along (renameInJobs).
+      const now = readJob(projectId, job.id);
+      if (now) job = { ...job, sheet: now.sheet, request: now.request };
       const asset = await bringIn(projectId, job, out);
       attach(projectId, job, asset);
-      saveJob(projectId, { ...job, status: "done", position: undefined, asset: asset.id });
+      updateJob(projectId, job, { status: "done", position: undefined, asset: asset.id });
     } catch (err) {
       throw err instanceof FalError ? err : new FalError(`Couldn't bring the take in: ${err instanceof Error ? err.message : String(err)}`, false);
     }

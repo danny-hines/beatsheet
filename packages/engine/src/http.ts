@@ -22,7 +22,7 @@ import { narrate } from "./narrate.ts";
 import { castFromSubject } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
-import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, spentSince, startMake, turnBudget, type MakeAsk } from "./make.ts";
+import { cancelJobs, driveJobs, estimate, listJobs, makeChoices, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -526,11 +526,20 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 400, { error: said(err) });
     }
   }
-  if (section === "projects" && id && action === "make" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as MakeAsk;
-    if (body.op !== "image" && body.op !== "video") return json(res, 400, { error: "Make a still or a video?" });
+  // A pass over many shots: what it would cost with each model, then making it (all or nothing).
+  if (section === "projects" && id && action === "make" && parts[3] === "estimate" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asks?: MakeAsk[] };
+    if (!body.asks?.length) return json(res, 400, { error: "Estimate what?" });
+    return json(res, 200, estimate(id, body.asks));
+  }
+  if (section === "projects" && id && action === "make" && !parts[3] && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as MakeAsk & { asks?: MakeAsk[] };
+    const asks = body.asks ?? [body];
+    if (!asks.length || asks.some((a) => a.op !== "image" && a.op !== "video")) return json(res, 400, { error: "Make a still or a video?" });
     try {
-      return json(res, 200, startMake(id, body));
+      if (!body.asks) return json(res, 200, startMake(id, body));
+      const { plans, usd } = startMakeAll(id, asks);
+      return json(res, 200, { jobs: plans.flatMap((p) => p.jobs), usd });
     } catch (err) {
       return json(res, 400, { error: said(err) });
     }
@@ -544,6 +553,12 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, await cancelJobs(id, body.ids ?? []));
   }
   // Someone found in a clip or photo becomes a cast member (or joins one), with a still of them cut from it.
+  // A cast member (or variant) was renamed in the studio: the jobs still being made follow it.
+  if (section === "projects" && id && action === "jobs" && parts[3] === "rename" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { from?: string; to?: string };
+    if (!body.from || !body.to) return json(res, 400, { error: "Renamed from what, to what?" });
+    return json(res, 200, { moved: renameInJobs(id, body.from, body.to) });
+  }
   // A still of a clip's last frame (or of a moment in it), to start the next clip from.
   if (section === "projects" && id && action === "frame" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; at?: number };

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,11 +27,12 @@ vi.mock("../src/ingest.ts", async () => {
 });
 
 let castFromSubject: typeof import("../src/castfrom.ts").castFromSubject;
+let momentsOf: typeof import("../src/castfrom.ts").momentsOf;
 let store: typeof import("../src/store.ts");
 const dir = join(process.env.BEATSHEET_PROJECTS!, "family");
 
 beforeAll(async () => {
-  ({ castFromSubject } = await import("../src/castfrom.ts"));
+  ({ castFromSubject, momentsOf } = await import("../src/castfrom.ts"));
   store = await import("../src/store.ts");
   mkdirSync(dir, { recursive: true });
   // A 1000×500 photo of two people: Theo's face at the left, and someone not named yet at the right.
@@ -74,7 +76,7 @@ afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe("cast from someone found in the footage", () => {
   it("makes a character named for them, seen in the photo and in a still of their head and shoulders", async () => {
-    expect(await castFromSubject("family", { asset: "beach", subject: "face-1" })).toEqual({ member: "theo", still: "theo-still" });
+    expect(await castFromSubject("family", { asset: "beach", subject: "face-1" })).toEqual({ member: "theo", still: "theo-still", stills: ["theo-still"] });
     const { project } = store.loadProject("family");
     expect(project.cast).toEqual([{ id: "theo", name: "Theo", kind: "character", seen: [{ asset: "beach", subject: "face-1" }, { asset: "theo-still" }] }]);
     const still = project.assets.find((a) => a.id === "theo-still")!;
@@ -91,5 +93,37 @@ describe("cast from someone found in the footage", () => {
     expect(cast.find((m) => m.id === "character")).toMatchObject({ name: "", kind: "character" });
     expect(cast.find((m) => m.id === "theo")!.seen).toHaveLength(4);
     await expect(castFromSubject("family", { asset: "beach", subject: "face-9" })).rejects.toThrow('"beach" has no subject "face-9"');
+  });
+
+  it("picks where they're largest, then a couple more moments apart where they're nearly as large", () => {
+    const samples = [
+      [0, 0.1, 0.1, 0.2, 0.2],
+      [0.5, 0.1, 0.1, 0.3, 0.3],
+      [1.0, 0.1, 0.1, 0.32, 0.32],
+      [2.6, 0.5, 0.1, 0.28, 0.28],
+      [3.0, 0.5, 0.1, 0.1, 0.1],
+      [4.5, 0.2, 0.1, 0.25, 0.25],
+    ];
+    // The largest (1.0s); 0.5s is too close to it; 2.6s and 4.5s are far enough and nearly as large; 3.0s is too small.
+    expect(momentsOf(samples).map((s) => s[0])).toEqual([1.0, 2.6, 4.5]);
+    expect(momentsOf(samples, 1).map((s) => s[0])).toEqual([1.0]);
+  });
+
+  it("cuts three stills from a clip, a few moments apart", async () => {
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=320x180:r=25:d=5", "-pix_fmt", "yuv420p", join(dir, "walk.mp4")]);
+    store.updateFile("family", (d) =>
+      void d.assets.push({
+        id: "walk",
+        kind: "video",
+        path: join(dir, "walk.mp4"),
+        duration: 5,
+        label: "the walk",
+        subjects: [{ id: "person-1", label: "Mia", kind: "person", samples: [[0.4, 0.2, 0.2, 0.3, 0.6], [1.0, 0.25, 0.2, 0.3, 0.6], [2.5, 0.4, 0.2, 0.3, 0.6], [4.2, 0.5, 0.2, 0.3, 0.6]] }],
+      }),
+    );
+    expect(await castFromSubject("family", { asset: "walk", subject: "person-1" })).toEqual({ member: "mia", still: "mia-still", stills: ["mia-still", "mia-still-2", "mia-still-3"] });
+    const { project } = store.loadProject("family");
+    expect(project.cast!.find((m) => m.id === "mia")!.seen).toEqual([{ asset: "walk", subject: "person-1" }, { asset: "mia-still" }, { asset: "mia-still-2" }, { asset: "mia-still-3" }]);
+    expect(project.assets.filter((a) => a.id.startsWith("mia-still")).map((a) => a.provenance?.params?.at)).toEqual([0.4, 2.5, 4.2]);
   });
 });
