@@ -13,6 +13,7 @@ description: Make stills and clips in beatsheet with generate, and keep them con
 - `generate`: starts the takes and returns at once. Takes for a placeholder or generated shot (or `shots`) land on it: the first take is the one it shows, then the first clip over a still, then the first final over a rough. A `sheet` adds stills to a cast member's pictures.
 - `jobs`: where they've got to, with `wait` to hold until they're in (stills take seconds, clips minutes). A take that failed says why.
 - `get_project` lists the cast and sets; `edit_project` changes them (`/cast`) and picks a shot's take (`/shots/id=alley/content/take`).
+- `still_from_clip`: a clip's last frame (or a moment in it) as a still, to start the next clip from.
 
 ## Cheap before expensive
 
@@ -53,6 +54,8 @@ The board already says what's in the frame, so say what changes:
 - the pace: "slowly", "in one quick dash".
 
 Don't cut to another scene or bring in new people mid-clip; that's another shot.
+
+**Carrying a clip on.** A clip that ends mid-action continues in the next shot from its last frame: `still_from_clip` on it, then `generate` (op `video`) with `start` set to that still, and a prompt for what happens next. The cut between them lands on the same frame, so it reads as one continuous move.
 
 ## Cast and sets
 

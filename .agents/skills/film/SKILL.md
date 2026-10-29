@@ -57,7 +57,7 @@ What separates a great one from a pile of pretty clips:
 1. **Estimate:** `list_models` with every shot, `op: "video"`, `start: "board"`. If it's more than the turn may spend, ask first: a `choose` hand-off whose options say what they'd cost (all the shots, or the key ones first).
 2. `generate` with the same (`count: 1`, or 2 for the shots that carry the film). `jobs` with `wait`; clips take a few minutes.
 3. `review_cut` and `frame` what matters. Make the weak shots again on their own, with a clearer action or camera move.
-4. **Sound.** `/sfx` cues on every action and hit (whooshes on moves, impacts on landings, a riser into the reveal); `generate_sfx` for anything specific (a cat flap's clack).
+4. **Sound.** `/sfx` cues on every action and hit (whooshes on moves, impacts on landings, a riser into the reveal); `generate_sfx` for anything specific (a cat flap's clack). If the characters speak, give each a `voice` in `/cast` (`list_voices`) and pass their lines to `narrate` with `speaker`; a line without one is the narrator's.
 5. `hand_off` with kind `review`.
 
 ## Turn 6: finals
