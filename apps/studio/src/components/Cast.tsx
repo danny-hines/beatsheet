@@ -6,7 +6,7 @@
 import { renameCast, type Asset, type CastMember } from "@beatsheet/schema";
 import { useState } from "react";
 import { hideBroken, posterUrl } from "../lib";
-import { actions, useProject, useStore } from "../store";
+import { actions, getState, setState, useProject, useStore } from "../store";
 import { Failed, money, useChoices, useMake, WhyNot } from "./Takes";
 import { PopMenu, TextField } from "./ui";
 
@@ -109,6 +109,30 @@ export function lookStyleName(p: { cast?: CastMember[]; look?: { style?: string 
   return m ? label(m) : "Photographic";
 }
 
+/**
+ * Asks the agent to look through the Library for who and what recurs and propose them as the cast (a cast hand-off,
+ * where the person keeps the ones they want).
+ */
+async function findCast() {
+  const { projectId, cutId } = getState();
+  await actions.flushSave();
+  const res = await fetch("/api/turn/ask", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      project: projectId,
+      cut: cutId,
+      text: "Find the cast in my photos and clips: who and what recurs (people, pets, places, things), grouped with the pictures each is in, as a cast hand-off so I can keep the ones I want. The make skill says how.",
+    }),
+  });
+  if (!res.ok) {
+    setState({ notice: ((await res.json().catch(() => ({}))) as { error?: string }).error ?? "The agent didn't get that." });
+    if (res.status === 409) actions.setSettingsOpen(true);
+    return;
+  }
+  actions.setSide("agent");
+}
+
 /** The cast and sets, at the top of the Library: each one's main picture, name and @id. */
 export function CastList() {
   const p = useProject();
@@ -116,10 +140,18 @@ export function CastList() {
   const selection = useStore((s) => s.selection);
   const [adding, setAdding] = useState<{ x: number; y: number }>();
   const cast = p.cast ?? [];
+  // Enough of the person's own pictures that someone or somewhere could recur in them.
+  const pictures = p.assets.filter((a) => (a.kind === "image" || a.kind === "video") && a.provenance?.source !== "generated").length;
   return (
     <div className="cast-list">
       <div className="library-group dim small cast-head">
         Cast &amp; sets
+        <span className="spacer" />
+        {pictures >= 3 && (
+          <button className="link small" onClick={() => void findCast()} title="The agent looks through your photos and clips for who and what recurs, and you keep the ones you want">
+            Find in my photos
+          </button>
+        )}
         <button className="link small" onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })} title="A character, set, prop or style, from a description">
           + New
         </button>

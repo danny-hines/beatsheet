@@ -953,7 +953,7 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-row select:last-child { flex: 1; min-width: 0; }
 
 /* Cast & sets: at the top of the Library, and a cast member in Inspect (its pictures, where it's seen, its variants). */
-.cast-head { display: flex; align-items: center; justify-content: space-between; }
+.cast-head { display: flex; align-items: center; gap: 8px; }
 .cast-row .asset-row-thumb { background: var(--panel-2); }
 .cast-line { margin: -2px 0 0; }
 .cast-pic { position: relative; flex: none; }

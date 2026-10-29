@@ -13,7 +13,7 @@ import { listAgents, RUNTIME } from "./agents.ts";
 import { PLANS, planStates } from "./plans.ts";
 import { addServiceKey, capabilities, findSavedKeys, listServices, recheckService, removeServiceKey } from "./services.ts";
 import { readSettings, updateSettings } from "./settings.ts";
-import { answerMessage, currentTurn, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
+import { answerMessage, currentTurn, keepProposals, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
 import { streamEvents } from "./events.ts";
 import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
@@ -303,26 +303,33 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   }
   // The person's answer to the agent's hand-off becomes the agent's next message, with the notes they attached. Each
   // cut has its own conversation: with none open on this cut, their default agent starts one and gets the answer with
-  // its opening (unless the agent is busy elsewhere, which a new conversation would cut off).
-  if (section === "turn" && id === "answer" && req.method === "POST") {
+  // its opening (unless the agent is busy elsewhere, which a new conversation would cut off). "ask" is a request the
+  // studio words for the person (Find the cast in my photos), delivered the same way.
+  if (section === "turn" && (id === "answer" || id === "ask") && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as Omit<Answer, "notes"> & { project?: string; cut?: string; notes?: boolean };
     if (!body.project || !isProjectId(body.project)) return json(res, 400, { error: "Which project?" });
-    const notes = body.notes ? takeNotes(body.project, body.cut).line : undefined;
-    const message = answerMessage(body.project, currentTurn(body.project), { ...body, notes });
     const agent = agentStudio();
-    if (agent.openOn(body.project, body.cut)) {
-      await agent.send(message);
-      return json(res, 200, { delivered: "session" });
-    }
-    if (agent.busyElsewhere(body.project, body.cut)) {
+    const open = agent.openOn(body.project, body.cut);
+    if (!open && agent.busyElsewhere(body.project, body.cut)) {
       const v = agent.view;
       const where = v.project === body.project ? `the cut "${v.cut ? (loadFile(body.project).doc.cuts.find((c) => c.id === v.cut)?.name ?? v.cut) : "another cut"}"` : "another project";
       return json(res, 423, { error: `${AGENT_LABELS[v.agent ?? "claude"]} is still working on ${where}. Wait for it to hand back, or stop it, then send this again.` });
     }
     const preferred = readSettings().agent;
-    if (!preferred) return json(res, 409, { error: "No agent is set up yet. Pick one in Settings." });
-    void agent.start(preferred.id, { model: preferred.model, project: body.project, cut: body.cut, then: message });
-    return json(res, 200, { delivered: "started", agent: preferred.id });
+    if (!open && !preferred) return json(res, 409, { error: "No agent is set up yet. Pick one in Settings." });
+    // Only once it's sure to be delivered: the notes it takes, and the cast members kept, would otherwise go twice.
+    if (id === "ask" && !body.text?.trim()) return json(res, 400, { error: "Ask what?" });
+    const notes = body.notes ? takeNotes(body.project, body.cut).line : undefined;
+    const message =
+      id === "ask"
+        ? `On project ${body.project}${body.cut ? `, cut ${body.cut}` : ""}: ${body.text!.trim()}`
+        : answerMessage(body.project, currentTurn(body.project), { ...body, notes }, keepProposals(body.project, { keep: body.keep }));
+    if (open) {
+      await agent.send(message);
+      return json(res, 200, { delivered: "session" });
+    }
+    void agent.start(preferred!.id, { model: preferred!.model, project: body.project, cut: body.cut, then: message });
+    return json(res, 200, { delivered: "started", agent: preferred!.id });
   }
   // What went wrong in the studio page, kept where it can be read later (the Mac app has no console to open).
   if (section === "log" && req.method === "POST") {

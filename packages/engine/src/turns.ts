@@ -8,7 +8,7 @@
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseFile, type HandOff, type ProjectFile, type Turn } from "@beatsheet/schema";
+import { keepCast, parseFile, type HandOff, type ProjectFile, type Turn } from "@beatsheet/schema";
 import { ConflictError, loadFile, saveFile, updateFile, updateProject } from "./store.ts";
 
 /** Snapshots taken at the start of agent turns, newest kept. */
@@ -158,12 +158,33 @@ export function takeNotes(id: string, cut?: string): { count: number; line?: str
 }
 
 /** The person's answer to a hand-off, as the agent's next message. `notes` is the line from takeNotes. */
-export type Answer = { picks?: string[]; also?: Record<string, string[]>; text?: string; looksGood?: boolean; provided?: string; notes?: string };
+export type Answer = { picks?: string[]; also?: Record<string, string[]>; text?: string; looksGood?: boolean; provided?: string; notes?: string; keep?: string[] };
 
-export function answerMessage(id: string, turn: Turn | undefined, a: Answer): string {
+/**
+ * The cast proposals the person kept, put into the cast before the agent hears about it, so its next turn starts with
+ * them there. Nothing happens for any other hand-off.
+ */
+export function keepProposals(id: string, a: Answer): { added: string[]; joined: string[] } | undefined {
+  const ask = loadFile(id).doc.turn?.ask;
+  if (ask?.kind !== "cast" || !a.keep) return undefined;
+  let kept: { added: string[]; joined: string[] } = { added: [], joined: [] };
+  updateFile(id, (d) => void (kept = keepCast(d, ask.proposals, a.keep!)));
+  return kept;
+}
+
+export function answerMessage(id: string, turn: Turn | undefined, a: Answer, kept?: { added: string[]; joined: string[] }): string {
   const ask = turn?.ask;
   const parts: string[] = [];
   const where = `project ${id}${turn?.cut ? `, cut ${turn.cut}` : ""}`;
+  if (ask?.kind === "cast" && a.keep) {
+    const left = ask.proposals.filter((p) => !a.keep!.includes(p.id)).map((p) => `"${p.name}"`);
+    const said = [
+      kept?.added.length ? `I kept ${kept.added.map((x) => `@${x}`).join(", ")}: they're in the cast now, seen in the pictures you proposed.` : "",
+      kept?.joined.length ? `The pictures for ${kept.joined.map((x) => `@${x}`).join(", ")} were added to the one already in the cast.` : "",
+      left.length ? `I didn't keep ${left.join(", ")}.` : "",
+    ].filter(Boolean);
+    parts.push(`On ${where}: ${said.join(" ") || "I didn't keep any of them."}`);
+  }
   if (a.picks?.length) {
     const options = ask?.kind === "choose" ? ask.options : [];
     const picked = a.picks.map((id) => options.find((o) => o.id === id) ?? { id, label: id });

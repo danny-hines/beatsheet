@@ -14,6 +14,7 @@ import {
   maxStillRefs,
   parseFile,
   pictureOf,
+  keepCast,
   renameCast,
   Project,
   resolveTimeline,
@@ -369,6 +370,35 @@ describe("cast and sets in prompts", () => {
     const before = JSON.stringify(f);
     expect([renameCast(f, "alley", "dog"), renameCast(f, "alley", "The Alley"), renameCast(f, "marmalade/nope", "x"), renameCast(f, "ghost", "x")]).toEqual([false, false, false, false]);
     expect(JSON.stringify(f)).toBe(before);
+  });
+
+  it("keeps the proposals the person picked: new ones seen in their pictures, and more pictures for one already there", () => {
+    const f: ProjectFile = withCut({ schema: SCHEMA_VERSION, cuts: [], ...make() } as never, {
+      ...make({
+        cast: [{ id: "cat", name: "the cat", kind: "character", seen: [{ asset: "p1" }] }],
+        assets: ["p1", "p2", "p3", "p4"].map((id) => ({ id, kind: "image" as const, path: `${id}.jpg` })),
+      }),
+    });
+    const proposals = [
+      { id: "cat", kind: "character" as const, name: "Marmalade", about: "orange tabby", assets: ["p1", "p2"] },
+      { id: "Aunt Rosa", kind: "character" as const, name: "Aunt Rosa", about: "curly gray hair", assets: ["p3", "gone"] },
+      { id: "porch", kind: "place" as const, name: "The porch", assets: ["p4"] },
+      { id: "shed", kind: "place" as const, name: "The shed", assets: ["p4"] },
+    ];
+    expect(keepCast(f, proposals, ["cat", "Aunt Rosa", "porch"])).toEqual({ added: ["aunt-rosa", "porch"], joined: ["cat"] });
+    // The cat keeps its name and id, gains the new picture once, and its description where it had none.
+    expect(f.cast![0]).toEqual({ id: "cat", name: "the cat", kind: "character", seen: [{ asset: "p1" }, { asset: "p2" }], about: "orange tabby" });
+    expect(f.cast!.slice(1)).toEqual([
+      { id: "aunt-rosa", kind: "character", name: "Aunt Rosa", about: "curly gray hair", seen: [{ asset: "p3" }] },
+      { id: "porch", kind: "place", name: "The porch", seen: [{ asset: "p4" }] },
+    ]);
+    // One found in footage before it had a name takes the proposal's.
+    f.cast![0]!.name = "";
+    keepCast(f, proposals, ["cat"]);
+    expect(f.cast![0]!.name).toBe("Marmalade");
+    // A new one whose id is taken by a style gets one of its own.
+    f.cast!.push({ id: "noir", name: "Noir", kind: "style" });
+    expect(keepCast(f, [{ id: "noir", kind: "prop", name: "Noir hat", assets: ["p4"] }], ["noir"])).toEqual({ added: ["noir-2"], joined: [] });
   });
 
   it("is kept with the project, not a cut, when a cut is written back", () => {

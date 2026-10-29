@@ -29,7 +29,13 @@ export function useTurn() {
 }
 
 const askLine = (ask: HandOff) =>
-  ask.kind === "choose" ? `pick ${ask.multiple ? "one or more" : "one"}: ${ask.message}` : ask.kind === "review" ? "watch the cut and leave notes" : `${ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : ask.need === "cast" ? "add pictures" : "reply"}: ${ask.message}`;
+  ask.kind === "choose"
+    ? `pick ${ask.multiple ? "one or more" : "one"}: ${ask.message}`
+    : ask.kind === "review"
+      ? "watch the cut and leave notes"
+      : ask.kind === "cast"
+        ? `keep the cast you want: ${ask.message}`
+        : `${ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : ask.need === "cast" ? "add pictures" : "reply"}: ${ask.message}`;
 
 /** One line in the top bar: whose turn it is and what that means right now. */
 export function TurnLine() {
@@ -54,7 +60,7 @@ export function TurnLine() {
  * Sends the person's answer, with any notes they've attached on this cut: to the session on this project, or to a new
  * session of their default agent.
  */
-export async function answer(body: { picks?: string[]; also?: Record<string, string[]>; text?: string; looksGood?: boolean; provided?: string }) {
+export async function answer(body: { picks?: string[]; also?: Record<string, string[]>; text?: string; looksGood?: boolean; provided?: string; keep?: string[] }) {
   const { projectId, cutId } = getState();
   if (!projectId) return;
   await actions.flushSave();
@@ -130,7 +136,7 @@ export function TurnCard() {
             </button>
           </div>
           <p>{t.ask.message}</p>
-          {t.ask.kind === "choose" ? <Choose ask={t.ask} /> : t.ask.kind === "review" ? <Review /> : <Provide ask={t.ask} />}
+          {t.ask.kind === "choose" ? <Choose ask={t.ask} /> : t.ask.kind === "review" ? <Review /> : t.ask.kind === "cast" ? <KeepCast ask={t.ask} /> : <Provide ask={t.ask} />}
         </>
       )}
     </div>
@@ -209,6 +215,65 @@ function Choose({ ask }: { ask: Extract<HandOff, { kind: "choose" }> }) {
 }
 
 type Option = Extract<HandOff, { kind: "choose" }>["options"][number];
+
+const KINDS = { character: "Character", place: "Place", prop: "Prop" } as const;
+
+/**
+ * Who and what the agent found in the Library, each with the pictures it's in: the ones kept join the cast (or add their
+ * pictures to the one already there with that id) as the answer goes.
+ */
+function KeepCast({ ask }: { ask: Extract<HandOff, { kind: "cast" }> }) {
+  const projectId = useStore((s) => s.projectId);
+  const cast = useStore((s) => s.doc?.cast);
+  const [keep, setKeep] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const toggle = (id: string) => setKeep((k) => (k.includes(id) ? k.filter((x) => x !== id) : [...k, id]));
+  return (
+    <>
+      <div className="turn-options">
+        {ask.proposals.map((p) => {
+          const there = cast?.find((m) => m.id === p.id && m.kind !== "style");
+          return (
+            <button key={p.id} className={`turn-option ${keep.includes(p.id) ? "on" : ""}`} onClick={() => toggle(p.id)} aria-pressed={keep.includes(p.id)}>
+              {projectId && (
+                <span className="turn-board">
+                  {p.assets.slice(0, 4).map((a) => (
+                    <img key={a} src={posterUrl(projectId, a)} alt="" />
+                  ))}
+                </span>
+              )}
+              <span className="turn-option-text">
+                <strong>
+                  {p.name} <span className="dim small">@{p.id}</span>
+                </strong>
+                <span className="dim small">
+                  {KINDS[p.kind]} · in {p.assets.length} picture{p.assets.length === 1 ? "" : "s"}
+                  {there ? ` · adds to ${there.name || `@${there.id}`} in the cast` : ""}
+                </span>
+                {p.about && <span className="small">{p.about}</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="turn-actions">
+        <span className="dim small">Pick the ones to keep; they join Cast & sets with their pictures.</span>
+        <span className="spacer" />
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await answer({ keep });
+            setBusy(false);
+          }}
+        >
+          {keep.length ? `Keep ${keep.length === ask.proposals.length && keep.length > 1 ? "all" : keep.length === 1 ? "this one" : `these ${keep.length}`}` : "Keep none"}
+        </button>
+      </div>
+    </>
+  );
+}
 
 /** One question's options: a few words each, with the frames, picture or cut that shows it. */
 function Options({ options, picked, onPick }: { options: Option[]; picked: string[]; onPick: (id: string) => void }) {

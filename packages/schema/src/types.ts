@@ -577,6 +577,16 @@ const ChooseOption = z.object({
 });
 export type ChooseOption = z.infer<typeof ChooseOption>;
 
+/** A cast member the agent found in the Library, for the person to keep or not. */
+const CastProposal = z.object({
+  id: z.string().describe("The id it'd have in the cast (@cat); one that's already there gets these pictures added"),
+  kind: z.enum(["character", "place", "prop"]),
+  name: z.string(),
+  about: z.string().optional().describe("What it looks like, from the pictures"),
+  assets: z.array(z.string()).min(1).describe("The photos and clips it's in, the clearest first"),
+});
+export type CastProposal = z.infer<typeof CastProposal>;
+
 export const HandOff = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("choose"),
@@ -597,6 +607,11 @@ export const HandOff = z.discriminatedUnion("kind", [
       .describe("More questions on the same card, answered together: the look to go with the directions, say"),
   }),
   z.object({ kind: z.literal("review"), message: z.string(), cut: z.string().optional().describe("The cut to watch; default the one on screen") }),
+  z.object({
+    kind: z.literal("cast"),
+    message: z.string(),
+    proposals: z.array(CastProposal).min(1).max(12).describe("Who and what recurs in the Library, each with the pictures it's in; the ones the person keeps join the cast"),
+  }),
   z.object({
     kind: z.literal("provide"),
     message: z.string(),

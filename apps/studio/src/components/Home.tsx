@@ -280,7 +280,7 @@ const tilde = (path: string) => (WINDOWS ? path.replace(/^[a-z]:\\Users\\[^\\]+(
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : "under 1 MB");
 
 const askWords = (ask: HandOff) =>
-  ask.kind === "choose" ? "pick a direction" : ask.kind === "review" ? "watch the cut" : ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : ask.need === "cast" ? "add pictures" : "reply";
+  ask.kind === "choose" ? "pick a direction" : ask.kind === "review" ? "watch the cut" : ask.kind === "cast" ? "keep the cast you want" : ask.need === "song" ? "add a song" : ask.need === "footage" ? "add footage" : ask.need === "chrome" ? "let it use your Chrome" : ask.need === "cast" ? "add pictures" : "reply";
 
 /** The time, every half minute, so "edited 3m ago" stays true while the list is open. */
 function useNow() {

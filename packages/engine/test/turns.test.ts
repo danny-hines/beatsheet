@@ -67,4 +67,24 @@ describe("answers", () => {
     );
     expect(answerMessage("trip", turn, { picks: ["o1"] })).toContain(`For "And which look?" (look), no pick: it's your call.`);
   });
+
+  it("say which proposed cast were kept, joined or left out", () => {
+    const turn = {
+      who: "you" as const,
+      since: "",
+      ask: {
+        kind: "cast" as const,
+        message: "Who's in these?",
+        proposals: [
+          { id: "cat", kind: "character" as const, name: "The tabby", assets: ["p1"] },
+          { id: "porch", kind: "place" as const, name: "The porch", assets: ["p2"] },
+          { id: "van", kind: "prop" as const, name: "The van", assets: ["p3"] },
+        ],
+      },
+    };
+    expect(answerMessage("trip", turn, { keep: ["cat", "porch"] }, { added: ["porch"], joined: ["cat"] })).toBe(
+      `On project trip: I kept @porch: they're in the cast now, seen in the pictures you proposed. The pictures for @cat were added to the one already in the cast. I didn't keep "The van".`,
+    );
+    expect(answerMessage("trip", turn, { keep: [] }, { added: [], joined: [] })).toBe(`On project trip: I didn't keep "The tabby", "The porch", "The van".`);
+  });
 });

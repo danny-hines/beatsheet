@@ -17,6 +17,7 @@ import {
   buildBatch,
   CATALOG,
   cutOf,
+  CAST_ID,
   describeAnchor,
   formatPreset,
   formatTime,
@@ -27,6 +28,7 @@ import {
   SFX_SOUNDS,
   resolveTimeline,
   shotContentSummary,
+  slugify,
   STAGE_IDS,
   Look,
   type Asset,
@@ -1029,11 +1031,11 @@ server.registerTool(
   "hand_off",
   {
     description:
-      'End your turn and hand it to the person, with exactly what you need from them. "choose": 2-6 options (directions, takes, songs, looks), each a few words plus a sentence; set multiple when they may pick several, and point an option at a cut, assets or an image that shows it. A second question that belongs with the first (the look to go with the directions) goes in questions, on the same card. "review": a cut is playable and you want their notes. "provide": you need something only they have (a song, more footage, some text, or their signed-in Chrome for a page behind a login). Call it last; their answer comes back as your next message.',
+      'End your turn and hand it to the person, with exactly what you need from them. "choose": 2-6 options (directions, takes, songs, looks), each a few words plus a sentence; set multiple when they may pick several, and point an option at a cut, assets or an image that shows it. A second question that belongs with the first (the look to go with the directions) goes in questions, on the same card. "review": a cut is playable and you want their notes. "provide": you need something only they have (a song, more footage, some text, or their signed-in Chrome for a page behind a login). "cast": you\'ve sorted the Library into who and what recurs (the cat in 14 photos, the house in 9); each proposal is a cast member with the pictures it\'s in, and the ones they keep are in the cast before their answer reaches you. Call it last; their answer comes back as your next message.',
     inputSchema: {
       project: projectArg,
       cut: cutArg,
-      kind: z.enum(["choose", "review", "provide"]),
+      kind: z.enum(["choose", "review", "provide", "cast"]),
       message: z.string().describe("What you're asking, in a sentence or two"),
       options: z.array(OPTION).optional().describe('For "choose"'),
       multiple: z.boolean().optional().describe('For "choose": they may pick more than one'),
@@ -1046,11 +1048,36 @@ server.registerTool(
         .enum(["song", "footage", "text", "chrome", "cast"])
         .optional()
         .describe('For "provide". "chrome" puts a button on the card that lets you use their Chrome; say what you\'ll do there. "cast": pictures of someone or somewhere only they have (their cat, themselves, their street); say whom'),
+      proposals: z
+        .array(
+          z.object({
+            id: z.string().describe("The cast id it'd have (cat); an id already in the cast gets these pictures added to it"),
+            kind: z.enum(["character", "place", "prop"]),
+            name: z.string(),
+            about: z.string().optional().describe("What it looks like, from the pictures: orange tabby, white chest and paws, green eyes"),
+            assets: z.array(z.string()).min(1).describe("Asset ids of the photos and clips it's in, the clearest first"),
+          }),
+        )
+        .max(12)
+        .optional()
+        .describe('For "cast": who and what you found, each with the pictures it\'s in'),
     },
   },
-  async ({ project: id, cut, kind, message, options, multiple, questions, need }) => {
+  async ({ project: id, cut, kind, message, options, multiple, questions, need, proposals }) => {
     const { project, dir } = loadProject(id, cut);
     if (kind === "choose" && (!options || options.length < 2)) return text('A "choose" hand-off needs at least two options.');
+    if (kind === "cast") {
+      if (!proposals?.length) return text('A "cast" hand-off needs proposals: who or what, with the pictures each is in.');
+      const unknown = [...new Set(proposals.flatMap((p) => p.assets))].filter((a) => !project.assets.some((x) => x.id === a));
+      if (unknown.length) return text(`No such asset: ${unknown.join(", ")}. list_assets has the ids.`);
+      // An id has to follow an @: "Aunt Rosa" is proposed as aunt-rosa.
+      proposals = proposals.map((p) => ({ ...p, id: CAST_ID.test(p.id) ? p.id : slugify(p.name) }));
+      const ids = proposals.map((p) => p.id);
+      const twice = [...new Set(ids.filter((x, i) => ids.indexOf(x) !== i))];
+      if (twice.length) return text(`Each proposal needs its own id; ${twice.join(", ")} is used more than once.`);
+      yourTurn(id, { kind, message, proposals }, project.cut.id);
+      return text("Handed over: it's the person's turn now. The ones they keep will be in the cast when their answer comes as your next message. Stop here.");
+    }
     if (kind === "provide" && !need) return text('A "provide" hand-off needs "need": song, footage, text or chrome.');
     // Pictures made for options are kept relative to the project, where the studio can show them.
     const missing: string[] = [];

@@ -3,8 +3,9 @@
  * if not, why. Pure, so the studio's picker, the engine and the agent's tools all give the same answer. The models
  * themselves are in catalog.ts; the engine knows which services are connected and runs the jobs.
  */
+import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
-import type { CastMember, Project, ProjectFile } from "./types.ts";
+import type { CastMember, CastProposal, Project, ProjectFile } from "./types.ts";
 
 /** What can be asked for. More join as they're wired up: extend, edit-video, swap, lipsync, restore, isolate. */
 export const MAKE_OPS = ["image", "video"] as const;
@@ -387,6 +388,34 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
     if (p?.prompt) p.prompt = inPrompt(p.prompt);
   }
   return true;
+}
+
+/**
+ * Puts the proposals the person kept into the cast: each as a new member seen in its pictures, or, when its id is
+ * already in the cast, its pictures added to that one. Pictures that aren't in the project are left out, and a new
+ * member's id is made usable after an @ and unique. Changes `file` in place; says which ids were added and joined.
+ */
+export function keepCast(file: ProjectFile, proposals: CastProposal[], keep: string[]): { added: string[]; joined: string[] } {
+  const out = { added: [] as string[], joined: [] as string[] };
+  const have = new Set(file.assets.map((a) => a.id));
+  for (const p of proposals.filter((x) => keep.includes(x.id))) {
+    const seen = [...new Set(p.assets)].filter((a) => have.has(a)).map((asset) => ({ asset }));
+    const cast = (file.cast ??= []);
+    const same = cast.find((m) => m.id === p.id && m.kind !== "style");
+    if (same) {
+      same.seen = [...(same.seen ?? []), ...seen.filter((s) => !same.seen?.some((x) => x.asset === s.asset && !x.subject))];
+      if (!same.about && p.about) same.about = p.about;
+      if (!same.name.trim()) same.name = p.name;
+      out.joined.push(same.id);
+      continue;
+    }
+    const base = CAST_ID.test(p.id) ? p.id : slugify(p.name);
+    let id = base;
+    for (let n = 2; cast.some((m) => m.id === id); n++) id = `${base}-${n}`;
+    cast.push({ id, kind: p.kind, name: p.name, ...(p.about ? { about: p.about } : {}), ...(seen.length ? { seen } : {}) });
+    out.added.push(id);
+  }
+  return out;
 }
 
 /** The most reference pictures any model in a catalog takes for stills. */
