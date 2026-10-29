@@ -11,14 +11,15 @@ process.env.BEATSHEET_PROJECTS = join(root, "projects");
 process.env.BEATSHEET_HOME = join(root, "home");
 process.env.BEATSHEET_MAKE_POLL_MS = "5";
 
-// fal's key comes from the Keychain, and a key there means fal is connected. A test can set a spending limit.
+// Keys come from the Keychain, and a key there means the service is connected: fal, and the two that make stills in
+// one request, OpenAI and Meta. A test can set a spending limit.
 const settings = vi.hoisted(() => ({ make: undefined as undefined | { limit?: { usd: number; since: string } } }));
 vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async (id: string) => (id === "fal" ? "test-key" : undefined),
-    readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" } }, checks: {}, make: settings.make }),
+    getSecret: async (id: string) => (["fal", "openai", "meta"].includes(id) ? "test-key" : undefined),
+    readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" } }, checks: {}, make: settings.make }),
   };
 });
 // Adding an asset probes it with ffprobe and makes previews; here it only records it, as a 6-second video or a still.
@@ -47,8 +48,9 @@ type Make = typeof import("../src/make.ts");
 let make: Make;
 let store: typeof import("../src/store.ts");
 
-// ---- A stand-in for fal: uploads, the queue (waiting, then running, then done), and the files it made.
-type Seen = { submits: { endpoint: string; input: Record<string, unknown> }[]; uploads: number };
+// ---- A stand-in for fal: uploads, the queue (waiting, then running, then done), and the files it made. And for
+// OpenAI's and Meta's Images API, which answer with the picture.
+type Seen = { submits: { endpoint: string; input: Record<string, unknown> }[]; uploads: number; direct: { url: string; type: string; body: string }[] };
 let seen: Seen;
 let refuse: string | undefined;
 let server: Server;
@@ -65,6 +67,13 @@ beforeAll(async () => {
         res.writeHead(status, { "content-type": type });
         res.end(type === "application/json" ? JSON.stringify(data) : (data as Buffer));
       };
+      if (url.startsWith("/direct/")) {
+        if (req.headers.authorization !== "Bearer test-key") return send(401, { error: { message: "no" } });
+        seen.direct.push({ url, type: String(req.headers["content-type"]), body });
+        if (refuse && body.includes(refuse)) return send(400, { error: { message: "Your request was rejected by the safety system.", code: "moderation_blocked" } });
+        if (body.includes("busy")) return send(503, { error: { message: "Overloaded" } });
+        return send(200, { data: [{ b64_json: Buffer.from("a made picture").toString("base64") }], usage: { input_tokens: 50, input_tokens_details: { text_tokens: 50, image_tokens: 0 }, output_tokens: 1000 } });
+      }
       if (req.headers.authorization !== "Key test-key" && !url.startsWith("/out/") && !url.startsWith("/upload/")) return send(401, { detail: "no" });
       if (url.startsWith("/rest/storage/upload/initiate")) {
         seen.uploads++;
@@ -99,6 +108,8 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   process.env.BEATSHEET_FAL_QUEUE = `${base}/queue`;
   process.env.BEATSHEET_FAL_REST = `${base}/rest`;
+  process.env.BEATSHEET_OPENAI = `${base}/direct/openai`;
+  process.env.BEATSHEET_META = `${base}/direct/meta`;
   make = await import("../src/make.ts");
   store = await import("../src/store.ts");
 });
@@ -111,7 +122,7 @@ afterAll(() => {
 // A 9:16 cut of the cat video with two placeholder shots, and the cat's photo.
 const PROJECT = "cat";
 beforeEach(() => {
-  seen = { submits: [], uploads: 0 };
+  seen = { submits: [], uploads: 0, direct: [] };
   refuse = undefined;
   polls.clear();
   const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
@@ -274,7 +285,7 @@ describe("cast and sets", () => {
     const sent = seen.submits[0]!;
     expect(sent.endpoint).toBe("fal-ai/nano-banana/edit");
     expect(sent.input.prompt).toBe(
-      "the cat (orange tabby, white chest; a tiny black eye mask) strolls down the alley (narrow, wet brick) like it owns it. Reference pictures, in order: the cat. Keep each one's features, markings and colors as they are there; draw them in the style asked for.",
+      "the cat (orange tabby, white chest; a tiny black eye mask) strolls down the alley (narrow, wet brick) like it owns it. Reference pictures, in order: the cat. Keep each one's features, markings and colors as they are there; draw them in the style asked for. The picture is one single frame of the scene, not a sheet, a grid or panels.",
     );
     expect(shot("s2").content).toMatchObject({ kind: "generated", prompt: "@cat/heist strolls down @alley like it owns it" });
     const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
@@ -416,5 +427,90 @@ describe("takes that finish together, and trying again", () => {
     await make.driveJobs(PROJECT);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", asset: "s1-take" });
     expect(seen.submits).toHaveLength(1);
+  });
+});
+
+describe("stills from services that answer in one request", () => {
+  it("makes a board with GPT Image at the shot's shape, saves the picture, and counts what it actually cost", async () => {
+    const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
+    expect(fit).toMatchObject({ model: "gpt-image", route: "openai", endpoint: "gpt-image-2.5-flare", aspect: "9:16", usd: 0.053 });
+    await make.driveJobs(PROJECT);
+
+    expect(seen.submits).toHaveLength(0);
+    expect(seen.direct[0]!.url).toBe("/direct/openai/images/generations");
+    expect(JSON.parse(seen.direct[0]!.body)).toEqual({ model: "gpt-image-2.5-flare", prompt: "The cat strolls down the alley like it owns it", n: 1, size: "864x1536", output_format: "jpeg", quality: "medium", output_compression: 92 });
+    const [job] = make.listJobs(PROJECT);
+    // 50 words in at $5 a million, a picture of 1,000 tokens out at $30.
+    expect(job).toMatchObject({ status: "done", charged: true, usd: 0.0303, asset: "s2-take" });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
+    expect(take.provenance).toMatchObject({ provider: "openai", model: "gpt-image-2.5-flare", costUsd: 0.0303, params: { model: "gpt-image" } });
+    expect(readFileSync(take.path, "utf8")).toBe("a made picture");
+    expect(shot("s2")).toMatchObject({ fidelity: "board", content: { kind: "generated", take: "s2-take", provider: "openai" } });
+  });
+
+  it("gives Muse Image the cast's pictures as data in JSON, and GPT Image as files in a form", async () => {
+    make.startMake(PROJECT, { op: "image", sheet: "cat", model: "muse-image", count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(seen.direct[0]!.url).toBe("/direct/meta/images/edits");
+    const sent = JSON.parse(seen.direct[0]!.body) as Record<string, unknown>;
+    expect(sent).toMatchObject({ model: "muse-image-1.0", size: "1536x864", response_format: "b64_json", images: [{ image_url: `data:image/jpeg;base64,${Buffer.from("the cat").toString("base64")}` }] });
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", usd: 0.01 });
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.images).toEqual(["cat-sheet"]);
+
+    make.startMake(PROJECT, { op: "image", shot: "s2", prompt: "@cat strolls down @alley", model: "gpt-image" });
+    await make.driveJobs(PROJECT);
+    expect(seen.direct[1]!.url).toBe("/direct/openai/images/edits");
+    expect(seen.direct[1]!.type).toMatch(/^multipart\/form-data/);
+    expect(seen.direct[1]!.body).toContain('name="image[]"; filename="');
+    expect(seen.direct[1]!.body).toContain("a made picture");
+  });
+
+  it("says why when the service won't make it, and sends again after a hiccup", async () => {
+    refuse = "alley";
+    make.startMake(PROJECT, { op: "image", shot: "s2", model: "muse-image" });
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "failed", error: "Your request was rejected by the safety system." });
+    expect(make.listJobs(PROJECT)[0]!.charged).toBeUndefined();
+
+    // Busy once, then fine: nothing was made the first time, so it goes again.
+    let busy = true;
+    const real = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      if (busy && String(url).includes("/direct/")) {
+        busy = false;
+        return new Response(JSON.stringify({ error: { message: "Overloaded" } }), { status: 503 });
+      }
+      return real(url, init);
+    });
+    refuse = undefined;
+    make.startMake(PROJECT, { op: "image", shot: "s1", model: "muse-image" });
+    await make.driveJobs(PROJECT);
+    spy.mockRestore();
+    expect(make.listJobs(PROJECT)[1]).toMatchObject({ status: "done", asset: "s1-take" });
+  });
+
+  it("can't pick up a still that was being made when the engine stopped, so it counts it and says so", async () => {
+    const since = new Date().toISOString();
+    const [job] = make.startMake(PROJECT, { op: "image", shot: "s1", model: "gpt-image" }).jobs;
+    await make.driveJobs(PROJECT);
+    // As if the engine had stopped while it waited for the answer: running, no picture, a dead process's lock.
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT, "jobs");
+    store.updateFile(PROJECT, (d) => {
+      d.assets = d.assets.filter((a) => a.id !== "s1-take");
+      d.cuts[0]!.shots.find((x) => x.id === "s1")!.content = { kind: "placeholder", description: "The cat slips out through the cat flap at dawn" };
+    });
+    writeFileSync(join(dir, `${job!.id}.json`), JSON.stringify({ ...job, status: "running" }));
+    writeFileSync(join(dir, `${job!.id}.lock`), "999999");
+    seen.direct = [];
+    await make.driveJobs(PROJECT);
+    expect(seen.direct).toHaveLength(0);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "failed", charged: true, error: expect.stringMatching(/^The engine stopped while this was being made/) });
+    expect(make.spentSince(since)).toBeCloseTo(0.053, 3);
+
+    // Trying again makes it again.
+    make.retryJobs(PROJECT, [job!.id]);
+    await make.driveJobs(PROJECT);
+    expect(seen.direct).toHaveLength(1);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", asset: "s1-take" });
   });
 });

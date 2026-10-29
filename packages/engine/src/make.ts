@@ -33,6 +33,7 @@ import {
   type Shot,
   type ShotContent,
 } from "@beatsheet/schema";
+import { DIRECT, directImage } from "./direct.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
@@ -78,6 +79,8 @@ export type MakeJob = {
   status: "queued" | "running" | "done" | "failed" | "canceled";
   /** The service's request, once it's been sent. */
   remote?: FalRequest;
+  /** The take, saved the moment it arrived from a service that answers in one request and doesn't keep it (GPT Image). */
+  file?: string;
   /** Place in the service's queue, while waiting. */
   position?: number;
   error?: string;
@@ -224,13 +227,15 @@ export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
       if (pictures.length) {
         refs = pictures.map((p) => p.asset);
         sent = castPrompt(prompt, uses, pictures.map((p) => p.use));
+        // Given a sheet of views, a model can copy its layout and give back a grid of the scene (Muse Image did).
+        if (!member) sent += " The picture is one single frame of the scene, not a sheet, a grid or panels.";
       }
     }
   }
   // A variant's sheet starts from the plain one, which models copy view for view; the difference has to be in all of them.
   const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} In every view: ${variant.about}.`;
-  const sheetAspect =member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
+  const sheetAspect = member &&(member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   return {
     op: ask.op,
     prompt,
@@ -428,7 +433,8 @@ export function retryJobs(projectId: string, ids: string[]): MakeJob[] {
   for (const id of ids) {
     const job = readJob(projectId, id);
     if (!job || job.status !== "failed") continue;
-    const again = job.charged && job.remote ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, charged: undefined };
+    const kept = job.charged && (job.remote || (job.file && existsSync(job.file)));
+    const again = kept ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, file: undefined, charged: undefined };
     out.push(saveJob(projectId, { ...again, error: undefined }));
   }
   if (out.length) void driveJobs(projectId);
@@ -514,11 +520,12 @@ async function drive(projectId: string) {
   for (;;) {
     const mine = listJobs(projectId).filter((j) => isOpen(j) && claim(projectId, j.id));
     if (!mine.length) return;
-    const key = await getSecret("fal");
+    const keys = new Map<string, Promise<string | undefined>>();
+    const keyFor = (route: string) => keys.get(route) ?? keys.set(route, getSecret(route)).get(route)!;
     await Promise.all(
       mine.map(async (job) => {
         try {
-          await step(projectId, job, key);
+          await step(projectId, job, await keyFor(job.route));
           tries.delete(job.id);
         } catch (err) {
           const n = (tries.get(job.id) ?? 0) + 1;
@@ -537,8 +544,12 @@ async function drive(projectId: string) {
 
 /** One step of a job: send it, or ask where it is, or bring in what it made. */
 async function step(projectId: string, job: MakeJob, key: string | undefined) {
-  if (job.route !== "fal") throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
-  if (!key) throw new FalError("Making this needs a fal key. The person can add one in Settings → Media services.", true);
+  if (!key && !job.file) {
+    const name = SERVICES.find((s) => s.id === job.route)?.label ?? job.route;
+    throw new FalError(`Making this needs a ${name} key. The person can add one in Settings → Media services.`, true);
+  }
+  if (DIRECT.includes(job.route)) return stepDirect(projectId, job, key);
+  if (job.route !== "fal" || !key) throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
   if (!job.remote) {
     const { project, dir } = loadProject(projectId, job.cut);
     const upload = (id: string) => {
@@ -570,15 +581,70 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
   if (!job.charged) job = saveJob(projectId, { ...job, charged: true });
   const out = falOutput(await falResult(key, job.remote!));
   if (!out) throw new FalError("fal finished but didn't send a file", true);
-  // Takes come in one at a time, so two finishing together don't take the same id or write the same preview. What
-  // goes wrong here is the project's side (a file in use, a write that clashed): the take is still at the service, so
-  // it's tried again.
-  const done = job;
-  await oneAtATime(projectId, async () => {
+  await finish(projectId, job, out);
+}
+
+/**
+ * A job on a service that answers in one request (see direct.ts): sent and answered in this step, and the picture
+ * saved before anything else, since the service won't give it again. The lock is kept fresh while it waits, so another
+ * process doesn't take the job for one that stopped.
+ */
+async function stepDirect(projectId: string, job: MakeJob, key: string | undefined) {
+  if (job.file) return finish(projectId, job, { file: job.file });
+  // Sent by a process that stopped before the answer came: the picture is lost, and may have been paid for.
+  if (job.status === "running") {
+    saveJob(projectId, { ...job, charged: true });
+    throw new FalError("The engine stopped while this was being made, so the picture was lost (and may have been charged). Try again to make it again.", true);
+  }
+  const { project, dir } = loadProject(projectId, job.cut);
+  const fileOf = (id: string) => {
+    const a = project.assets.find((x) => x.id === id);
+    if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+    return assetPath(project, dir, a);
+  };
+  const r = job.request;
+  const refs = r.refs?.map(fileOf);
+  job = saveJob(projectId, { ...job, status: "running" });
+  const beat = setInterval(() => {
     try {
-      const asset = await bringIn(projectId, done, out);
-      attach(projectId, done, asset);
-      saveJob(projectId, { ...done, status: "done", position: undefined, asset: asset.id });
+      utimesSync(lockFile(projectId, job.id), new Date(), new Date());
+    } catch {
+      // The lock is gone; the job's own save says what happened.
+    }
+  }, 10_000);
+  let out: Awaited<ReturnType<typeof directImage>>;
+  try {
+    out = await directImage(job.route, job.endpoint, key!, { prompt: r.sent ?? r.prompt, aspect: r.aspect, refs });
+  } catch (err) {
+    // Nothing came back, so nothing was made: it can be sent again.
+    const now = readJob(projectId, job.id) ?? job;
+    if (now.status === "running") saveJob(projectId, { ...now, status: "queued" });
+    throw err;
+  } finally {
+    clearInterval(beat);
+  }
+  const folder = join(projectDir(projectId), "made", "takes");
+  mkdirSync(folder, { recursive: true });
+  const file = join(folder, `${job.id}${EXT[out.contentType] ?? ".jpg"}`);
+  writeFileSync(file, out.bytes);
+  const now = readJob(projectId, job.id) ?? job;
+  job = saveJob(projectId, { ...now, file, charged: true, ...(out.usd !== undefined ? { usd: out.usd } : {}) });
+  // Stopped while it was being made: it's paid for and kept, but not added.
+  if (now.status === "canceled") return;
+  await finish(projectId, job, { file });
+}
+
+/**
+ * Brings a finished take in and puts it where it was asked for. Takes come in one at a time, so two finishing together
+ * don't take the same id or write the same preview. What goes wrong here is the project's side (a file in use, a write
+ * that clashed): the take is still at the service (or saved), so it's tried again.
+ */
+function finish(projectId: string, job: MakeJob, out: Taken) {
+  return oneAtATime(projectId, async () => {
+    try {
+      const asset = await bringIn(projectId, job, out);
+      attach(projectId, job, asset);
+      saveJob(projectId, { ...job, status: "done", position: undefined, asset: asset.id });
     } catch (err) {
       throw err instanceof FalError ? err : new FalError(`Couldn't bring the take in: ${err instanceof Error ? err.message : String(err)}`, false);
     }
@@ -593,12 +659,8 @@ function oneAtATime(projectId: string, fn: () => Promise<void>): Promise<void> {
   return next;
 }
 
-const EXT: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4", "video/quicktime": ".mov" };
-
-/** Downloads the take into made/takes/ and adds it as an asset, once: a job picked up again after a crash finds its own. */
-async function bringIn(projectId: string, job: MakeJob, out: { url: string; contentType?: string; seed?: number }): Promise<Asset> {
-  const have = loadProject(projectId, job.cut).project.assets.find((a) => a.provenance?.job === job.id);
-  if (have) return have;
+/** Downloads a take from where the service has it into made/takes/. */
+async function download(projectId: string, job: MakeJob, out: { url: string; contentType?: string }): Promise<string> {
   const res = await fetch(out.url, { signal: AbortSignal.timeout(10 * 60_000) }).catch((err: unknown) => {
     throw new FalError(`Couldn't download the take (${err instanceof Error ? err.message : String(err)})`, false);
   });
@@ -608,6 +670,22 @@ async function bringIn(projectId: string, job: MakeJob, out: { url: string; cont
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${job.id}${ext}`);
   writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  return file;
+}
+
+const EXT: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4", "video/quicktime": ".mov" };
+
+/** A finished take: where the service has it, or the file it was already saved to. */
+type Taken = { url: string; contentType?: string; seed?: number } | { file: string; seed?: undefined };
+
+/**
+ * Downloads the take into made/takes/ (unless it's there already) and adds it as an asset, once: a job picked up again
+ * after a crash finds its own.
+ */
+async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Asset> {
+  const have = loadProject(projectId, job.cut).project.assets.find((a) => a.provenance?.job === job.id);
+  if (have) return have;
+  const file = "file" in out ? out.file : await download(projectId, job, out);
   // A still that came back letterboxed would make a clip with the bars in it; a file that won't read is left as it is.
   const bars = job.op === "image" ? await unletterbox(file).catch(() => undefined) : undefined;
   const r = job.request;

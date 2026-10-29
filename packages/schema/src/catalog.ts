@@ -19,6 +19,32 @@ export const CATALOG: CatalogModel[] = [
     routes: [{ via: "fal", shape: "nano-banana", endpoints: { text: "fal-ai/nano-banana", refs: "fal-ai/nano-banana/edit" }, price: { perImage: 0.0398 } }],
   },
   {
+    id: "muse-image",
+    label: "Muse Image",
+    by: "Meta",
+    note: "Cheap stills and boards; keeps a character from reference pictures.",
+    ops: ["image"],
+    // It takes up to 10; 4 like the others, since a request gives every still model the same pictures.
+    takes: { refs: 4 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    wait: 20,
+    // dev.meta.ai/docs/image-generation: $0.01 an image, whatever its size.
+    routes: [{ via: "meta", shape: "images-api", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0.01 } }],
+  },
+  {
+    id: "gpt-image",
+    label: "GPT Image",
+    by: "OpenAI",
+    note: "Follows long, exact prompts and draws legible text; slower.",
+    ops: ["image"],
+    takes: { refs: 4 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    wait: 60,
+    // developers.openai.com/api/docs/guides/image-generation: billed by the token, about 4 to 5¢ a picture at medium
+    // quality; the take records what it actually cost.
+    routes: [{ via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.5-flare", refs: "gpt-image-2.5-flare" }, price: { perImage: 0.053 } }],
+  },
+  {
     id: "kling-2.5-turbo",
     label: "Kling 2.5 Turbo",
     by: "Kuaishou",
