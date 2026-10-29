@@ -47,9 +47,10 @@ What separates a great one from a pile of pretty clips:
 ## Turn 4: boards
 
 1. **Estimate,** then make: `list_models` with every shot (`op: "image"`, `count: 2`), then `generate` with the same. A board pass for 16 shots is about $1.30.
-2. `jobs` with `wait`. Look at every board: the cast on-model, the framing the beat needs, continuity from shot to shot. Pick each shot's take; make the weak ones again with sharper prompts.
-3. **Music.** `set_song` if the person gave one; otherwise, if they asked, `generate_music` with the genre's feel (a heist wants pizzicato and brushed drums), instrumental, a few seconds longer than the cut; then `fit_music`.
-4. `hand_off` with kind `review`: the board plays as an animatic.
+2. `jobs` with `wait`. Look at every board (`look_at_assets`, or a contact sheet of them): the cast on-model, the framing the beat needs, continuity from shot to shot, and no words printed in the picture. Pick each shot's take; make the weak ones again with sharper prompts. A close shot that came back wide named its place with @: say where in words instead (the `make` skill).
+3. **Music.** `set_song` if the person gave one; otherwise, if they asked, `generate_music` with the genre's feel (a heist wants pizzicato and brushed drums), instrumental, a few seconds longer than the cut; then `fit_music`, which jumps the song on a bar line so its own ending lands on the last shot.
+4. **Titles.** A title over the opening and a line over the last shot (text shots on the text track, `title-bold` and `handwritten`) are often all the designed shots a film needs.
+5. `hand_off` with kind `review`: the board plays as an animatic.
 
 ## Turn 5: roughs
 
