@@ -396,7 +396,11 @@ server.registerTool(
         const cue = p.music?.cues[0];
         const song = p.assets.find((a) => a.id === cue?.asset);
         if (!cue || !song?.grid || !song.duration) throw new Error("The cut needs a song with a beat grid first (set_song or generate_music)");
-        const want = length ?? resolveTimeline(p).duration;
+        // A cut timed by its shots runs as long as its picture, not as long as the song now under it.
+        const tl = resolveTimeline(p);
+        const picture = p.tracks.find((t) => t.kind === "picture")?.id;
+        const lastShot = Math.max(0, ...tl.shots.filter((s) => s.track === picture && Number.isFinite(s.end)).map((s) => s.end));
+        const want = length ?? (p.spine === "shots" && lastShot > 0 ? lastShot : tl.duration);
         const start = from ?? cue.from ?? 0;
         const fit = fitSong({ grid: song.grid, duration: song.duration }, want, start);
         p.music = {
@@ -540,7 +544,14 @@ server.registerTool(
   async ({ project: id, cut, prompt, seconds, instrumental, label, use }) => {
     const a = await generateMusic(id, { prompt, seconds, instrumental, label, cut, use });
     return text(
-      `Made "${a.label}" (${a.id}): ${a.duration ? formatTime(a.duration) : "?"}, ${a.grid?.bpm} BPM, sections ${a.sections?.map((s) => `${s.label} (${s.id}) at ${formatTime(s.start)}`).join(", ")}.${use === false ? " Added to the project's music." : " It's the cut's music now; run first_cut to cut to it."}`,
+      `Made "${a.label}" (${a.id}): ${a.duration ? formatTime(a.duration) : "?"}, ${a.grid?.bpm} BPM, sections ${a.sections?.map((s) => `${s.label} (${s.id}) at ${formatTime(s.start)}`).join(", ")}.${
+        use === false
+          ? " Added to the project's music."
+          : // A cut timed by its own shots keeps them; first_cut would rebuild it from footage.
+            loadProject(id, cut).project.spine === "shots"
+            ? " It's the cut's music now; run fit_music so its ending lands on the last shot."
+            : " It's the cut's music now; run first_cut to cut to it."
+      }`,
     );
   },
 );

@@ -35,6 +35,7 @@ import {
 } from "@beatsheet/schema";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { addAsset } from "./ingest.ts";
+import { unletterbox } from "./letterbox.ts";
 import { assetPath, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { SERVICES } from "./services.ts";
@@ -607,6 +608,8 @@ async function bringIn(projectId: string, job: MakeJob, out: { url: string; cont
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${job.id}${ext}`);
   writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+  // A still that came back letterboxed would make a clip with the bars in it; a file that won't read is left as it is.
+  const bars = job.op === "image" ? await unletterbox(file).catch(() => undefined) : undefined;
   const r = job.request;
   return addAsset(projectId, file, {
     id: job.sheet ? `${job.sheet.replace("/", "-")}-sheet` : `${job.shot ?? job.op}-take`,
@@ -623,7 +626,13 @@ async function bringIn(projectId: string, job: MakeJob, out: { url: string; cont
       costUsd: job.usd,
       createdAt: new Date().toISOString(),
       op: job.op,
-      params: { model: job.model, ...(r.seconds !== undefined ? { seconds: r.seconds } : {}), ...(r.aspect ? { aspect: r.aspect } : {}), ...(job.quality ? { quality: job.quality } : {}) },
+      params: {
+        model: job.model,
+        ...(r.seconds !== undefined ? { seconds: r.seconds } : {}),
+        ...(r.aspect ? { aspect: r.aspect } : {}),
+        ...(job.quality ? { quality: job.quality } : {}),
+        ...(bars ? { letterbox: `removed ${bars.top + bars.bottom}px of bars` } : {}),
+      },
       job: job.id,
     },
   });
