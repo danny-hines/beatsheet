@@ -15,8 +15,12 @@ export const CATALOG: CatalogModel[] = [
     takes: { refs: 4 },
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 15,
-    // fal.ai/models/fal-ai/nano-banana: $0.0398 an image.
-    routes: [{ via: "fal", shape: "nano-banana", endpoints: { text: "fal-ai/nano-banana", refs: "fal-ai/nano-banana/edit" }, price: { perImage: 0.0398 } }],
+    // fal.ai/models/fal-ai/nano-banana: $0.0398 an image. On the Gemini API it's gemini-2.5-flash-image: 1,290 tokens
+    // out at $30 a million, about $0.039.
+    routes: [
+      { via: "fal", shape: "nano-banana", endpoints: { text: "fal-ai/nano-banana", refs: "fal-ai/nano-banana/edit" }, price: { perImage: 0.0398 } },
+      { via: "gemini", shape: "gemini-image", endpoints: { text: "gemini-2.5-flash-image", refs: "gemini-2.5-flash-image" }, price: { perImage: 0.039 } },
+    ],
   },
   {
     id: "muse-image",

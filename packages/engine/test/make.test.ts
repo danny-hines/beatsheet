@@ -12,14 +12,14 @@ process.env.BEATSHEET_HOME = join(root, "home");
 process.env.BEATSHEET_MAKE_POLL_MS = "5";
 
 // Keys come from the Keychain, and a key there means the service is connected: fal, and the two that make stills in
-// one request, OpenAI and Meta. A test can set a spending limit.
-const settings = vi.hoisted(() => ({ make: undefined as undefined | { limit?: { usd: number; since: string } } }));
+// one request, OpenAI and Meta. A test can connect more (Gemini), and set a spending limit.
+const settings = vi.hoisted(() => ({ make: undefined as undefined | { limit?: { usd: number; since: string } }, services: {} as Record<string, { addedAt: string }> }));
 vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async (id: string) => (["fal", "openai", "meta"].includes(id) ? "test-key" : undefined),
-    readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" } }, checks: {}, make: settings.make }),
+    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini"].includes(id) ? "test-key" : undefined),
+    readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" }, ...settings.services }, checks: {}, make: settings.make }),
   };
 });
 // Plans (ChatGPT through Codex, Muse Code) aren't signed in unless a test says so, and make their picture without the CLI.
@@ -80,6 +80,13 @@ beforeAll(async () => {
         res.writeHead(status, { "content-type": type });
         res.end(type === "application/json" ? JSON.stringify(data) : (data as Buffer));
       };
+      // Gemini's generateContent: the picture comes back as a part of the answer.
+      if (url.startsWith("/gemini/")) {
+        if (req.headers["x-goog-api-key"] !== "test-key") return send(400, { error: { message: "API key not valid", status: "INVALID_ARGUMENT" } });
+        seen.direct.push({ url, type: String(req.headers["content-type"]), body });
+        if (body.includes("free tier")) return send(429, { error: { message: "Quota exceeded for metric: generate_content_free_tier_requests, limit: 0", status: "RESOURCE_EXHAUSTED" } });
+        return send(200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: Buffer.from("a made picture").toString("base64") } }] } }], usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 1290 } });
+      }
       if (url.startsWith("/direct/")) {
         if (req.headers.authorization !== "Bearer test-key") return send(401, { error: { message: "no" } });
         seen.direct.push({ url, type: String(req.headers["content-type"]), body });
@@ -123,6 +130,7 @@ beforeAll(async () => {
   process.env.BEATSHEET_FAL_REST = `${base}/rest`;
   process.env.BEATSHEET_OPENAI = `${base}/direct/openai`;
   process.env.BEATSHEET_META = `${base}/direct/meta`;
+  process.env.BEATSHEET_GEMINI = `${base}/gemini`;
   make = await import("../src/make.ts");
   store = await import("../src/store.ts");
 });
@@ -139,6 +147,7 @@ beforeEach(() => {
   refuse = undefined;
   plans.ready = [];
   plans.asks = [];
+  settings.services = {};
   polls.clear();
   const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
   rmSync(dir, { recursive: true, force: true });
@@ -523,6 +532,25 @@ describe("stills from services that answer in one request", () => {
     expect(jobs[0]!.request.refs).toEqual(["cat-photo", "noir-pic"]);
     expect(jobs[0]!.request.sent).toMatch(/The reference photos show the cat: keep .* exactly\. The last reference picture shows the style to draw it in, not who or what it is\.$/);
     await make.driveJobs(PROJECT);
+  });
+
+  it("makes Nano Banana on a Gemini key, with the pictures inline and the shape in imageConfig", async () => {
+    settings.services = { gemini: { addedAt: "2026-10-29" } };
+    const { fit } = make.startMake(PROJECT, { op: "image", sheet: "cat", model: "nano-banana", count: 1 });
+    expect(fit).toMatchObject({ route: "gemini", where: "Google Gemini", endpoint: "gemini-2.5-flash-image", usd: 0.039 });
+    await make.driveJobs(PROJECT);
+    expect(seen.direct[0]!.url).toBe("/gemini/models/gemini-2.5-flash-image:generateContent");
+    const sent = JSON.parse(seen.direct[0]!.body) as { contents: { parts: Record<string, unknown>[] }[]; generationConfig: unknown };
+    expect(sent.contents[0]!.parts[1]).toEqual({ inline_data: { mime_type: "image/jpeg", data: Buffer.from("the cat").toString("base64") } });
+    expect(sent.generationConfig).toEqual({ responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "16:9" } });
+    // 300 tokens in at $0.30 a million and 1,290 out at $30.
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", route: "gemini", usd: 0.0388, asset: "cat-sheet" });
+
+    // A key with no allowance for pictures says so once, rather than trying again and again.
+    make.startMake(PROJECT, { op: "image", prompt: "the free tier", model: "nano-banana", count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT)[1]).toMatchObject({ status: "failed", error: expect.stringContaining("limit: 0") });
+    expect(seen.direct).toHaveLength(2);
   });
 
   it("gives Muse Image the cast's pictures as data in JSON, and GPT Image as files in a form", async () => {

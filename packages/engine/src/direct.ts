@@ -1,7 +1,8 @@
 /**
  * Stills from services that answer in one request instead of a queue: GPT Image on OpenAI and Muse Image on Meta's
- * Model API. Both take OpenAI's Images API: a prompt to /images/generations, or a prompt and pictures to /images/edits,
- * and the picture comes back in the answer. There's no request to pick up again after a restart, so the caller saves
+ * Model API, which both take OpenAI's Images API (a prompt to /images/generations, or a prompt and pictures to
+ * /images/edits), and Nano Banana on Google's Gemini API (generateContent, the pictures inline). The picture comes back
+ * in the answer. There's no request to pick up again after a restart, so the caller saves
  * the picture the moment it arrives. The key is read inside the engine and never passes through the agent.
  */
 import { readFileSync } from "node:fs";
@@ -11,8 +12,9 @@ import { FalError } from "./fal.ts";
 const BASES: Record<string, string> = {
   openai: process.env.BEATSHEET_OPENAI ?? "https://api.openai.com/v1",
   meta: process.env.BEATSHEET_META ?? "https://api.meta.ai/v1",
+  gemini: process.env.BEATSHEET_GEMINI ?? "https://generativelanguage.googleapis.com/v1beta",
 };
-const NAMES: Record<string, string> = { openai: "OpenAI", meta: "Meta" };
+const NAMES: Record<string, string> = { openai: "OpenAI", meta: "Meta", gemini: "Gemini" };
 /** The routes this module runs. */
 export const DIRECT = Object.keys(BASES);
 
@@ -55,6 +57,7 @@ export type DirectOut = { bytes: Buffer; contentType: string; usd?: number };
 export async function directImage(route: string, model: string, key: string, ask: DirectAsk): Promise<DirectOut> {
   const base = BASES[route];
   if (!base) throw new FalError(`beatsheet can't run ${route} jobs`, true);
+  if (route === "gemini") return geminiImage(base, model, key, ask);
   const name = NAMES[route]!;
   const size = sizeFor(ask.aspect);
   // GPT Image takes options Muse Image refuses (it answers 400 to fields it doesn't know).
@@ -99,6 +102,52 @@ export async function directImage(route: string, model: string, key: string, ask
   const bytes = out?.b64_json ? Buffer.from(out.b64_json, "base64") : out?.url ? await download(out.url, name) : undefined;
   if (!bytes?.length) throw new FalError(`${name} finished but didn't send a picture`, true);
   return { bytes, contentType: "image/jpeg", usd: costOf(route, body.usage) };
+}
+
+// Gemini 2.5 Flash Image, per million tokens: $0.30 in, $30 out (a picture is 1,290 tokens, so about 3.9¢).
+const GEMINI_RATES = { in: 0.3, out: 30 };
+
+/** Nano Banana on the Gemini API: the prompt and the pictures as parts of one message, the shape in imageConfig. */
+async function geminiImage(base: string, model: string, key: string, ask: DirectAsk): Promise<DirectOut> {
+  const parts = [{ text: ask.prompt }, ...(ask.refs ?? []).map((file) => ({ inline_data: { mime_type: typeOf(file), data: readFileSync(file).toString("base64") } }))];
+  const body = { contents: [{ parts }], generationConfig: { responseModalities: ["IMAGE"], ...(ask.aspect ? { imageConfig: { aspectRatio: ask.aspect } } : {}) } };
+  let res: Response;
+  try {
+    res = await fetch(`${base}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "x-goog-api-key": key, "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5 * 60_000),
+    });
+  } catch (err) {
+    throw new FalError(`Couldn't reach Gemini (${err instanceof Error ? err.message : String(err)})`, false);
+  }
+  type Part = { text?: string; inlineData?: { mimeType?: string; data?: string } };
+  const out = (await res.json().catch(() => ({}))) as {
+    candidates?: { content?: { parts?: Part[] }; finishReason?: string }[];
+    promptFeedback?: { blockReason?: string };
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+    error?: { message?: string; status?: string };
+  };
+  if (!res.ok) {
+    const said = out.error?.message ?? `Gemini answered ${res.status}`;
+    if (res.status === 401 || (res.status === 400 && /API_KEY_INVALID|API key not valid/i.test(said))) throw new FalError("Gemini refused the key. The person can check it in Settings → Media services.", true);
+    if (res.status === 403) throw new FalError(`Gemini won't let this key make images: ${said}`, true);
+    // A key with no allowance for pictures (the free tier) won't get one by asking again; a passing limit will.
+    if (res.status === 429) throw new FalError(`Gemini couldn't make it: ${said}`, /quota|billing|limit: 0/i.test(said));
+    if (res.status >= 500) throw new FalError(`Gemini couldn't make it right now: ${said}`, false);
+    throw new FalError(said, true);
+  }
+  if (out.promptFeedback?.blockReason) throw new FalError(`Gemini wouldn't make this (${out.promptFeedback.blockReason.toLowerCase().replace(/_/g, " ")})`, true);
+  const c = out.candidates?.[0];
+  const pic = c?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
+  if (!pic?.data) {
+    const why = c?.content?.parts?.find((p) => p.text)?.text ?? c?.finishReason;
+    throw new FalError(`Gemini didn't make a picture${why ? `: ${why}` : ""}`, true);
+  }
+  const u = out.usageMetadata;
+  const usd = u?.candidatesTokenCount ? Math.round((((u.promptTokenCount ?? 0) * GEMINI_RATES.in + u.candidatesTokenCount * GEMINI_RATES.out) / 1e6) * 10000) / 10000 : undefined;
+  return { bytes: Buffer.from(pic.data, "base64"), contentType: pic.mimeType ?? "image/png", usd };
 }
 
 async function download(url: string, name: string): Promise<Buffer> {
