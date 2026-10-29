@@ -10,6 +10,7 @@ import {
   cutView,
   fitModel,
   HANDLE,
+  maxStillRefs,
   parseFile,
   Project,
   resolveTimeline,
@@ -328,5 +329,19 @@ describe("cast and sets in prompts", () => {
     const back = withCut(file, view);
     expect(back.cast?.map((m) => m.id)).toEqual(["cat"]);
     expect("cast" in back.cuts[0]!).toBe(false);
+  });
+});
+
+describe("more cast than a model takes pictures of", () => {
+  it("gives the characters' pictures first, up to the most a still takes, and the rest only in words", () => {
+    const pic = (id: string, kind: CastMember["kind"]): CastMember => ({ id, name: id, kind, about: `${id} look`, images: [`${id}-pic`] });
+    const cast = [pic("kitchen", "place"), pic("mom", "character"), pic("dad", "character"), pic("kid", "character"), pic("cat", "character"), pic("mug", "prop")];
+    const prompt = "@mom, @dad, @kid and @cat at breakfast in @kitchen, a @mug on the table";
+    const uses = castOf(prompt, cast);
+    const pictured = castPictures(uses, maxStillRefs(CATALOG));
+    expect(maxStillRefs(CATALOG)).toBe(4);
+    expect(pictured.map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic"]);
+    // Everyone is still described; only the pictured are named as references.
+    expect(castPrompt(prompt, uses, pictured.map((p) => p.use))).toMatch(/in kitchen \(kitchen look\), a mug \(mug look\) on the table\. Reference pictures, in order: mom, dad, kid, cat\./);
   });
 });

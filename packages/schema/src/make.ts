@@ -295,13 +295,25 @@ export function castPrompt(prompt: string, uses: CastUse[], pictured: CastUse[] 
   return text;
 }
 
-/** The cast that have a picture to give a model, with the picture: the variant's own if it has one, else the main one. */
-export function castPictures(uses: CastUse[]): { use: CastUse; asset: string }[] {
-  return uses.flatMap((use) => {
-    const asset = use.variant?.images?.[0] ?? use.member.images?.[0];
-    return asset ? [{ use, asset }] : [];
-  });
+/** Who gets a picture first when there are more than a model takes: the characters, then props, places and the style. */
+const PICTURE_ORDER: CastMember["kind"][] = ["character", "prop", "place", "style"];
+
+/**
+ * The cast that have a picture to give a model, with the picture: the variant's own if it has one, else the main
+ * one. With `max`, only that many, characters first (the rest are still described in words).
+ */
+export function castPictures(uses: CastUse[], max = Infinity): { use: CastUse; asset: string }[] {
+  return uses
+    .flatMap((use) => {
+      const asset = use.variant?.images?.[0] ?? use.member.images?.[0];
+      return asset ? [{ use, asset }] : [];
+    })
+    .sort((a, b) => PICTURE_ORDER.indexOf(a.use.member.kind) - PICTURE_ORDER.indexOf(b.use.member.kind))
+    .slice(0, max);
 }
+
+/** The most reference pictures any model in a catalog takes for stills. */
+export const maxStillRefs = (catalog: CatalogModel[]) => Math.max(0, ...catalog.filter((m) => m.ops.includes("image")).map((m) => m.takes.refs ?? 0));
 
 /** What a shot asks of a take: how long it plays (in the cut's first format), that format's shape, and a first prompt. */
 export function shotNeeds(project: Project, shotId: string): { seconds?: number; aspect: string; prompt?: string } {

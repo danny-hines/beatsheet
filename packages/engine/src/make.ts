@@ -14,6 +14,7 @@ import {
   castOf,
   castPictures,
   castPrompt,
+  maxStillRefs,
   chooseModels,
   FIDELITY,
   fitModel,
@@ -212,7 +213,8 @@ export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
       const keep = member!.kind === "place" ? "its layout, colors and details" : `${member!.name}'s features, markings, colors and shape`;
       sent = `${sent.replace(/[.!?]?\s*$/, ".")} The reference photos show ${member!.name}: keep ${keep} exactly.`;
     } else {
-      const pictures = castPictures(uses);
+      // As many pictures as a model for stills takes, characters first; the rest are described in words.
+      const pictures = castPictures(uses, maxStillRefs(CATALOG));
       if (pictures.length) {
         refs = pictures.map((p) => p.asset);
         sent = castPrompt(prompt, uses, pictures.map((p) => p.use));
