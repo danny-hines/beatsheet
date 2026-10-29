@@ -562,7 +562,8 @@ function TextOverlay({ text, style, duration, look }: { text: string; style?: st
       : style === "title-bold"
       ? { fontFamily: display, fontWeight: heavy, fontSize: 104 * u, letterSpacing: caps ? "0.04em" : 0, textTransform: caps ? "uppercase" : "none", lineHeight: 1.05 }
       : style === "handwritten"
-        ? { fontFamily: "Snell Roundhand, Brush Script MT, cursive", fontSize: 120 * u }
+        ? // The Mac's script faces, then Windows' own.
+          { fontFamily: "Snell Roundhand, Brush Script MT, Segoe Script, Ink Free, cursive", fontSize: 120 * u }
         : { fontFamily: look?.fonts?.body ?? "Helvetica Neue, Arial, sans-serif", fontWeight: 700, fontSize: 64 * u };
   return (
     <AbsoluteFill style={{ justifyContent: style === "handwritten" ? "flex-end" : "flex-start", paddingTop: (style === "title-huge" ? 380 : 300) * u, paddingBottom: 360 * u, opacity: fade }}>
