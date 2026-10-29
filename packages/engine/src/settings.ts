@@ -40,7 +40,12 @@ export type Settings = {
   /** On Windows: a Hugging Face token (in Credential Manager) that can download Meta's SAM 3.1, and whose it is. */
   huggingface?: { name?: string; addedAt: string };
   /** Making footage: the models Auto tries first for each kind of thing (catalog ids), and what the agent may spend in a turn before asking. */
-  make?: { ranking?: Partial<Record<string, string[]>>; turnBudgetUsd?: number };
+  make?: {
+    ranking?: Partial<Record<string, string[]>>;
+    turnBudgetUsd?: number;
+    /** A hard limit on what making may spend in all, from `since` on, whoever asks: the person, the agent or a script. */
+    limit?: { usd: number; since: string };
+  };
 };
 
 export function readSettings(): Settings {

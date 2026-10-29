@@ -11,10 +11,15 @@ process.env.BEATSHEET_PROJECTS = join(root, "projects");
 process.env.BEATSHEET_HOME = join(root, "home");
 process.env.BEATSHEET_MAKE_POLL_MS = "5";
 
-// fal's key comes from the Keychain, and a key there means fal is connected.
+// fal's key comes from the Keychain, and a key there means fal is connected. A test can set a spending limit.
+const settings = vi.hoisted(() => ({ make: undefined as undefined | { limit?: { usd: number; since: string } } }));
 vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
-  return { ...real, getSecret: async (id: string) => (id === "fal" ? "test-key" : undefined), readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" } }, checks: {} }) };
+  return {
+    ...real,
+    getSecret: async (id: string) => (id === "fal" ? "test-key" : undefined),
+    readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" } }, checks: {}, make: settings.make }),
+  };
 });
 // Adding an asset probes it with ffprobe and makes previews; here it only records it, as a 6-second video or a still.
 vi.mock("../src/ingest.ts", async () => {
@@ -332,5 +337,26 @@ describe("roughs, finals and whole passes", () => {
     const { plans, usd } = make.startMakeAll(PROJECT, asks, { spendable: 1 });
     expect(usd).toBe(0.16);
     expect(plans.map((p) => p.jobs.length)).toEqual([2, 2]);
+  });
+});
+
+describe("the spending limit", () => {
+  it("refuses what would go past it, counting every take asked for since it was set, whoever asked", async () => {
+    // From now: takes an earlier test left going were asked for before.
+    settings.make = { limit: { usd: 0.1, since: new Date().toISOString() } };
+    try {
+      make.startMake(PROJECT, { op: "image", shot: "s1", count: 2 });
+      await make.driveJobs(PROJECT);
+      expect(make.spentSince(settings.make.limit!.since)).toBeCloseTo(0.08, 3);
+      expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 })).toThrow("This is about $0.04, and $0.08 of the $0.10 spending limit");
+      // What failed or was stopped doesn't count.
+      refuse = "alley";
+      settings.make.limit!.usd = 0.12;
+      make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 });
+      await make.driveJobs(PROJECT);
+      expect(make.spentSince(settings.make.limit!.since)).toBeCloseTo(0.08, 3);
+    } finally {
+      settings.make = undefined;
+    }
   });
 });
