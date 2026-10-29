@@ -18,7 +18,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
-import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, startMake, type MakeAsk } from "./make.ts";
+import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, spentSince, startMake, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -381,6 +381,24 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       const saved = updateSettings((s) => void (s.chrome = !!body.on));
       await agentStudio().chromeChanged();
       return json(res, 200, saved);
+    }
+    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, and the order
+    // Auto tries models in.
+    if (id === "make" && req.method === "GET") {
+      const make = readSettings().make ?? {};
+      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined });
+    }
+    if (id === "make" && req.method === "POST") {
+      const change = body as unknown as { limit?: { usd: number; since?: string } | null; turnBudgetUsd?: number; ranking?: Record<string, string[]> };
+      const saved = updateSettings((s) => {
+        const make = (s.make ??= {});
+        if (change.limit === null) delete make.limit;
+        else if (change.limit && change.limit.usd > 0) make.limit = { usd: change.limit.usd, since: change.limit.since ?? make.limit?.since ?? new Date().toISOString() };
+        if (change.turnBudgetUsd !== undefined && change.turnBudgetUsd >= 0) make.turnBudgetUsd = change.turnBudgetUsd;
+        if (change.ranking) make.ranking = { ...(make.ranking ?? {}), ...change.ranking };
+      });
+      const make = saved.make ?? {};
+      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined });
     }
     if (id === "service" && action && req.method === "POST") return json(res, 200, body.key ? await addServiceKey(action, body.key) : await recheckService(action));
     if (id === "service" && action && req.method === "DELETE") {

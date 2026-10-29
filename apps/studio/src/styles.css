@@ -966,3 +966,13 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-row input { flex: 1; min-width: 0; }
 .cast-remove { margin-top: 10px; }
 .card-menu button:disabled { opacity: 0.45; }
+
+/* Settings → Making: the spending limit, the agent's turn budget, and the order Auto tries models in. */
+.make-settings { display: flex; flex-direction: column; gap: 18px; }
+.make-settings section { display: flex; flex-direction: column; gap: 8px; }
+.make-settings h4 { margin: 0; }
+.make-settings label.check-row { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.make-settings input.money { width: 72px; flex: none; }
+.make-ranking ol { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
+.make-ranking li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 10px; align-items: baseline; }
+.make-ranking-move { white-space: nowrap; }

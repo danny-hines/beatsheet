@@ -4,6 +4,7 @@ import { AGENT_NAMES, AGENT_ORDER, CAPABILITY_LABELS, timeAgo, OS, WINDOWS } fro
 import { actions, useStore, type State } from "../store";
 import { Mark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
+import { MakeSection, useMakeSummary } from "./MakeSettings";
 
 type SetupInfo = NonNullable<State["setup"]>;
 
@@ -21,6 +22,7 @@ const ABOUT = {
   services: WINDOWS ? "Each key you add gives the agent more to work with. Keys are checked, then kept in Windows Credential Manager." : "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
   abilities: "Everything the agent can do with what's set up now.",
+  make: "What making pictures and video may spend, and which models Auto tries first.",
 };
 
 /** The agent list, asked for once; each CLI takes a moment to answer. */
@@ -112,6 +114,7 @@ const PANES = [
   { id: "mac", label: `On ${OS.here}` },
   { id: "voices", label: "Voices" },
   { id: "services", label: "Media services" },
+  { id: "make", label: "Making" },
   { id: "abilities", label: "What it can do" },
 ] as const;
 type Pane = (typeof PANES)[number]["id"];
@@ -123,6 +126,7 @@ export function SettingsDialog() {
   const asked = useStore((s) => s.settingsPane);
   const [pane, setPane] = useState<Pane>(() => (PANES.some((p) => p.id === asked) ? (asked as Pane) : "agent"));
   const voices = useVoices();
+  const makeSummary = useMakeSummary();
   const close = () => actions.setSettingsOpen(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
@@ -138,6 +142,7 @@ export function SettingsDialog() {
     mac: setup.sam?.state === "ready" ? `${samName(setup.sam)} installed` : setup.sam?.state === "installing" ? `Installing ${samName(setup.sam)}…` : setup.vision?.ok ? (WINDOWS ? "Faces and people" : "Apple Vision") : "",
     voices: voiceLabel(voices, voices?.default ?? voices?.fallback),
     services: added ? `${added} added` : "None added",
+    make: makeSummary,
     abilities: `${BUILT_IN.length + ON_THIS_MAC.filter((x) => localAbility(setup, x)).length + setup.capabilities.length} things`,
   };
   const title = PANES.find((p) => p.id === pane)!.label;
@@ -172,6 +177,8 @@ export function SettingsDialog() {
               <VoicesSection onAddKey={() => setPane("services")} />
             ) : pane === "services" ? (
               <ServicesSection services={setup.services} />
+            ) : pane === "make" ? (
+              <MakeSection />
             ) : (
               <Abilities setup={setup} />
             )}
