@@ -252,7 +252,7 @@ describe("cast and sets", () => {
     expect(sent.image_urls).toEqual([`${base}/out/uploaded-1.jpg`]);
     // A photograph, said in so many words: "reference sheet" alone comes back drawn.
     expect(String(sent.prompt)).toMatch(/^A photographic reference sheet of the cat \(orange tabby, white chest\): front, three-quarter/);
-    expect(String(sent.prompt)).toMatch(/photographed rather than drawn, nothing else in the picture\. The reference photos show the cat: keep the cat's features, markings, colors and shape exactly\.$/);
+    expect(String(sent.prompt)).toMatch(/photographed rather than drawn, nothing else in the picture and no text or labels\. The reference photos show the cat: keep the cat's features, markings, colors and shape exactly\.$/);
     const cat = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!;
     expect(cat.images).toEqual(["cat-sheet"]);
     expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-sheet")).toMatchObject({ tags: ["sheet"], provenance: { cast: ["cat"] } });
@@ -284,14 +284,14 @@ describe("cast and sets", () => {
     make.startMake(PROJECT, { op: "image", sheet: "alley", count: 1 });
     await make.driveJobs(PROJECT);
     expect(seen.submits[0]!.input.prompt).toBe(
-      "A wide establishing view of the alley (narrow, wet brick), empty of people, nothing else in the picture, in the style of film noir (black and white, hard shadows).",
+      "A wide establishing view of the alley (narrow, wet brick), empty of people, nothing else in the picture and no text or labels, in the style of film noir (black and white, hard shadows).",
     );
 
     // The cat is drawn: its sheet is in its own style, and a board puts the drawn cat in the noir alley.
     store.updateFile(PROJECT, (d) => void (d.cast!.find((m) => m.id === "cat")!.style = "toon"));
     make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
     await make.driveJobs(PROJECT);
-    expect(String(seen.submits[1]!.input.prompt)).toMatch(/^A reference sheet of the cat \(orange tabby, white chest\): .*, nothing else in the picture, in the style of hand-drawn \(2D animation, clean ink lines\)\. The reference photos show the cat: keep/);
+    expect(String(seen.submits[1]!.input.prompt)).toMatch(/^A reference sheet of the cat \(orange tabby, white chest\): .*, nothing else in the picture and no text or labels, in the style of hand-drawn \(2D animation, clean ink lines\)\. The reference photos show the cat: keep/);
     make.startMake(PROJECT, { op: "image", shot: "s2", prompt: "@cat strolls down @alley", count: 1 });
     await make.driveJobs(PROJECT);
     expect(String(seen.submits[2]!.input.prompt)).toMatch(
@@ -358,5 +358,16 @@ describe("the spending limit", () => {
     } finally {
       settings.make = undefined;
     }
+  });
+});
+
+describe("a variant's sheet", () => {
+  it("says the difference is in every view, since it starts from the plain sheet", async () => {
+    make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    await make.driveJobs(PROJECT);
+    make.startMake(PROJECT, { op: "image", sheet: "cat/heist", count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(String(seen.submits[1]!.input.prompt)).toMatch(/ In every view: a tiny black eye mask\.$/);
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.images).toEqual(["cat-heist-sheet"]);
   });
 });

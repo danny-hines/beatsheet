@@ -165,11 +165,11 @@ function sheetPrompt(member: CastMember, id: string, style: string | undefined):
   if (member.kind === "style") return `A single still that shows the look of @${id}.`;
   if (member.kind === "place")
     return style
-      ? `A wide establishing view of @${id}, empty of people, nothing else in the picture, in the style of @${style}.`
-      : `A wide establishing photograph of @${id} in even daylight, empty of people, nothing else in the picture.`;
+      ? `A wide establishing view of @${id}, empty of people, nothing else in the picture and no text or labels, in the style of @${style}.`
+      : `A wide establishing photograph of @${id} in even daylight, empty of people, nothing else in the picture and no text or labels.`;
   return style
-    ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture, in the style of @${style}.`
-    : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture.`;
+    ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
+    : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
 }
 
 /** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
@@ -221,7 +221,10 @@ export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
       }
     }
   }
-  const sheetAspect = member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
+  // A variant's sheet starts from the plain one, which models copy view for view; the difference has to be in all of them.
+  const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
+  if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} In every view: ${variant.about}.`;
+  const sheetAspect =member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   return {
     op: ask.op,
     prompt,
