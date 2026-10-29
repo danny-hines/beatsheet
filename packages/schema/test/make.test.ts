@@ -65,11 +65,12 @@ const fal: ServiceState = { label: "fal", state: "ready" };
 const services = { fal } satisfies Record<string, ServiceState>;
 
 describe("whether a model can make a shot", () => {
-  it("asks for the shortest length that covers the shot with a little either side", () => {
+  it("asks for the shortest length that covers the shot, with a little either side when that length allows it", () => {
     const f = fitModel(fixed, { op: "video", prompt: "a cat", seconds: 3.2, aspect: "16:9" }, services);
     expect(f).toMatchObject({ ok: true, route: "fal", endpoint: "fal/fixed/t2v", seconds: 5, aspect: "16:9" });
-    // 4.5s plus the handles is over 5, so it's the 10-second take.
-    expect(fitModel(fixed, { op: "video", prompt: "a cat", seconds: 4.5 }, services)).toMatchObject({ ok: true, seconds: 10 });
+    // A 5-second shot gets the 5-second take, not a 10-second one at twice the price for half a second either side.
+    expect(fitModel(fixed, { op: "video", prompt: "a cat", seconds: 5 }, services)).toMatchObject({ ok: true, seconds: 5, usd: 0.35 });
+    expect(fitModel(fixed, { op: "video", prompt: "a cat", seconds: 5.2 }, services)).toMatchObject({ ok: true, seconds: 10 });
     // Just under the longest: no room for handles, but it still fits.
     expect(fitModel(fixed, { op: "video", prompt: "a cat", seconds: 9.8 }, services)).toMatchObject({ ok: true, seconds: 10 });
     expect(fitModel(ranged, { op: "video", prompt: "a cat", seconds: 3.2 }, services)).toMatchObject({ ok: true, seconds: 3.2 + 2 * HANDLE });

@@ -139,7 +139,12 @@ function lengthFor(model: CatalogModel, wanted: number | undefined): { seconds: 
   if (wanted === undefined || !Number.isFinite(wanted)) return { seconds: options ? options[0]! : Math.min(max, Math.max(min, 5)) };
   if (wanted > max + 1e-6) return { why: { kind: "fit", reason: `Makes up to ${seconds1(max)}; this shot is ${seconds1(wanted)}`, fix: "split" } };
   const padded = wanted + 2 * HANDLE;
-  if (options) return { seconds: options.find((o) => o >= padded - 1e-6) ?? max };
+  if (options) {
+    const bare = options.find((o) => o >= wanted - 1e-6) ?? max;
+    const roomy = options.find((o) => o >= padded - 1e-6);
+    // The spare either side is worth a little more length (5 seconds rather than 4), not a take twice as long at twice the price.
+    return { seconds: roomy !== undefined && roomy <= bare * 1.5 ? roomy : bare };
+  }
   return { seconds: Math.round(Math.min(max, Math.max(min, padded)) * 100) / 100 };
 }
 
