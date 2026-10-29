@@ -5,7 +5,7 @@ description: Make stills and clips in beatsheet with generate, and keep them con
 
 # Making stills and clips
 
-`generate` makes pictures and video with the person's services (fal for now), as takes for shots or as sheets for cast members. Everything it makes lands in the project with where it came from: the model, the prompt the model read, the seed, the cost. The `film` recipe is the whole process for a video made from nothing; this is the craft for each request.
+`generate` makes pictures and video with the person's services (fal, and stills with OpenAI or Meta keys), as takes for shots or as sheets for cast members. Everything it makes lands in the project with where it came from: the model, the prompt the model read, the seed, the cost. The `film` recipe is the whole process for a video made from nothing; this is the craft for each request.
 
 ## The tools
 
@@ -28,7 +28,8 @@ A clip that starts from a board keeps everything the board settled, so never ski
 
 - Leave the model to Auto unless there's a reason; it picks the first ready model of the quality asked for. `list_models` says what each is good for.
 - Keep to one model per pass: mixing models across shots changes how they look. Name it with `model` once you've picked.
-- Stills: Nano Banana. Roughs: Kling 2.5 Turbo (or Wan 2.2, cheaper, any length up to 10s). Finals: Kling 3 Pro, from a board only.
+- Stills: Nano Banana (fal). With the person's own keys, also Muse Image (Meta, 1¢ a still, good for many boards) and GPT Image (OpenAI, about 2¢; follows long, exact prompts and draws legible text like a sign or a note). Roughs: Kling 2.5 Turbo (or Wan 2.2, cheaper, any length up to 10s). Finals: Kling 3 Pro, from a board only.
+- Boards and sheets from different still models look different (grain, color, how faces are drawn). Make a cast member's sheet and the boards with one model, then keep it.
 - A shot longer than any model makes is refused with the reason: split it into two shots.
 
 ## Writing a prompt for a still
