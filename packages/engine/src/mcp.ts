@@ -35,6 +35,7 @@ import {
   type SubjectTrack,
 } from "@beatsheet/schema";
 import { castFromSubject } from "./castfrom.ts";
+import { SERVICES } from "./services.ts";
 import { presenceFromEnv, removePresence, writePresence, type Presence } from "./agents.ts";
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
@@ -585,7 +586,7 @@ const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.r
 const fitLine = (f: Fit) => {
   const note = CATALOG.find((m) => m.id === f.model)?.note;
   if (!f.ok) return `- ${f.label} (${f.model}): ${f.why.reason}`;
-  return `- ${f.label} (${f.model}) on ${f.route}: ${[f.seconds && `${f.seconds}s`, f.aspect, usd(f.usd), minutes(f.wait)].filter(Boolean).join(", ")}. ${note ?? ""}`.trimEnd();
+  return `- ${f.label} (${f.model}) on ${SERVICES.find((s) => s.id === f.route)?.label ?? f.route}: ${[f.seconds && `${f.seconds}s`, f.aspect, usd(f.usd), minutes(f.wait)].filter(Boolean).join(", ")}. ${note ?? ""}`.trimEnd();
 };
 
 server.registerTool(
