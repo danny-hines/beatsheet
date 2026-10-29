@@ -213,6 +213,7 @@ export function resolveTimeline(project: Project, formatId?: string): Timeline {
   const sourceIn = (s: Shot): number =>
     memo(`shot:${s.id}:in`, () => {
       const c = s.content;
+      if (c.kind === "generated") return c.in ?? 0;
       if (c.kind !== "clip") return 0;
       if (!c.sync) return c.in ?? 0;
       return momentTime(c.asset, c.sync.moment) - (anchor(c.sync.at) - shotStart(s)) * (c.speed ?? 1);
@@ -339,7 +340,7 @@ export function resolveTimeline(project: Project, formatId?: string): Timeline {
       start: attempt(`shot ${s.id} start`, () => shotStart(s)),
       end: attempt(`shot ${s.id} end`, () => shotEnd(s)),
     };
-    if (s.content.kind === "clip") r.sourceIn = attempt(`shot ${s.id} source`, () => sourceIn(s));
+    if (s.content.kind === "clip" || (s.content.kind === "generated" && s.content.in)) r.sourceIn = attempt(`shot ${s.id} source`, () => sourceIn(s));
     if (r.end < r.start - EPS) diagnostics.push({ where: `shot ${s.id}`, message: "ends before it starts" });
     return r;
   });

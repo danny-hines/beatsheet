@@ -216,6 +216,9 @@ export const Provenance = z.object({
   refs: z.array(z.string()).optional().describe("Asset ids used as references"),
   costUsd: z.number().optional(),
   createdAt: z.string().optional(),
+  op: z.string().optional().describe("What was asked for: image, video"),
+  params: z.record(z.string(), z.unknown()).optional().describe("Enough to ask again: the catalog model, length, aspect"),
+  job: z.string().optional().describe("The job that made it"),
 });
 export type Provenance = z.infer<typeof Provenance>;
 
@@ -424,6 +427,9 @@ export const ShotContent = z.discriminatedUnion("kind", [
     provider: z.string().optional(),
     model: z.string().optional(),
     refs: z.array(z.string()).optional(),
+    start: z.string().optional().describe("Asset id of the picture a video take starts from (usually the shot's board)"),
+    end: z.string().optional().describe("Asset id of the picture a video take ends on"),
+    in: z.number().optional().describe("Seconds into the take: takes are made a little longer than the shot, so it can be retimed"),
   }),
   z.object({
     kind: z.literal("coded"),

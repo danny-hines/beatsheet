@@ -18,6 +18,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
+import { driveJobs } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -441,6 +442,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   }
   if (section === "projects" && id && !action) {
     if (req.method === "GET") {
+      // Takes still being made when the engine last stopped are picked up again.
+      void driveJobs(id);
       const raw = readRaw(id);
       return json(res, 200, { project: raw.json, version: raw.version });
     }

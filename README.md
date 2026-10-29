@@ -218,7 +218,7 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 
 ## Not built yet
 
-- Generating images and video with the service keys. Narration and music use ElevenLabs; the other services are verified and listed for the agent, with no generation tools yet. Music from fal or Gemini isn't wired up either. (SAM 3.1 cut-outs through fal are wired up but untested without a key.)
+- Making images and video from the studio. The agent can make them through fal (`list_models`, `generate`, `jobs`: stills and clips as takes for a shot, from Nano Banana, Kling 2.5 Turbo and Wan 2.2), written to fal's documentation and tested against a stand-in for it, not yet run for real. The studio's take strip and model picker are next ([docs/MAKE.md](docs/MAKE.md)). Only fal makes pictures and video so far; the other services are verified but have no generation tools. Music from fal or Gemini isn't wired up either. (SAM 3.1 cut-outs through fal are wired up but untested without a key.)
 - Recording the Mac's own sound with the screen. Screen recordings take the microphone only for now.
 - ElevenLabs speech, voice design, cloning and music are written to their documentation and untested end to end (they spend credits); listing voices is tested. Kokoro's install (about 1.5 GB) is untested.
 - SAM for moving cut-outs. The MLX port does pictures, so SAM handles photos and stills, and Apple Vision handles clips. fal's SAM 3/3.1 video (about 0.5–1¢ per 16 frames) would bring it to any machine.

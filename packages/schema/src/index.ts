@@ -11,3 +11,5 @@ export * from "./frame.ts";
 export * from "./voice.ts";
 export * from "./fit.ts";
 export * from "./color.ts";
+export * from "./make.ts";
+export * from "./catalog.ts";

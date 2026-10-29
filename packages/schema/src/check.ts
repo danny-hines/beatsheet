@@ -109,7 +109,7 @@ export function checkCut(p: Project): CheckIssue[] {
       formats(`${path}.content.reframe`, Object.keys(c.reframe ?? {}));
     }
     if (c.kind === "generated") {
-      for (const a of [...(c.takes ?? []), ...(c.take ? [c.take] : []), ...(c.refs ?? [])])
+      for (const a of [...(c.takes ?? []), ...(c.take ? [c.take] : []), ...(c.refs ?? []), ...(c.start ? [c.start] : []), ...(c.end ? [c.end] : [])])
         if (!ids.assets.has(a)) add(path, `unknown asset "${a}"`);
       if (c.take && c.takes && !c.takes.includes(c.take)) add(path, `take "${c.take}" is not in takes`);
     }

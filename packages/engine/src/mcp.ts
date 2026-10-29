@@ -15,6 +15,7 @@ import {
   autoAssemble,
   branchCut,
   buildBatch,
+  CATALOG,
   cutOf,
   describeAnchor,
   formatPreset,
@@ -22,12 +23,14 @@ import {
   fitSong,
   freshCut,
   lineState,
+  MAKE_OPS,
   SFX_SOUNDS,
   resolveTimeline,
   shotContentSummary,
   STAGE_IDS,
   Look,
   type Asset,
+  type Fit,
   type Project,
   type SubjectTrack,
 } from "@beatsheet/schema";
@@ -35,6 +38,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
+import { cancelJobs, describeJob, driveJobs, isOpen, listJobs, makeChoices, spentThisTurn, startMake, turnBudget } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -73,7 +77,7 @@ Designed scenes: a shot doesn't have to be footage. Coded shots draw anything: k
 
 Pages behind a login (a Google Photos album, a dashboard, a private doc): the person's Chrome is signed in, so use it when you can reach it: the claude-in-chrome tools (Claude Code), your own browser tool's chrome backend (Codex), or the chrome-devtools tools (attached to their running Chrome; if they can't connect, ask the person to turn on remote debugging once at chrome://inspect/#remote-debugging and allow the connection Chrome asks about). The person is asked before you act on each site. To bring media in from there, download it in Chrome (it lands in ~/Downloads; Google Photos zips a multi-photo download) and pass the files or zip to import_media, which skips what the project already has: compare with list_assets first rather than downloading everything. Without those tools, your own browsers aren't signed in to anything: hand_off with kind "provide" and need "chrome", saying what you'll do there; the card gives the person a button that lets you use their Chrome (or they can download the files and tell you where they are). Never read a browser's saved logins or cookies.
 
-Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
+Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's fal key): give it a placeholder or generated shot and it makes takes for that shot, with the shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle each shot cheaply as a board, then video from the chosen board (op "video", start: the board's asset id). list_models says which models could make something, about what each costs, and why the others can't. generate returns at once and the takes land on the shot as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off that says what it would cost. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
 
 Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or ${IS_WINDOWS ? "Windows'" : "the Mac's"} own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
 
@@ -538,6 +542,103 @@ server.registerTool(
     return text(
       `Made "${a.label}" (${a.id}): ${a.duration ? formatTime(a.duration) : "?"}, ${a.grid?.bpm} BPM, sections ${a.sections?.map((s) => `${s.label} (${s.id}) at ${formatTime(s.start)}`).join(", ")}.${use === false ? " Added to the project's music." : " It's the cut's music now; run first_cut to cut to it."}`,
     );
+  },
+);
+
+// ---- Making pictures and video: what could make something, making it, and where it's got to.
+const makeArgs = {
+  project: projectArg,
+  cut: cutArg,
+  op: z.enum(MAKE_OPS).describe("image: a still (a shot's board, a character's sheet); video: a clip"),
+  shot: z
+    .string()
+    .optional()
+    .describe("A placeholder or generated shot to make it for: the shot's length, the cut's shape and the shot's description fill in what isn't given, and the takes land on the shot"),
+  prompt: z.string().optional().describe("What to make; default the shot's description. For video, say what moves and how the camera does"),
+  start: z.string().optional().describe("Asset id of the picture a video starts from: the shot's chosen board"),
+  end: z.string().optional().describe("Asset id of a picture a video ends on"),
+  refs: z.array(z.string()).optional().describe("Asset ids of reference pictures: a character, a place"),
+  seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
+  aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
+};
+const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
+const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
+const fitLine = (f: Fit) => {
+  const note = CATALOG.find((m) => m.id === f.model)?.note;
+  if (!f.ok) return `- ${f.label} (${f.model}): ${f.why.reason}`;
+  return `- ${f.label} (${f.model}) on ${f.route}: ${[f.seconds && `${f.seconds}s`, f.aspect, usd(f.usd), minutes(f.wait)].filter(Boolean).join(", ")}. ${note ?? ""}`.trimEnd();
+};
+
+server.registerTool(
+  "list_models",
+  {
+    description:
+      "Which models could make a picture or a clip (for a shot, or as described), checked against the person's services: the ones ready to use with what each would cost and how long it takes, the ones that need a key the person hasn't added, and the ones that can't make this (too short, the wrong shape, no start frame) with why. generate uses the first ready one unless you name another.",
+    inputSchema: { ...makeArgs, count: z.number().int().min(1).max(4).optional().describe("How many takes, for the estimate (default 1)") },
+  },
+  async ({ project: id, ...ask }) => {
+    const { req, choices } = makeChoices(id, ask);
+    const out = [
+      `For ${req.op === "image" ? "a still" : "video"}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.start ? "from a start frame" : req.aspect}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
+    ];
+    if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
+    if (choices.setup.length) out.push("Needs something the person has to set up (Settings → Media services):", ...choices.setup.map(fitLine));
+    if (choices.unfit.length) out.push("Can't make this:", ...choices.unfit.map(fitLine));
+    return text(out.join("\n"));
+  },
+);
+
+server.registerTool(
+  "generate",
+  {
+    description:
+      "Make pictures or video with the person's services, usually takes for a shot: a placeholder shot becomes a generated shot as its first take lands, and the first take (or the first video over a still) is the one it shows. Settle a shot as a still first (op image, a board, cents each), then make video from the board you pick (op video, start: its asset id). Makes 2 takes unless you say otherwise. Returns at once with the jobs; the takes land in the project as they finish (a still in seconds, a clip in a few minutes), and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking.",
+    inputSchema: {
+      ...makeArgs,
+      count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2)"),
+      model: z.string().optional().describe("A model id from list_models; default Auto, the first ready one"),
+    },
+  },
+  async ({ project: id, ...ask }) => {
+    const spendable = turnBudget() - spentThisTurn(id);
+    const { fit, jobs } = startMake(id, { ...ask, count: ask.count ?? 2 }, { spendable });
+    const what = ask.shot ? `shot ${ask.shot}` : ask.op === "image" ? "a still" : "a clip";
+    return text(
+      [
+        `Making ${jobs.length} take${jobs.length === 1 ? "" : "s"} of ${what} with ${fit.label} on ${fit.route}: ${[fit.seconds && `${fit.seconds}s`, fit.aspect, usd(fit.usd) && `${usd(fit.usd)} in all`, minutes(fit.wait)].filter(Boolean).join(", ")}.`,
+        `Jobs: ${jobs.map((j) => j.id).join(", ")} (together: ${jobs[0]!.batch}).`,
+        ask.shot ? "They land on the shot as its takes as they finish. Call jobs with wait to see them come in." : "They land in the project's assets as they finish. Call jobs with wait to see them come in.",
+      ].join("\n"),
+    );
+  },
+);
+
+server.registerTool(
+  "jobs",
+  {
+    description:
+      "Where the pictures and clips being made have got to: waiting in the service's queue, being made, done (with the take's asset id) or failed (with why). Without ids, the unfinished ones and those from the last hour. wait holds until the ones listed are finished or that many seconds pass. cancel stops the ones listed.",
+    inputSchema: {
+      project: projectArg,
+      ids: z.array(z.string()).optional().describe("Job ids, or the id that takes asked for together share"),
+      wait: z.number().min(0).max(300).optional().describe("Seconds to wait for them to finish"),
+      cancel: z.boolean().optional().describe("Stop them (one already being made may still be charged)"),
+    },
+  },
+  async ({ project: id, ids, wait, cancel }) => {
+    void driveJobs(id);
+    const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const pick = () => {
+      const all = listJobs(id);
+      return ids?.length ? all.filter((j) => ids.includes(j.id) || ids.includes(j.batch)) : all.filter((j) => isOpen(j) || j.updatedAt >= hourAgo).slice(-20);
+    };
+    if (cancel) await cancelJobs(id, pick().map((j) => j.id));
+    const until = Date.now() + (wait ?? 0) * 1000;
+    while (Date.now() < until && pick().some(isOpen)) await new Promise((r) => setTimeout(r, 2000));
+    const list = pick();
+    if (!list.length) return text(ids?.length ? `No jobs ${ids.join(", ")} in this project.` : "Nothing is being made, and nothing was in the last hour.");
+    const open = list.filter(isOpen).length;
+    return text([...list.map(describeJob), open ? `${open} still going.` : "All finished."].join("\n"));
   },
 );
 
