@@ -5,6 +5,7 @@
 import {
   centreOn,
   cover,
+  pictureOf,
   resolveTimeline,
   SFX_SECONDS,
   SFX_SOUNDS,
@@ -325,13 +326,14 @@ export function placement(shot: Shot, r: ResolvedShot, a: Asset, format: string,
   const speed = pc?.speed ?? (c.kind === "clip" ? c.speed ?? 1 : 1);
   // Seconds into the placed asset's file now (what its subjects are timed by).
   const sourceT = (placed.r.sourceIn ?? 0) + (r.start + local - placed.r.start) * speed;
-  const reframe = pc?.reframe?.[format] ?? (c.kind === "clip" ? c.reframe?.[format] : undefined);
+  // A clip and a generated shot are framed the same way.
+  const reframe = pc?.reframe?.[format] ?? pictureOf(c)?.reframe?.[format];
   const src = { width: placed.asset.width ?? a.width ?? out.width, height: placed.asset.height ?? a.height ?? out.height };
   const follow = reframe?.follow ? placed.asset.subjects?.find((x) => x.id === reframe.follow) : undefined;
   const focus = follow ? subjectFocus(follow, sourceT) : undefined;
   const pos = focus ? centreOn(src, out, focus) : reframe ? { x: reframe.x, y: reframe.y } : { x: 0.5, y: 0.5 };
   // Photos get a slow push in; a cut-out photo pushes in with its source, or holds still on its own.
-  const pushes = a.kind === "image" && (!a.cutout || !!under) && !(c.kind === "clip" && c.motion);
+  const pushes = a.kind === "image" && (!a.cutout || !!under) && !pictureOf(c)?.motion;
   const pushFrom = under ? under.r.start : r.start, pushLen = under ? under.r.end - under.r.start : r.end - r.start;
   const push = pushes ? interpolate(r.start + local - pushFrom, [0, Math.max(0.01, pushLen)], [1, 1.07], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1;
   const zoom = (reframe?.zoom ?? 1) * push;
@@ -355,11 +357,12 @@ function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; base: string; q
     transformOrigin: origin,
     transform: p.zoom !== 1 ? `scale(${p.zoom})` : undefined,
   };
-  const effects = c.kind === "clip" && !a.cutout ? c.effects : undefined;
+  const effects = !a.cutout ? pictureOf(c)?.effects : undefined;
   const volume = c.kind === "clip" ? c.volume : undefined;
   // The project's grade, then the shot's own look (mono behind a cut-out, say).
   style.filter = gradeFilter(grade, c.kind === "clip" && c.look ? LOOKS[c.look] : undefined);
-  const move = c.kind === "clip" && c.motion ? poseAt(c.motion, frame / fps / Math.max(0.01, r.end - r.start), width, height) : undefined;
+  const motion = pictureOf(c)?.motion;
+  const move = motion ? poseAt(motion, frame / fps / Math.max(0.01, r.end - r.start), width, height) : undefined;
   // In the player a file that won't load (still being made, gone missing) shows as a card; a render still fails on it.
   const [broken, setBroken] = useState("");
   const onError = getRemotionEnvironment().isPlayer ? (err?: unknown) => setBroken(err instanceof Error ? err.message : "it didn't load") : undefined;

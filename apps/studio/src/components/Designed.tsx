@@ -17,7 +17,8 @@ const MOVES: Record<string, Motion | undefined> = {
 
 /** How a footage shot moves through its length: a push in, a pull out, a pan. */
 export function MotionSelect({ shot }: { shot: Shot }) {
-  if (shot.content.kind !== "clip") return null;
+  // Clips and generated shots move the same way.
+  if (shot.content.kind !== "clip" && shot.content.kind !== "generated") return null;
   const now = shot.content.motion;
   const name = Object.entries(MOVES).find(([, m]) => JSON.stringify(m) === JSON.stringify(now))?.[0] ?? (now ? "custom" : "none");
   return (
@@ -28,7 +29,7 @@ export function MotionSelect({ shot }: { shot: Shot }) {
         onChange={(e) =>
           actions.edit((d) => {
             const c = d.shots.find((s) => s.id === shot.id)!.content;
-            if (c.kind !== "clip") return;
+            if (c.kind !== "clip" && c.kind !== "generated") return;
             const m = MOVES[e.target.value];
             if (m) c.motion = structuredClone(m);
             else delete c.motion;

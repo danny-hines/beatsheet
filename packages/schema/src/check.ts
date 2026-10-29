@@ -1,6 +1,6 @@
 /** Loading and integrity checks: schema validation plus the cross-references a schema can't express. */
 import { cutView, upgrade } from "./cuts.ts";
-import { ProjectFile, SFX_SOUNDS, type Anchor, type Project } from "./types.ts";
+import { pictureOf, ProjectFile, SFX_SOUNDS, type Anchor, type Project } from "./types.ts";
 
 export type CheckIssue = { path: string; message: string };
 
@@ -121,12 +121,16 @@ export function checkCut(p: Project): CheckIssue[] {
     if (c.kind === "clip") {
       if (!ids.assets.has(c.asset)) add(path, `unknown asset "${c.asset}"`);
       anchor(`${path}.content.sync.at`, c.sync?.at);
-      // Effects and reframes that follow a subject need it found on that clip first (find_subjects or track_subject).
-      const subjects = new Set(p.assets.find((a) => a.id === c.asset)?.subjects?.map((x) => x.id) ?? []);
-      c.effects?.forEach((e, j) => subjects.has(e.subject) || add(`${path}.content.effects.${j}.subject`, `"${c.asset}" has no subject "${e.subject}"`));
-      for (const [fmt, r] of Object.entries(c.reframe ?? {}))
-        if (r.follow && !subjects.has(r.follow)) add(`${path}.content.reframe.${fmt}.follow`, `"${c.asset}" has no subject "${r.follow}"`);
-      formats(`${path}.content.reframe`, Object.keys(c.reframe ?? {}));
+    }
+    // Effects and reframes that follow a subject need it found on the picture first (find_subjects or track_subject):
+    // a clip's footage, or a generated shot's chosen take.
+    const pic = pictureOf(c);
+    if (pic) {
+      const subjects = new Set(p.assets.find((a) => a.id === pic.asset)?.subjects?.map((x) => x.id) ?? []);
+      pic.effects?.forEach((e, j) => subjects.has(e.subject) || add(`${path}.content.effects.${j}.subject`, `"${pic.asset}" has no subject "${e.subject}"`));
+      for (const [fmt, r] of Object.entries(pic.reframe ?? {}))
+        if (r.follow && !subjects.has(r.follow)) add(`${path}.content.reframe.${fmt}.follow`, `"${pic.asset}" has no subject "${r.follow}"`);
+      formats(`${path}.content.reframe`, Object.keys(pic.reframe ?? {}));
     }
     if (c.kind === "generated") {
       for (const a of [...(c.takes ?? []), ...(c.take ? [c.take] : []), ...(c.refs ?? []), ...(c.start ? [c.start] : []), ...(c.end ? [c.end] : [])])

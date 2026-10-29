@@ -371,6 +371,7 @@ export const Reframe = z.object({
   zoom: z.number().positive().default(1),
   follow: z.string().optional().describe("Subject id on the asset: the focus point follows it (x, y are where it is when it isn't found)"),
 });
+export type Reframe = z.infer<typeof Reframe>;
 
 /** Where the picture is at one end of a shot: zoomed, nudged across the frame, turned. */
 const Pose = z.object({
@@ -436,6 +437,9 @@ export const ShotContent = z.discriminatedUnion("kind", [
     start: z.string().optional().describe("Asset id of the picture a video take starts from (usually the shot's board)"),
     end: z.string().optional().describe("Asset id of the picture a video take ends on"),
     in: z.number().optional().describe("Seconds into the take: takes are made a little longer than the shot, so it can be retimed"),
+    reframe: z.record(z.string(), Reframe).optional().describe("Per format id, as for a clip: where the take sits in a format of another shape"),
+    effects: z.array(ClipEffect).optional().describe("As for a clip, following a subject found on the take"),
+    motion: Motion.optional().describe("As for a clip: a push in, a pull out, a pan, a tilt"),
   }),
   z.object({
     kind: z.literal("coded"),
@@ -448,6 +452,16 @@ export const ShotContent = z.discriminatedUnion("kind", [
 ]);
 export type ShotContent = z.infer<typeof ShotContent>;
 export type ShotKind = ShotContent["kind"];
+
+/**
+ * A shot's picture, when it has one: the asset it shows (a clip's footage, a generated shot's chosen take) and how it
+ * sits in the frame. Clips and generated shots are framed, followed and moved the same way.
+ */
+export function pictureOf(c: ShotContent): { asset?: string; reframe?: Record<string, Reframe>; effects?: ClipEffect[]; motion?: Motion } | undefined {
+  if (c.kind === "clip") return { asset: c.asset, reframe: c.reframe, effects: c.effects, motion: c.motion };
+  if (c.kind === "generated") return { asset: c.take, reframe: c.reframe, effects: c.effects, motion: c.motion };
+  return undefined;
+}
 
 export const FIDELITY = ["idea", "board", "rough", "final"] as const;
 export const Fidelity = z.enum(FIDELITY).describe("How far along this one shot is, independent of the rest");

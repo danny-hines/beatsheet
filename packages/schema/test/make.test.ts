@@ -12,6 +12,7 @@ import {
   HANDLE,
   maxStillRefs,
   parseFile,
+  pictureOf,
   Project,
   resolveTimeline,
   SCHEMA_VERSION,
@@ -344,5 +345,40 @@ describe("more cast than a model takes pictures of", () => {
     expect(pictured.map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic"]);
     // Everyone is still described; only the pictured are named as references.
     expect(castPrompt(prompt, uses, pictured.map((p) => p.use))).toMatch(/in kitchen \(kitchen look\), a mug \(mug look\) on the table\. Reference pictures, in order: mom, dad, kid, cat\./);
+  });
+});
+
+describe("a generated shot framed like a clip", () => {
+  const make = (over: Partial<ProjectInput> = {}): Project =>
+    Project.parse({
+      schema: SCHEMA_VERSION,
+      id: "t",
+      title: "test",
+      recipe: "film",
+      brief: { goal: "test" },
+      formats: [
+        { id: "port", label: "9:16", width: 1080, height: 1920, fps: 30 },
+        { id: "land", label: "16:9", width: 1920, height: 1080, fps: 30 },
+      ],
+      stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])),
+      spine: "shots",
+      assets: [{ id: "take1", kind: "video", path: "made/takes/take1.mp4", duration: 5, subjects: [{ id: "face-1", label: "Lily", kind: "face", by: "vision", samples: [[0, 0.4, 0.3, 0.2, 0.2]] }] }],
+      tracks: [{ id: "pic", kind: "picture", label: "Picture" }],
+      shots: [],
+      notes: [],
+      ...over,
+    });
+
+  it("follows a subject found on its take, in a format of another shape, and checks the subject is there", () => {
+    const shot = (follow: string) => ({
+      id: "s1",
+      track: "pic",
+      duration: 3,
+      content: { kind: "generated" as const, prompt: "x", take: "take1", takes: ["take1"], reframe: { land: { x: 0.5, y: 0.5, zoom: 1, follow } }, effects: [{ kind: "spotlight" as const, subject: follow }] },
+      fidelity: "rough" as const,
+    });
+    expect(pictureOf(make({ shots: [shot("face-1")] }).shots[0]!.content)).toMatchObject({ asset: "take1", reframe: { land: { follow: "face-1" } } });
+    expect(checkCut(make({ shots: [shot("face-1")] }))).toEqual([]);
+    expect(checkCut(make({ shots: [shot("face-9")] })).map((i) => i.message)).toEqual(['"take1" has no subject "face-9"', '"take1" has no subject "face-9"']);
   });
 });

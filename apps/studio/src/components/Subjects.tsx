@@ -1,4 +1,4 @@
-import { formatTime, subjectAt, type Asset, type ClipEffect, type ProjectFile, type Rect, type Shot, type SubjectTrack } from "@beatsheet/schema";
+import { formatTime, pictureOf, subjectAt, type Asset, type ClipEffect, type ProjectFile, type Rect, type Shot, type SubjectTrack } from "@beatsheet/schema";
 import { useState } from "react";
 import { runJob } from "../lib";
 import { actions, useProject, useStore } from "../store";
@@ -270,16 +270,21 @@ const EFFECT_LABEL: Record<ClipEffect["kind"], string> = { blur: "Blur", label: 
  * A shot's look and motion: how it comes in, and for a clip its look, a crop that keeps someone in frame, and effects
  * that follow a subject.
  */
+/** A shot whose picture can be framed, followed and moved: a clip, or a generated shot's take. */
+const framed = (c: Shot["content"]): c is Extract<Shot["content"], { kind: "clip" | "generated" }> => c.kind === "clip" || c.kind === "generated";
+
 export function ShotLook({ shot }: { shot: Shot }) {
   const p = useProject();
   const format = useStore((s) => s.format);
   const editShot = (fn: (s: Shot) => void) => actions.edit((d) => fn(d.shots.find((s) => s.id === shot.id)!));
   const c = shot.content;
-  const a = c.kind === "clip" ? p.assets.find((x) => x.id === c.asset) : undefined;
+  // A clip's footage or a generated shot's chosen take: both are framed and followed the same way.
+  const pic = pictureOf(c);
+  const a = pic?.asset ? p.assets.find((x) => x.id === pic.asset) : undefined;
   const subjects = a?.subjects ?? [];
   const [adding, setAdding] = useState<ClipEffect["kind"] | null>(null);
   const fmt = p.formats.find((f) => f.id === format);
-  const reframe = c.kind === "clip" ? c.reframe?.[format] : undefined;
+  const reframe = pic?.reframe?.[format];
 
   return (
     <div className="shot-look">
@@ -312,7 +317,7 @@ export function ShotLook({ shot }: { shot: Shot }) {
           </label>
         )}
       </div>
-      {c.kind === "clip" && a && !a.cutout && (
+      {pic && a && !a.cutout && (
         <>
           {subjects.length === 0 ? (
             <p className="dim small">
@@ -330,7 +335,7 @@ export function ShotLook({ shot }: { shot: Shot }) {
                   value={reframe?.follow ?? ""}
                   onChange={(e) =>
                     editShot((s) => {
-                      if (s.content.kind !== "clip") return;
+                      if (!framed(s.content)) return;
                       const r = s.content.reframe?.[format] ?? { x: 0.5, y: 0.5, zoom: 1 };
                       if (e.target.value) r.follow = e.target.value;
                       else delete r.follow;
@@ -346,15 +351,15 @@ export function ShotLook({ shot }: { shot: Shot }) {
                   ))}
                 </select>
               </label>
-              {(c.effects ?? []).map((e, i) => (
+              {(pic?.effects ?? []).map((e, i) => (
                 <div key={i} className="effect-row">
                   <span className="pill">{EFFECT_LABEL[e.kind]}</span>
                   <span className="small">{subjects.find((x) => x.id === e.subject)?.label ?? <span className="warn">missing {e.subject}</span>}</span>
                   {e.kind === "label" && (
-                    <TextField value={e.text} onCommit={(v) => editShot((s) => s.content.kind === "clip" && void ((s.content.effects![i] as Extract<ClipEffect, { kind: "label" }>).text = v))} />
+                    <TextField value={e.text} onCommit={(v) => editShot((s) => framed(s.content) && void ((s.content.effects![i] as Extract<ClipEffect, { kind: "label" }>).text = v))} />
                   )}
                   <span className="spacer" />
-                  <button className="link danger small" onClick={() => editShot((s) => s.content.kind === "clip" && void (s.content.effects = s.content.effects!.filter((_, j) => j !== i)))}>
+                  <button className="link danger small" onClick={() => editShot((s) => framed(s.content) && void (s.content.effects = s.content.effects!.filter((_, j) => j !== i)))}>
                     ✕
                   </button>
                 </div>
@@ -370,7 +375,7 @@ export function ShotLook({ shot }: { shot: Shot }) {
                       if (!subject) return;
                       const label = subjects.find((x) => x.id === subject)?.label ?? "";
                       const effect: ClipEffect = adding === "label" ? { kind: "label", subject, text: /^(Face|Person) \d+$/.test(label) ? "Name" : label } : { kind: adding, subject };
-                      editShot((s) => s.content.kind === "clip" && void (s.content.effects = [...(s.content.effects ?? []), effect]));
+                      editShot((s) => framed(s.content) && void (s.content.effects = [...(s.content.effects ?? []), effect]));
                       setAdding(null);
                     }}
                   >
