@@ -18,6 +18,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
+import { describeCast } from "./describe.ts";
 import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, spentSince, startMake, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
@@ -524,6 +525,14 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   if (section === "projects" && id && action === "jobs" && parts[3] === "cancel" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { ids?: string[] };
     return json(res, 200, await cancelJobs(id, body.ids ?? []));
+  }
+  // A cast member's description, written from its pictures by a vision model; the studio puts it in the field to edit.
+  if (section === "projects" && id && action === "cast" && parts[3] && parts[4] === "describe" && req.method === "POST") {
+    try {
+      return json(res, 200, { about: await describeCast(id, parts[3]) });
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
   }
   if (section === "projects" && id && action === "jobs" && parts[3] === "retry" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { ids?: string[] };

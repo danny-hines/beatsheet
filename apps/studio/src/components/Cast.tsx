@@ -210,7 +210,18 @@ export function CastView({ id }: { id: string }) {
   const sheet = sheetOf || id;
   const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
   const { choices, problem } = useChoices({ op: "image", sheet, count });
+  const [describing, setDescribing] = useState("");
   if (!m) return <p className="dim small">That cast member is gone.</p>;
+  // A vision model writes what it looks like from its pictures; the words land in the field, to edit.
+  const describe = async () => {
+    setDescribing("Looking…");
+    const res = await fetch(`/api/projects/${projectId}/cast/${id}/describe`, { method: "POST" }).catch(() => undefined);
+    const j = res ? ((await res.json()) as { about?: string; error?: string }) : { error: "Couldn't reach the engine" };
+    if (j.about) {
+      actions.edit((d) => void (d.cast!.find((x) => x.id === id)!.about = j.about));
+      setDescribing("");
+    } else setDescribing(j.error ?? "Couldn't describe it");
+  };
 
   const edit = (fn: (m: CastMember) => void) => actions.edit((d) => fn(d.cast!.find((x) => x.id === id)!));
   // A member without a name of its own takes its id from the name it's given; a named one keeps its id, which
@@ -249,6 +260,14 @@ export function CastView({ id }: { id: string }) {
         {m.kind === "style" ? "What it's like" : "What it looks like"}
         <TextField multiline value={m.about ?? ""} placeholder={ABOUT_EXAMPLE[m.kind]} onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))} />
       </label>
+      {(!!m.images?.length || photos.some((a) => a.kind === "image")) && (
+        <p className="small">
+          <button className="link small" disabled={describing === "Looking…"} onClick={() => void describe()} title="Gemini looks at its pictures and writes what it looks like">
+            {describing === "Looking…" ? "Looking at its pictures…" : m.about ? "Describe it again from its pictures" : "Describe it from its pictures"}
+          </button>
+          {describing && describing !== "Looking…" && <span className="warn"> {describing}</span>}
+        </p>
+      )}
       {m.kind !== "style" && (
         <div className="insp-row">
           <span>Style</span>
