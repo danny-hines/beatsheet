@@ -126,6 +126,8 @@ A switcher in the top bar, beside the cut menu: **Edit · Make**. The hash carri
 
 Opened from a shot, the composer shows its target ("For shot 7 · 3.2s · 9:16 and 16:9") and results go to that shot's takes as well as the board. Clearing the target makes things for the Library only. Put in a shot, and dragging from the Library onto the timeline (which Edit needs anyway), is how loose results get used.
 
+As built: the composer has the cast as chips that put `@id` in the prompt, stills or a clip (rough or final, a length, a start frame), the shape, how many and the model; the board's cards have **Vary** (the request back in the composer), **Animate** (a clip from a still) and **Use in** (a shot), and right-click for the cast; the queue says what's on the way, with Stop, and what the project has spent today and against the limit. The Agent tab stays on the right as in Edit. A picture dropped on a picture track goes into the placeholder or made shot under it, or in as a clip after the shot there ([place.ts](../apps/studio/src/place.ts)).
+
 ## Cast & sets
 
 Characters, places, props and styles that every cut shares, like the footage and the look. ("Scene" already means a designed, coded shot in beatsheet, so places are sets.) A set is one place a shot happens in, so the house might be three: the kitchen, the porch, the cat flap.
@@ -427,8 +429,8 @@ Both keep their anchors; nothing about time changes.
 ## Order
 
 1. **The pipeline, on one shot** (done: run for real through fal on 2026-10-29, boards from the agent's `generate` and a Kling clip from Inspect). The catalog and fit check (in schema, with tests), fal as the first route for images and video, jobs on disk, the new provenance fields, the take strip in Inspect, and `list_models`, `generate` and `jobs`. Done when Make 2 on a placeholder with Auto gives two takes through fal, a studio restart in the middle doesn't lose them, and the agent can do the same and hand off a choice.
-2. **A video from nothing** (built; a sheet from a photo, a board with a cast variant and a Kling 3 final ran for real through fal on 2026-10-29, but not the whole film end to end: cast & sets in the project, in prompts and in the studio's Library and Inspect, with sheets and variants; boards, roughs and finals, with Kling 3 Pro for finals; estimates for a whole pass; the `cast` hand-off; the film recipe and the make skill. Cut-outs and Make mode itself moved to phase 3). Cast & sets from the story, from a description and from photos (the Library's right-click menu with Make a character, Make a set and Add to), with cut-outs, descriptions, sheets and variants in Make; references through a start frame; boards, rough and final; estimates for a whole pass; the `cast` need; and the film recipe. Done when the cat video goes from a brief to a watchable rough cut with the agent driving and the person only answering hand-offs and leaving notes.
-3. **The rest of Make mode.** The board of loose takes, the queue, the full composer, cast from subjects and clips, the agent grouping the Library into a cast, selecting several things at once, speakers on lines, and dragging from the Library onto the timeline.
+2. **A video from nothing** (done: the cat video ran end to end on 2026-10-29, from a brief to a rendered 58-second vertical cut, made entirely through the agent's tools (overnight, so the agent also made the picks a person would at each hand-off): 8 cast members and a style, 48 sheets and boards, 19 roughs and 4 finals through fal, a song and effects from ElevenLabs, about $11. What it taught is in the film and make skills and in the Gaps below. Cut-outs and Make mode itself moved to phase 3). Cast & sets from the story, from a description and from photos (the Library's right-click menu with Make a character, Make a set and Add to), with cut-outs, descriptions, sheets and variants in Make; references through a start frame; boards, rough and final; estimates for a whole pass; the `cast` need; and the film recipe. Done when the cat video goes from a brief to a watchable rough cut with the agent driving and the person only answering hand-offs and leaving notes.
+3. **The rest of Make mode** (partly built on 2026-10-29: the Edit · Make switch; the composer, the board of takes with what was made from each nested under it, and the queue; dragging from the Library onto the timeline; cast from faces and people found in footage, in the studio and as `cast_from_subject`; Describe from a cast member's pictures; renaming cast and variant ids everywhere they're used; and stills from GPT Image and Muse Image beside Nano Banana. Still to come: the agent grouping the Library into a cast, selecting several things at once, speakers on lines, and the card actions past Vary, Animate and Use in). The board of loose takes, the queue, the full composer, cast from subjects and clips, the agent grouping the Library into a cast, selecting several things at once, speakers on lines, and dragging from the Library onto the timeline.
 4. **Changing footage.** Extend by dragging, relight, new angle, restyle, remove, replace someone, widen. With it, what old films need: deinterlacing on import, splitting a file at its cuts, transcription, separating voices from noise, restoring (upscale, clean-up, steadying), and effects drawn over cut-outs.
 5. **Running models yourself.** ComfyUI on this PC (found or installed), with SCAIL-2 and Wan as the first workflows; bring-your-own workflows; Tonight; and the agent's suggestion with the `setup` hand-off. Then RunPod: serverless endpoints, and pods started and stopped for a batch. The remaster recipe comes with this phase, since its remade shots lean on motion transfer and long runs overnight.
 6. **More services.** Runway and Gemini directly, and lip-sync.
@@ -437,15 +439,15 @@ Both keep their anchors; nothing about time changes.
 
 What's built but thin, or set aside for later, as it turns up. Each comes off the list when it's done.
 
-- **Image models.** Only Nano Banana. GPT Image (with the OpenAI key) and Muse Image (with the Meta key) belong beside it. They run on those services directly, so each needs its own adapter rather than fal's.
 - **Wan 2.2** is wired up and tested against a stand-in for fal, but hasn't made a real take.
-- **Formats.** A generated shot can't be reframed for a cut's other formats the way a clip can.
-- **Settings.** The agent's turn budget and Auto's ranking can only be changed in `settings.json`.
-- **The cat video end to end.** Phase 2 is done when it goes from a brief to a watchable rough cut with the agent driving; that run (about $5–8) hasn't happened.
-- **Describing a cast member.** Written by hand or by the agent (from `look_at_assets`); there's no Describe button that asks a vision model.
-- **Cut-outs for cast pictures.** A cast member's photos go to the model whole, sofa and all; cutting the subject out first comes with phase 3.
-- **Cast from clips and subjects.** Only photos can make or join a cast member; a clip's frames and the faces found in it come with phase 3.
-- **Variant ids** made in the studio come from the description (`@tabby/tiny-black-eye-mask`) and can't be renamed there.
+- **Nano Banana on a Gemini key.** It runs on fal only; a Gemini key could run it directly (Gemini answers in one request, like GPT Image and Muse Image, so the same path would do).
+- **Pictures per still model.** Every still model is given the same four cast pictures, though Muse Image takes 10 and GPT Image more: a request is built before its model is picked.
+- **GPT Image's estimate** is a flat 5.3¢ (medium quality, the dearest shape); a 9:16 board actually cost 1.7¢. The take records what it really cost, from OpenAI's token count, but the estimate before it is high.
+- **A still that's mid-request when the engine stops** is lost (GPT Image and Muse Image don't keep it to fetch again), and counted as spent in case it was charged. Trying again makes it again.
+- **Cut-outs for cast pictures.** A cast member's photos go to the model whole, sofa and all. Cast from a found face is cropped to the head and shoulders, but not cut out.
+- **Cast from footage** cuts one still, from the frame where the person is largest. Several angles (the most different frames) would make better sheets.
+- **Renaming a cast member while its sheet is being made** loses the sheet: the job names the old id when it comes in.
+- **Dragging from the board** onto the timeline needs both on screen; in Make mode the timeline isn't. Use in (on a card) or the Library does it.
 - **A clip from cast pictures with no board** isn't chained for you (make a still with them, then animate it). The film recipe always boards first.
 - **A style's picture** is given to models with boards, but a sheet made from photos gets its style in words only (the photos take the reference slots).
 - **Kling 3's own character references** (its `elements`) aren't used; the board carries the cast instead.
@@ -454,7 +456,6 @@ What's built but thin, or set aside for later, as it turns up. Each comes off th
 
 ## Open questions
 
-- Make as a full mode from the start, or a wide panel first? (A mode, I think: the board needs the middle of the screen, which Edit gives to the player and timeline.)
 - Should a project pin the model it made its first take with, by default?
 - Are prices curated in the catalog, or read from each service where it publishes them? Either way the estimate is "about".
 - How much handle is worth paying for.
