@@ -114,6 +114,22 @@ describe("whether a model can make a shot", () => {
     expect(fitModel(stills, { op: "image", prompt: "x", count: 3 }, { runway: { label: "Runway", state: "ready" } })).toMatchObject({ ok: true, usd: 0.12, aspect: undefined });
   });
 
+  it("says where else it could run, and makes it there when asked", () => {
+    const gpt = CATALOG.find((m) => m.id === "gpt-image")!;
+    const both = { openai: { label: "OpenAI", state: "ready" }, chatgpt: { label: "ChatGPT plan", state: "ready" } } satisfies Record<string, ServiceState>;
+    // The plan costs nothing more, so it comes first; the key is the other choice.
+    expect(fitModel(gpt, { op: "image", prompt: "x", aspect: "9:16" }, both)).toMatchObject({ ok: true, route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", where: "OpenAI", usd: 0.053 }] });
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).toMatchObject({ ok: true, route: "openai", endpoint: "gpt-image-2.5-flare", usd: 0.053 });
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).not.toHaveProperty("also");
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "chatgpt" }, { openai: both.openai })).toMatchObject({ ok: false, why: { kind: "connect", reason: "Runs on chatgpt" } });
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "fal" }, both)).toMatchObject({ ok: false, why: { kind: "fit", reason: "GPT Image doesn't run on fal" } });
+    // A plan whose image tool isn't on yet doesn't stop the key from making it.
+    const muse = CATALOG.find((m) => m.id === "muse-image")!;
+    const gated = { meta: { label: "Meta", state: "ready" }, "muse-code": { label: "Muse Code plan", state: "failing", detail: "not on yet" } } satisfies Record<string, ServiceState>;
+    expect(fitModel(muse, { op: "image", prompt: "x" }, gated)).toMatchObject({ ok: true, route: "meta", usd: 0.01 });
+    expect(fitModel(muse, { op: "image", prompt: "x" }, gated)).not.toHaveProperty("also");
+  });
+
   it("says which services would run it, or why the one there is can't", () => {
     expect(fitModel(stills, { op: "image", prompt: "x" }, services)).toMatchObject({ ok: false, why: { kind: "connect", reason: "Runs on runway", services: ["runway"] } });
     expect(fitModel(stills, { op: "image", prompt: "x" }, { runway: { label: "Runway", state: "missing" } })).toMatchObject({ why: { reason: "Runs on Runway" } });

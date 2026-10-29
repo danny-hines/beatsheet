@@ -22,6 +22,19 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
     readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" } }, checks: {}, make: settings.make }),
   };
 });
+// Plans (ChatGPT through Codex, Muse Code) aren't signed in unless a test says so, and make their picture without the CLI.
+const plans = vi.hoisted(() => ({ ready: [] as string[], asks: [] as { route: string; prompt: string; aspect?: string; refs?: string[] }[] }));
+vi.mock("../src/plans.ts", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/plans.ts")>();
+  return {
+    ...real,
+    planStates: () => Object.fromEntries(real.PLANS.map((p) => [p.id, { label: p.label, state: plans.ready.includes(p.id) ? "ready" : "missing" }])),
+    planImage: async (route: string, a: { prompt: string; aspect?: string; refs?: string[] }) => {
+      plans.asks.push({ route, ...a });
+      return { bytes: Buffer.from("a picture on a plan"), contentType: "image/png" };
+    },
+  };
+});
 // Adding an asset probes it with ffprobe and makes previews; here it only records it, as a 6-second video or a still.
 // Like the real one, it picks the id first and saves a moment later (the previews take time), and a test can make it
 // fail, as a file in use would.
@@ -124,6 +137,8 @@ const PROJECT = "cat";
 beforeEach(() => {
   seen = { submits: [], uploads: 0, direct: [] };
   refuse = undefined;
+  plans.ready = [];
+  plans.asks = [];
   polls.clear();
   const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
   rmSync(dir, { recursive: true, force: true });
@@ -446,6 +461,25 @@ describe("stills from services that answer in one request", () => {
     expect(take.provenance).toMatchObject({ provider: "openai", model: "gpt-image-2.5-flare", costUsd: 0.0303, params: { model: "gpt-image" } });
     expect(readFileSync(take.path, "utf8")).toBe("a made picture");
     expect(shot("s2")).toMatchObject({ fidelity: "board", content: { kind: "generated", take: "s2-take", provider: "openai" } });
+  });
+
+  it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and with the key when asked", async () => {
+    plans.ready = ["chatgpt"];
+    const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
+    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.053 }] });
+    await make.driveJobs(PROJECT);
+    expect(seen.direct).toHaveLength(0);
+    expect(plans.asks).toEqual([{ route: "chatgpt", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", route: "chatgpt", usd: 0, asset: "s2-take" });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
+    expect(take.provenance).toMatchObject({ provider: "chatgpt", model: "gpt-image", costUsd: 0 });
+    expect(take.path).toMatch(/\.png$/);
+
+    make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", via: "openai", count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(seen.direct).toHaveLength(1);
+    expect(make.listJobs(PROJECT)[1]).toMatchObject({ status: "done", route: "openai" });
+    expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", model: "muse-image", via: "muse-code" })).toThrow("Muse Image can't make this: Runs on Muse Code plan");
   });
 
   it("gives Muse Image the cast's pictures as data in JSON, and GPT Image as files in a form", async () => {

@@ -28,7 +28,7 @@ A clip that starts from a board keeps everything the board settled, so never ski
 
 - Leave the model to Auto unless there's a reason; it picks the first ready model of the quality asked for. `list_models` says what each is good for.
 - Keep to one model per pass: mixing models across shots changes how they look. Name it with `model` once you've picked.
-- Stills: Nano Banana (fal). With the person's own keys, also Muse Image (Meta, 1¢ a still, good for many boards) and GPT Image (OpenAI, about 2¢; follows long, exact prompts and draws legible text like a sign or a note). Roughs: Kling 2.5 Turbo (or Wan 2.2, cheaper, any length up to 10s). Finals: Kling 3 Pro, from a board only.
+- Stills: Nano Banana (fal). With the person's own keys, also Muse Image (Meta, 1¢ a still, good for many boards) and GPT Image (OpenAI, about 2¢; follows long, exact prompts and draws legible text like a sign or a note). GPT Image also runs on the person's ChatGPT plan through Codex, and Muse Image on a Muse Code plan where Meta has turned its image tool on: no charge, from the plan's allowance, about half a minute each. list_models says where each model runs (`via`); generate uses the plan unless you pass the key's `via`. A plan's allowance runs out, so for a big pass of boards a cheap key (Muse Image, 1¢) can be kinder. Roughs: Kling 2.5 Turbo (or Wan 2.2, cheaper, any length up to 10s). Finals: Kling 3 Pro, from a board only.
 - Boards and sheets from different still models look different (grain, color, how faces are drawn). Make a cast member's sheet and the boards with one model, then keep it.
 - A shot longer than any model makes is refused with the reason: split it into two shots.
 

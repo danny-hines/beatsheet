@@ -28,8 +28,12 @@ export const CATALOG: CatalogModel[] = [
     takes: { refs: 4 },
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 20,
-    // dev.meta.ai/docs/image-generation: $0.01 an image, whatever its size.
-    routes: [{ via: "meta", shape: "images-api", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0.01 } }],
+    // dev.meta.ai/docs/image-generation: $0.01 an image, whatever its size. Muse Code's own image tool makes it on the
+    // person's plan instead, where Meta has turned that tool on for them.
+    routes: [
+      { via: "meta", shape: "images-api", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0.01 } },
+      { via: "muse-code", shape: "plan", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0 } },
+    ],
   },
   {
     id: "gpt-image",
@@ -41,8 +45,12 @@ export const CATALOG: CatalogModel[] = [
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 60,
     // developers.openai.com/api/docs/guides/image-generation: billed by the token, about 4 to 5¢ a picture at medium
-    // quality; the take records what it actually cost.
-    routes: [{ via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.5-flare", refs: "gpt-image-2.5-flare" }, price: { perImage: 0.053 } }],
+    // quality; the take records what it actually cost. Codex makes it on the person's ChatGPT plan instead, from its
+    // allowance rather than by the token.
+    routes: [
+      { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.5-flare", refs: "gpt-image-2.5-flare" }, price: { perImage: 0.053 } },
+      { via: "chatgpt", shape: "plan", endpoints: { text: "gpt-image", refs: "gpt-image" }, price: { perImage: 0 } },
+    ],
   },
   {
     id: "kling-2.5-turbo",

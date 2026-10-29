@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type Rect } from "@beatsheet/schema";
 import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
 import { listAgents, RUNTIME } from "./agents.ts";
+import { PLANS, planStates } from "./plans.ts";
 import { addServiceKey, capabilities, findSavedKeys, listServices, recheckService, removeServiceKey } from "./services.ts";
 import { readSettings, updateSettings } from "./settings.ts";
 import { answerMessage, currentTurn, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
@@ -384,11 +385,15 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       await agentStudio().chromeChanged();
       return json(res, 200, saved);
     }
-    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, and the order
-    // Auto tries models in.
+    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, the order
+    // Auto tries models in, and the plans that make stills without a key.
+    const plans = () => {
+      const states = planStates();
+      return PLANS.map((p) => ({ id: p.id, ...states[p.id]! }));
+    };
     if (id === "make" && req.method === "GET") {
       const make = readSettings().make ?? {};
-      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined });
+      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans() });
     }
     if (id === "make" && req.method === "POST") {
       const change = body as unknown as { limit?: { usd: number; since?: string } | null; turnBudgetUsd?: number; ranking?: Record<string, string[]> };
@@ -400,7 +405,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         if (change.ranking) make.ranking = { ...(make.ranking ?? {}), ...change.ranking };
       });
       const make = saved.make ?? {};
-      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined });
+      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans() });
     }
     if (id === "service" && action && req.method === "POST") return json(res, 200, body.key ? await addServiceKey(action, body.key) : await recheckService(action));
     if (id === "service" && action && req.method === "DELETE") {
@@ -504,6 +509,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,
           count: Number(q.get("count")) || undefined,
+          via: q.get("via") ?? undefined,
           ...(quality === "rough" || quality === "final" ? { quality } : {}),
           ...(seconds > 0 ? { seconds } : {}),
         }),

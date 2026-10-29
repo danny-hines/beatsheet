@@ -980,6 +980,8 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-ranking ol { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
 .make-ranking li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 10px; align-items: baseline; }
 .make-ranking-move { white-space: nowrap; }
+.make-plans { margin: 4px 0 6px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.make-plans li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 
 /* Make mode: the composer, the board of takes (a row per request, what was made from a take nested under it) and the
    queue. It takes the middle of the window over, where the player and the timeline are in Edit. */

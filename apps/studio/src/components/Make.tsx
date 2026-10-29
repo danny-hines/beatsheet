@@ -11,7 +11,7 @@ import { ASSET_DRAG, hideBroken, posterUrl, proxyUrl, putInShot, round2, timeAgo
 import { actions, useProject, useStore, useTimeline } from "../store";
 import { AssetMenu } from "./Cast";
 import { useMakeSummary } from "./MakeSettings";
-import { money, ModelSelect, useChoices, WhyNot } from "./Takes";
+import { cost, fitOf, money, ModelSelect, pickOf, useChoices, WhyNot } from "./Takes";
 
 const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 /** Whether a job's cost counts: what was asked for, unless it failed or was stopped before the service made it. */
@@ -106,10 +106,10 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
     aspect: shot ? undefined : draft.aspect,
     quality: video ? draft.quality : undefined,
   });
-  const chosen = choices && (draft.model ? choices.ready.find((f) => f.model === draft.model) : choices.auto);
+  const chosen = fitOf(choices, draft.model);
   // A model picked for stills can't make video, and the other way round.
   useEffect(() => {
-    if (draft.model && choices && !choices.ready.some((f) => f.model === draft.model)) set({ model: "" });
+    if (draft.model && choices && !fitOf(choices, draft.model)) set({ model: "" });
   }, [choices, draft.model]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const named = castOf(draft.prompt, p.cast).filter((u) => u.member.kind !== "style");
@@ -142,7 +142,7 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
       prompt: draft.prompt.trim(),
       count: draft.count,
       ...(draft.shot ? { shot: draft.shot } : { aspect: draft.aspect }),
-      ...(draft.model ? { model: draft.model } : {}),
+      ...pickOf(draft.model),
       ...(video ? { quality: draft.quality, ...(draft.start ? { start: draft.start } : {}), ...(seconds ? { seconds } : {}) } : {}),
     };
     try {
@@ -252,7 +252,7 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
       <div className="make-row">
         <button className="primary" disabled={!chosen || !draft.prompt.trim() || sending} onClick={() => void make()}>
           Make {draft.count} {what}
-          {chosen?.usd !== undefined ? ` · ${money(chosen.usd)}` : ""}
+          {chosen?.usd !== undefined ? ` · ${cost(chosen)}` : ""}
         </button>
         {(error || problem) && <span className="warn small">{error || problem}</span>}
       </div>
@@ -310,7 +310,7 @@ function BatchRow({ batch, use, retry }: { batch: Batch; use: (d: Partial<Draft>
         <strong className="small">{kind}</strong>
         <span className="dim small">{[modelLabel(j.model), where, usd ? `$${usd.toFixed(2)}` : "", timeAgo(j.createdAt)].filter(Boolean).join(" · ")}</span>
         <span className="spacer" />
-        <button className="link small" onClick={() => use({ op: j.op, prompt: r.prompt, model: j.model, count: batch.jobs.length, shot: j.shot, start: r.start, ...(j.quality ? { quality: j.quality } : {}), ...(r.aspect ? { aspect: r.aspect } : {}), ...(r.seconds ? { seconds: r.seconds } : {}) })} title="Put this request in the composer, to make more like it or change it">
+        <button className="link small" onClick={() => use({ op: j.op, prompt: r.prompt, model: `${j.model}@${j.route}`, count: batch.jobs.length, shot: j.shot, start: r.start, ...(j.quality ? { quality: j.quality } : {}), ...(r.aspect ? { aspect: r.aspect } : {}), ...(r.seconds ? { seconds: r.seconds } : {}) })} title="Put this request in the composer, to make more like it or change it">
           Vary
         </button>
       </div>

@@ -35,7 +35,7 @@ import {
   type SubjectTrack,
 } from "@beatsheet/schema";
 import { castFromSubject } from "./castfrom.ts";
-import { SERVICES } from "./services.ts";
+import { PLAN_ROUTES } from "./plans.ts";
 import { presenceFromEnv, removePresence, writePresence, type Presence } from "./agents.ts";
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
@@ -578,15 +578,18 @@ const makeArgs = {
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
 };
-type MakeToolArgs = { cut?: string; op: (typeof MAKE_OPS)[number]; shot?: string; shots?: string[]; sheet?: string; prompt?: string; cast?: string[]; quality?: "rough" | "final"; start?: string; end?: string; refs?: string[]; seconds?: number; aspect?: string; count?: number; model?: string };
+type MakeToolArgs = { cut?: string; op: (typeof MAKE_OPS)[number]; shot?: string; shots?: string[]; sheet?: string; prompt?: string; cast?: string[]; quality?: "rough" | "final"; start?: string; end?: string; refs?: string[]; seconds?: number; aspect?: string; count?: number; model?: string; via?: string };
 /** One request per shot when there are several, else the one. */
 const asksFor = ({ shots, ...ask }: MakeToolArgs): MakeAsk[] => (shots?.length ? shots.map((shot) => ({ ...ask, shot })) : [ask]);
 const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
 const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
+/** What it costs where it runs: nothing extra on a plan. */
+const costAt = (x: { route: string; usd?: number }) => (PLAN_ROUTES.includes(x.route) ? "no charge, from the plan's allowance" : usd(x.usd));
 const fitLine = (f: Fit) => {
   const note = CATALOG.find((m) => m.id === f.model)?.note;
   if (!f.ok) return `- ${f.label} (${f.model}): ${f.why.reason}`;
-  return `- ${f.label} (${f.model}) on ${SERVICES.find((s) => s.id === f.route)?.label ?? f.route}: ${[f.seconds && `${f.seconds}s`, f.aspect, usd(f.usd), minutes(f.wait)].filter(Boolean).join(", ")}. ${note ?? ""}`.trimEnd();
+  const also = f.also?.length ? ` Also on ${f.also.map((x) => `${x.where} (via "${x.route}", ${costAt(x)})`).join(" and ")}.` : "";
+  return `- ${f.label} (${f.model}) on ${f.where} (via "${f.route}"): ${[f.seconds && `${f.seconds}s`, f.aspect, costAt(f), minutes(f.wait)].filter(Boolean).join(", ")}.${also} ${note ?? ""}`.trimEnd();
 };
 
 server.registerTool(
@@ -632,6 +635,7 @@ server.registerTool(
       ...makeArgs,
       count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),
       model: z.string().optional().describe("A model id from list_models; default Auto, the first ready one of the quality asked for"),
+      via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one place (a plan like "chatgpt" or a key like "openai"); default the cheapest ready one'),
     },
   },
   async ({ project: id, ...args }) => {

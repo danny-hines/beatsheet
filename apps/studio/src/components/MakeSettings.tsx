@@ -1,11 +1,18 @@
 /**
  * Settings → Making: the hard limit on what making may spend in all (the person's, the agent's and any script's
- * takes alike), what the agent may spend in a turn before it asks, and the order Auto tries models in.
+ * takes alike), what the agent may spend in a turn before it asks, the order Auto tries models in, and the plans that
+ * make stills without a key.
  */
-import { CATALOG, type MakeOp } from "@beatsheet/schema";
+import { CATALOG, type MakeOp, type ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 
-type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; ranking?: Partial<Record<string, string[]>>; spent?: number };
+type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; ranking?: Partial<Record<string, string[]>>; spent?: number; plans?: ({ id: string } & ServiceState)[] };
+
+/** What each plan makes, and how to get it going. */
+const PLAN_NOTES: Record<string, { makes: string; setUp: string }> = {
+  chatgpt: { makes: "GPT Image stills, through Codex", setUp: "Sign in to Codex with ChatGPT (Settings → Agent) to use it." },
+  "muse-code": { makes: "Muse Image stills, through Muse Code", setUp: "Sign in to Muse Code on a subscription (Settings → Agent) to use it." },
+};
 
 async function save(change: Record<string, unknown>): Promise<MakeSettings> {
   const res = await fetch("/api/settings/make", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(change) });
@@ -57,6 +64,22 @@ export function MakeSection() {
           <span>a turn before it asks you.</span>
         </div>
       </section>
+      {!!s.plans?.length && (
+        <section>
+          <h4>Your plans</h4>
+          <ul className="make-plans">
+            {s.plans.map((p) => (
+              <li key={p.id}>
+                <span>
+                  {p.label} <span className="dim small">· {PLAN_NOTES[p.id]?.makes}</span>
+                </span>
+                <span className={`small ${p.state === "ready" ? "" : "dim"}`}>{p.state === "ready" ? "Ready" : p.state === "failing" ? p.detail : PLAN_NOTES[p.id]?.setUp}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="dim small">A still made on a plan comes out of its allowance, not your money. Where you also have a key, the model picker offers both, and the plan is used unless you pick the key.</p>
+        </section>
+      )}
       <section>
         <h4>What Auto tries first</h4>
         <Ranking op="image" label="Stills" order={s.ranking?.image} onChange={(ids) => change({ ranking: { image: ids } })} />

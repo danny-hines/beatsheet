@@ -34,6 +34,7 @@ import {
   type ShotContent,
 } from "@beatsheet/schema";
 import { DIRECT, directImage } from "./direct.ts";
+import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
@@ -141,10 +142,13 @@ function saveJob(projectId: string, job: MakeJob): MakeJob {
 
 // ---- What can make what, with the services there are.
 
-/** Every service's state for the fit check: a key in the Keychain counts as ready (checking it costs a request). */
+/**
+ * Every service's state for the fit check: a key in the Keychain counts as ready (checking it costs a request), and so
+ * does a plan the person's agent CLI is signed in on.
+ */
 export function serviceStates(): Record<string, ServiceState> {
   const saved = readSettings().services;
-  return Object.fromEntries(SERVICES.map((s) => [s.id, saved[s.id] ? { label: s.label, state: "ready" } : { label: s.label, state: "missing" }]));
+  return { ...Object.fromEntries(SERVICES.map((s) => [s.id, saved[s.id] ? { label: s.label, state: "ready" } : { label: s.label, state: "missing" }])), ...planStates() };
 }
 
 /** Something to make, as the agent's tools and the studio ask for it. */
@@ -248,6 +252,7 @@ export function requestFor(projectId: string, ask: MakeAsk): FullRequest {
     seconds: ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined),
     aspect: ask.aspect ?? sheetAspect ?? aspectOf(format.width, format.height),
     count: ask.count,
+    ...(ask.via ? { via: ask.via } : {}),
   };
 }
 
@@ -544,11 +549,12 @@ async function drive(projectId: string) {
 
 /** One step of a job: send it, or ask where it is, or bring in what it made. */
 async function step(projectId: string, job: MakeJob, key: string | undefined) {
-  if (!key && !job.file) {
+  const plan = PLAN_ROUTES.includes(job.route);
+  if (!key && !job.file && !plan) {
     const name = SERVICES.find((s) => s.id === job.route)?.label ?? job.route;
     throw new FalError(`Making this needs a ${name} key. The person can add one in Settings → Media services.`, true);
   }
-  if (DIRECT.includes(job.route)) return stepDirect(projectId, job, key);
+  if (DIRECT.includes(job.route) || plan) return stepDirect(projectId, job, key);
   if (job.route !== "fal" || !key) throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
   if (!job.remote) {
     const { project, dir } = loadProject(projectId, job.cut);
@@ -585,16 +591,17 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
 }
 
 /**
- * A job on a service that answers in one request (see direct.ts): sent and answered in this step, and the picture
- * saved before anything else, since the service won't give it again. The lock is kept fresh while it waits, so another
- * process doesn't take the job for one that stopped.
+ * A job on a service that answers in one request (see direct.ts), or on a plan (plans.ts): sent and answered in this
+ * step, and the picture saved before anything else, since the service won't give it again. The lock is kept fresh
+ * while it waits, so another process doesn't take the job for one that stopped.
  */
 async function stepDirect(projectId: string, job: MakeJob, key: string | undefined) {
   if (job.file) return finish(projectId, job, { file: job.file });
-  // Sent by a process that stopped before the answer came: the picture is lost, and may have been paid for.
+  const plan = PLAN_ROUTES.includes(job.route);
+  // Sent by a process that stopped before the answer came: the picture is lost, and may have been paid for (a plan's comes out of its allowance).
   if (job.status === "running") {
-    saveJob(projectId, { ...job, charged: true });
-    throw new FalError("The engine stopped while this was being made, so the picture was lost (and may have been charged). Try again to make it again.", true);
+    if (!plan) saveJob(projectId, { ...job, charged: true });
+    throw new FalError(`The engine stopped while this was being made, so the picture was lost${plan ? "" : " (and may have been charged)"}. Try again to make it again.`, true);
   }
   const { project, dir } = loadProject(projectId, job.cut);
   const fileOf = (id: string) => {
@@ -612,9 +619,10 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
       // The lock is gone; the job's own save says what happened.
     }
   }, 10_000);
-  let out: Awaited<ReturnType<typeof directImage>>;
+  let out: { bytes: Buffer; contentType: string; usd?: number };
   try {
-    out = await directImage(job.route, job.endpoint, key!, { prompt: r.sent ?? r.prompt, aspect: r.aspect, refs });
+    const ask = { prompt: r.sent ?? r.prompt, aspect: r.aspect, refs };
+    out = plan ? await planImage(job.route, ask) : await directImage(job.route, job.endpoint, key!, ask);
   } catch (err) {
     // Nothing came back, so nothing was made: it can be sent again.
     const now = readJob(projectId, job.id) ?? job;

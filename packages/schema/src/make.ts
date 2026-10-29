@@ -66,6 +66,8 @@ export type MakeRequest = {
   aspect?: string;
   /** How many takes. */
   count?: number;
+  /** Where to make it, when the model runs in more than one place ("chatgpt" rather than "openai"); default the cheapest that's ready. */
+  via?: string;
 };
 
 /** Whether a service can be used now. `label` is its name for people ("fal"). */
@@ -83,6 +85,10 @@ export type FitOk = {
   model: string;
   label: string;
   route: string;
+  /** Where it runs, for people: "fal", "ChatGPT plan". */
+  where: string;
+  /** The other places it could run now, cheapest first. */
+  also?: { route: string; where: string; usd?: number }[];
   /** The service's endpoint for this shape of request. */
   endpoint: string;
   /** The length to ask for: the shot's plus a little either side when the model allows it. */
@@ -197,16 +203,32 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   }
 
   const shape = shapeOf(req);
-  const routes = model.routes.filter((r) => r.endpoints[shape]);
-  if (!routes.length) return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : "only a prompt"}` });
   const state = (r: ModelRoute): ServiceState => services[r.via] ?? { label: r.via, state: "missing" };
+  const routes = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
+  if (!routes.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
+  if (!routes.length) return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : "only a prompt"}` });
   const ready = routes
     .filter((r) => state(r).state === "ready")
     .map((r) => ({ r, usd: costOn(r, req.op, seconds, count), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
     .sort((a, b) => (a.usd ?? Infinity) - (b.usd ?? Infinity));
-  const affordable = ready.find((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
-  if (affordable)
-    return { ok: true, model: model.id, label: model.label, route: affordable.r.via, endpoint: affordable.r.endpoints[shape]!, seconds, aspect, usd: affordable.usd, wait: model.wait };
+  const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
+  if (affordable.length) {
+    const [best, ...rest] = affordable.map((x) => ({ ...x, where: state(x.r).label }));
+    const also = rest.map((x) => ({ route: x.r.via, where: x.where, usd: x.usd }));
+    return {
+      ok: true,
+      model: model.id,
+      label: model.label,
+      route: best!.r.via,
+      where: best!.where,
+      ...(also.length ? { also } : {}),
+      endpoint: best!.r.endpoints[shape]!,
+      seconds,
+      aspect,
+      usd: best!.usd,
+      wait: model.wait,
+    };
+  }
   if (ready.length) {
     const x = ready[0]!;
     return no({ kind: "funds", reason: `${state(x.r).label} has ${money(x.balance!)}; this is about ${money(x.usd!)}`, balanceUsd: x.balance!, needUsd: x.usd! });

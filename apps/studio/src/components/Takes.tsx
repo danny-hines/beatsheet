@@ -6,15 +6,39 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { castOf, type Choices, type Fit, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { castOf, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { TextField } from "./ui";
 
 const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 export const money = (usd?: number) => (usd === undefined ? "" : `~$${usd.toFixed(2)}`);
+/** What it costs where it runs: a plan's allowance rather than money. */
+export const cost = (f: { usd?: number }) => (f.usd === 0 ? "on your plan" : money(f.usd));
 const wait = (s?: number) => (s === undefined ? "" : s < 90 ? `~${Math.max(10, Math.round(s / 10) * 10)}s` : `~${Math.round(s / 60)} min`);
-const fitLabel = (f: Fit) => (f.ok ? [f.label, money(f.usd), wait(f.wait)].filter(Boolean).join(" · ") : `${f.label}: ${f.why.reason}`);
+/** A model, where it runs when it runs in more than one place, what it costs and how long it takes; or why it can't. */
+const fitLabel = (f: Fit, where = false) => {
+  if (!f.ok) return `${f.label}: ${f.why.reason}`;
+  const place = (where || !!f.also?.length) && f.where;
+  // "ChatGPT plan" already says it's on the plan.
+  return [f.label, place, !(place && f.usd === 0) && cost(f), wait(f.wait)].filter(Boolean).join(" · ");
+};
+
+/** A model picked in ModelSelect, and where it runs when there's a choice: "gpt-image@chatgpt". */
+export const pickOf = (value: string): { model?: string; via?: string } => {
+  if (!value) return {};
+  const [model, via] = value.split("@");
+  return { model, ...(via ? { via } : {}) };
+};
+/** A ready model in each place it can run: itself (the cheapest), then the others. */
+const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, also: undefined }))];
+/** The fit for a pick (Auto when there's none), or nothing when that model can't make this now. */
+export function fitOf(choices: Choices | undefined, value: string): FitOk | undefined {
+  if (!choices || !value) return choices?.auto;
+  const { model, via } = pickOf(value);
+  const f = choices.ready.find((x) => x.model === model);
+  return f && (via ? placesOf(f).find((x) => x.route === via) : f);
+}
 
 /**
  * The project's jobs that `match` (a shot's, a sheet's), asked for again every couple of seconds while any is going;
@@ -119,10 +143,10 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
   const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined });
-  const chosen = choices && (model ? choices.ready.find((f) => f.model === model) : choices.auto);
+  const chosen = fitOf(choices, model);
   // A model picked for stills can't make video, and the other way round.
   useEffect(() => {
-    if (model && choices && !choices.ready.some((f) => f.model === model)) setModel("");
+    if (model && choices && !fitOf(choices, model)) setModel("");
   }, [choices, model]);
 
   // Who the prompt names: the cast it'll be given, and any @name that isn't in the cast.
@@ -211,11 +235,11 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
           className="primary"
           disabled={!chosen || !prompt.trim() || sending}
           onClick={() =>
-            void make({ op, cut: cutId, shot: shot.id, prompt, count, ...(op === "video" ? { quality } : {}), ...(model ? { model } : {}), ...(start ? { start } : {}), ...(length ? { seconds: length } : {}) })
+            void make({ op, cut: cutId, shot: shot.id, prompt, count, ...(op === "video" ? { quality } : {}), ...pickOf(model), ...(start ? { start } : {}), ...(length ? { seconds: length } : {}) })
           }
         >
           Make {count} {what}
-          {chosen?.usd !== undefined ? ` · ${money(chosen.usd)}` : ""}
+          {chosen?.usd !== undefined ? ` · ${cost(chosen)}` : ""}
         </button>
         {going.length > 0 && <span className="dim small">{going.length} on the way</span>}
       </div>
@@ -230,11 +254,19 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
   return (
     <select value={model} onChange={(e) => setModel(e.target.value)} title="Which model makes it" aria-label="Model">
       <option value="">{choices?.auto ? `Auto (${fitLabel(choices.auto)})` : "Auto"}</option>
-      {choices?.ready.map((f) => (
-        <option key={f.model} value={f.model}>
-          {fitLabel(f)}
-        </option>
-      ))}
+      {choices?.ready.flatMap((f) =>
+        f.also?.length
+          ? placesOf(f).map((x) => (
+              <option key={`${x.model}@${x.route}`} value={`${x.model}@${x.route}`}>
+                {fitLabel(x, true)}
+              </option>
+            ))
+          : [
+              <option key={f.model} value={f.model}>
+                {fitLabel(f)}
+              </option>,
+            ],
+      )}
       {!!choices?.setup.length && (
         <optgroup label="Needs a key or an install">
           {choices.setup.map((f) => (
