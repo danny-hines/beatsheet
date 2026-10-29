@@ -18,7 +18,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
-import { cancelJobs, driveJobs, listJobs, makeChoices, startMake, type MakeAsk } from "./make.ts";
+import { cancelJobs, driveJobs, listJobs, makeChoices, retryJobs, startMake, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -506,6 +506,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   if (section === "projects" && id && action === "jobs" && parts[3] === "cancel" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { ids?: string[] };
     return json(res, 200, await cancelJobs(id, body.ids ?? []));
+  }
+  if (section === "projects" && id && action === "jobs" && parts[3] === "retry" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { ids?: string[] };
+    return json(res, 200, retryJobs(id, body.ids ?? []));
   }
   if (section === "projects" && id && action === "footage" && req.method === "POST") {
     // Folders, single files, or both (what was picked or dropped).

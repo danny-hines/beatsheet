@@ -22,6 +22,9 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
   };
 });
 // Adding an asset probes it with ffprobe and makes previews; here it only records it, as a 6-second video or a still.
+// Like the real one, it picks the id first and saves a moment later (the previews take time), and a test can make it
+// fail, as a file in use would.
+const ingest = vi.hoisted(() => ({ failures: 0, chosen: [] as string[] }));
 vi.mock("../src/ingest.ts", async () => {
   const { loadFile, updateFile } = await import("../src/store.ts");
   return {
@@ -29,6 +32,9 @@ vi.mock("../src/ingest.ts", async () => {
       const used = new Set(loadFile(id).doc.assets.map((a) => a.id));
       let aid = meta.id ?? "take";
       for (let n = 2; used.has(aid); n++) aid = `${meta.id}-${n}`;
+      ingest.chosen.push(aid);
+      await new Promise((r) => setTimeout(r, 10));
+      if (ingest.failures > 0 && ingest.failures--) throw new Error("EPERM: operation not permitted, rename");
       const video = file.endsWith(".mp4");
       const asset: Asset = { id: aid, kind: video ? "video" : "image", path: file, label: meta.label, tags: meta.tags, provenance: meta.provenance, width: 1080, height: 1920, ...(video ? { duration: 6 } : {}) };
       updateFile(id, (d) => void d.assets.push(asset));
@@ -369,5 +375,46 @@ describe("a variant's sheet", () => {
     await make.driveJobs(PROJECT);
     expect(String(seen.submits[1]!.input.prompt)).toMatch(/ In every view: a tiny black eye mask\.$/);
     expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.images).toEqual(["cat-heist-sheet"]);
+  });
+});
+
+describe("takes that finish together, and trying again", () => {
+  it("brings in takes that finish at once one at a time, so each gets its own id", async () => {
+    ingest.chosen = [];
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 4 });
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT).map((j) => j.status)).toEqual(["done", "done", "done", "done"]);
+    expect(shot("s2").content).toMatchObject({ takes: ["s2-take", "s2-take-2", "s2-take-3", "s2-take-4"] });
+    // No two picked the same id (and wrote the same previews) along the way.
+    expect(ingest.chosen).toEqual(["s2-take", "s2-take-2", "s2-take-3", "s2-take-4"]);
+  });
+
+  it("tries bringing a take in again when the project's side goes wrong, without asking the service again", async () => {
+    ingest.failures = 2;
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", charged: true, asset: "s2-take" });
+    expect(seen.submits).toHaveLength(1);
+  });
+
+  it("fetches a failed take the service had made, rather than paying for it again, and counts what it cost", async () => {
+    const since = new Date().toISOString();
+    const [job] = make.startMake(PROJECT, { op: "image", shot: "s1", count: 1 }).jobs;
+    await make.driveJobs(PROJECT);
+    // As if bringing it in had failed for good: the service made it, and it's paid for.
+    const file = join(process.env.BEATSHEET_PROJECTS!, PROJECT, "jobs", `${job!.id}.json`);
+    const saved = JSON.parse(readFileSync(file, "utf8")) as import("../src/make.ts").MakeJob;
+    store.updateFile(PROJECT, (d) => {
+      d.assets = d.assets.filter((a) => a.id !== saved.asset);
+      const s = d.cuts[0]!.shots.find((x) => x.id === "s1")!;
+      s.content = { kind: "placeholder", description: "The cat slips out through the cat flap at dawn" };
+    });
+    writeFileSync(file, JSON.stringify({ ...saved, status: "failed", error: "EPERM", asset: undefined }));
+    expect(make.spentSince(since)).toBeCloseTo(0.04, 3);
+
+    expect(make.retryJobs(PROJECT, [job!.id])).toMatchObject([{ status: "running" }]);
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", asset: "s1-take" });
+    expect(seen.submits).toHaveLength(1);
   });
 });

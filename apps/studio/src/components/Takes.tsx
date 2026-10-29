@@ -53,7 +53,24 @@ export function useMake(match: (j: MakeJob) => boolean, key: string) {
   };
   const hourAgo = new Date(Date.now() - 3600_000).toISOString();
   const failed = jobs.filter((j) => j.status === "failed" && j.updatedAt >= hourAgo).at(-1);
-  return { going, make, sending, error, failed };
+  // A failed take the service had made is fetched again for nothing; one it never made is asked for again.
+  const retry = async (job: MakeJob) => {
+    await fetch(`/api/projects/${projectId}/jobs/retry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [job.id] }) });
+    await refresh();
+  };
+  return { going, make, sending, error, failed, retry };
+}
+
+/** A failed take or sheet: why, and trying it again (free when the service had made it). */
+export function Failed({ job, what, retry }: { job: MakeJob; what: string; retry: (j: MakeJob) => void }) {
+  return (
+    <p className="warn small">
+      {what} didn't come: {job.error}{" "}
+      <button className="link small" onClick={() => retry(job)} title={job.charged ? "It was made; fetch it again, at no cost" : "Ask for it again; it costs again"}>
+        Try again{job.charged ? "" : ` · ${money(job.usd)}`}
+      </button>
+    </p>
+  );
 }
 
 /**
@@ -100,7 +117,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const [count, setCount] = useState(2);
   const start = op === "video" && fromBoard ? board : undefined;
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
-  const { going, make, sending, error, failed } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
+  const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
   const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined });
   const chosen = choices && (model ? choices.ready.find((f) => f.model === model) : choices.auto);
   // A model picked for stills can't make video, and the other way round.
@@ -203,7 +220,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
         {going.length > 0 && <span className="dim small">{going.length} on the way</span>}
       </div>
       {(error || problem) && <p className="warn small">{error || problem}</p>}
-      {failed && !error && <p className="warn small">A take didn't come: {failed.error}</p>}
+      {failed && !error && <Failed job={failed} what="A take" retry={(j) => void retry(j)} />}
     </div>
   );
 }

@@ -80,11 +80,16 @@ export type MakeJob = {
   /** Place in the service's queue, while waiting. */
   position?: number;
   error?: string;
+  /** The service finished it, so it's paid for, even if bringing it into the project then went wrong. */
+  charged?: boolean;
   /** The take it made. */
   asset?: string;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Whether a job's cost counts: everything asked for, except what failed or was stopped before the service made it. */
+const counts = (j: MakeJob) => j.charged || (j.status !== "failed" && j.status !== "canceled");
 
 const POLL_MS = Number(process.env.BEATSHEET_MAKE_POLL_MS ?? 3000);
 /** A lock nobody has touched for this long belongs to a process that stopped. */
@@ -251,16 +256,16 @@ export function spentThisTurn(projectId: string): number {
   const turn = loadFile(projectId).doc.turn;
   if (turn?.who !== "agent") return 0;
   const spent = listJobs(projectId)
-    .filter((j) => j.createdAt >= turn.since && j.status !== "failed" && j.status !== "canceled")
+    .filter((j) => j.createdAt >= turn.since && counts(j))
     .reduce((sum, j) => sum + (j.usd ?? 0), 0);
   return Math.round(spent * 1000) / 1000;
 }
 
-/** What making has cost since a time, in every project: the estimates of the takes asked for, less the ones that failed or were stopped. */
+/** What making has cost since a time, in every project: the estimates of the takes asked for, less the ones that failed or were stopped before they were made. */
 export function spentSince(since: string): number {
   const spent = listProjects()
     .flatMap((p) => listJobs(p.id))
-    .filter((j) => j.createdAt >= since && j.status !== "failed" && j.status !== "canceled")
+    .filter((j) => j.createdAt >= since && counts(j))
     .reduce((sum, j) => sum + (j.usd ?? 0), 0);
   return Math.round(spent * 1000) / 1000;
 }
@@ -413,6 +418,22 @@ export async function cancelJobs(projectId: string, ids: string[]): Promise<Make
   return out;
 }
 
+/**
+ * Tries failed jobs again. One the service had finished is fetched again (results are kept for a while), not made
+ * again; one it never made is sent again, and costs again.
+ */
+export function retryJobs(projectId: string, ids: string[]): MakeJob[] {
+  const out: MakeJob[] = [];
+  for (const id of ids) {
+    const job = readJob(projectId, id);
+    if (!job || job.status !== "failed") continue;
+    const again = job.charged && job.remote ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, charged: undefined };
+    out.push(saveJob(projectId, { ...again, error: undefined }));
+  }
+  if (out.length) void driveJobs(projectId);
+  return out;
+}
+
 // ---- Driving the jobs.
 
 const alive = (pid: number) => {
@@ -545,11 +566,30 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
     return;
   }
   if (s.error) throw new FalError(s.error, true);
-  const out = falOutput(await falResult(key, job.remote));
+  if (!job.charged) job = saveJob(projectId, { ...job, charged: true });
+  const out = falOutput(await falResult(key, job.remote!));
   if (!out) throw new FalError("fal finished but didn't send a file", true);
-  const asset = await bringIn(projectId, job, out);
-  attach(projectId, job, asset);
-  saveJob(projectId, { ...job, status: "done", position: undefined, asset: asset.id });
+  // Takes come in one at a time, so two finishing together don't take the same id or write the same preview. What
+  // goes wrong here is the project's side (a file in use, a write that clashed): the take is still at the service, so
+  // it's tried again.
+  const done = job;
+  await oneAtATime(projectId, async () => {
+    try {
+      const asset = await bringIn(projectId, done, out);
+      attach(projectId, done, asset);
+      saveJob(projectId, { ...done, status: "done", position: undefined, asset: asset.id });
+    } catch (err) {
+      throw err instanceof FalError ? err : new FalError(`Couldn't bring the take in: ${err instanceof Error ? err.message : String(err)}`, false);
+    }
+  });
+}
+
+const intake = new Map<string, Promise<unknown>>();
+/** Runs `fn` after whatever is already bringing takes into this project. */
+function oneAtATime(projectId: string, fn: () => Promise<void>): Promise<void> {
+  const next = (intake.get(projectId) ?? Promise.resolve()).catch(() => undefined).then(fn);
+  intake.set(projectId, next);
+  return next;
 }
 
 const EXT: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4", "video/quicktime": ".mov" };

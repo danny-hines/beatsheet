@@ -7,7 +7,7 @@ import type { Asset, CastMember } from "@beatsheet/schema";
 import { useState } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { actions, useProject, useStore } from "../store";
-import { money, useChoices, useMake, WhyNot } from "./Takes";
+import { Failed, money, useChoices, useMake, WhyNot } from "./Takes";
 import { PopMenu, TextField } from "./ui";
 
 type Kind = CastMember["kind"];
@@ -208,7 +208,7 @@ export function CastView({ id }: { id: string }) {
   const [count, setCount] = useState(2);
   const [sheetOf, setSheetOf] = useState("");
   const sheet = sheetOf || id;
-  const { going, make, sending, error, failed } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
+  const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
   const { choices, problem } = useChoices({ op: "image", sheet, count });
   if (!m) return <p className="dim small">That cast member is gone.</p>;
 
@@ -301,7 +301,7 @@ export function CastView({ id }: { id: string }) {
       </div>
       <WhyNot choices={choices} />
       {(error || problem) && <p className="warn small">{error || problem}</p>}
-      {failed && !error && <p className="warn small">A sheet didn't come: {failed.error}</p>}
+      {failed && !error && <Failed job={failed} what="A sheet" retry={(j) => void retry(j)} />}
 
       {photos.length > 0 && (
         <>

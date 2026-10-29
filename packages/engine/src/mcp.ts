@@ -38,7 +38,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { cancelJobs, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { cancelJobs, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -644,9 +644,10 @@ server.registerTool(
       ids: z.array(z.string()).optional().describe("Job ids, or the id that takes asked for together share"),
       wait: z.number().min(0).max(300).optional().describe("Seconds to wait for them to finish"),
       cancel: z.boolean().optional().describe("Stop them (one already being made may still be charged)"),
+      retry: z.boolean().optional().describe("Try the failed ones again: one the service had made is fetched again for free; one it never made is sent again, and costs again"),
     },
   },
-  async ({ project: id, ids, wait, cancel }) => {
+  async ({ project: id, ids, wait, cancel, retry }) => {
     void driveJobs(id);
     const hourAgo = new Date(Date.now() - 3600_000).toISOString();
     const pick = () => {
@@ -654,6 +655,7 @@ server.registerTool(
       return ids?.length ? all.filter((j) => ids.includes(j.id) || ids.includes(j.batch)) : all.filter((j) => isOpen(j) || j.updatedAt >= hourAgo).slice(-20);
     };
     if (cancel) await cancelJobs(id, pick().map((j) => j.id));
+    if (retry) retryJobs(id, pick().map((j) => j.id));
     const until = Date.now() + (wait ?? 0) * 1000;
     while (Date.now() < until && pick().some(isOpen)) await new Promise((r) => setTimeout(r, 2000));
     const list = pick();
