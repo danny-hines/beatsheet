@@ -3,7 +3,7 @@
  * at the top of the Library. Right-click a photo to make one from it or add it to one; select one to name it,
  * describe it and make its sheet (clean views that models are given to match).
  */
-import type { Asset, CastMember } from "@beatsheet/schema";
+import { renameCast, type Asset, type CastMember } from "@beatsheet/schema";
 import { useState } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { actions, useProject, useStore } from "../store";
@@ -228,12 +228,22 @@ export function CastView({ id }: { id: string }) {
   // prompts already use.
   const rename = (name: string) => {
     const newId = UNNAMED.test(id) && name.trim() ? castIdFor(name, (p.cast ?? []).map((x) => x.id).filter((x) => x !== id), m.kind) : id;
-    actions.edit((d) => {
-      const x = d.cast!.find((c) => c.id === id)!;
-      x.name = name.trim();
-      x.id = newId;
+    actions.editFile((f) => {
+      f.cast!.find((c) => c.id === id)!.name = name.trim();
+      if (newId !== id) renameCast(f, id, newId);
     });
     if (newId !== id) actions.select({ kind: "cast", id: newId });
+  };
+  // A new id on purpose: every prompt and shot that names the old one follows.
+  const reId = (to: string) => {
+    if (p.cast?.some((x) => x.id === to)) return `@${to} is taken`;
+    actions.editFile((f) => void renameCast(f, id, to));
+    actions.select({ kind: "cast", id: to });
+  };
+  const reIdVariant = (from: string) => (to: string) => {
+    if (m.variants?.some((x) => x.id === to)) return `@${id}/${to} is taken`;
+    actions.editFile((f) => void renameCast(f, `${id}/${from}`, to));
+    if (sheetOf === `${id}/${from}`) setSheetOf(`${id}/${to}`);
   };
   const remove = () => {
     actions.edit((d) => void (d.cast = d.cast!.filter((x) => x.id !== id)));
@@ -245,7 +255,7 @@ export function CastView({ id }: { id: string }) {
   return (
     <div className="inspector cast-view">
       <div className="insp-head">
-        <span className="mono dim">@{m.id}</span>
+        <IdField value={m.id} onRename={reId} />
         <span className="spacer" />
         <select value={m.kind} onChange={(e) => edit((x) => void (x.kind = e.target.value as Kind))} aria-label="Kind">
           {KINDS.map(([k, name]) => (
@@ -336,7 +346,7 @@ export function CastView({ id }: { id: string }) {
       <h4>Variants</h4>
       {m.variants?.map((v, i) => (
         <div key={v.id} className="variant-row">
-          <span className="mono small">@{m.id}/{v.id}</span>
+          <IdField prefix={`${m.id}/`} value={v.id} onRename={reIdVariant(v.id)} />
           <TextField value={v.about} placeholder="What's different: wearing a tiny black eye mask" onCommit={(t) => edit((x) => void (x.variants![i]!.about = t))} />
           <button className="link danger small" onClick={() => edit((x) => void (x.variants = x.variants!.filter((y) => y.id !== v.id)))} title="Remove this variant">
             ×
@@ -351,6 +361,28 @@ export function CastView({ id }: { id: string }) {
         </button>
       </div>
     </div>
+  );
+}
+
+/**
+ * A cast id, to change: what's typed becomes one prompts can name (lowercase, dashes). `onRename` says why not when it
+ * can't be, and the field goes back to the id it has.
+ */
+function IdField({ prefix = "", value, onRename }: { prefix?: string; value: string; onRename: (id: string) => string | void }) {
+  const [problem, setProblem] = useState("");
+  const [tries, setTries] = useState(0);
+  const commit = (typed: string) => {
+    const to = typed.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    const why = to && to !== value ? onRename(to) : undefined;
+    setProblem(why ?? "");
+    setTries((n) => n + 1);
+  };
+  return (
+    <span className="cast-id" title="What prompts call it. Changing it changes every prompt that uses it">
+      <span className="mono dim">@{prefix}</span>
+      <TextField key={`${value}-${tries}`} value={value} onCommit={commit} />
+      {problem && <span className="warn small">{problem}</span>}
+    </span>
   );
 }
 

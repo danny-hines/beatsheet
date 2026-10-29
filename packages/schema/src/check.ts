@@ -1,5 +1,6 @@
 /** Loading and integrity checks: schema validation plus the cross-references a schema can't express. */
 import { cutView, upgrade } from "./cuts.ts";
+import { CAST_ID } from "./make.ts";
 import { pictureOf, ProjectFile, SFX_SOUNDS, type Anchor, type Project } from "./types.ts";
 
 export type CheckIssue = { path: string; message: string };
@@ -72,7 +73,7 @@ export function checkCut(p: Project): CheckIssue[] {
   const castIds = new Set<string>();
   p.cast?.forEach((m, i) => {
     castIds.add(m.id);
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(m.id)) add(`cast.${i}.id`, `"${m.id}" can't follow an @: use lowercase letters, numbers and dashes`);
+    if (!CAST_ID.test(m.id)) add(`cast.${i}.id`, `"${m.id}" can't follow an @: use lowercase letters, numbers and dashes`);
     [...(m.images ?? []), ...(m.variants ?? []).flatMap((v) => v.images ?? [])].forEach((a) => ids.assets.has(a) || add(`cast.${i}`, `unknown asset "${a}"`));
     m.seen?.forEach((s, j) => {
       const a = p.assets.find((x) => x.id === s.asset);

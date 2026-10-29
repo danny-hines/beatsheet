@@ -506,6 +506,15 @@ export const actions = {
     setState({ ...showDoc(withCut(doc, draft)), past: [...state.past.slice(-99), doc], future: [], save: "dirty" });
     scheduleSave();
   },
+  /** Like edit, for a change that reaches every cut (a cast id their prompts use). */
+  editFile(fn: (draft: ProjectFile) => void) {
+    const { doc } = state;
+    if (!doc) return;
+    const draft = structuredClone(doc);
+    fn(draft);
+    setState({ ...showDoc(draft), past: [...state.past.slice(-99), doc], future: [], save: "dirty" });
+    scheduleSave();
+  },
   undo() {
     const prev = state.past.at(-1);
     if (!prev || !state.doc) return;

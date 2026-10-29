@@ -6,6 +6,7 @@ import {
   castPictures,
   castPrompt,
   checkCut,
+  checkReferences,
   chooseModels,
   cutView,
   fitModel,
@@ -13,6 +14,7 @@ import {
   maxStillRefs,
   parseFile,
   pictureOf,
+  renameCast,
   Project,
   resolveTimeline,
   SCHEMA_VERSION,
@@ -21,6 +23,7 @@ import {
   withCut,
   type CastMember,
   type CatalogModel,
+  type ProjectFile,
   type ProjectInput,
   type ServiceState,
 } from "../src/index.ts";
@@ -320,6 +323,36 @@ describe("cast and sets in prompts", () => {
     });
     expect(checkCut(p).map((i) => `${i.path}: ${i.message}`)).toEqual(['look.style: no style "cat" in the cast']);
     expect(checkCut({ ...p, look: { style: "toon" }, cast: [{ ...p.cast![0]!, style: "noir" }, p.cast![1]!] }).map((i) => i.message)).toEqual(['no style "noir" in the cast']);
+  });
+
+  it("renames a member or a variant everywhere it's used, and refuses an id that's taken or can't follow an @", () => {
+    const file = (): ProjectFile =>
+      withCut({ schema: SCHEMA_VERSION, cuts: [], ...make() } as never, {
+        ...make({
+          look: { style: "noir" },
+          cast: [...structuredClone(cast), { id: "dog", name: "the dog", kind: "character", style: "noir" }],
+          assets: [{ id: "take1", kind: "image", path: "made/takes/take1.png", label: "@cat/heist in @alley", provenance: { source: "generated", prompt: "@cat/heist in @alley", cast: ["cat/heist", "alley"] } }],
+          shots: [{ id: "s1", track: "pic", duration: 2, content: { kind: "generated", prompt: "@cat/heist sneaks past @cat-flap and @catnip, then @cat naps", cast: ["cat", "noir"] }, fidelity: "idea" }],
+        }),
+      });
+    const f = file();
+    expect(renameCast(f, "cat/heist", "masked")).toBe(true);
+    expect(f.cast![0]!.variants![0]!.id).toBe("masked");
+    expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ prompt: "@cat/masked sneaks past @cat-flap and @catnip, then @cat naps", cast: ["cat", "noir"] });
+    expect(f.assets[0]).toMatchObject({ label: "@cat/masked in @alley", provenance: { prompt: "@cat/masked in @alley", cast: ["cat/masked", "alley"] } });
+
+    expect(renameCast(f, "cat", "marmalade")).toBe(true);
+    expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ prompt: "@marmalade/masked sneaks past @cat-flap and @catnip, then @marmalade naps", cast: ["marmalade", "noir"] });
+    expect(f.assets[0]!.provenance!.cast).toEqual(["marmalade/masked", "alley"]);
+
+    // A style's new id follows it into the look and onto the members drawn in it.
+    expect(renameCast(f, "noir", "film-noir")).toBe(true);
+    expect([f.look?.style, f.cast![3]!.style, (f.cuts[0]!.shots[0]!.content as { cast: string[] }).cast[1]]).toEqual(["film-noir", "film-noir", "film-noir"]);
+    expect(checkReferences(f).filter((i) => !i.message.startsWith("unknown asset"))).toEqual([]);
+
+    const before = JSON.stringify(f);
+    expect([renameCast(f, "alley", "dog"), renameCast(f, "alley", "The Alley"), renameCast(f, "marmalade/nope", "x"), renameCast(f, "ghost", "x")]).toEqual([false, false, false, false]);
+    expect(JSON.stringify(f)).toBe(before);
   });
 
   it("is kept with the project, not a cut, when a cut is written back", () => {

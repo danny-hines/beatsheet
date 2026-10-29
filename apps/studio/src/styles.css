@@ -963,6 +963,10 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .cast-pic:hover .cast-pic-remove, .cast-pic-remove:focus-visible { opacity: 1; }
 .variant-row { display: flex; align-items: center; gap: 6px; }
 .variant-row > :nth-child(2) { flex: 1; min-width: 0; }
+.cast-id { display: flex; align-items: center; min-width: 0; }
+.cast-id input { font-family: var(--mono); font-size: 12px; width: 13ch; padding: 1px 3px; background: transparent; border-color: transparent; }
+.cast-id input:hover, .cast-id input:focus { border-color: var(--line); }
+.cast-id .warn { margin-left: 6px; white-space: nowrap; }
 .make-row input { flex: 1; min-width: 0; }
 .cast-remove { margin-top: 10px; }
 .card-menu button:disabled { opacity: 0.45; }

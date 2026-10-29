@@ -4,7 +4,7 @@
  * themselves are in catalog.ts; the engine knows which services are connected and runs the jobs.
  */
 import { resolveTimeline } from "./resolve.ts";
-import type { CastMember, Project } from "./types.ts";
+import type { CastMember, Project, ProjectFile } from "./types.ts";
 
 /** What can be asked for. More join as they're wired up: extend, edit-video, swap, lipsync, restore, isolate. */
 export const MAKE_OPS = ["image", "video"] as const;
@@ -315,6 +315,56 @@ export function castPictures(uses: CastUse[], max = Infinity): { use: CastUse; a
     })
     .sort((a, b) => PICTURE_ORDER.indexOf(a.use.member.kind) - PICTURE_ORDER.indexOf(b.use.member.kind))
     .slice(0, max);
+}
+
+/** An id prompts can name after an @. */
+export const CAST_ID = /^[a-z0-9][a-z0-9-]*$/;
+
+/**
+ * Gives a cast member, or one of its variants ("cat/heist"), a new id everywhere it's used: the prompts and cast lists
+ * of made shots in every cut, what takes were made with and their labels, and the styles that name it. Changes `file`
+ * in place; false (and nothing changed) when there's nothing by that id, or the new one is taken or can't follow an @.
+ */
+export function renameCast(file: ProjectFile, from: string, to: string): boolean {
+  const [id, variant] = from.split("/") as [string, string?];
+  const member = file.cast?.find((m) => m.id === id);
+  if (!member || !CAST_ID.test(to)) return false;
+  let map: (key: string) => string;
+  if (variant) {
+    const v = member.variants?.find((x) => x.id === variant);
+    if (!v || (to !== variant && member.variants!.some((x) => x.id === to))) return false;
+    v.id = to;
+    map = (key) => (key === from ? `${id}/${to}` : key);
+  } else {
+    if (to !== id && file.cast!.some((m) => m.id === to)) return false;
+    member.id = to;
+    map = (key) => {
+      const [a, b] = key.split("/");
+      return a === id ? (b ? `${to}/${b}` : to) : key;
+    };
+    for (const m of file.cast!) if (m.style === id) m.style = to;
+    if (file.look?.style === id) file.look.style = to;
+  }
+  const inPrompt = (text: string) =>
+    text.replace(MENTION, (whole, a: string, b?: string) => {
+      const key = b ? `${a}/${b}` : a;
+      const next = map(key);
+      return next === key ? whole : `@${next}`;
+    });
+  for (const cut of file.cuts)
+    for (const shot of cut.shots) {
+      const c = shot.content;
+      if (c?.kind !== "generated") continue;
+      c.prompt = inPrompt(c.prompt);
+      if (c.cast) c.cast = c.cast.map(map);
+    }
+  for (const a of file.assets) {
+    if (a.label) a.label = inPrompt(a.label);
+    const p = a.provenance;
+    if (p?.cast) p.cast = p.cast.map(map);
+    if (p?.prompt) p.prompt = inPrompt(p.prompt);
+  }
+  return true;
 }
 
 /** The most reference pictures any model in a catalog takes for stills. */
