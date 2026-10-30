@@ -33,7 +33,7 @@ import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
 import { cloneVoice, designVoice, listVoices, previewFile, removeVoice, saveDesignedVoice, saveSample, setVoiceSettings } from "./voices.ts";
 import { cutOut, findSubjects, joinSubjects, trackSubject, visionStatus, type CutOutOptions } from "./subjects.ts";
-import { addFootage, addSong, ensureCached, importFolder, scanFolder } from "./ingest.ts";
+import { addFootage, addSong, ensureCached, importFolder, lookAgain, scanFolder } from "./ingest.ts";
 import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, sourceRoot } from "./paths.ts";
 import { IS_WINDOWS, pickerCommand, revealCommand, run as runLaunch } from "./platform.ts";
 import { ConflictError, InvalidProjectError, listProjects, loadFile, loadProject, readRaw, saveFile, trashPlan, trashProject } from "./store.ts";
@@ -535,8 +535,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   }
   if (section === "projects" && id && !action) {
     if (req.method === "GET") {
-      // Takes still being made when the engine last stopped are picked up again.
+      // Takes still being made when the engine last stopped are picked up again, and old video brought in before
+      // beatsheet made playable copies gets one.
       void driveJobs(id);
+      void lookAgain(id).catch(() => undefined);
       const raw = readRaw(id);
       return json(res, 200, { project: raw.json, version: raw.version });
     }

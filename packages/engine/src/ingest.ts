@@ -4,7 +4,7 @@
  */
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { autoAssemble, formatPreset, SCHEMA_VERSION, STAGE_IDS, type Asset, type Brief, type Cut, type CutSpec, type Format, type Project, type ProjectFile } from "@beatsheet/schema";
@@ -405,6 +405,7 @@ export async function addAsset(
 }
 
 export async function buildCache(id: string, log: (msg: string) => void = () => {}, onProgress?: (fraction: number) => void): Promise<void> {
+  await lookAgain(id, log);
   const { project, dir } = loadProject(id);
   const media = project.assets.filter((a) => a.kind === "video" || a.kind === "image");
   const colors = new Map<string, string>();
@@ -458,6 +459,71 @@ function labelFor(kind: string, capturedAt: string | undefined, duration: number
 export function playableFor(file: string, info: Pick<Probe, "interlaced" | "sar">): Asset["playable"] | undefined {
   const fix = { ...(info.interlaced ? { deinterlace: true } : {}), ...(info.sar ? { sar: info.sar } : {}) };
   return Object.keys(fix).length || !PLAYABLE_EXT.has(extname(file).toLowerCase()) ? fix : undefined;
+}
+
+const looking = new Map<string, Promise<string[]>>();
+
+/**
+ * Footage brought in before beatsheet made playable copies (2026-10-29) is looked at again, once each: old video
+ * (interlaced, pixels that aren't square, a file browsers can't read) gets its copy and previews made from it, like
+ * footage brought in now. What's been looked at is kept in .cache/looked.json. Returns the clips it fixed.
+ */
+export function lookAgain(id: string, log: (msg: string) => void = () => {}): Promise<string[]> {
+  const running = looking.get(id);
+  if (running) return running;
+  const p = (async () => {
+    const { project, dir } = loadProject(id);
+    const file = join(dir, ".cache", "looked.json");
+    let looked: string[] = [];
+    try {
+      looked = JSON.parse(readFileSync(file, "utf8")) as string[];
+    } catch {
+      // never looked
+    }
+    const seen = new Set(looked);
+    const footage = project.assets.filter((a) => a.kind === "video" && !a.playable && !a.cutout && !a.version && !seen.has(a.id) && (a.provenance?.source ?? "import") === "import");
+    if (!footage.length) return [];
+    const fixed: { id: string; playable: NonNullable<Asset["playable"]>; info: Probe }[] = [];
+    for (const a of footage) {
+      const path = originalPath(project, dir, a);
+      if (!existsSync(path)) continue;
+      try {
+        const info = await probe(path);
+        const playable = playableFor(path, info);
+        if (playable) fixed.push({ id: a.id, playable, info });
+      } catch {
+        // can't read it: left as it is
+      }
+      seen.add(a.id);
+    }
+    if (fixed.length) {
+      log(`${fixed.length} old clip${fixed.length === 1 ? "" : "s"} to make playable copies of`);
+      updateFile(id, (d) => {
+        for (const f of fixed) {
+          const a = d.assets.find((x) => x.id === f.id);
+          if (!a) continue;
+          a.playable = f.playable;
+          if (f.info.width) a.width = f.info.width;
+          if (f.info.height) a.height = f.info.height;
+          if (f.info.fps) a.fps = f.playable.deinterlace ? Math.round(f.info.fps * 2 * 1000) / 1000 : f.info.fps;
+          if (f.info.interlaced && !a.tags?.includes("interlaced")) a.tags = [...(a.tags ?? []), "interlaced"];
+        }
+      });
+      // Previews made from the file as it was go, and are made again from the copy.
+      const { project: now } = loadProject(id);
+      for (const f of fixed) {
+        const c = cachePaths(dir, f.id);
+        for (const x of [c.proxy, c.poster, c.strip]) rmSync(x, { force: true });
+        const a = now.assets.find((x) => x.id === f.id);
+        if (a) await ensureCached(now, dir, a).catch((err: unknown) => log(`${f.id}: ${err instanceof Error ? err.message : String(err)}`));
+      }
+    }
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify([...seen]));
+    return fixed.map((f) => f.id);
+  })().finally(() => looking.delete(id));
+  looking.set(id, p);
+  return p;
 }
 
 function tagsFor(file: string, info: { width?: number; height?: number; fps?: number; duration?: number; interlaced?: boolean }): string[] {
