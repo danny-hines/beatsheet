@@ -43,6 +43,7 @@ import { assetPath, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { SERVICES } from "./services.ts";
 import { ledgerSince } from "./spend.ts";
+import { refFile } from "./refcut.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { listProjects, loadFile, loadProject, updateFile, updateProject } from "./store.ts";
 
@@ -634,6 +635,11 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       return falUpload(key, assetPath(project, dir, a));
     };
     const r = job.request;
+    // A cast member's own photos go cut out, when that can be done here.
+    const uploadRef = async (id: string) => {
+      if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      return falUpload(key, await refFile(project, dir, id, r.cast));
+    };
     const input = falInput(job.shape, {
       prompt: r.sent ?? r.prompt,
       seconds: r.seconds,
@@ -641,7 +647,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       seed: r.seed,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
-      refs: r.refs && (await Promise.all(r.refs.map(upload))),
+      refs: r.refs && (await Promise.all(r.refs.map(uploadRef))),
     });
     const remote = await falSubmit(key, job.endpoint, input);
     updateJob(projectId, job, { status: "running", remote });
@@ -680,7 +686,8 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
     return assetPath(project, dir, a);
   };
   const r = job.request;
-  const refs = r.refs?.map(fileOf);
+  for (const id of r.refs ?? []) fileOf(id);
+  const refs = r.refs && (await Promise.all(r.refs.map((id) => refFile(project, dir, id, r.cast))));
   job = updateJob(projectId, job, { status: "running" });
   const beat = setInterval(() => {
     try {
