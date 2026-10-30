@@ -431,7 +431,7 @@ function Said({ a, seek }: { a: Asset; seek: (t: number) => void }) {
                 <button className="mono small link" onClick={() => seek(l.s)} title="Jump to it">
                   {formatTime(l.s)}
                 </button>
-                {l.speaker && <span className="said-speaker small">{l.speaker.replace(/^speaker_/, "")}</span>}
+                {l.speaker && <span className="said-speaker small">{/^speaker_\d+$/.test(l.speaker) ? `Speaker ${Number(l.speaker.slice(8)) + 1}` : l.speaker}</span>}
                 <span className="small">{l.text}</span>
               </li>
             ))}

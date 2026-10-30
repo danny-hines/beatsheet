@@ -42,7 +42,7 @@ export const TRANSCRIBERS: Transcriber[] = [
     id: "whisper",
     label: "Whisper",
     by: "OpenAI, run by whisper.cpp",
-    note: "Free, and the audio never leaves this computer. Quick with a graphics card or Apple silicon; slow on an older laptop's processor.",
+    note: "Free, and the audio never leaves this computer. Quick with a graphics card or Apple silicon; slow on an older laptop's processor. Tells speakers apart once Who's speaking is installed with it.",
     runs: "here",
     needs: "whisper-cpp",
     gives: { words: true, speakers: false },
@@ -73,10 +73,11 @@ export const TRANSCRIBERS: Transcriber[] = [
 
 /**
  * Whether a transcriber can be used on this machine now. `speed` is seconds of work for a second of audio, measured
- * here when it was set up (0.05 is twenty times faster than the clip plays). `where` says what it runs on.
+ * here when it was set up (0.05 is twenty times faster than the clip plays). `where` says what it runs on. `speakers`
+ * says one that can't tell speakers apart by itself can here (Whisper, with speaker labelling installed beside it).
  */
 export type TranscriberState =
-  | { state: "ready"; speed?: number; where?: string }
+  | { state: "ready"; speed?: number; where?: string; speakers?: boolean }
   | { state: "install"; detail: string }
   | { state: "key"; detail: string }
   | { state: "unfit"; detail: string };
@@ -112,7 +113,8 @@ export function chooseTranscriber(
   const all = catalog.map((t): TranscriberChoice => {
     const s = states[t.id] ?? { state: "unfit", detail: "Not available here" };
     const base = { id: t.id, label: t.label };
-    if (ask.speakers && !t.gives.speakers) return { ...base, ok: false, kind: "speakers", why: "Can't tell who's speaking" };
+    if (ask.speakers && !t.gives.speakers && !(s.state === "ready" && s.speakers))
+      return { ...base, ok: false, kind: "speakers", why: t.runs === "here" && s.state === "ready" ? "Needs Who's speaking installed with it (Settings → Transcription)" : "Can't tell who's speaking" };
     if (s.state !== "ready") return { ...base, ok: false, kind: s.state, why: s.detail };
     const seconds = ask.seconds !== undefined && s.speed !== undefined ? Math.round(ask.seconds * s.speed) : undefined;
     const usd = ask.seconds !== undefined && t.perHour !== undefined ? Math.round((ask.seconds / 3600) * t.perHour * 1000) / 1000 : undefined;
@@ -128,6 +130,34 @@ export function chooseTranscriber(
   };
   const ready = all.filter((c) => c.ok).sort((a, b) => rankOf(a) - rankOf(b));
   return { auto: ready[0], ready, setup: all.filter((c) => !c.ok) };
+}
+
+/** Who spoke when, from a speaker labeller: turns in seconds, each with the labeller's name for the voice. */
+export type SpeakerTurn = { s: number; e: number; speaker: string };
+
+/**
+ * Gives each word the speaker whose turn it falls in most; a word between turns takes the nearest one within half a
+ * second, and one further off is left without. Speakers are named in the order they first speak: speaker_0, speaker_1…
+ */
+export function assignSpeakers(words: SaidWord[], turns: SpeakerTurn[]): SaidWord[] {
+  const order = new Map<string, string>();
+  const name = (raw: string) => order.get(raw) ?? order.set(raw, `speaker_${order.size}`).get(raw)!;
+  const sorted = [...turns].sort((a, b) => a.s - b.s);
+  return words.map((w) => {
+    let best: SpeakerTurn | undefined;
+    let most = 0;
+    for (const t of sorted) {
+      const overlap = Math.min(w.e, t.e) - Math.max(w.s, t.s);
+      if (overlap > most) [best, most] = [t, overlap];
+    }
+    if (!best) {
+      const gap = (t: SpeakerTurn) => Math.max(t.s - w.e, w.s - t.e, 0);
+      const near = sorted.reduce<SpeakerTurn | undefined>((a, t) => (!a || gap(t) < gap(a) ? t : a), undefined);
+      if (near && gap(near) <= 0.5) best = near;
+    }
+    const { speaker: _old, ...rest } = w;
+    return best ? { ...rest, speaker: name(best.speaker) } : rest;
+  });
 }
 
 /** A line of a transcript: words run together until a pause, a new speaker, or the end of a sentence after a while. */

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readTurns, speakersPlan } from "../src/speakers.ts";
 import { planFor, readWhisperJson, speedWords } from "../src/whispercpp.ts";
 
 describe("Whisper on whatever computer it's on", () => {
@@ -30,6 +31,31 @@ describe("Whisper on whatever computer it's on", () => {
       ],
     });
     expect(readWhisperJson(json)).toEqual({ language: "en", words: [{ w: "Happy", s: 0.2, e: 0.8 }, { w: "Birthday,", s: 0.8, e: 2.75 }] });
+  });
+
+  it("has a speaker labeller for each system, about 60 MB with its models", () => {
+    for (const m of [
+      { platform: "win32" as const, arch: "x64" },
+      { platform: "win32" as const, arch: "arm64" },
+      { platform: "darwin" as const, arch: "arm64" },
+      { platform: "darwin" as const, arch: "x64" },
+      { platform: "linux" as const, arch: "x64" },
+      { platform: "linux" as const, arch: "arm64" },
+    ]) {
+      const p = speakersPlan(m)!;
+      expect(p.build.url).toContain("/v2.0.1/");
+      expect(Math.round(p.bytes / 1e6)).toBeGreaterThan(50);
+      expect(Math.round(p.bytes / 1e6)).toBeLessThan(65);
+    }
+    expect(speakersPlan({ platform: "freebsd", arch: "x64" })).toBeUndefined();
+  });
+
+  it("reads the labeller's turns", () => {
+    const out = "Started\n0.031 -- 3.406 speaker_00\n4.807 -- 6.764 speaker_01\nElapsed seconds: 0.500 s\n";
+    expect(readTurns(out)).toEqual([
+      { s: 0.031, e: 3.406, speaker: "speaker_00" },
+      { s: 4.807, e: 6.764, speaker: "speaker_01" },
+    ]);
   });
 
   it("says how quick it is in words", () => {

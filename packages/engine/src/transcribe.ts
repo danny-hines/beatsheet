@@ -10,10 +10,11 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { chooseTranscriber, linesOf, TRANSCRIBERS, type SaidWord, type Transcript, type TranscriberChoice, type TranscriberState } from "@beatsheet/schema";
+import { assignSpeakers, chooseTranscriber, linesOf, TRANSCRIBERS, type SaidWord, type Transcript, type TranscriberChoice, type TranscriberState } from "@beatsheet/schema";
 import { assetPath, projectDir } from "./paths.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { loadProject, updateFile } from "./store.ts";
+import { runSpeakers, speakersReady } from "./speakers.ts";
 import { runWhisper, whisperReady, whisperStatus } from "./whispercpp.ts";
 
 const exec = promisify(execFile);
@@ -31,7 +32,7 @@ export async function transcriberStates(): Promise<Record<string, TranscriberSta
   const mb = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
   const whisper: TranscriberState =
     ready && w.state === "ready"
-      ? { state: "ready", speed: ready.speed, where: `on ${ready.where}` }
+      ? { state: "ready", speed: ready.speed, where: `on ${ready.where}`, ...(speakersReady() ? { speakers: true } : {}) }
       : w.state === "unsupported"
         ? { state: "unfit", detail: w.detail }
         : w.state === "installing"
@@ -77,14 +78,21 @@ async function soundOf(file: string, kind: "wav" | "mp3", from?: number, seconds
 
 type Run = { words: SaidWord[]; language?: string; model?: string; events?: Transcript["events"]; costUsd?: number };
 
-/** Whisper here: the whole clip in one go, the speech-only stretches heard. */
-async function onWhisper(file: string, onProgress: (f: number) => void): Promise<Run> {
+/**
+ * Whisper here: the whole clip in one go, the speech-only stretches heard; then, when who's speaking is installed
+ * beside it, each word given the speaker whose turn it falls in.
+ */
+async function onWhisper(file: string, onProgress: (f: number) => void, people?: number): Promise<Run> {
   const ready = whisperReady();
   if (!ready) throw new Error("Whisper isn't installed on this computer (Settings → Transcription)");
   const wav = await soundOf(file, "wav");
   try {
-    const r = await runWhisper(ready.binary, wav, { size: ready.model, onProgress });
-    return { words: r.words, language: r.language, model: ready.model };
+    const speakers = speakersReady();
+    const r = await runWhisper(ready.binary, wav, { size: ready.model, onProgress: (f) => onProgress(speakers ? f * 0.7 : f) });
+    if (!speakers || !r.words.length) return { words: r.words, language: r.language, model: ready.model };
+    const turns = await runSpeakers(speakers, wav, { people });
+    onProgress(1);
+    return { words: assignSpeakers(r.words, turns), language: r.language, model: ready.model };
   } finally {
     rmSync(wav, { force: true });
   }
@@ -97,7 +105,7 @@ const said = (what: string, res: Response, body: { detail?: unknown; error?: { m
 };
 
 /** ElevenLabs Scribe: words with times, who said them, and laughter, applause and the like. */
-async function onScribe(file: string, seconds: number | undefined): Promise<Run> {
+async function onScribe(file: string, seconds: number | undefined, people?: number): Promise<Run> {
   const key = await getSecret("elevenlabs");
   if (!key) throw new Error("There's no ElevenLabs key (Settings → Media services)");
   const mp3 = await soundOf(file, "mp3");
@@ -108,6 +116,7 @@ async function onScribe(file: string, seconds: number | undefined): Promise<Run>
     form.append("diarize", "true");
     form.append("timestamps_granularity", "word");
     form.append("tag_audio_events", "true");
+    if (people) form.append("num_speakers", String(people));
     const res = await fetch(`${BASES.elevenlabs}/speech-to-text`, { method: "POST", headers: { "xi-api-key": key }, body: form, signal: AbortSignal.timeout(30 * 60_000) });
     const body = (await res.json().catch(() => ({}))) as {
       language_code?: string;
@@ -167,7 +176,7 @@ async function onOpenAI(file: string, seconds: number | undefined, onProgress: (
 export async function transcribeAsset(
   projectId: string,
   assetId: string,
-  opts: { with?: string; speakers?: boolean; onProgress?: (f: number) => void } = {},
+  opts: { with?: string; speakers?: boolean; people?: number; onProgress?: (f: number) => void } = {},
 ): Promise<{ transcript: Transcript; choice: TranscriberChoice }> {
   const { project, dir } = loadProject(projectId);
   const a = project.assets.find((x) => x.id === assetId);
@@ -184,7 +193,8 @@ export async function transcribeAsset(
   const file = assetPath(project, dir, a);
   if (!existsSync(file)) throw new Error(`Its file isn't there: ${file}`);
   const onProgress = opts.onProgress ?? (() => {});
-  const r = choice.id === "whisper" ? await onWhisper(file, onProgress) : choice.id === "scribe" ? await onScribe(file, a.duration) : await onOpenAI(file, a.duration, onProgress);
+  const r =
+    choice.id === "whisper" ? await onWhisper(file, onProgress, opts.people) : choice.id === "scribe" ? await onScribe(file, a.duration, opts.people) : await onOpenAI(file, a.duration, onProgress);
   const transcript: Transcript = { by: choice.id, ...(r.model ? { model: r.model } : {}), ...(r.language ? { language: r.language } : {}), at: new Date().toISOString(), words: r.words, ...(r.events ? { events: r.events } : {}), ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}) };
   const out = transcriptFile(projectId, assetId);
   mkdirSync(join(out, ".."), { recursive: true });

@@ -12,7 +12,7 @@ import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/inde
 import { listAgents, RUNTIME } from "./agents.ts";
 import { PLANS, planStates } from "./plans.ts";
 import { readTranscript, transcribeAsset, transcribeChoices, transcriberStates, transcriptLines } from "./transcribe.ts";
-import { cancelWhisperInstall, installWhisper, MODELS, removeWhisper, whisperStatus, type ModelSize } from "./whispercpp.ts";
+import { cancelWhisperInstall, installWhisper, installWhisperSpeakers, MODELS, removeWhisper, whisperStatus, type ModelSize } from "./whispercpp.ts";
 import { addServiceKey, capabilities, findSavedKeys, listServices, recheckService, removeServiceKey } from "./services.ts";
 import { readSettings, updateSettings } from "./settings.ts";
 import { answerMessage, currentTurn, keepProposals, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
@@ -386,6 +386,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), ranking: t.ranking ?? [], whisperModel: t.whisperModel });
     }
     if (id === "whisper" && action === "install" && req.method === "POST") return json(res, 202, await installWhisper((body as { model?: ModelSize }).model));
+    if (id === "whisper" && action === "speakers" && req.method === "POST") return json(res, 202, await installWhisperSpeakers());
     if (id === "whisper" && action === "cancel" && req.method === "POST") {
       cancelWhisperInstall();
       return json(res, 200, await whisperStatus());
@@ -595,10 +596,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, await transcribeChoices(a?.duration, q.get("speakers") === "1"));
   }
   if (section === "projects" && id && action === "transcribe" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; with?: string; speakers?: boolean };
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; with?: string; speakers?: boolean; people?: number };
     if (!body.asset) return json(res, 400, { error: "Transcribe which clip?" });
     const job = startJob("transcribe", id, async (j) => {
-      const r = await transcribeAsset(id, body.asset!, { with: body.with, speakers: body.speakers, onProgress: (f) => (j.progress = f * 0.95) });
+      const r = await transcribeAsset(id, body.asset!, { with: body.with, speakers: body.speakers, people: body.people, onProgress: (f) => (j.progress = f * 0.95) });
       return `${r.transcript.words.length}`;
     });
     return json(res, 202, job);

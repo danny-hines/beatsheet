@@ -112,7 +112,8 @@ function WhisperCard({ info, onChange, setModel }: { info: Info; onChange: () =>
       {s.state === "missing" && (
         <div className="dim small">
           Transcribes on {s.plan?.where === "the processor" ? `${OS.here}'s processor` : (s.plan?.where ?? OS.here)}, through whisper.cpp
-          {s.plan?.brew ? " (Homebrew installs it)" : ""}. After installing, it times itself on a few seconds of speech, so Auto knows whether {OS.here} is quick at it.
+          {s.plan?.brew ? " (Homebrew installs it)" : ""}
+          {s.speakers.state === "missing" ? ", and tells speakers apart (sherpa-onnx)" : ""}. After installing, it times itself on a few seconds of speech, so Auto knows whether {OS.here} is quick at it.
         </div>
       )}
       {!installing && (
@@ -131,6 +132,17 @@ function WhisperCard({ info, onChange, setModel }: { info: Info; onChange: () =>
       {ready && (
         <div className="small">
           <span className="good">✓</span> {s.detail} <span className="dim">· {mb(s.ready?.bytes)} on disk</span>
+        </div>
+      )}
+      {ready && s.speakers.state === "ready" && (
+        <div className="small">
+          <span className="good">✓</span> Tells speakers apart too, on {OS.here}
+        </div>
+      )}
+      {ready && s.speakers.state === "missing" && (
+        <div className="small make-row">
+          <span className="dim">Who's speaking isn't installed: without it, only Scribe can tell people apart, and the audio goes to ElevenLabs.</span>
+          <button onClick={() => void call("POST", "/speakers")}>Add who's speaking · {mb(s.speakers.bytes)}</button>
         </div>
       )}
       {installing && (

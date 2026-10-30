@@ -454,7 +454,8 @@ What's built but thin, or set aside for later, as it turns up. Each comes off th
 - **A rename the person undoes** leaves jobs still being made pointing at the new id; the take comes into the Library but not onto the member.
 - **Old video already in a project** from before 2026-10-29 isn't looked at again: only footage brought in since gets a playable copy.
 - **Splitting at cuts** finds hard cuts; dissolves and fades need a lower threshold (`split_at_cuts`'s `threshold`) and may still be missed.
-- **Speakers, here.** Only Scribe tells speakers apart; Whisper on the computer can't yet. A local speaker model (or matching voices to the faces found in the clip) would let a family tape stay private and still know who said what.
+- **Naming speakers.** A transcript says Speaker 1 and Speaker 2; saying who they are (Grandpa, @lily) is by hand in the agent's words for now. Matching voices to the faces found in the clip, or to a cast member's own voice, would name them, and keep the same person the same speaker across clips.
+- **Who's speaking here** (sherpa-onnx beside Whisper) was tuned and checked on two clear voices; how it does on a hissy tape with a room full of relatives isn't known yet, and telling it how many people there are (`transcribe`'s `people`) helps. Its Mac and Linux builds are pinned but haven't run.
 - **Whisper on a Mac** goes through Homebrew's whisper-cpp, written to it but never run; a Mac without Homebrew is told to get it. Linux gets the processor build only (whisper.cpp publishes no Linux GPU build).
 - **A CUDA build that won't run** on a card (a newer one than CUDA 12.4 knows) falls back to the processor build; that fallback is written and unit-tested, not seen on a real card.
 - **OpenAI's Whisper** gives words without punctuation (its word list has none), so its lines read flatter than Whisper here or Scribe.

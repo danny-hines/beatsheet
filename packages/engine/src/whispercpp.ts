@@ -17,6 +17,7 @@ import { REPO } from "./paths.ts";
 import { findOnPath, HERE, IS_WINDOWS, pathKey, run as runLaunch, systemExe, unzipCommand, untarCommand } from "./platform.ts";
 import { download, du, stream, type Download } from "./pyenv.ts";
 import { readSettings, SETTINGS_DIR } from "./settings.ts";
+import { installSpeakers, speakersPlan, speakersReady } from "./speakers.ts";
 
 const exec = promisify(execFile);
 
@@ -90,9 +91,11 @@ export function planFor(m: Machine, model?: ModelSize): { builds: Build[]; brew?
 export type WhisperStatus = {
   state: "unsupported" | "missing" | "installing" | "ready" | "error";
   detail: string;
-  /** What an install would download, and what it'd run on. */
+  /** What an install would download (who's speaking included), and what it'd run on. */
   plan?: { where: string; model: ModelSize; bytes: number; brew?: boolean };
   ready?: Ready;
+  /** Telling speakers apart, installed with Whisper: there, or what adding it would download, or no build for this machine. */
+  speakers: { state: "ready" } | { state: "missing"; bytes: number } | { state: "unsupported" };
   stage?: string;
   progress?: number;
   log?: string[];
@@ -117,14 +120,16 @@ const mb = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` :
 
 export async function whisperStatus(): Promise<WhisperStatus> {
   const m = await thisMachine();
+  const sp = speakersPlan(m);
+  const speakers: WhisperStatus["speakers"] = speakersReady() ? { state: "ready" } : sp ? { state: "missing", bytes: sp.bytes } : { state: "unsupported" };
   const plan = planFor(m, readSettings().transcribe?.whisperModel);
-  if ("why" in plan) return { state: "unsupported", detail: plan.why };
-  const p = { where: plan.where, model: plan.model, bytes: plan.bytes, ...(plan.brew ? { brew: true } : {}) };
-  if (install && !install.done) return { state: "installing", detail: install.stage, stage: install.stage, progress: install.progress, log: install.log.slice(-6), plan: p };
+  if ("why" in plan) return { state: "unsupported", detail: plan.why, speakers };
+  const p = { where: plan.where, model: plan.model, bytes: plan.bytes + (sp?.bytes ?? 0), ...(plan.brew ? { brew: true } : {}) };
+  if (install && !install.done) return { state: "installing", detail: install.stage, stage: install.stage, progress: install.progress, log: install.log.slice(-6), plan: p, speakers };
   const ready = readReady();
-  if (ready) return { state: "ready", detail: `On ${ready.where}, ${speedWords(ready.speed)}`, ready, plan: p };
-  if (install?.error) return { state: "error", detail: install.error, log: install.log.slice(-6), plan: p };
-  return { state: "missing", detail: plan.brew ? `Installs with Homebrew, then a ${mb(plan.bytes)} model` : `About ${mb(plan.bytes)} to download, for ${plan.where}`, plan: p };
+  if (ready) return { state: "ready", detail: `On ${ready.where}, ${speedWords(ready.speed)}`, ready, plan: p, speakers };
+  if (install?.error) return { state: "error", detail: install.error, log: install.log.slice(-6), plan: p, speakers };
+  return { state: "missing", detail: plan.brew ? `Installs with Homebrew, then about ${mb(p.bytes)}` : `About ${mb(p.bytes)} to download, for ${plan.where}`, plan: p, speakers };
 }
 
 /** "about 25 times faster than it plays" or "about twice as long as it plays". */
@@ -182,6 +187,7 @@ export async function installWhisper(model?: ModelSize): Promise<WhisperStatus> 
           const bytes = await du(WHISPER_DIR);
           writeFileSync(paths.ready, JSON.stringify({ binary: c.binary, build: c.build, where: c.where, model: plan.model, speed, at: new Date().toISOString(), bytes } satisfies Ready, null, 2));
           log(`Ready on ${c.where}: ${speedWords(speed)}.`);
+          await addSpeakers(m, job, log);
           job.progress = 1;
           return;
         } catch (err) {
@@ -194,6 +200,45 @@ export async function installWhisper(model?: ModelSize): Promise<WhisperStatus> 
       }
     } catch (err) {
       job.error = job.abort.signal.aborted ? "Stopped. Install again to pick up where it left off." : err instanceof Error ? err.message : String(err);
+      log(job.error);
+    } finally {
+      job.done = true;
+    }
+  })();
+  return whisperStatus();
+}
+
+/**
+ * Who's speaking, beside Whisper. Whisper works without it, so if it won't install here that's said in the log and
+ * Settings offers to add it again.
+ */
+async function addSpeakers(m: Machine, job: Install, log: (l: string) => void) {
+  const sp = speakersPlan(m);
+  if (!sp || speakersReady()) return;
+  job.stage = `Adding who's speaking (${mb(sp.bytes)})`;
+  try {
+    await installSpeakers(m, job.abort.signal, log, (f) => (job.progress = Math.max(job.progress, 0.85 + f * 0.15)));
+  } catch (err) {
+    if (job.abort.signal.aborted) throw err;
+    log(`Who's speaking didn't install: ${err instanceof Error ? err.message : String(err)}. Whisper works without it; add it again from Settings.`);
+  }
+}
+
+/** Adds who's speaking to a Whisper installed before it; whisperStatus() follows along. */
+export async function installWhisperSpeakers(): Promise<WhisperStatus> {
+  if (install && !install.done) return whisperStatus();
+  if (!readReady()) throw new Error("Install Whisper first");
+  const m = await thisMachine();
+  if (!speakersPlan(m)) throw new Error(`There's no speaker labeller for ${m.platform} ${m.arch}`);
+  const job: Install = { stage: "Starting", progress: 0, log: [], abort: new AbortController() };
+  install = job;
+  const log = (line: string) => void job.log.push(line);
+  void (async () => {
+    try {
+      job.stage = "Adding who's speaking";
+      await installSpeakers(m, job.abort.signal, log, (f) => (job.progress = f));
+    } catch (err) {
+      job.error = job.abort.signal.aborted ? "Stopped." : `Who's speaking didn't install: ${err instanceof Error ? err.message : String(err)}`;
       log(job.error);
     } finally {
       job.done = true;

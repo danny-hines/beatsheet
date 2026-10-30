@@ -1000,22 +1000,23 @@ server.registerTool(
   "transcribe",
   {
     description:
-      "Transcribe what's said in a clip or sound file: every word with its time, and who said it when the transcriber can tell. Auto picks what suits this computer: Whisper here when it's installed and quick, otherwise a service with the person's key (ElevenLabs Scribe, which also tells speakers apart and marks laughter and applause; OpenAI's Whisper). Without `with`, say what you need: speakers: true when it matters who said what (a family tape, an interview). Services cost a little (about 22¢ to 36¢ an hour of audio). Read it back with transcript.",
+      "Transcribe what's said in a clip or sound file: every word with its time, and who said it when the transcriber can tell. Auto picks what suits this computer: Whisper here when it's installed and quick (and it tells speakers apart too when Who's speaking is installed with it, keeping a family tape private), otherwise a service with the person's key (ElevenLabs Scribe, which tells speakers apart and marks laughter and applause; OpenAI's Whisper). Without `with`, say what you need: speakers: true when it matters who said what (a family tape, an interview). Services cost a little (about 22¢ to 36¢ an hour of audio). Read it back with transcript.",
     inputSchema: {
       project: projectArg,
       asset: z.string(),
       with: z.enum(["whisper", "scribe", "openai-whisper"]).optional().describe("A transcriber; default Auto, the best this computer can use now"),
       speakers: z.boolean().optional().describe("Only a transcriber that tells speakers apart"),
+      people: z.number().int().min(1).max(32).optional().describe("How many people speak in it, when you know (it helps tell them apart)"),
     },
   },
-  async ({ project: id, asset, with: by, speakers }) => {
+  async ({ project: id, asset, with: by, speakers, people }) => {
     const { transcribeAsset, transcriptLines } = await import("./transcribe.ts");
-    const { transcript: t, choice } = await transcribeAsset(id, asset, { with: by, speakers });
+    const { transcript: t, choice } = await transcribeAsset(id, asset, { with: by, speakers, people });
     const lines = transcriptLines(t);
-    const people = new Set(t.words.map((w) => w.speaker).filter(Boolean)).size;
+    const voices = new Set(t.words.map((w) => w.speaker).filter(Boolean)).size;
     return text(
       [
-        `${asset}: ${t.words.length} words in ${lines.length} lines${t.language ? `, in ${t.language}` : ""}${people ? `, ${people} speaker${people === 1 ? "" : "s"}` : ""}, by ${choice.label}${choice.where ? ` ${choice.where}` : ""}${t.costUsd ? ` (about $${t.costUsd.toFixed(2)})` : ""}.`,
+        `${asset}: ${t.words.length} words in ${lines.length} lines${t.language ? `, in ${t.language}` : ""}${voices ? `, ${voices} speaker${voices === 1 ? "" : "s"}` : ""}, by ${choice.label}${choice.where ? ` ${choice.where}` : ""}${t.costUsd ? ` (about $${t.costUsd.toFixed(2)})` : ""}.`,
         ...lines.slice(0, 12).map((l) => `- ${formatTime(l.s)}${l.speaker ? ` ${l.speaker}` : ""}: ${l.text}`),
         ...(lines.length > 12 ? [`… transcript has the rest (search it, or ask for a stretch with from/to).`] : []),
       ].join("\n"),

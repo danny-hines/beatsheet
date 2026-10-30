@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseTranscriber, linesOf, type TranscriberState } from "@beatsheet/schema";
+import { assignSpeakers, chooseTranscriber, linesOf, type TranscriberState } from "@beatsheet/schema";
 
 const keys: Record<string, TranscriberState> = {
   scribe: { state: "ready" },
@@ -30,7 +30,8 @@ describe("choosing a transcriber for the machine it's on", () => {
     expect(chooseTranscriber(pc, {}, ["openai-whisper"]).auto?.id).toBe("openai-whisper");
     const c = chooseTranscriber(pc, { speakers: true });
     expect(c.ready.map((x) => x.id)).toEqual(["scribe"]);
-    expect(c.setup.find((x) => x.id === "whisper")).toMatchObject({ ok: false, kind: "speakers", why: "Can't tell who's speaking" });
+    expect(c.setup.find((x) => x.id === "whisper")).toMatchObject({ ok: false, kind: "speakers", why: "Needs Who's speaking installed with it (Settings → Transcription)" });
+    expect(c.setup.find((x) => x.id === "openai-whisper")).toMatchObject({ ok: false, kind: "speakers", why: "Can't tell who's speaking" });
   });
 
   it("says what each one that can't be used needs", () => {
@@ -41,6 +42,42 @@ describe("choosing a transcriber for the machine it's on", () => {
       ["scribe", "key", "Needs an ElevenLabs key"],
       ["openai-whisper", "unfit", "Not available here"],
     ]);
+  });
+});
+
+describe("who said each word", () => {
+  it("is the turn a word falls in most, then the nearest close by, named in the order people first speak", () => {
+    const words = [
+      { w: "Happy", s: 0.2, e: 0.8 },
+      { w: "birthday,", s: 0.8, e: 1.4 },
+      { w: "Okay", s: 4.9, e: 5.2 },
+      { w: "everyone.", s: 6.6, e: 7.0 },
+      { w: "Cake?", s: 13.0, e: 13.4 },
+      { w: "Hm.", s: 20, e: 20.2, speaker: "speaker_9" },
+    ];
+    const turns = [
+      { s: 0.1, e: 2.0, speaker: "speaker_03" },
+      { s: 4.8, e: 6.76, speaker: "speaker_01" },
+      { s: 13.5, e: 15.4, speaker: "speaker_03" },
+    ];
+    expect(assignSpeakers(words, turns).map((w) => [w.w, w.speaker])).toEqual([
+      ["Happy", "speaker_0"],
+      ["birthday,", "speaker_0"],
+      ["Okay", "speaker_1"],
+      // Just after the turn ends: still theirs.
+      ["everyone.", "speaker_1"],
+      ["Cake?", "speaker_0"],
+      // Nowhere near anyone's turn: nobody's (and not what it said before).
+      ["Hm.", undefined],
+    ]);
+  });
+
+  it("lets Whisper here answer for speakers once it can label them", () => {
+    const states = { whisper: { state: "ready" as const, speed: 0.01, speakers: true }, scribe: { state: "ready" as const } };
+    expect(chooseTranscriber(states, { speakers: true }).auto?.id).toBe("whisper");
+    expect(chooseTranscriber({ ...states, whisper: { state: "ready", speed: 0.01 } }, { speakers: true }).setup.find((c) => c.id === "whisper")?.why).toBe(
+      "Needs Who's speaking installed with it (Settings → Transcription)",
+    );
   });
 });
 

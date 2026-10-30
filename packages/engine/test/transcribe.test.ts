@@ -35,6 +35,19 @@ vi.mock("../src/whispercpp.ts", () => ({
   },
 }));
 
+// Who's speaking beside it: installed or not, and hearing two voices.
+const labeller = vi.hoisted(() => ({ ready: false, people: undefined as number | undefined }));
+vi.mock("../src/speakers.ts", () => ({
+  speakersReady: () => (labeller.ready ? { binary: "sherpa", segmentation: "seg", embedding: "emb", at: "" } : undefined),
+  runSpeakers: async (_r: unknown, _wav: string, opts: { people?: number }) => {
+    labeller.people = opts.people;
+    return [
+      { s: 0.1, e: 0.9, speaker: "speaker_01" },
+      { s: 1.0, e: 1.6, speaker: "speaker_00" },
+    ];
+  },
+}));
+
 let t: typeof import("../src/transcribe.ts");
 let store: typeof import("../src/store.ts");
 
@@ -81,6 +94,8 @@ beforeEach(() => {
   keys.services = ["elevenlabs", "openai"];
   whisper.speed = 0.04;
   whisper.ran = 0;
+  labeller.ready = false;
+  labeller.people = undefined;
   mkdirSync(dir, { recursive: true });
   // Three seconds of a clip with sound, and one without.
   execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=s=160x90:r=10:d=3", "-f", "lavfi", "-i", "sine=d=3", "-shortest", "-pix_fmt", "yuv420p", join(dir, "cake.mp4")]);
@@ -153,7 +168,7 @@ describe("transcribing on whatever this computer has", () => {
     expect((await t.transcribeAsset("party", "cake", { speakers: true })).choice.id).toBe("scribe");
     keys.services = ["openai"];
     await expect(t.transcribeAsset("party", "cake", { speakers: true })).rejects.toThrow(
-      "Nothing can transcribe it here now. Whisper: Can't tell who's speaking. Scribe: Needs an ElevenLabs key (Settings → Media services). Whisper on OpenAI: Can't tell who's speaking.",
+      "Nothing can transcribe it here now. Whisper: Needs Who's speaking installed with it (Settings → Transcription). Scribe: Needs an ElevenLabs key (Settings → Media services). Whisper on OpenAI: Can't tell who's speaking.",
     );
   });
 
@@ -168,6 +183,20 @@ describe("transcribing on whatever this computer has", () => {
     await expect(t.transcribeAsset("party", "cake")).rejects.toThrow(
       "Nothing can transcribe it here now. Whisper: Install it in Settings → Transcription (about 200 MB, for the processor). Scribe: Needs an ElevenLabs key (Settings → Media services). Whisper on OpenAI: Needs an OpenAI key (Settings → Media services).",
     );
+  });
+
+  it("tells speakers apart here too once who's speaking is installed, so the audio stays on this computer", async () => {
+    labeller.ready = true;
+    const { transcript, choice } = await t.transcribeAsset("party", "cake", { speakers: true, people: 2 });
+    expect(choice.id).toBe("whisper");
+    expect(seen).toHaveLength(0);
+    expect(labeller.people).toBe(2);
+    expect(transcript.words.map((w) => [w.w, w.speaker])).toEqual([
+      ["Happy", "speaker_0"],
+      ["birthday,", "speaker_0"],
+      ["Lily.", "speaker_1"],
+    ]);
+    expect(store.loadFile("party").doc.assets[0]!.transcript).toMatchObject({ by: "whisper", speakers: 2 });
   });
 
   it("says when there's nothing to hear", async () => {
