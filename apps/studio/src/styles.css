@@ -999,6 +999,8 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 18px 24px; display: flex; flex-direction: column; gap: 14px; }
 .make-composer { display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
 .make-composer .make-row { flex-wrap: wrap; }
+.restore-form { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 8px; }
+.restore-form .make-row { flex-wrap: wrap; }
 .make-prompt { width: 100%; resize: vertical; font-size: 14px; line-height: 1.45; }
 .cast-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .cast-chips .chip { cursor: pointer; font-family: var(--mono); font-size: 11.5px; }

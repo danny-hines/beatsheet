@@ -11,6 +11,7 @@ import {
   SFX_SOUNDS,
   subjectAt,
   subjectFocus,
+  versionAt,
   type Asset,
   type Captions as CaptionSettings,
   type ClipEffect,
@@ -48,6 +49,8 @@ export function assetUrl(base: string, a: Asset, quality: MediaQuality): string 
   return `${base}/asset/${a.id}/original`;
 }
 export const fileUrl = (base: string, path: string) => `${base}/file/${encodeURIComponent(path)}`;
+/** Where a clip's sound plays from: its cleaned sound once it's been cleaned, else its own file. */
+export const soundUrl = (base: string, a: Asset, quality: MediaQuality) => (a.cleaned ? `${base}/asset/${a.id}/sound` : assetUrl(base, a, quality));
 
 /** Size, frame rate and length of the composition for a project in one format. */
 export function metadataFor(props: VideoProps) {
@@ -283,7 +286,8 @@ function ShotView(props: {
   const assetId = c.kind === "clip" ? c.asset : c.kind === "generated" ? c.take : undefined;
   const a = assetId ? assets.get(assetId) : undefined;
   if (!a || (a.kind !== "video" && a.kind !== "image")) return track.kind === "picture" ? <Card shot={shot} /> : <Chip shot={shot} />;
-  return <Picture {...props} a={a} grade={props.scene.project.look?.grade} />;
+  const version = c.kind === "clip" && c.version ? assets.get(c.version) : undefined;
+  return <Picture {...props} a={a} version={version} grade={props.scene.project.look?.grade} />;
 }
 
 /** A designed scene: what it knows about its shot (time, words, beats, look, assets), then the scene itself. */
@@ -342,8 +346,8 @@ export function placement(shot: Shot, r: ResolvedShot, a: Asset, format: string,
   return { pos, zoom, sourceT, speed, trimSeconds, cover: cover(src, out, pos, zoom) };
 }
 
-function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; base: string; quality: MediaQuality; muteClips: boolean; format: string; underlay: FindUnderlay; grade?: Grade }) {
-  const { shot, r, a, base, quality, muteClips, format, underlay, grade } = props;
+function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset; base: string; quality: MediaQuality; muteClips: boolean; format: string; underlay: FindUnderlay; grade?: Grade }) {
+  const { shot, r, a, version, base, quality, muteClips, format, underlay, grade } = props;
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const c = shot.content;
@@ -359,6 +363,12 @@ function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; base: string; q
   };
   const effects = !a.cutout ? pictureOf(c)?.effects : undefined;
   const volume = c.kind === "clip" ? c.volume : undefined;
+  const muted = a.cutout ? true : volume === undefined ? muteClips : volume === 0;
+  // A version of the clip (restored, made again) shows in its place where it covers what the shot plays.
+  const vAt = version && !a.cutout ? versionAt(version, a.id, r.sourceIn ?? 0, (r.sourceIn ?? 0) + (r.end - r.start) * p.speed) : undefined;
+  const shown = vAt !== undefined ? version! : a;
+  // The sound stays the clip's own, cleaned when it has been: then it plays beside the picture, which is muted.
+  const apart = !a.cutout && (vAt !== undefined || !!a.cleaned);
   // The project's grade, then the shot's own look (mono behind a cut-out, say).
   style.filter = gradeFilter(grade, c.kind === "clip" && c.look ? LOOKS[c.look] : undefined);
   const motion = pictureOf(c)?.motion;
@@ -374,16 +384,19 @@ function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; base: string; q
         <Img src={assetUrl(base, a, quality)} style={style} pauseWhenLoading onError={onError && (() => onError())} />
       ) : (
         <OffthreadVideo
-          src={assetUrl(base, a, quality)}
+          src={assetUrl(base, shown, quality)}
           onError={onError}
-          trimBefore={Math.max(0, Math.round(p.trimSeconds * fps))}
+          trimBefore={Math.max(0, Math.round((vAt ?? p.trimSeconds) * fps))}
           playbackRate={p.speed}
-          muted={a.cutout ? true : volume === undefined ? muteClips : volume === 0}
-          volume={volume}
+          muted={apart || muted}
+          volume={apart ? undefined : volume}
           style={style}
           transparent={!!a.cutout}
           pauseWhenBuffering
         />
+      )}
+      {a.kind === "video" && apart && !muted && (
+        <Audio src={soundUrl(base, a, quality)} trimBefore={Math.max(0, Math.round(p.trimSeconds * fps))} playbackRate={p.speed} volume={volume} pauseWhenBuffering onError={mediaError(`the sound of ${a.label ?? a.id}`)} />
       )}
       {/* A cut-out's source underneath already has the vignette. */}
       {!a.cutout && <Vignette amount={grade?.vignette} />}

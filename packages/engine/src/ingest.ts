@@ -376,7 +376,7 @@ export async function ensureCached(project: { sources: Project["sources"] }, dir
 export async function addAsset(
   id: string,
   file: string,
-  meta: { id?: string; label?: string; tags?: string[]; rating?: number; provenance?: Asset["provenance"]; cutout?: Asset["cutout"]; capturedAt?: string } = {},
+  meta: { id?: string; label?: string; tags?: string[]; rating?: number; provenance?: Asset["provenance"]; cutout?: Asset["cutout"]; version?: Asset["version"]; capturedAt?: string } = {},
 ): Promise<Asset> {
   const path = resolve(expandHome(file));
   if (!existsSync(path)) throw new Error(`No file at ${path}`);
@@ -397,6 +397,7 @@ export async function addAsset(
     rating: meta.rating,
     provenance: meta.provenance ?? { source: "generated", createdAt: new Date().toISOString() },
     cutout: meta.cutout,
+    version: meta.version,
   };
   await ensureCached({ sources: doc.sources }, dir, asset);
   updateFile(id, (d) => void d.assets.push(asset));

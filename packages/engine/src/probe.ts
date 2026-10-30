@@ -52,6 +52,12 @@ const rate = (r: string | undefined) => {
   return b ? Math.round((a! / b) * 1000) / 1000 : a;
 };
 
+/**
+ * Frames a second. The stream's base rate, unless its frames really come much less often (an MPEG-1 file that says
+ * 59.94 and holds 29.97, a phone's variable rate that says 120): then how often they come.
+ */
+export const frameRate = (base?: number, avg?: number) => (base && avg && avg < base * 0.75 ? avg : (base ?? avg));
+
 /** Whether most of a video's first frames are interlaced. */
 async function framesInterlaced(file: string): Promise<boolean> {
   try {
@@ -83,6 +89,7 @@ export async function probe(file: string): Promise<Probe> {
       width?: number;
       height?: number;
       r_frame_rate?: string;
+      avg_frame_rate?: string;
       field_order?: string;
       sample_aspect_ratio?: string;
       tags?: Record<string, string>;
@@ -107,7 +114,7 @@ export async function probe(file: string): Promise<Probe> {
     duration,
     width: rotation === 90 ? v.height : shown,
     height: rotation === 90 ? shown : v.height,
-    fps: rate(v.r_frame_rate),
+    fps: frameRate(rate(v.r_frame_rate), rate(v.avg_frame_rate)),
     codec: v.codec_name,
     hasAudio,
     capturedAt,

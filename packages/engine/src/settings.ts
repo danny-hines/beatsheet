@@ -48,6 +48,8 @@ export type Settings = {
   };
   /** Transcribing what's said: the order Auto tries transcribers in (ids in TRANSCRIBERS), and the size of Whisper's model here. */
   transcribe?: { ranking?: string[]; whisperModel?: "fast" | "good" | "best" };
+  /** Cleaning sound and restoring picture: the order Auto tries fixers in for each job (ids in FIXERS). */
+  restore?: { ranking?: Partial<Record<"clean" | "upscale" | "frames", string[]>> };
 };
 
 export function readSettings(): Settings {

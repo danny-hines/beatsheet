@@ -26,6 +26,7 @@ export function checkReferences(file: ProjectFile): CheckIssue[] {
   file.assets.forEach((a, i) => a.source && !sources.has(a.source) && issues.push({ path: `assets.${i}.source`, message: `unknown source "${a.source}"` }));
   const assetIds = new Set(file.assets.map((a) => a.id));
   file.assets.forEach((a, i) => a.cutout && !assetIds.has(a.cutout.of) && issues.push({ path: `assets.${i}.cutout.of`, message: `unknown asset "${a.cutout.of}"` }));
+  file.assets.forEach((a, i) => a.version && !assetIds.has(a.version.of) && issues.push({ path: `assets.${i}.version.of`, message: `unknown asset "${a.version.of}"` }));
   file.cuts.forEach((c, i) => {
     for (const issue of checkCut(cutView(file, c.id))) {
       // Shared parts are checked once, with the first cut.
@@ -128,6 +129,11 @@ export function checkCut(p: Project): CheckIssue[] {
     if (c.kind === "clip") {
       if (!ids.assets.has(c.asset)) add(path, `unknown asset "${c.asset}"`);
       anchor(`${path}.content.sync.at`, c.sync?.at);
+      if (c.version) {
+        const v = p.assets.find((a) => a.id === c.version);
+        if (!v) add(`${path}.content.version`, `unknown asset "${c.version}"`);
+        else if (v.version?.of !== c.asset) add(`${path}.content.version`, `"${c.version}" isn't a version of "${c.asset}"`);
+      }
     }
     // Effects and reframes that follow a subject need it found on the picture first (find_subjects or track_subject):
     // a clip's footage, or a generated shot's chosen take.

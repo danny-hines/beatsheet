@@ -14,3 +14,4 @@ export * from "./color.ts";
 export * from "./make.ts";
 export * from "./catalog.ts";
 export * from "./transcript.ts";
+export * from "./restore.ts";

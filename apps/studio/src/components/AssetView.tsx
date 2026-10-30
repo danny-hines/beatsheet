@@ -2,6 +2,7 @@ import { formatTime, slugify, speakerLabel, TRANSCRIBERS, whoSpeaks, type Asset,
 import { useEffect, useRef, useState } from "react";
 import { hideBroken, posterUrl, proxyUrl, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
+import { CleanSound, RestoreClip, useCleanSound } from "./Restore";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { PopMenu, Stars, TextField } from "./ui";
 
@@ -32,6 +33,9 @@ export function AssetView({ a }: { a: Asset }) {
   const [following, setFollowing] = useState<number | null>(null);
   const [followError, setFollowError] = useState("");
   const [hover, setHover] = useState<string | null>(null);
+  // Heard as recorded, or through its cleaned sound.
+  const [hear, setHear] = useState<"own" | "clean">("clean");
+  useCleanSound(video, a.cleaned ? `/media/${projectId}/asset/${a.id}/sound` : undefined, hear === "clean");
   const aspect = a.width && a.height ? a.width / a.height : 16 / 9;
   const rel = (e: React.PointerEvent) => {
     const r = media.current!.getBoundingClientRect();
@@ -192,6 +196,15 @@ export function AssetView({ a }: { a: Asset }) {
       {(a.kind === "audio" || a.kind === "voice" || a.kind === "music") && (
         <audio key={a.id} className="asset-audio" controls preload="metadata" src={`/media/${projectId}/asset/${a.id}/original`} />
       )}
+      {a.version && (
+        <p className="dim small">
+          A restored version of{" "}
+          <button className="link small" onClick={() => actions.select({ kind: "asset", id: a.version!.of })}>
+            {project.assets.find((x) => x.id === a.version!.of)?.label ?? a.version.of}
+          </button>{" "}
+          from {formatTime(a.version.from)}, in step with it. A shot of that clip shows it in its place (Shows, in the shot's look), with the clip's own sound.
+        </p>
+      )}
       {a.cutout && (
         <p className="dim small">
           A cut-out of{" "}
@@ -264,7 +277,9 @@ export function AssetView({ a }: { a: Asset }) {
         </>
       )}
 
-      {a.kind !== "image" && !a.cutout && <Said a={a} seek={seek} />}
+      {a.kind !== "image" && !a.cutout && !a.version && <Said a={a} seek={seek} />}
+      {a.kind !== "image" && !a.cutout && !a.version && <CleanSound a={a} hear={hear} setHear={setHear} />}
+      {isVideo && !a.cutout && !a.version && <RestoreClip a={a} t={t} />}
 
       {(isVideo || a.kind === "image") && !a.cutout && (
         <SubjectTools a={a} t={isVideo ? t : 0} boxing={boxing} setBoxing={setBoxing} hover={hover} setHover={setHover} seek={seek} />

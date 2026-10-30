@@ -7,7 +7,10 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type Rect } from "@beatsheet/schema";
+import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
+import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } from "./fixtools.ts";
+
+const TOOLS: ToolId[] = ["deepfilter", "realesrgan", "rife"];
 import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
 import { listAgents, RUNTIME } from "./agents.ts";
 import { PLANS, planStates } from "./plans.ts";
@@ -115,7 +118,7 @@ export function sendFile(req: IncomingMessage, res: ServerResponse, file: string
 
 export type Job = {
   id: string;
-  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe";
+  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe" | "clean" | "restore";
   project: string;
   format?: string;
   status: "running" | "done" | "error";
@@ -132,6 +135,8 @@ const JOB_WORDS: Record<Job["kind"], string> = {
   record: "saving a recording",
   narrate: "voicing the narration",
   transcribe: "transcribing",
+  clean: "cleaning the sound",
+  restore: "restoring",
 };
 /** Kept for older imports. */
 export type RenderJob = Job;
@@ -395,6 +400,31 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       removeWhisper();
       return json(res, 200, await whisperStatus());
     }
+    // Restoring: the programs that clean sound and restore picture here, and the order Auto tries fixers in for each job.
+    if (id === "restore" && (req.method === "GET" || req.method === "POST")) {
+      if (req.method === "POST") {
+        const change = body as unknown as { ranking?: Partial<Record<FixerJob, string[]>> };
+        updateSettings((s) => {
+          const r = (s.restore ??= {});
+          if (change.ranking) r.ranking = { ...r.ranking, ...change.ranking };
+        });
+      }
+      const { fixerStates } = await import("./clean.ts");
+      return json(res, 200, { tools: Object.fromEntries(TOOLS.map((t) => [t, toolStatus(t)])), states: await fixerStates(), ranking: readSettings().restore?.ranking ?? {} });
+    }
+    if (id === "fix" && action && (TOOLS as string[]).includes(action)) {
+      const tool = action as ToolId;
+      if (parts[3] === "install" && req.method === "POST") return json(res, 202, installTool(tool));
+      if (parts[3] === "cancel" && req.method === "POST") {
+        cancelToolInstall(tool);
+        return json(res, 200, toolStatus(tool));
+      }
+      if (!parts[3] && req.method === "DELETE") {
+        removeTool(tool);
+        return json(res, 200, toolStatus(tool));
+      }
+      if (!parts[3] && req.method === "GET") return json(res, 200, toolStatus(tool));
+    }
     if (id === "kokoro" && req.method === "GET") return json(res, 200, kokoroStatus());
     if (id === "kokoro" && action === "install" && req.method === "POST") return json(res, 202, installKokoro());
     if (id === "kokoro" && action === "cancel" && req.method === "POST") {
@@ -626,6 +656,78 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!t) return json(res, 404, { error: "It hasn't been transcribed" });
     return json(res, 200, { ...t, lines: transcriptLines(t) });
   }
+  // Its voices cleaned of hiss and hum: who could do it here and for how much, then doing it (a job), or undoing it.
+  if (section === "projects" && id && action === "clean" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const a = loadProject(id).project.assets.find((x) => x.id === q.get("asset"));
+    const { fixChoices } = await import("./clean.ts");
+    return json(res, 200, await fixChoices("clean", { seconds: a?.duration ?? 0 }));
+  }
+  if (section === "projects" && id && action === "clean" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; with?: string; strength?: "light" | "full"; everywhere?: boolean; again?: boolean };
+    if (!body.asset) return json(res, 400, { error: "Clean which clip?" });
+    const { cleanSound } = await import("./clean.ts");
+    const job = startJob("clean", id, async (j) => {
+      const r = await cleanSound(id, body.asset!, { ...body, onProgress: (f) => (j.progress = f * 0.98) });
+      return JSON.stringify({ by: r.choice.label, spans: r.spans, reused: r.reused, costUsd: r.costUsd });
+    });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "clean" && req.method === "DELETE") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const { uncleanSound } = await import("./clean.ts");
+    uncleanSound(id, q.get("asset") ?? "");
+    return json(res, 200, { ok: true });
+  }
+  // A stretch of a clip restored (less noise, steadier, bigger, smoother): what it'd take, then doing it (a job).
+  if (section === "projects" && id && action === "restore" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const a = loadProject(id).project.assets.find((x) => x.id === q.get("asset"));
+    const { fixChoices } = await import("./clean.ts");
+    const { restoredSize } = await import("@beatsheet/schema");
+    const seconds = Number(q.get("to") ?? a?.duration ?? 0) - Number(q.get("from") ?? 0);
+    const upscale = Number(q.get("upscale") ?? 2);
+    const fps = q.get("fps") ? Number(q.get("fps")) : undefined;
+    const ask = { seconds, width: a?.width, height: a?.height, fps: restoredSize(a ?? {}, { fps }).fps ?? a?.fps, upscale };
+    return json(res, 200, { upscale: await fixChoices("upscale", ask), frames: await fixChoices("frames", { ...ask, fps: a?.fps }) });
+  }
+  if (section === "projects" && id && action === "restore" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; from?: number; to?: number; steps?: RestoreSteps; upscaleWith?: string; use?: boolean; cut?: string };
+    if (!body.asset || !body.steps) return json(res, 400, { error: "Restore which clip, and how?" });
+    const { restoreClip, restorePlan } = await import("./restore.ts");
+    // Asked about first, so a request that can't run says why at once rather than as a failed job.
+    try {
+      await restorePlan(id, body.asset, { from: body.from, to: body.to, steps: body.steps, upscaleWith: body.upscaleWith });
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+    const job = startJob("restore", id, async (j) => {
+      const r = await restoreClip(id, body.asset!, {
+        from: body.from,
+        to: body.to,
+        steps: body.steps!,
+        upscaleWith: body.upscaleWith,
+        ...(body.use ? { use: { cut: body.cut } } : {}),
+        onProgress: (f, stage) => {
+          j.progress = f * 0.99;
+          if (stage && j.log.at(-1) !== stage) j.log.push(stage);
+        },
+      });
+      return JSON.stringify({ asset: r.asset.id, shots: r.shots, costUsd: r.costUsd, seconds: r.seconds });
+    });
+    return json(res, 202, job);
+  }
+  // Shots of a clip showing one of its versions, or back to the clip.
+  if (section === "projects" && id && action === "version" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { version?: string; cut?: string; shots?: string[]; off?: boolean };
+    if (!body.version) return json(res, 400, { error: "Which version?" });
+    const { useVersion } = await import("./restore.ts");
+    try {
+      return json(res, 200, { shots: useVersion(id, body.version, { cut: body.cut, shots: body.shots, off: body.off }) });
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
   // A long file (a tape, a DVD) split into its shots, as moments.
   if (section === "projects" && id && action === "split" && req.method === "POST") {
     const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; threshold?: number };
@@ -824,6 +926,10 @@ async function media(req: IncomingMessage, res: ServerResponse, parts: string[])
     // Files added after import (by an agent, say) get their previews the first time one is asked for.
     const missing = (kind === "poster" && !existsSync(c.poster)) || (kind === "strip" && a.kind === "video" && !existsSync(c.strip));
     if (missing && existsSync(original)) await cacheOnce(`${id}/${a.id}`, () => ensureCached(project, dir, a));
+    if (kind === "sound") {
+      const { soundFile } = await import("./clean.ts");
+      return sendFile(req, res, soundFile(project, dir, a));
+    }
     const pick =
       kind === "proxy" ? (existsSync(c.proxy) ? c.proxy : original)
       : kind === "image" ? (existsSync(c.image) ? c.image : original)

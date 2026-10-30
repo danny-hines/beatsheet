@@ -16,3 +16,4 @@ export { ELEVEN_MODELS, type DesignPreview, type VoiceInfo, type VoicesInfo } fr
 export { KOKORO_VOICES, kokoroReady, kokoroStatus, type KokoroStatus } from "./kokoro.ts";
 export type { MakeAsk, MakeJob } from "./make.ts";
 export type { ModelSize, WhisperStatus } from "./whispercpp.ts";
+export type { ToolId, ToolStatus } from "./fixtools.ts";

@@ -336,6 +336,21 @@ export function ShotLook({ shot }: { shot: Shot }) {
           </select>
         </label>
         <MotionSelect shot={shot} />
+        {c.kind === "clip" && p.assets.some((x) => x.version?.of === c.asset) && (
+          <label title="A restored version of the clip shows in its place where it covers the shot; the sound stays the clip's">
+            Shows
+            <select value={c.version ?? ""} onChange={(e) => editShot((s) => s.content.kind === "clip" && void (e.target.value ? (s.content.version = e.target.value) : delete s.content.version))}>
+              <option value="">The footage</option>
+              {p.assets
+                .filter((x) => x.version?.of === c.asset)
+                .map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label ?? v.id}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
         {c.kind === "clip" && (
           <label>
             Look

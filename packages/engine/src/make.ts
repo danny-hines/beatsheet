@@ -42,6 +42,7 @@ import { unletterbox } from "./letterbox.ts";
 import { assetPath, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { SERVICES } from "./services.ts";
+import { ledgerSince } from "./spend.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { listProjects, loadFile, loadProject, updateFile, updateProject } from "./store.ts";
 
@@ -280,23 +281,45 @@ export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest
   return { req, choices: chooseModels(CATALOG, req, serviceStates(), readSettings().make?.ranking?.[req.op] ?? []) };
 }
 
-/** What the agent's jobs have cost so far in its current turn (nothing when it isn't the agent's turn). */
+/** What the agent's jobs (and the services its tools used) have cost so far in its current turn (nothing when it isn't the agent's turn). */
 export function spentThisTurn(projectId: string): number {
   const turn = loadFile(projectId).doc.turn;
   if (turn?.who !== "agent") return 0;
   const spent = listJobs(projectId)
     .filter((j) => j.createdAt >= turn.since && counts(j))
     .reduce((sum, j) => sum + (j.usd ?? 0), 0);
-  return Math.round(spent * 1000) / 1000;
+  return Math.round((spent + ledgerSince(turn.since, projectId)) * 1000) / 1000;
 }
 
-/** What making has cost since a time, in every project: the estimates of the takes asked for, less the ones that failed or were stopped before they were made. */
+/**
+ * What making has cost since a time, in every project: the estimates of the takes asked for, less the ones that failed
+ * or were stopped before they were made, and what other services cost (cleaning sound, restoring, transcribing).
+ */
 export function spentSince(since: string): number {
   const spent = listProjects()
     .flatMap((p) => listJobs(p.id))
     .filter((j) => j.createdAt >= since && counts(j))
     .reduce((sum, j) => sum + (j.usd ?? 0), 0);
-  return Math.round(spent * 1000) / 1000;
+  return Math.round((spent + ledgerSince(since)) * 1000) / 1000;
+}
+
+/**
+ * Refuses something that would cost `usd` when it'd go over the spending limit, or (with `spendable`) over what the
+ * agent may still spend this turn without asking.
+ */
+export function assertSpendable(usd: number, opts: { spendable?: number } = {}) {
+  const limit = readSettings().make?.limit;
+  if (limit) {
+    const spent = spentSince(limit.since);
+    if (spent + usd > limit.usd + 1e-9)
+      throw new Error(
+        `This is about $${usd.toFixed(2)}, and $${spent.toFixed(2)} of the $${limit.usd.toFixed(2)} spending limit (since ${limit.since.slice(0, 16).replace("T", " ")}) is already spent. The person can raise it in Settings.`,
+      );
+  }
+  if (opts.spendable !== undefined && usd > opts.spendable + 1e-9)
+    throw new Error(
+      `This is about $${usd.toFixed(2)}, and only $${Math.max(0, opts.spendable).toFixed(2)} more can be spent this turn without asking (the person allows $${turnBudget().toFixed(2)} a turn). Ask first: a choose hand-off that says what it would cost.`,
+    );
 }
 
 /** How much the agent may spend in a turn before asking. */
@@ -394,18 +417,7 @@ export function estimate(
 export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendable?: number } = {}): { plans: (Plan & { jobs: MakeJob[] })[]; usd: number } {
   const plans = asks.map((ask) => plan(projectId, ask));
   const usd = Math.round(plans.reduce((sum, p) => sum + (p.fit.usd ?? 0), 0) * 1000) / 1000;
-  const limit = readSettings().make?.limit;
-  if (limit) {
-    const spent = spentSince(limit.since);
-    if (spent + usd > limit.usd + 1e-9)
-      throw new Error(
-        `This is about $${usd.toFixed(2)}, and $${spent.toFixed(2)} of the $${limit.usd.toFixed(2)} spending limit (since ${limit.since.slice(0, 16).replace("T", " ")}) is already spent. The person can raise it in Settings.`,
-      );
-  }
-  if (opts.spendable !== undefined && usd > opts.spendable + 1e-9)
-    throw new Error(
-      `This is about $${usd.toFixed(2)}, and only $${Math.max(0, opts.spendable).toFixed(2)} more can be spent this turn without asking (the person allows $${turnBudget().toFixed(2)} a turn). Ask first: a choose hand-off that says what it would cost.`,
-    );
+  assertSpendable(usd, opts);
   const cut = loadProject(projectId, asks[0]?.cut).project.cut.id;
   const now = new Date().toISOString();
   const started = plans.map((p) => {

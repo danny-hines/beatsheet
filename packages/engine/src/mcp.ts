@@ -1104,6 +1104,70 @@ server.registerTool(
 );
 
 server.registerTool(
+  "clean_sound",
+  {
+    description:
+      "Clean the voices in a clip's sound (tape hiss, wind, hum): clips of it play the cleaned sound from then on, and the file itself stays as it was. Auto picks what suits this computer: DeepFilterNet here (free, on the processor, many times faster than the clip plays) once it's installed in Settings → Restoring, else ElevenLabs' Voice Isolator with the person's key (12¢ a minute). Both take out everything that isn't a voice, the film's music too, so transcribe the clip first: then only the stretches where people talk are cleaned, and music and sounds between the lines stay. light (the default) keeps a little of the room; full takes out everything but the voices. Cleaning again with the same cleaner only mixes again (quick); off: true goes back to the clip's own sound.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      with: z.enum(["deepfilter", "isolator"]).optional().describe("A cleaner; default Auto"),
+      strength: z.enum(["light", "full"]).optional(),
+      everywhere: z.boolean().optional().describe("Clean all of it, not just where people talk (it has no music, or it's all talk)"),
+      again: z.boolean().optional().describe("Clean the voices again rather than reuse the ones cleaned before"),
+      off: z.boolean().optional().describe("Back to the clip's own sound"),
+    },
+  },
+  async ({ project: id, asset, with: by, strength, everywhere, again, off }) => {
+    const { cleanSound, uncleanSound } = await import("./clean.ts");
+    if (off) {
+      uncleanSound(id, asset);
+      return text(`${asset} plays its own sound again (the cleaned voices are kept, so cleaning it again is quick).`);
+    }
+    const r = await cleanSound(id, asset, { with: by, strength, everywhere, again, spendable: turnBudget() - spentThisTurn(id) });
+    return text(
+      `${asset}'s voices are cleaned (${r.asset.cleaned!.strength}) by ${r.choice.label}${r.choice.where ? ` ${r.choice.where}` : ""}${r.reused ? " (the voices cleaned before, mixed again)" : ""}${r.costUsd ? `, about $${r.costUsd.toFixed(2)}` : ""}: ${r.spans ? `only where people talk (${r.spans} stretch${r.spans === 1 ? "" : "es"}), the rest as it was` : "all of it (transcribe it first to clean only where people talk)"}. Its clips play the cleaned sound now.`,
+    );
+  },
+);
+
+server.registerTool(
+  "restore",
+  {
+    description:
+      "Restore a stretch of old footage (a tape, a DVD, a camcorder file), faithfully: the same frames, made cleaner (denoise), steadier (steady: each shot on its own, a cut starts it over; it zooms in a little to hide the edges), smoother (fps: frames made in between, at most twice as many, by RIFE here) and bigger (upscale 2 or 4: Real-ESRGAN on this computer's graphics card, free, or SeedVR2 on fal, which restores detail better and costs $0.001 a megapixel made, so about $2 a minute of 240p footage at 4×). It makes a version of the clip, in step with it: with use: true the cut's clip shots of the clip that it covers show it (content.version), keeping the clip's own sound, subjects and words. Restore what the cut uses (from/to), not a whole tape: on this PC 4× takes about five times as long as the stretch plays. estimate: true says what it would take without doing it.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      from: z.number().nonnegative().optional().describe("Seconds into the clip; default its start"),
+      to: z.number().positive().optional().describe("Seconds into the clip; default its end"),
+      denoise: z.enum(["light", "strong"]).optional(),
+      steady: z.boolean().optional(),
+      upscale: z.union([z.literal(2), z.literal(4)]).optional(),
+      fps: z.number().positive().optional().describe("Frames a second to make it, e.g. 30 from 15, or 60 from 30"),
+      with: z.enum(["realesrgan", "seedvr"]).optional().describe("The upscaler; default Auto"),
+      use: z.boolean().optional().describe("Show it in the cut's clip shots it covers"),
+      cut: cutArg,
+      estimate: z.boolean().optional(),
+    },
+  },
+  async ({ project: id, asset, from, to, denoise, steady, upscale, fps, with: by, use, cut, estimate: only }) => {
+    const { restoreClip, restorePlan } = await import("./restore.ts");
+    const { restoreWords } = await import("@beatsheet/schema");
+    const steps = { ...(denoise ? { denoise } : {}), ...(steady ? { steady } : {}), ...(upscale ? { upscale } : {}), ...(fps ? { fps } : {}) };
+    const plan = await restorePlan(id, asset, { from, to, steps, upscaleWith: by });
+    const takes = [plan.upscaler, plan.frames].filter((c) => c?.seconds).reduce((s, c) => s + c!.seconds!, 0);
+    const what = `${formatTime(plan.from)}–${formatTime(plan.to)} of ${asset}, ${restoreWords(steps)}${plan.size.width ? ` (${plan.size.width}×${plan.size.height}${plan.size.fps ? ` at ${plan.size.fps} fps` : ""})` : ""}`;
+    const how = `${plan.upscaler ? `${plan.upscaler.label}${plan.upscaler.where ? ` ${plan.upscaler.where}` : ""}` : "ffmpeg"}${takes ? `, about ${Math.max(1, Math.round(takes / 60))} min` : ""}${plan.usd ? `, about $${plan.usd.toFixed(2)}` : ", free"}`;
+    if (only) return text(`Restoring ${what}: ${how}.`);
+    const r = await restoreClip(id, asset, { from, to, steps, upscaleWith: by, ...(use ? { use: { cut } } : {}), spendable: turnBudget() - spentThisTurn(id) });
+    return text(
+      `${r.asset.id} is ${what}, a version of ${asset} (${how}; took ${Math.max(1, Math.round(r.seconds / 60))} min).${r.shots.length ? ` Shown in ${r.shots.join(", ")}.` : use ? " No clip shot of it in the cut is inside that stretch." : ` Show it in a clip shot of ${asset} with content.version: "${r.asset.id}" (or restore with use: true).`}`,
+    );
+  },
+);
+
+server.registerTool(
   "still_from_clip",
   {
     description:

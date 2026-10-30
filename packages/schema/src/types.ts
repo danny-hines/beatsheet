@@ -212,7 +212,7 @@ export const MusicSection = z.object({
 export type MusicSection = z.infer<typeof MusicSection>;
 
 export const Provenance = z.object({
-  source: z.enum(["import", "capture", "generated", "recorded", "synth"]),
+  source: z.enum(["import", "capture", "generated", "recorded", "synth", "restored"]),
   provider: z.string().optional(),
   model: z.string().optional(),
   prompt: z.string().optional(),
@@ -279,6 +279,23 @@ export const Asset = z.object({
     })
     .optional()
     .describe("Old video beatsheet plays from a copy of (media/<id>.mp4 in the project): deinterlaced, square pixels, H.264. The original stays where it is"),
+  cleaned: z
+    .object({
+      by: z.string().describe("What cleaned it: deepfilter, isolator"),
+      strength: z.enum(["light", "full"]).describe("light leaves a little of the room around the voices; full takes out everything but them"),
+      only: z.literal("speech").optional().describe("Cleaned only where people talk (by its transcript), so music and sounds between the lines stay as they were"),
+      at: z.string(),
+      costUsd: z.number().optional(),
+    })
+    .optional()
+    .describe("Its voices cleaned of hiss, wind and hum, kept beside the project (media/<id>.clean-*.m4a): clips play that sound instead of the file's own. The original stays as it was"),
+  version: z
+    .object({
+      of: z.string().describe("The clip it's a version of"),
+      from: z.number().describe("The second of that clip it starts at"),
+    })
+    .optional()
+    .describe("A version of a stretch of another clip (restored, or made again), in step with it: a clip shot of that clip can show it instead (content.version), and the clip's subjects, words and moments still line up"),
   cutout: z
     .object({
       of: z.string().describe("The asset it was lifted from"),
@@ -440,6 +457,10 @@ export const ShotContent = z.discriminatedUnion("kind", [
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id"),
     look: z.string().optional().describe("mono, dim, blur, mono-dim, warm, cool or faded"),
     volume: z.number().optional(),
+    version: z
+      .string()
+      .optional()
+      .describe("A version of the clip to show instead: an asset whose version.of is this clip (restored, or made again). It shows over the stretch it covers; the sound stays the clip's own"),
     effects: z.array(ClipEffect).optional().describe("Drawn on the clip and following a subject: blur a face, a name tag, a spotlight"),
     motion: Motion.optional().describe("Moves the picture through the shot: a push in, a pull out, a pan, a tilt. Photos without it get a slow push in"),
   }),

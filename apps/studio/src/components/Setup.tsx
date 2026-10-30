@@ -6,6 +6,7 @@ import { Mark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
 import { MakeSection, useMakeSummary } from "./MakeSettings";
 import { TranscribeSection, useTranscribeSummary } from "./TranscribeSettings";
+import { RestoreSection, useRestoreSummary } from "./RestoreSettings";
 
 type SetupInfo = NonNullable<State["setup"]>;
 
@@ -25,6 +26,7 @@ const ABOUT = {
   abilities: "Everything the agent can do with what's set up now.",
   make: "What making pictures and video may spend, and which models Auto tries first.",
   transcribe: "Turning what's said in a clip into words with their times: on this computer, or a service with your key.",
+  restore: "Old footage at its best: voices cleaned of hiss and hum, and the picture steadier, sharper and smoother. On this computer, or a service with your key.",
 };
 
 /** The agent list, asked for once; each CLI takes a moment to answer. */
@@ -118,6 +120,7 @@ const PANES = [
   { id: "services", label: "Media services" },
   { id: "make", label: "Making" },
   { id: "transcribe", label: "Transcription" },
+  { id: "restore", label: "Restoring" },
   { id: "abilities", label: "What it can do" },
 ] as const;
 type Pane = (typeof PANES)[number]["id"];
@@ -131,6 +134,7 @@ export function SettingsDialog() {
   const voices = useVoices();
   const makeSummary = useMakeSummary();
   const transcribeSummary = useTranscribeSummary();
+  const restoreSummary = useRestoreSummary();
   const close = () => actions.setSettingsOpen(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
@@ -148,6 +152,7 @@ export function SettingsDialog() {
     services: added ? `${added} added` : "None added",
     make: makeSummary,
     transcribe: transcribeSummary,
+    restore: restoreSummary,
     abilities: `${BUILT_IN.length + ON_THIS_MAC.filter((x) => localAbility(setup, x)).length + setup.capabilities.length} things`,
   };
   const title = PANES.find((p) => p.id === pane)!.label;
@@ -186,6 +191,8 @@ export function SettingsDialog() {
               <MakeSection />
             ) : pane === "transcribe" ? (
               <TranscribeSection />
+            ) : pane === "restore" ? (
+              <RestoreSection />
             ) : (
               <Abilities setup={setup} />
             )}

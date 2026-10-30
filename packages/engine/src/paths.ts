@@ -58,6 +58,15 @@ export const assetPath = (project: HasSources, dir: string, a: Asset) => {
   return copy && existsSync(copy) ? copy : mediaPath(project, dir, a.path, a.source);
 };
 
+/**
+ * An asset's sound with everything but the voices taken out, at full strength, by what cleaned it (48 kHz mono WAV):
+ * the slow or paid part, kept so changing how much of it is used doesn't clean it again.
+ */
+export const voicesPath = (dir: string, assetId: string, by: string) => join(dir, "media", `${assetId}.voices-${by}.wav`);
+
+/** The sound an asset's clips play once it's cleaned: the voices mixed back with the original, as asked. */
+export const cleanPath = (dir: string, a: Asset) => (a.cleaned ? join(dir, "media", `${a.id}.clean-${Date.parse(a.cleaned.at).toString(36)}.m4a`) : undefined);
+
 /** The file itself, never a copy: where it came from. */
 export const originalPath = (project: HasSources, dir: string, a: Asset) => mediaPath(project, dir, a.path, a.source);
 
