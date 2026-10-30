@@ -1,4 +1,4 @@
-import { formatTime, slugify, type Asset, type Moment, type Rect } from "@beatsheet/schema";
+import { formatTime, slugify, TRANSCRIBERS, type Asset, type Moment, type Rect } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
 import { hideBroken, posterUrl, proxyUrl, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
@@ -367,7 +367,7 @@ export function AssetView({ a }: { a: Asset }) {
 type Choice = { id: string; label: string; ok: boolean; why?: string; kind?: string; where?: string; seconds?: number; usd?: number };
 type Said = { by: string; language?: string; lines: { s: number; e: number; text: string; speaker?: string }[]; costUsd?: number };
 
-const about = (c: Choice) => [c.where, c.usd !== undefined ? `~$${c.usd < 0.01 ? "0.01" : c.usd.toFixed(2)}` : "free", c.seconds !== undefined ? `~${c.seconds < 90 ? `${Math.max(5, c.seconds)}s` : `${Math.round(c.seconds / 60)} min`}` : ""].filter(Boolean).join(" · ");
+const about = (c: Choice) => [c.where, c.usd !== undefined ? (c.usd < 0.01 ? "under 1¢" : `~$${c.usd.toFixed(2)}`) : "free", c.seconds !== undefined ? `~${c.seconds < 90 ? `${Math.max(5, c.seconds)}s` : `${Math.round(c.seconds / 60)} min`}` : ""].filter(Boolean).join(" · ");
 
 /**
  * What's said in a clip: transcribed by whichever transcriber suits this computer (Whisper here, or a service with a
@@ -419,7 +419,7 @@ function Said({ a, seek }: { a: Asset; seek: (t: number) => void }) {
         What's said{" "}
         {t && (
           <span className="dim small">
-            {t.words.toLocaleString()} words{t.speakers ? ` · ${t.speakers} speaker${t.speakers === 1 ? "" : "s"}` : ""} · {t.by}
+            {t.words.toLocaleString()} words{t.speakers ? ` · ${t.speakers} speaker${t.speakers === 1 ? "" : "s"}` : ""} · {TRANSCRIBERS.find((x) => x.id === t.by)?.label ?? t.by}
           </span>
         )}
       </h4>
