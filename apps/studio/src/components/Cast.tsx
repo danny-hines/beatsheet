@@ -3,7 +3,7 @@
  * at the top of the Library. Right-click a photo to make one from it or add it to one; select one to name it,
  * describe it and make its sheet (clean views that models are given to match).
  */
-import { renameCast, type Asset, type CastMember } from "@beatsheet/schema";
+import { renameCast, speakerLabel, type Asset, type CastMember } from "@beatsheet/schema";
 import { useState } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { actions, getState, setState, useProject, useStore } from "../store";
@@ -397,6 +397,28 @@ export function CastView({ id }: { id: string }) {
               <Picture key={a.id} projectId={projectId} id={a.id} onRemove={() => edit((x) => void (x.seen = x.seen!.filter((s) => s.asset !== a.id)))} />
             ))}
           </div>
+        </>
+      )}
+
+      {!!m.heard?.length && (
+        <>
+          <h4>Heard in</h4>
+          <ul className="heard-list small">
+            {m.heard.map((h) => {
+              const a = p.assets.find((x) => x.id === h.asset);
+              return (
+                <li key={`${h.asset}-${h.speaker}`}>
+                  <button className="link small" onClick={() => actions.select({ kind: "asset", id: h.asset })} title="Show the clip and what's said in it">
+                    {a?.label ?? h.asset}
+                  </button>
+                  <span className="dim"> · {speakerLabel(h.speaker)}</span>
+                  <button className="link danger small" onClick={() => edit((x) => void (x.heard = x.heard!.filter((y) => !(y.asset === h.asset && y.speaker === h.speaker))))} title="That isn't them">
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </>
       )}
 

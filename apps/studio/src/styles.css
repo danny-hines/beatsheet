@@ -705,7 +705,9 @@ html.desktop.win .home-bar, html.desktop.win .setup-screen-bar { height: auto; -
 .moment-list li.here { background: rgba(242, 181, 68, 0.1); }
 .said-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 3px; max-height: 280px; overflow-y: auto; }
 .said-list li { display: grid; grid-template-columns: auto auto 1fr; gap: 6px; align-items: baseline; }
-.said-speaker { color: var(--accent-2); white-space: nowrap; }
+.said-speaker { color: var(--accent-2); white-space: nowrap; padding: 0; }
+.said-speaker:not(.named) { opacity: 0.75; }
+.said-speaker.named { font-weight: 600; }
 .moment-list li input { flex: 1; background: none; border: 1px solid transparent; border-radius: 4px; padding: 2px 4px; }
 .moment-list li input:hover, .moment-list li input:focus { border-color: var(--line-2); background: var(--panel-2); }
 .moment-list .score { width: 7px; height: 7px; background: var(--accent); transform: rotate(45deg); flex: none; }
@@ -1027,3 +1029,4 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .lane.dropping { background: rgba(242, 181, 68, 0.08); box-shadow: inset 0 0 0 1px rgba(242, 181, 68, 0.45); }
 .make-card { min-width: 132px; }
 .card-actions { flex-wrap: wrap; }
+.heard-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }

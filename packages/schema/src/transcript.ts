@@ -160,6 +160,94 @@ export function assignSpeakers(words: SaidWord[], turns: SpeakerTurn[]): SaidWor
   });
 }
 
+/** "speaker_1" as people read it: Speaker 2. */
+export const speakerLabel = (speaker: string) => (/^speaker_\d+$/.test(speaker) ? `Speaker ${Number(speaker.slice(8)) + 1}` : speaker);
+
+/** The cast member a speaker in a clip's transcript is, when they've been named. */
+export function whoSpeaks<T extends { id: string; heard?: { asset: string; speaker: string }[] }>(cast: T[] | undefined, asset: string, speaker: string): T | undefined {
+  return cast?.find((m) => m.heard?.some((h) => h.asset === asset && h.speaker === speaker));
+}
+
+/**
+ * When a clip is transcribed again its speakers get new labels: each old label becomes the new one most of its words
+ * now have, by time, so names given to speakers carry over. Labels with no words in common are left out.
+ */
+export function remapSpeakers(before: SaidWord[], after: SaidWord[]): Record<string, string> {
+  const tally = new Map<string, Map<string, number>>();
+  for (const o of before) {
+    if (!o.speaker) continue;
+    for (const n of after) {
+      if (!n.speaker || n.e <= o.s || n.s >= o.e) continue;
+      const t = tally.get(o.speaker) ?? new Map<string, number>();
+      t.set(n.speaker, (t.get(n.speaker) ?? 0) + Math.min(o.e, n.e) - Math.max(o.s, n.s));
+      tally.set(o.speaker, t);
+    }
+  }
+  return Object.fromEntries([...tally].map(([old, t]) => [old, [...t].sort((a, b) => b[1] - a[1])[0]![0]]));
+}
+
+/** The voice group `turns` mostly give a stretch of time, and how much of the stretch that is (0..1). */
+function groupOf(turns: SpeakerTurn[], s: number, e: number): { group?: string; share: number } {
+  const tally = new Map<string, number>();
+  for (const t of turns) {
+    const overlap = Math.min(e, t.e) - Math.max(s, t.s);
+    if (overlap > 0) tally.set(t.speaker, (tally.get(t.speaker) ?? 0) + overlap);
+  }
+  const all = [...tally.values()].reduce((a, b) => a + b, 0);
+  const [group, most] = [...tally].sort((a, b) => b[1] - a[1])[0] ?? [];
+  return { group, share: all ? most! / all : 0 };
+}
+
+/**
+ * Which known people a clip's speakers are, from one labelling run over each known person's voice sample and then the
+ * clip (starting at `offset` seconds): a sample's group is the voice group it mostly falls in, and a clip speaker's is
+ * the one their words mostly fall in. A clip speaker whose group holds exactly one person's sample is that person; a
+ * group two people's samples share decides nothing, and nor does a sample split between groups.
+ */
+export function voicesFromTurns(turns: SpeakerTurn[], samples: { who: string; s: number; e: number }[], words: SaidWord[], offset: number): Record<string, string> {
+  const owners = new Map<string, Set<string>>();
+  for (const x of samples) {
+    const g = groupOf(turns, x.s, x.e);
+    if (!g.group || g.share < 0.6) continue;
+    owners.set(g.group, (owners.get(g.group) ?? new Set()).add(x.who));
+  }
+  const bySpeaker = new Map<string, Map<string, number>>();
+  for (const w of words) {
+    if (!w.speaker) continue;
+    for (const t of turns) {
+      const overlap = Math.min(w.e + offset, t.e) - Math.max(w.s + offset, t.s);
+      if (overlap <= 0) continue;
+      const m = bySpeaker.get(w.speaker) ?? new Map<string, number>();
+      m.set(t.speaker, (m.get(t.speaker) ?? 0) + overlap);
+      bySpeaker.set(w.speaker, m);
+    }
+  }
+  const out: Record<string, string> = {};
+  for (const [speaker, groups] of bySpeaker) {
+    const [group] = [...groups].sort((a, b) => b[1] - a[1])[0]!;
+    const who = owners.get(group);
+    if (who?.size === 1) out[speaker] = [...who][0]!;
+  }
+  return out;
+}
+
+/**
+ * A stretch of someone's voice to recognise them by: their longest lines in a transcript, up to `most` seconds in
+ * all, earliest first.
+ */
+export function voiceSample(t: Pick<Transcript, "words">, speaker: string, most = 12): { s: number; e: number }[] {
+  const lines = linesOf(t).filter((l) => l.speaker === speaker && l.e - l.s >= 0.6);
+  const out: { s: number; e: number }[] = [];
+  let total = 0;
+  for (const l of [...lines].sort((a, b) => b.e - b.s - (a.e - a.s))) {
+    if (total >= most) break;
+    const e = Math.min(l.e, l.s + (most - total));
+    out.push({ s: l.s, e });
+    total += e - l.s;
+  }
+  return out.sort((a, b) => a.s - b.s);
+}
+
 /** A line of a transcript: words run together until a pause, a new speaker, or the end of a sentence after a while. */
 export type SaidLine = { s: number; e: number; text: string; speaker?: string };
 

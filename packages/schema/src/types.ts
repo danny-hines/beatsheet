@@ -668,6 +668,10 @@ export const CastMember = z.object({
     .array(z.object({ asset: z.string(), subject: z.string().optional().describe("Which of the asset's subjects it is; default the whole picture") }))
     .optional()
     .describe("Where it is in the project's own media: the photos and clips it was made from"),
+  heard: z
+    .array(z.object({ asset: z.string(), speaker: z.string().describe("The speaker's label in the asset's transcript: speaker_0") }))
+    .optional()
+    .describe("Where they're heard: a speaker in a clip's transcript that is them"),
   images: z.array(z.string()).optional().describe("Asset ids of the pictures models are given (its sheet, or cut-outs); the first is the main one"),
   variants: z
     .array(z.object({ id: z.string(), about: z.string().describe("What's different: wearing a tiny black eye mask"), images: z.array(z.string()).optional() }))

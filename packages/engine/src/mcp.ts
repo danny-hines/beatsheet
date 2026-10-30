@@ -25,6 +25,7 @@ import {
   freshCut,
   lineState,
   lineVoice,
+  whoSpeaks,
   MAKE_OPS,
   SFX_SOUNDS,
   resolveTimeline,
@@ -1028,17 +1029,53 @@ server.registerTool(
   "transcript",
   {
     description:
-      "What was said in a transcribed clip, a line at a time: when, who (when the transcriber told speakers apart) and the words. Narrow it to a stretch (from, to, in seconds) or to the lines that have every word of `search`, to find a line that fits.",
-    inputSchema: { project: projectArg, asset: z.string(), from: z.number().optional(), to: z.number().optional(), search: z.string().optional() },
+      "What was said in a transcribed clip, a line at a time: when, who (a cast member when the speaker has been named, @grandpa, else speaker_0…) and the words. Narrow it to a stretch (from, to, in seconds), to the lines that have every word of `search`, or to what one person said (`who`: a cast id or a speaker label), to find a line that fits.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      from: z.number().optional(),
+      to: z.number().optional(),
+      search: z.string().optional(),
+      who: z.string().optional().describe("Only this person's lines: a cast id (grandpa) or a speaker label (speaker_1)"),
+    },
   },
-  async ({ project: id, asset, from, to, search }) => {
+  async ({ project: id, asset, from, to, search, who }) => {
     const { readTranscript, transcriptLines } = await import("./transcribe.ts");
     const t = readTranscript(id, asset);
     if (!t) return text(`${asset} hasn't been transcribed; transcribe it first.`);
-    const lines = transcriptLines(t, { from, to, search });
-    if (!lines.length) return text(search ? `Nothing in ${asset} says "${search}".` : "Nothing said in that stretch.");
+    const { project } = loadProject(id);
+    const name = (speaker?: string) => {
+      if (!speaker) return "";
+      const m = whoSpeaks(project.cast, asset, speaker);
+      return m ? ` @${m.id}` : ` ${speaker}`;
+    };
+    const lines = transcriptLines(t, { from, to, search }).filter((l) => !who || l.speaker === who || whoSpeaks(project.cast, asset, l.speaker ?? "")?.id === who.replace(/^@/, ""));
+    if (!lines.length) return text(search || who ? `Nothing in ${asset} matches.` : "Nothing said in that stretch.");
     const shown = lines.slice(0, 200);
-    return text([...shown.map((l) => `- ${formatTime(l.s)}–${formatTime(l.e)}${l.speaker ? ` ${l.speaker}` : ""}: ${l.text}`), ...(lines.length > shown.length ? [`(${lines.length - shown.length} more; narrow it with from/to)`] : [])].join("\n"));
+    return text([...shown.map((l) => `- ${formatTime(l.s)}–${formatTime(l.e)}${name(l.speaker)}: ${l.text}`), ...(lines.length > shown.length ? [`(${lines.length - shown.length} more; narrow it with from/to)`] : [])].join("\n"));
+  },
+);
+
+server.registerTool(
+  "name_speaker",
+  {
+    description:
+      "Say who a speaker in a clip's transcript is: someone in the cast (cast), or someone new (name), who's added to the cast as a character. Then the same voice is looked for in the project's other transcribed clips and named there too (where who's speaking is installed beside Whisper on this computer). Use it when the person tells you who's who, or when it's plain from what's said (\"Happy birthday, Grandpa!\"). Pass neither to take a name off.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      speaker: z.string().describe("The speaker's label in the transcript: speaker_0"),
+      cast: z.string().optional().describe("A cast member's id"),
+      name: z.string().optional().describe("Someone not in the cast yet: Grandpa"),
+    },
+  },
+  async ({ project: id, asset, speaker, cast, name }) => {
+    const { nameSpeaker, findVoices } = await import("./heard.ts");
+    const member = nameSpeaker(id, asset, speaker, { cast, name });
+    if (!member) return text(`${speaker} in ${asset} has no name now.`);
+    const { found, why } = await findVoices(id, { members: [member] });
+    const where = found.map((f) => `${f.asset} (${f.speaker})`);
+    return text(`${speaker} in ${asset} is @${member}.${where.length ? ` Found them in ${where.join(", ")} too.` : why ? ` (${why}.)` : " Not heard in any other transcribed clip."}`);
   },
 );
 

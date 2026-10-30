@@ -1,9 +1,9 @@
-import { formatTime, slugify, TRANSCRIBERS, type Asset, type Moment, type Rect } from "@beatsheet/schema";
+import { formatTime, slugify, speakerLabel, TRANSCRIBERS, whoSpeaks, type Asset, type Moment, type Rect } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
 import { hideBroken, posterUrl, proxyUrl, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
-import { actions, getState, useStore } from "../store";
-import { Stars, TextField } from "./ui";
+import { actions, getState, setState, useProject, useStore } from "../store";
+import { PopMenu, Stars, TextField } from "./ui";
 
 const imageUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/image`;
 const boxStyle = (r: Rect) => ({ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` });
@@ -375,6 +375,9 @@ const about = (c: Choice) => [c.where, c.usd !== undefined ? (c.usd < 0.01 ? "un
  */
 function Said({ a, seek }: { a: Asset; seek: (t: number) => void }) {
   const projectId = useStore((s) => s.projectId)!;
+  const p = useProject();
+  const [naming, setNaming] = useState<{ speaker: string; x: number; y: number }>();
+  const [heard, setHeard] = useState("");
   const [said, setSaid] = useState<Said>();
   const [choices, setChoices] = useState<{ auto?: Choice; ready: Choice[]; setup: Choice[] }>();
   const [pick, setPick] = useState("");
@@ -431,12 +434,22 @@ function Said({ a, seek }: { a: Asset; seek: (t: number) => void }) {
                 <button className="mono small link" onClick={() => seek(l.s)} title="Jump to it">
                   {formatTime(l.s)}
                 </button>
-                {l.speaker && <span className="said-speaker small">{/^speaker_\d+$/.test(l.speaker) ? `Speaker ${Number(l.speaker.slice(8)) + 1}` : l.speaker}</span>}
+                {l.speaker && (
+                  <button
+                    className={`said-speaker small link ${whoSpeaks(p.cast, a.id, l.speaker) ? "named" : ""}`}
+                    onClick={(e) => setNaming({ speaker: l.speaker!, x: e.clientX, y: e.clientY })}
+                    title="Say who this is"
+                  >
+                    {whoSpeaks(p.cast, a.id, l.speaker)?.name || speakerLabel(l.speaker)}
+                  </button>
+                )}
                 <span className="small">{l.text}</span>
               </li>
             ))}
           </ul>
           {!said.lines.length && <p className="dim small">Nothing was said in it.</p>}
+          {said.lines.some((l) => l.speaker && !whoSpeaks(p.cast, a.id, l.speaker)) && <p className="dim small">Click a speaker to say who it is; they're looked for in your other clips too.</p>}
+          {heard && <p className="small">{heard}</p>}
           <button className="link small" onClick={() => setAgain(true)}>
             Transcribe it again…
           </button>
@@ -492,7 +505,72 @@ function Said({ a, seek }: { a: Asset; seek: (t: number) => void }) {
         </>
       )}
       {error && <p className="warn small">{error}</p>}
+      {naming && (
+        <NameSpeaker
+          asset={a}
+          {...naming}
+          onClose={() => setNaming(undefined)}
+          onNamed={(said) => {
+            setNaming(undefined);
+            setHeard(said);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+/**
+ * Who a speaker is: someone in the cast, or someone new (added to the cast); then their voice is looked for in the
+ * project's other clips.
+ */
+function NameSpeaker({ asset, speaker, x, y, onClose, onNamed }: { asset: Asset; speaker: string; x: number; y: number; onClose: () => void; onNamed: (said: string) => void }) {
+  const p = useProject();
+  const projectId = useStore((s) => s.projectId)!;
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const now = whoSpeaks(p.cast, asset.id, speaker);
+  const people = (p.cast ?? []).filter((m) => m.kind === "character");
+  const send = async (who: { cast?: string; name?: string }) => {
+    setBusy(true);
+    try {
+      await actions.flushSave();
+      const out = await runJob(`/api/projects/${projectId}/speakers`, { asset: asset.id, speaker, ...who });
+      await actions.reload();
+      const r = out ? (JSON.parse(out) as { member: string; found: { asset: string }[]; why?: string }) : undefined;
+      const m = r && getState().doc?.cast?.find((x) => x.id === r.member);
+      const clips = r ? new Set(r.found.map((f) => f.asset)).size : 0;
+      onNamed(!m ? "" : clips ? `Found ${m.name} in ${clips} other clip${clips === 1 ? "" : "s"} too.` : r?.why ? `${r.why}.` : `Didn't hear ${m.name} in your other clips.`);
+    } catch (err) {
+      setState({ notice: err instanceof Error ? err.message : String(err) });
+      onClose();
+    }
+  };
+  return (
+    <PopMenu x={x} y={y} onClose={onClose}>
+      <p className="dim small menu-note">Who is {now?.name || speakerLabel(speaker)}?</p>
+      {people.map((m) => (
+        <button key={m.id} role="menuitem" disabled={busy || now?.id === m.id} onClick={() => void send({ cast: m.id })}>
+          {m.name || `@${m.id}`} <span className="dim mono">@{m.id}</span>
+        </button>
+      ))}
+      {!!people.length && <hr />}
+      <form
+        className="menu-note"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (name.trim()) void send({ name });
+        }}
+      >
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Someone new: Grandpa" aria-label="Their name" disabled={busy} />
+      </form>
+      {now && (
+        <button role="menuitem" disabled={busy} onClick={() => void send({})}>
+          Not {now.name}
+        </button>
+      )}
+      {busy && <p className="dim small menu-note">Looking for them in your other clips…</p>}
+    </PopMenu>
   );
 }
 

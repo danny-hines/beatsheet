@@ -604,6 +604,17 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     });
     return json(res, 202, job);
   }
+  // Who a speaker in a transcript is (a cast member, or someone new), then the same voice looked for in the other
+  // clips; or just the looking.
+  if (section === "projects" && id && action === "speakers" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; speaker?: string; cast?: string; name?: string };
+    if (!body.asset || !body.speaker) return json(res, 400, { error: "Which speaker, in which clip?" });
+    const { nameSpeaker, findVoices } = await import("./heard.ts");
+    const member = nameSpeaker(id, body.asset, body.speaker, { cast: body.cast, name: body.name });
+    if (!member) return json(res, 200, { member: null, found: [] });
+    const job = startJob("transcribe", id, async () => JSON.stringify({ member, ...(await findVoices(id, { members: [member] })) }));
+    return json(res, 202, job);
+  }
   if (section === "projects" && id && action === "transcripts" && parts[3] && req.method === "GET") {
     const t = readTranscript(id, parts[3]);
     if (!t) return json(res, 404, { error: "It hasn't been transcribed" });

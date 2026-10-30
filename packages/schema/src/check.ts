@@ -80,6 +80,11 @@ export function checkCut(p: Project): CheckIssue[] {
       if (!a) add(`cast.${i}.seen.${j}`, `unknown asset "${s.asset}"`);
       else if (s.subject && !a.subjects?.some((x) => x.id === s.subject)) add(`cast.${i}.seen.${j}`, `"${s.asset}" has no subject "${s.subject}"`);
     });
+    m.heard?.forEach((h, j) => {
+      const a = p.assets.find((x) => x.id === h.asset);
+      if (!a) add(`cast.${i}.heard.${j}`, `unknown asset "${h.asset}"`);
+      else if (!a.transcript) add(`cast.${i}.heard.${j}`, `"${h.asset}" hasn't been transcribed`);
+    });
     dupes(`cast.${i}.variants`, m.variants ?? []);
     m.variants?.forEach((v) => castIds.add(`${m.id}/${v.id}`));
   });

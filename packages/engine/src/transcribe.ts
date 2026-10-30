@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { assignSpeakers, chooseTranscriber, linesOf, TRANSCRIBERS, type SaidWord, type Transcript, type TranscriberChoice, type TranscriberState } from "@beatsheet/schema";
+import { assignSpeakers, chooseTranscriber, linesOf, remapSpeakers, TRANSCRIBERS, type SaidWord, type Transcript, type TranscriberChoice, type TranscriberState } from "@beatsheet/schema";
 import { assetPath, projectDir } from "./paths.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { loadProject, updateFile } from "./store.ts";
@@ -196,14 +196,27 @@ export async function transcribeAsset(
   const r =
     choice.id === "whisper" ? await onWhisper(file, onProgress, opts.people) : choice.id === "scribe" ? await onScribe(file, a.duration, opts.people) : await onOpenAI(file, a.duration, onProgress);
   const transcript: Transcript = { by: choice.id, ...(r.model ? { model: r.model } : {}), ...(r.language ? { language: r.language } : {}), at: new Date().toISOString(), words: r.words, ...(r.events ? { events: r.events } : {}), ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}) };
+  const before = readTranscript(projectId, assetId);
   const out = transcriptFile(projectId, assetId);
   mkdirSync(join(out, ".."), { recursive: true });
   writeFileSync(out, JSON.stringify(transcript));
   const speakers = new Set(r.words.map((w) => w.speaker).filter(Boolean)).size;
+  // Its speakers have new labels: the people named before carry over to whichever new speaker said their words.
+  const moved = before ? remapSpeakers(before.words, r.words) : {};
   updateFile(projectId, (d) => {
     const x = d.assets.find((y) => y.id === assetId);
     if (x) x.transcript = { by: choice.id, ...(r.language ? { language: r.language } : {}), at: transcript.at, words: r.words.length, ...(speakers ? { speakers } : {}) };
+    for (const m of d.cast ?? []) {
+      if (!m.heard?.some((h) => h.asset === assetId)) continue;
+      m.heard = m.heard.flatMap((h) => (h.asset !== assetId ? [h] : moved[h.speaker] ? [{ ...h, speaker: moved[h.speaker]! }] : []));
+      if (!m.heard.length) delete m.heard;
+    }
   });
+  // And the people named in other clips are looked for here, where the speaker labeller can do it.
+  if (speakers) {
+    const { findVoices } = await import("./heard.ts");
+    await findVoices(projectId, { assets: [assetId] }).catch(() => undefined);
+  }
   return { transcript, choice };
 }
 

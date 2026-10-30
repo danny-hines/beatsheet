@@ -54,6 +54,9 @@ let store: typeof import("../src/store.ts");
 // A stand-in for ElevenLabs' speech-to-text and OpenAI's transcriptions.
 let server: Server;
 let seen: { url: string; body: string }[] = [];
+// Scribe can come back with its speaker labels the other way round, as a second run may.
+let swap = false;
+const sid = (s: string) => (swap ? (s === "speaker_0" ? "speaker_1" : "speaker_0") : s);
 beforeAll(async () => {
   server = createServer((req, res) => {
     let body = "";
@@ -66,11 +69,11 @@ beforeAll(async () => {
         return send({
           language_code: "en",
           words: [
-            { text: "Happy", start: 0.2, end: 0.6, type: "word", speaker_id: "speaker_0" },
-            { text: " ", start: 0.6, end: 0.6, type: "spacing", speaker_id: "speaker_0" },
-            { text: "birthday!", start: 0.6, end: 1.1, type: "word", speaker_id: "speaker_0" },
+            { text: "Happy", start: 0.2, end: 0.6, type: "word", speaker_id: sid("speaker_0") },
+            { text: " ", start: 0.6, end: 0.6, type: "spacing", speaker_id: sid("speaker_0") },
+            { text: "birthday!", start: 0.6, end: 1.1, type: "word", speaker_id: sid("speaker_0") },
             { text: "(laughter)", start: 1.2, end: 1.9, type: "audio_event", speaker_id: null },
-            { text: "Thanks!", start: 2.0, end: 2.4, type: "word", speaker_id: "speaker_1" },
+            { text: "Thanks!", start: 2.0, end: 2.4, type: "word", speaker_id: sid("speaker_1") },
           ],
         });
       }
@@ -91,6 +94,7 @@ afterAll(() => server.close());
 const dir = join(root, "projects", "party");
 beforeEach(() => {
   seen = [];
+  swap = false;
   keys.services = ["elevenlabs", "openai"];
   whisper.speed = 0.04;
   whisper.ran = 0;
@@ -197,6 +201,29 @@ describe("transcribing on whatever this computer has", () => {
       ["Lily.", "speaker_1"],
     ]);
     expect(store.loadFile("party").doc.assets[0]!.transcript).toMatchObject({ by: "whisper", speakers: 2 });
+  });
+
+  it("names speakers as the cast, someone new or nobody, and keeps the names when the clip is transcribed again", async () => {
+    const { nameSpeaker } = await import("../src/heard.ts");
+    await t.transcribeAsset("party", "cake", { with: "scribe" });
+    expect(nameSpeaker("party", "cake", "speaker_1", { name: "Lily" })).toBe("lily");
+    expect(nameSpeaker("party", "cake", "speaker_0", { name: "Grandpa" })).toBe("grandpa");
+    const cast = () => store.loadFile("party").doc.cast!;
+    expect(cast()).toEqual([
+      { id: "lily", name: "Lily", kind: "character", heard: [{ asset: "cake", speaker: "speaker_1" }] },
+      { id: "grandpa", name: "Grandpa", kind: "character", heard: [{ asset: "cake", speaker: "speaker_0" }] },
+    ]);
+    // A speaker is one person in a clip: naming them again moves them.
+    expect(nameSpeaker("party", "cake", "speaker_0", { cast: "lily" })).toBe("lily");
+    expect(cast().find((m) => m.id === "grandpa")!.heard).toBeUndefined();
+    expect(nameSpeaker("party", "cake", "speaker_0", {})).toBeUndefined();
+    expect(cast().find((m) => m.id === "lily")!.heard).toEqual([{ asset: "cake", speaker: "speaker_1" }]);
+    expect(() => nameSpeaker("party", "silent", "speaker_0", { name: "Nobody" })).toThrow("hasn't been transcribed");
+
+    // Transcribed again, the labels come back the other way round; Lily is still the one who said "Thanks!".
+    swap = true;
+    await t.transcribeAsset("party", "cake", { with: "scribe" });
+    expect(cast().find((m) => m.id === "lily")!.heard).toEqual([{ asset: "cake", speaker: "speaker_0" }]);
   });
 
   it("says when there's nothing to hear", async () => {
