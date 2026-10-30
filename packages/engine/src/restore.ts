@@ -9,12 +9,12 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { resolveTimeline, restoredSize, restoreWords, versionAt, type Asset, type FixerChoice, type RestoreSteps } from "@beatsheet/schema";
 import { soundFile } from "./clean.ts";
 import { pickFixer } from "./clean.ts";
-import { falResult, falStatus, falSubmit, falUpload, type FalRequest } from "./fal.ts";
+import { FalError, falResult, falStatus, falSubmit, falUpload, type FalRequest } from "./fal.ts";
 import { runFrames, runUpscale, toolReady } from "./fixtools.ts";
 import { addAsset } from "./ingest.ts";
 import { assertSpendable } from "./make.ts";
@@ -187,7 +187,7 @@ export async function restoreClip(projectId: string, assetId: string, opts: Rest
   if (steps.upscale && plan.upscaler?.id === "seedvr") {
     progress(0.91, "Upscaling on fal");
     const upscaled = join(work, "seedvr.mp4");
-    if (!existsSync(upscaled)) await onFal(picture, upscaled, steps.upscale, join(work, "fal.json"), signal);
+    if (!existsSync(upscaled)) await onFal(picture, upscaled, { width: plan.size.width!, height: plan.size.height!, fps: outFps }, join(work, "fal.json"), signal);
     costUsd = plan.usd;
     if (!existsSync(join(work, "charged"))) {
       recordSpend(projectId, { what: `Restored ${a.label ?? a.id} (${restoreWords(steps)})`, by: `fal:${SEEDVR}`, usd: costUsd });
@@ -230,37 +230,70 @@ export async function restoreClip(projectId: string, assetId: string, opts: Rest
 /** "1:05" */
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-/** SeedVR2 on fal: the picture goes up, comes back bigger. The request is kept in `state`, so a restart waits for it rather than paying again. */
-async function onFal(file: string, out: string, factor: number, state: string, signal: AbortSignal) {
+/** SeedVR2 takes nothing smaller than this either way. */
+const SEEDVR_LEAST = 256;
+
+/**
+ * SeedVR2 on fal: the picture goes up, comes back `size`. Tape smaller than it takes is enlarged just enough first, and
+ * asked for the rest. The request is kept in `state`, so a restart waits for it rather than paying again.
+ */
+async function onFal(file: string, out: string, size: { width: number; height: number; fps: number }, state: string, signal: AbortSignal) {
   const key = await getSecret("fal");
   if (!key) throw new Error("There's no fal key (Settings → Media services)");
+  const { stdout } = await exec("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", file]);
+  const [w, h] = stdout.trim().split(",").map(Number) as [number, number];
+  const pre = Math.max(1, SEEDVR_LEAST / Math.min(w, h));
+  let send = file;
+  if (pre > 1) {
+    send = join(dirname(file), "enlarged.mp4");
+    const even = (n: number) => Math.ceil(n / 2) * 2;
+    await exec("ffmpeg", ["-v", "error", "-y", "-i", file, "-vf", `scale=${even(w * pre)}:${even(h * pre)}:flags=lanczos`, "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", send]);
+  }
+  const factor = Math.round((size.width / (w * pre)) * 1000) / 1000;
+  // A request fal turned away is forgotten, so trying again sends a new one; it's waited for again only while it's running.
+  const refused = (why: string) => {
+    rmSync(state, { force: true });
+    return new Error(/content checker|flagged/i.test(why) ? "fal's content checker wouldn't take this stretch (it turns away things like a home movie's fake blood). Upscale it with Real-ESRGAN on this computer instead, which has no such check." : `fal couldn't upscale it: ${why}`);
+  };
   let req: FalRequest;
   try {
     req = JSON.parse(readFileSync(state, "utf8")) as FalRequest;
   } catch {
-    const url = await falUpload(key, file);
-    req = await falSubmit(key, SEEDVR, { video_url: url, upscale_mode: "factor", upscale_factor: factor, output_format: "X264 (.mp4)", output_quality: "high" });
+    const url = await falUpload(key, send);
+    try {
+      req = await falSubmit(key, SEEDVR, { video_url: url, upscale_mode: "factor", upscale_factor: factor, output_format: "X264 (.mp4)", output_quality: "high" });
+    } catch (err) {
+      // fal's content checker turns away what it takes for gore, a home movie's fake blood included.
+      if (/content checker|flagged/i.test(err instanceof Error ? err.message : "")) throw refused(err instanceof Error ? err.message : "");
+      throw err;
+    }
     writeFileSync(state, JSON.stringify(req));
   }
-  for (;;) {
-    if (signal.aborted) throw new Error("Stopped (fal goes on with it; restoring again picks it up)");
-    const s = await falStatus(key, req);
-    if (s.state === "done") {
-      if (s.error) {
-        rmSync(state, { force: true });
-        throw new Error(`fal couldn't upscale it: ${s.error}`);
+  let r: Record<string, unknown>;
+  try {
+    for (;;) {
+      if (signal.aborted) throw new Error("Stopped (fal goes on with it; restoring again picks it up)");
+      const s = await falStatus(key, req);
+      if (s.state === "done") {
+        if (s.error) throw refused(s.error);
+        break;
       }
-      break;
+      await new Promise((r) => setTimeout(r, 5000));
     }
-    await new Promise((r) => setTimeout(r, 5000));
+    r = await falResult(key, req);
+  } catch (err) {
+    if (err instanceof FalError && err.final) throw refused(err.message);
+    throw err;
   }
-  const r = await falResult(key, req);
   const url = (r.video as { url?: string } | undefined)?.url;
   if (!url) throw new Error("fal finished, but didn't give the video");
   const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
   if (!res.ok) throw new Error(`Couldn't download the upscaled video (${res.status})`);
-  writeFileSync(`${out}.part`, Buffer.from(await res.arrayBuffer()));
-  renameSync(`${out}.part`, out);
+  writeFileSync(`${out}.part.mp4`, Buffer.from(await res.arrayBuffer()));
+  // Exactly the size asked for (its factor can land a pixel off), and the clip's own rate (fal rounds 29.97 to 30),
+  // frame for frame.
+  await exec("ffmpeg", ["-v", "error", "-y", "-i", `${out}.part.mp4`, "-vf", `scale=${size.width}:${size.height}:flags=lanczos,setpts=N/(${size.fps}*TB)`, "-r", String(size.fps), "-an", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", out]);
+  rmSync(`${out}.part.mp4`, { force: true });
 }
 
 /**
