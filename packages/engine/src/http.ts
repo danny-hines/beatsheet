@@ -612,7 +612,13 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const { nameSpeaker, findVoices } = await import("./heard.ts");
     const member = nameSpeaker(id, body.asset, body.speaker, { cast: body.cast, name: body.name });
     if (!member) return json(res, 200, { member: null, found: [] });
-    const job = startJob("transcribe", id, async () => JSON.stringify({ member, ...(await findVoices(id, { members: [member] })) }));
+    const job = startJob("transcribe", id, async () => {
+      const r = await findVoices(id, { members: [member] });
+      // Their face, wherever their voice is now known.
+      const { followPeople } = await import("./heard.ts");
+      const more = await followPeople(id, [body.asset!, ...r.found.map((f) => f.asset)]);
+      return JSON.stringify({ member, found: [...r.found, ...more.found], joined: more.joined, why: r.why });
+    });
     return json(res, 202, job);
   }
   if (section === "projects" && id && action === "transcripts" && parts[3] && req.method === "GET") {

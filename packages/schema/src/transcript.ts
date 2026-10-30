@@ -248,6 +248,63 @@ export function voiceSample(t: Pick<Transcript, "words">, speaker: string, most 
   return out.sort((a, b) => a.s - b.s);
 }
 
+/** A face or person found in a clip, as faces and voices are paired: its id and its boxes over time ([t, x, y, w, h]). */
+type Seen = { id: string; kind: string; samples: number[][] };
+
+/**
+ * Which face is whose voice in a clip, by who's on screen while each speaker talks. Every word a speaker says credits
+ * the faces on screen then: all of it to a face alone, a share by size when there are several. A speaker and a face
+ * are paired when each is the other's clear best (most of the speaker's words with that face on screen, well ahead of
+ * the next face, and that face on screen mostly for this speaker), so someone talking off camera (the person filming)
+ * pairs with nobody. Uses faces when the clip has any, else people.
+ */
+export function pairFacesVoices(subjects: Seen[], words: SaidWord[], opts: { least?: number; ahead?: number } = {}): { subject: string; speaker: string; share: number }[] {
+  const least = opts.least ?? 0.5;
+  const ahead = opts.ahead ?? 2;
+  const faces = subjects.some((s) => s.kind === "face") ? subjects.filter((s) => s.kind === "face") : subjects.filter((s) => s.kind === "person");
+  if (!faces.length) return [];
+  // How long each sample stands for: a little over half the usual gap either side (so a time between two samples is in
+  // one of them), within reason.
+  const gapOf = (f: Seen) => {
+    const ts = f.samples.map((x) => x[0]!).sort((a, b) => a - b);
+    const gaps = ts.slice(1).map((t, i) => t - ts[i]!).sort((a, b) => a - b);
+    return Math.min(1, Math.max(0.1, gaps[Math.floor(gaps.length / 2)] ?? 0.5));
+  };
+  const half = new Map(faces.map((f) => [f.id, gapOf(f) * 0.6]));
+  /** The size of each face on screen at `t` (0 when it isn't). */
+  const onScreen = (t: number) =>
+    faces.flatMap((f) => {
+      const h = half.get(f.id)!;
+      const s = f.samples.find((x) => Math.abs(x[0]! - t) <= h);
+      return s ? [{ id: f.id, size: s[3]! * s[4]! }] : [];
+    });
+  const credit = new Map<string, Map<string, number>>();
+  const talked = new Map<string, number>();
+  for (const w of words) {
+    if (!w.speaker) continue;
+    const d = Math.max(0.05, w.e - w.s);
+    talked.set(w.speaker, (talked.get(w.speaker) ?? 0) + d);
+    const there = onScreen((w.s + w.e) / 2);
+    const all = there.reduce((a, b) => a + b.size, 0);
+    const c = credit.get(w.speaker) ?? new Map<string, number>();
+    for (const f of there) c.set(f.id, (c.get(f.id) ?? 0) + (d * f.size) / (all || 1));
+    credit.set(w.speaker, c);
+  }
+  const of = (speaker: string, face: string) => credit.get(speaker)?.get(face) ?? 0;
+  const out: { subject: string; speaker: string; share: number }[] = [];
+  for (const [speaker, c] of credit) {
+    const [best, second] = [...c].sort((a, b) => b[1] - a[1]);
+    if (!best) continue;
+    const share = best[1] / talked.get(speaker)!;
+    if (share < least || (second && best[1] < second[1] * ahead)) continue;
+    // And that face is on screen mostly for this speaker, not just watching someone else.
+    const others = [...credit.keys()].filter((s) => s !== speaker).map((s) => of(s, best[0]));
+    if (others.some((x) => x * ahead > best[1])) continue;
+    out.push({ subject: best[0], speaker, share: Math.round(share * 100) / 100 });
+  }
+  return out;
+}
+
 /** A line of a transcript: words run together until a pause, a new speaker, or the end of a sentence after a while. */
 export type SaidLine = { s: number; e: number; text: string; speaker?: string };
 

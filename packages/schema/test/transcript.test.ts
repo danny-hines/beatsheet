@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignSpeakers, chooseTranscriber, linesOf, remapSpeakers, speakerLabel, voicesFromTurns, voiceSample, whoSpeaks, type TranscriberState } from "@beatsheet/schema";
+import { assignSpeakers, chooseTranscriber, linesOf, pairFacesVoices, remapSpeakers, speakerLabel, voicesFromTurns, voiceSample, whoSpeaks, type TranscriberState } from "@beatsheet/schema";
 
 const keys: Record<string, TranscriberState> = {
   scribe: { state: "ready" },
@@ -150,6 +150,41 @@ describe("knowing who's who across clips", () => {
     expect(whoSpeaks(cast, "tape", "speaker_1")?.id).toBe("grandpa");
     expect(whoSpeaks(cast, "tape", "speaker_0")).toBeUndefined();
     expect([speakerLabel("speaker_0"), speakerLabel("speaker_11"), speakerLabel("Mom")]).toEqual(["Speaker 1", "Speaker 12", "Mom"]);
+  });
+});
+
+describe("faces and voices", () => {
+  // Five samples a second of a face from `from` to `to`, at size `size` (a square, so its area is size²).
+  const track = (id: string, from: number, to: number, size = 0.3, kind = "face") => ({
+    id,
+    kind,
+    samples: Array.from({ length: Math.round((to - from) * 5) + 1 }, (_, i) => [from + i * 0.2, 0.1, 0.1, size, size]),
+  });
+  const say = (speaker: string, from: number, to: number) => Array.from({ length: Math.round((to - from) / 0.5) }, (_, i) => ({ w: "word", s: from + i * 0.5, e: from + i * 0.5 + 0.4, speaker }));
+
+  it("pairs each voice with the face on screen while it talks", () => {
+    const subjects = [track("face-1", 0, 4), track("face-2", 4, 8)];
+    const words = [...say("speaker_0", 0, 4), ...say("speaker_1", 4, 8)];
+    expect(pairFacesVoices(subjects, words)).toEqual([
+      { subject: "face-1", speaker: "speaker_0", share: 1 },
+      { subject: "face-2", speaker: "speaker_1", share: 1 },
+    ]);
+  });
+
+  it("pairs nobody with a voice off camera, or a face that's only listening", () => {
+    // Face 1 is on screen the whole time; speaker 0 is them, speaker 1 is the person filming.
+    const subjects = [track("face-1", 0, 8)];
+    const words = [...say("speaker_0", 0, 4), ...say("speaker_1", 4, 8)];
+    expect(pairFacesVoices(subjects, words)).toEqual([]);
+    // With speaker 1 talking only a little, face 1 is clearly speaker 0's.
+    expect(pairFacesVoices(subjects, [...say("speaker_0", 0, 6), ...say("speaker_1", 7, 7.5)])).toEqual([{ subject: "face-1", speaker: "speaker_0", share: 1 }]);
+  });
+
+  it("gives the bigger face the credit when two are on screen, and uses people when there are no faces", () => {
+    const subjects = [track("face-1", 0, 4, 0.4), track("face-2", 0, 4, 0.1)];
+    expect(pairFacesVoices(subjects, say("speaker_0", 0, 4))).toEqual([{ subject: "face-1", speaker: "speaker_0", share: 0.94 }]);
+    expect(pairFacesVoices([track("person-1", 0, 4, 0.5, "person")], say("speaker_0", 0, 4))).toEqual([{ subject: "person-1", speaker: "speaker_0", share: 1 }]);
+    expect(pairFacesVoices([track("cup", 0, 4, 0.5, "object")], say("speaker_0", 0, 4))).toEqual([]);
   });
 });
 

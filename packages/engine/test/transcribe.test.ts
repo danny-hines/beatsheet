@@ -226,6 +226,31 @@ describe("transcribing on whatever this computer has", () => {
     expect(cast().find((m) => m.id === "lily")!.heard).toEqual([{ asset: "cake", speaker: "speaker_0" }]);
   });
 
+  it("joins a face and the voice talking while it's on screen, whichever was named first", async () => {
+    const { joinFacesVoices, nameSpeaker } = await import("../src/heard.ts");
+    // Grandpa's face while "Happy birthday!" is said; another face while "Thanks!" is.
+    const face = (id: string, from: number, to: number) => ({
+      id,
+      label: id,
+      kind: "face" as const,
+      samples: Array.from({ length: Math.round((to - from) * 5) + 1 }, (_, i) => [from + i * 0.2, 0.2, 0.2, 0.3, 0.3]),
+    });
+    store.updateFile("party", (d) => {
+      d.assets[0]!.subjects = [face("face-1", 0, 1.2), face("face-2", 1.9, 2.6)];
+      d.cast = [{ id: "grandpa", name: "Grandpa", kind: "character", seen: [{ asset: "cake", subject: "face-1" }] }];
+    });
+    await t.transcribeAsset("party", "cake", { with: "scribe" });
+    // Transcribing joined them: Grandpa's face was named, so the voice talking over it is his.
+    expect(store.loadFile("party").doc.cast![0]!.heard).toEqual([{ asset: "cake", speaker: "speaker_0" }]);
+
+    // Naming the other voice names the face on screen while it talks.
+    nameSpeaker("party", "cake", "speaker_1", { name: "Lily" });
+    expect(joinFacesVoices("party", "cake")).toEqual([{ asset: "cake", subject: "face-2", speaker: "speaker_1", member: "lily", by: "voice" }]);
+    expect(store.loadFile("party").doc.cast!.find((m) => m.id === "lily")!.seen).toEqual([{ asset: "cake", subject: "face-2" }]);
+    // Nothing more to join, and a face and voice named as two people stay as they are.
+    expect(joinFacesVoices("party", "cake")).toEqual([]);
+  });
+
   it("says when there's nothing to hear", async () => {
     await expect(t.transcribeAsset("party", "silent")).rejects.toThrow("It has no sound to transcribe");
     await expect(t.transcribeAsset("party", "photo")).rejects.toThrow("is a photo");

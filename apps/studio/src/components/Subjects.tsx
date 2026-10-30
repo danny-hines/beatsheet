@@ -1,7 +1,7 @@
 import { formatTime, pictureOf, subjectAt, type Asset, type ClipEffect, type ProjectFile, type Rect, type Shot, type SubjectTrack } from "@beatsheet/schema";
 import { useState } from "react";
 import { runJob } from "../lib";
-import { actions, useProject, useStore } from "../store";
+import { actions, getState, setState, useProject, useStore } from "../store";
 import { MotionSelect } from "./Designed";
 import { TextField } from "./ui";
 
@@ -108,10 +108,15 @@ export function SubjectTools({
     try {
       await actions.flushSave();
       const res = await fetch(`/api/projects/${projectId}/cast/from-subject`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ asset: a.id, subject, ...(into !== "new" ? { into } : {}) }) });
-      const j = (await res.json()) as { member?: string; error?: string };
+      const j = (await res.json()) as { member?: string; voice?: string; error?: string };
       if (!j.member) throw new Error(j.error ?? "Couldn't add them to the cast");
       await actions.reload();
       actions.select({ kind: "cast", id: j.member });
+      // They were the one talking while on screen: their voice is theirs now too, here and in the other clips it's heard in.
+      if (j.voice) {
+        const m = getState().doc?.cast?.find((x) => x.id === j.member);
+        setState({ notice: `${m?.name || "They"} ${m?.name ? "is" : "are"} the one talking in this clip, so that voice is named too${(m?.heard?.length ?? 0) > 1 ? `, and heard in ${m!.heard!.length - 1} other clip${m!.heard!.length === 2 ? "" : "s"}` : ""}.` });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

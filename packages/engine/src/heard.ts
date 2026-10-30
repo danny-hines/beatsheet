@@ -10,7 +10,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { slugify, voicesFromTurns, voiceSample, type CastMember, type Project } from "@beatsheet/schema";
+import { pairFacesVoices, slugify, voicesFromTurns, voiceSample, whoSpeaks, type CastMember, type Project } from "@beatsheet/schema";
 import { assetPath } from "./paths.ts";
 import { runSpeakers, speakersReady } from "./speakers.ts";
 import { loadProject, updateFile } from "./store.ts";
@@ -58,6 +58,59 @@ export function nameSpeaker(projectId: string, asset: string, speaker: string, w
 }
 
 type Found = { asset: string; speaker: string; member: string };
+/** A face and a voice in a clip found to be the same person: `by` is the one they were already named by. */
+export type Joined = { asset: string; subject: string; speaker: string; member: string; by: "face" | "voice" };
+
+/**
+ * A clip's faces and voices paired by who's on screen while each speaker talks (pairFacesVoices), and a person named
+ * by one named by the other: their face seen as them, or their voice heard as them. A face and a voice already named
+ * as two different people are left as they are.
+ */
+export function joinFacesVoices(projectId: string, assetId: string): Joined[] {
+  const { project } = loadProject(projectId);
+  const a = project.assets.find((x) => x.id === assetId);
+  if (!a?.subjects?.length || !a.transcript?.speakers) return [];
+  const t = readTranscript(projectId, assetId);
+  if (!t) return [];
+  const joined: Joined[] = [];
+  const faceOf = (subject: string) => project.cast?.find((m) => m.seen?.some((s) => s.asset === assetId && s.subject === subject));
+  for (const p of pairFacesVoices(a.subjects, t.words)) {
+    const byFace = faceOf(p.subject);
+    const byVoice = whoSpeaks(project.cast, assetId, p.speaker);
+    if (byFace && !byVoice) joined.push({ asset: assetId, subject: p.subject, speaker: p.speaker, member: byFace.id, by: "face" });
+    else if (byVoice && !byFace) joined.push({ asset: assetId, subject: p.subject, speaker: p.speaker, member: byVoice.id, by: "voice" });
+  }
+  if (joined.length)
+    updateFile(projectId, (d) => {
+      for (const j of joined) {
+        const m = d.cast?.find((x) => x.id === j.member);
+        if (!m) continue;
+        if (j.by === "face") m.heard = [...(m.heard ?? []), { asset: j.asset, speaker: j.speaker }];
+        else m.seen = [...(m.seen ?? []), { asset: j.asset, subject: j.subject }];
+      }
+    });
+  return joined;
+}
+
+/**
+ * After people are named (by face or voice) in some clips: each clip's faces and voices joined, then any voice that
+ * got its name from a face looked for in the other clips, whose faces are joined in turn. A few rounds at most.
+ */
+export async function followPeople(projectId: string, assets: string[]): Promise<{ joined: Joined[]; found: Found[] }> {
+  const joined: Joined[] = [];
+  const found: Found[] = [];
+  let todo = [...new Set(assets)];
+  for (let round = 0; round < 3 && todo.length; round++) {
+    const j = todo.flatMap((a) => joinFacesVoices(projectId, a));
+    joined.push(...j);
+    const voices = [...new Set(j.filter((x) => x.by === "face").map((x) => x.member))];
+    if (!voices.length) break;
+    const r = await findVoices(projectId, { members: voices });
+    found.push(...r.found);
+    todo = [...new Set(r.found.map((f) => f.asset))];
+  }
+  return { joined, found };
+}
 
 /**
  * Looks for the named people in clips: every transcribed clip with speakers (or the ones asked about), for everyone

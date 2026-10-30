@@ -537,10 +537,12 @@ function NameSpeaker({ asset, speaker, x, y, onClose, onNamed }: { asset: Asset;
       await actions.flushSave();
       const out = await runJob(`/api/projects/${projectId}/speakers`, { asset: asset.id, speaker, ...who });
       await actions.reload();
-      const r = out ? (JSON.parse(out) as { member: string; found: { asset: string }[]; why?: string }) : undefined;
+      const r = out ? (JSON.parse(out) as { member: string; found: { asset: string }[]; joined?: { member: string; by: string }[]; why?: string }) : undefined;
       const m = r && getState().doc?.cast?.find((x) => x.id === r.member);
       const clips = r ? new Set(r.found.map((f) => f.asset)).size : 0;
-      onNamed(!m ? "" : clips ? `Found ${m.name} in ${clips} other clip${clips === 1 ? "" : "s"} too.` : r?.why ? `${r.why}.` : `Didn't hear ${m.name} in your other clips.`);
+      const faces = r?.joined?.filter((j) => j.member === r.member && j.by === "voice").length ?? 0;
+      const face = faces ? ` Their face is named where they're talking on screen${faces > 1 ? ` (${faces} clips)` : ""}.` : "";
+      onNamed(!m ? "" : (clips ? `Found ${m.name} in ${clips} other clip${clips === 1 ? "" : "s"} too.` : r?.why ? `${r.why}.` : `Didn't hear ${m.name} in your other clips.`) + face);
     } catch (err) {
       setState({ notice: err instanceof Error ? err.message : String(err) });
       onClose();

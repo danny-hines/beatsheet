@@ -66,7 +66,7 @@ export async function stillOfSubject(file: string, video: boolean, sample: numbe
  * Makes a cast member from a subject found in an asset, or adds the subject to one (`into`): it's seen there, and in
  * the stills cut from there (one from a photo, up to three from a clip). Returns the member's id and the stills'.
  */
-export async function castFromSubject(projectId: string, ask: { asset: string; subject: string; into?: string }): Promise<{ member: string; still: string; stills: string[] }> {
+export async function castFromSubject(projectId: string, ask: { asset: string; subject: string; into?: string }): Promise<{ member: string; still: string; stills: string[]; voice?: string }> {
   const { project, dir } = loadProject(projectId);
   const a = project.assets.find((x) => x.id === ask.asset);
   if (!a) throw new Error(`No asset "${ask.asset}"`);
@@ -112,5 +112,9 @@ export async function castFromSubject(projectId: string, ask: { asset: string; s
       if (!seen.some((x) => x.asset === add.asset && x.subject === add.subject)) seen.push(add);
     m.seen = seen;
   });
-  return { member, still: stills[0]!.id, stills: stills.map((x) => x.id) };
+  // Their voice, if they're the one talking while they're on screen, and then the other clips it's heard in.
+  const { followPeople } = await import("./heard.ts");
+  const { joined } = await followPeople(projectId, [a.id]).catch(() => ({ joined: [] as { member: string; by: string; speaker: string }[] }));
+  const voice = joined.find((j) => j.member === member && j.by === "face")?.speaker;
+  return { member, still: stills[0]!.id, stills: stills.map((x) => x.id), ...(voice ? { voice } : {}) };
 }

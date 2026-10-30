@@ -127,6 +127,9 @@ async function viaCodex(work: string, a: Ask): Promise<PlanImage> {
   if (!codex) throw new FalError("Codex isn't installed, so the ChatGPT plan can't make pictures. Settings → Agent installs it.", true);
   const rpc = new StdioRpc("Codex");
   let said = "";
+  let thread = "";
+  /** A turn that ended with no picture and no error is asked once more: the model can say it's done without having made it. */
+  let nudged = false;
   const done = new Promise<PlanImage>((resolve, reject) => {
     let image: PlanImage | undefined;
     rpc.on("notification", (m: string, p: { item?: { type: string; text?: string } & CodexImage; turn?: { status: string; error?: { message: string } | null } }) => {
@@ -141,6 +144,11 @@ async function viaCodex(work: string, a: Ask): Promise<PlanImage> {
       if (m === "turn/completed") {
         if (image) return resolve(image);
         const err = p.turn?.error?.message;
+        if (!err && !nudged) {
+          nudged = true;
+          const again = [{ type: "text", text: "You haven't made the picture yet. Make it now with your image generation tool.", text_elements: [] }];
+          return void rpc.request("turn/start", { threadId: thread, input: again }).catch((e: Error) => reject(new FalError(`Codex: ${e.message}`, false)));
+        }
         reject(new FalError(err ? `Codex: ${err}` : `Codex didn't make a picture${said ? `: "${said.slice(0, 200)}"` : ""}`, !err));
       }
     });
@@ -151,6 +159,7 @@ async function viaCodex(work: string, a: Ask): Promise<PlanImage> {
   await rpc.request("initialize", { clientInfo: { name: "beatsheet_studio", title: "beatsheet studio", version: "0.1.0" }, capabilities: null });
   rpc.notify("initialized");
   const t = await rpc.request<{ thread: { id: string } }>("thread/start", { cwd: work, ephemeral: true, approvalPolicy: "never", sandbox: "read-only", developerInstructions: ONLY });
+  thread = t.thread.id;
   const input = [{ type: "text", text: askFor(a), text_elements: [] }, ...(a.refs ?? []).map((path) => ({ type: "localImage", path }))];
   await rpc.request("turn/start", { threadId: t.thread.id, input });
   return turn(rpc, "Codex", done);

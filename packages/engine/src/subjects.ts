@@ -140,6 +140,9 @@ export async function findSubjects(id: string, assetId: string, onProgress?: Pro
     if (!asset.subjects.length) delete asset.subjects;
     result = fresh;
   });
+  // Faces in a clip whose voices are named (or the other way round) are the same people.
+  const { followPeople } = await import("./heard.ts");
+  await followPeople(id, [assetId]).catch(() => undefined);
   return result;
 }
 

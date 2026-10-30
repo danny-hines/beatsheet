@@ -212,10 +212,12 @@ export async function transcribeAsset(
       if (!m.heard.length) delete m.heard;
     }
   });
-  // And the people named in other clips are looked for here, where the speaker labeller can do it.
+  // And the people named in other clips are looked for here, where the speaker labeller can do it, and its faces and
+  // voices joined, so someone named by their face here is known by their voice too.
   if (speakers) {
-    const { findVoices } = await import("./heard.ts");
+    const { findVoices, followPeople } = await import("./heard.ts");
     await findVoices(projectId, { assets: [assetId] }).catch(() => undefined);
+    await followPeople(projectId, [assetId]).catch(() => undefined);
   }
   return { transcript, choice };
 }

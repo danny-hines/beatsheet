@@ -993,7 +993,9 @@ server.registerTool(
   },
   async ({ project: id, asset, subject, into }) => {
     const r = await castFromSubject(id, { asset, subject, into });
-    return text(`@${r.member} is seen in ${asset} and in ${r.stills.length === 1 ? `the still ${r.still}` : `${r.stills.length} stills from moments apart (${r.stills.join(", ")})`}. Describe them in /cast (about), then make their sheet with generate (sheet: "${r.member}").`);
+    return text(
+      `@${r.member} is seen in ${asset} and in ${r.stills.length === 1 ? `the still ${r.still}` : `${r.stills.length} stills from moments apart (${r.stills.join(", ")})`}.${r.voice ? ` They're the one talking while they're on screen (${r.voice} in its transcript), so that voice is theirs too.` : ""} Describe them in /cast (about), then make their sheet with generate (sheet: "${r.member}").`,
+    );
   },
 );
 
@@ -1070,12 +1072,16 @@ server.registerTool(
     },
   },
   async ({ project: id, asset, speaker, cast, name }) => {
-    const { nameSpeaker, findVoices } = await import("./heard.ts");
+    const { nameSpeaker, findVoices, followPeople } = await import("./heard.ts");
     const member = nameSpeaker(id, asset, speaker, { cast, name });
     if (!member) return text(`${speaker} in ${asset} has no name now.`);
-    const { found, why } = await findVoices(id, { members: [member] });
-    const where = found.map((f) => `${f.asset} (${f.speaker})`);
-    return text(`${speaker} in ${asset} is @${member}.${where.length ? ` Found them in ${where.join(", ")} too.` : why ? ` (${why}.)` : " Not heard in any other transcribed clip."}`);
+    const r = await findVoices(id, { members: [member] });
+    const more = await followPeople(id, [asset, ...r.found.map((f) => f.asset)]);
+    const where = [...r.found, ...more.found].map((f) => `${f.asset} (${f.speaker})`);
+    const faces = more.joined.filter((j) => j.member === member && j.by === "voice").map((j) => `${j.subject} in ${j.asset}`);
+    return text(
+      `${speaker} in ${asset} is @${member}.${where.length ? ` Heard them in ${where.join(", ")} too.` : r.why ? ` (${r.why}.)` : " Not heard in any other transcribed clip."}${faces.length ? ` Their face: ${faces.join(", ")}.` : ""}`,
+    );
   },
 );
 
