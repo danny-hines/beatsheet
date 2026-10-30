@@ -180,6 +180,20 @@ describe("faces and voices", () => {
     expect(pairFacesVoices(subjects, [...say("speaker_0", 0, 6), ...say("speaker_1", 7, 7.5)])).toEqual([{ subject: "face-1", speaker: "speaker_0", share: 1 }]);
   });
 
+  it("pairs a voice with both pieces of a face the tracker lost and found again, but not with two faces at once", () => {
+    // She's on screen 2–4s and 6–8s, tracked as two faces; he talks 0–2s and 4–6s on his own face.
+    const subjects = [track("face-1", 0, 2), track("face-2", 2, 4), track("face-1b", 4, 6), track("face-3", 6, 8)];
+    const words = [...say("speaker_0", 0, 2), ...say("speaker_1", 2, 4), ...say("speaker_0", 4, 6), ...say("speaker_1", 6, 8)];
+    expect(pairFacesVoices(subjects, words)).toEqual([
+      { subject: "face-1", speaker: "speaker_0", share: 0.5 },
+      { subject: "face-1b", speaker: "speaker_0", share: 0.5 },
+      { subject: "face-2", speaker: "speaker_1", share: 0.5 },
+      { subject: "face-3", speaker: "speaker_1", share: 0.5 },
+    ]);
+    // Two faces on screen together the whole time while one voice talks: which is talking can't be told.
+    expect(pairFacesVoices([track("face-1", 0, 4), track("face-2", 0, 4)], say("speaker_0", 0, 4))).toEqual([]);
+  });
+
   it("gives the bigger face the credit when two are on screen, and uses people when there are no faces", () => {
     const subjects = [track("face-1", 0, 4, 0.4), track("face-2", 0, 4, 0.1)];
     expect(pairFacesVoices(subjects, say("speaker_0", 0, 4))).toEqual([{ subject: "face-1", speaker: "speaker_0", share: 0.94 }]);

@@ -256,7 +256,8 @@ type Seen = { id: string; kind: string; samples: number[][] };
  * the faces on screen then: all of it to a face alone, a share by size when there are several. A speaker and a face
  * are paired when each is the other's clear best (most of the speaker's words with that face on screen, well ahead of
  * the next face, and that face on screen mostly for this speaker), so someone talking off camera (the person filming)
- * pairs with nobody. Uses faces when the clip has any, else people.
+ * pairs with nobody. A person the tracker split in two (they left the frame and came back) can pair with both pieces,
+ * since the pieces are never on screen together. Uses faces when the clip has any, else people.
  */
 export function pairFacesVoices(subjects: Seen[], words: SaidWord[], opts: { least?: number; ahead?: number } = {}): { subject: string; speaker: string; share: number }[] {
   const least = opts.least ?? 0.5;
@@ -291,18 +292,32 @@ export function pairFacesVoices(subjects: Seen[], words: SaidWord[], opts: { lea
     credit.set(w.speaker, c);
   }
   const of = (speaker: string, face: string) => credit.get(speaker)?.get(face) ?? 0;
+  /** A face on screen mostly for this speaker, not just watching someone else. */
+  const theirs = (speaker: string, face: string) => ![...credit.keys()].some((s) => s !== speaker && of(s, face) * ahead > of(speaker, face));
+  // Two faces never on screen at once may be one person the tracker lost and found again (out of frame and back).
+  const times = new Map(faces.map((f) => [f.id, f.samples.map((x) => x[0]!)]));
+  const together = (a: string, b: string) => {
+    const tb = times.get(b)!;
+    const h = Math.max(half.get(a)!, half.get(b)!);
+    return times.get(a)!.some((t) => tb.some((u) => Math.abs(t - u) <= h));
+  };
   const out: { subject: string; speaker: string; share: number }[] = [];
   for (const [speaker, c] of credit) {
-    const [best, second] = [...c].sort((a, b) => b[1] - a[1]);
-    if (!best) continue;
-    const share = best[1] / talked.get(speaker)!;
-    if (share < least || (second && best[1] < second[1] * ahead)) continue;
-    // And that face is on screen mostly for this speaker, not just watching someone else.
-    const others = [...credit.keys()].filter((s) => s !== speaker).map((s) => of(s, best[0]));
-    if (others.some((x) => x * ahead > best[1])) continue;
-    out.push({ subject: best[0], speaker, share: Math.round(share * 100) / 100 });
+    const said = talked.get(speaker)!;
+    const ranked = [...c].sort((a, b) => b[1] - a[1]);
+    if (!ranked.length || !theirs(speaker, ranked[0]![0])) continue;
+    // The best face, and any more of them that are this speaker's, never on screen with the ones already taken, and
+    // carry a fair part of what they said.
+    const took = [ranked[0]!];
+    for (const r of ranked.slice(1)) if (r[1] >= said * 0.15 && theirs(speaker, r[0]) && !took.some((x) => together(x[0], r[0]))) took.push(r);
+    const sum = took.reduce((a, x) => a + x[1], 0);
+    const next = ranked.find((r) => !took.includes(r));
+    if (sum / said < least || (next && sum < next[1] * ahead)) continue;
+    for (const [face, got] of took) out.push({ subject: face, speaker, share: Math.round((got / said) * 100) / 100 });
   }
-  return out;
+  // Each speaker's faces in the order they appear.
+  const first = (face: string) => Math.min(...times.get(face)!);
+  return out.sort((a, b) => a.speaker.localeCompare(b.speaker) || first(a.subject) - first(b.subject));
 }
 
 /** A line of a transcript: words run together until a pause, a new speaker, or the end of a sentence after a while. */
