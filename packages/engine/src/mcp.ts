@@ -1014,7 +1014,7 @@ server.registerTool(
   },
   async ({ project: id, asset, with: by, speakers, people }) => {
     const { transcribeAsset, transcriptLines } = await import("./transcribe.ts");
-    const { transcript: t, choice } = await transcribeAsset(id, asset, { with: by, speakers, people });
+    const { transcript: t, choice } = await transcribeAsset(id, asset, { with: by, speakers, people, spendable: turnBudget() - spentThisTurn(id) });
     const lines = transcriptLines(t);
     const voices = new Set(t.words.map((w) => w.speaker).filter(Boolean)).size;
     return text(

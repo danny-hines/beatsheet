@@ -15,6 +15,8 @@ import { assetPath, projectDir } from "./paths.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { loadProject, updateFile } from "./store.ts";
 import { runSpeakers, speakersReady } from "./speakers.ts";
+import { assertSpendable } from "./make.ts";
+import { recordSpend } from "./spend.ts";
 import { runWhisper, whisperReady, whisperStatus } from "./whispercpp.ts";
 
 const exec = promisify(execFile);
@@ -176,7 +178,7 @@ async function onOpenAI(file: string, seconds: number | undefined, onProgress: (
 export async function transcribeAsset(
   projectId: string,
   assetId: string,
-  opts: { with?: string; speakers?: boolean; people?: number; onProgress?: (f: number) => void } = {},
+  opts: { with?: string; speakers?: boolean; people?: number; spendable?: number; onProgress?: (f: number) => void } = {},
 ): Promise<{ transcript: Transcript; choice: TranscriberChoice }> {
   const { project, dir } = loadProject(projectId);
   const a = project.assets.find((x) => x.id === assetId);
@@ -193,8 +195,11 @@ export async function transcribeAsset(
   const file = assetPath(project, dir, a);
   if (!existsSync(file)) throw new Error(`Its file isn't there: ${file}`);
   const onProgress = opts.onProgress ?? (() => {});
+  // A service's cost counts against the spending limit, like making does.
+  if (choice.usd) assertSpendable(choice.usd, { spendable: opts.spendable });
   const r =
     choice.id === "whisper" ? await onWhisper(file, onProgress, opts.people) : choice.id === "scribe" ? await onScribe(file, a.duration, opts.people) : await onOpenAI(file, a.duration, onProgress);
+  if (r.costUsd) recordSpend(projectId, { what: `Transcribed ${a.label ?? a.id}`, by: choice.id === "scribe" ? "elevenlabs:scribe_v2" : "openai:whisper-1", usd: r.costUsd });
   const transcript: Transcript = { by: choice.id, ...(r.model ? { model: r.model } : {}), ...(r.language ? { language: r.language } : {}), at: new Date().toISOString(), words: r.words, ...(r.events ? { events: r.events } : {}), ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}) };
   const before = readTranscript(projectId, assetId);
   const out = transcriptFile(projectId, assetId);
