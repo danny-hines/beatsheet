@@ -1162,7 +1162,7 @@ server.registerTool(
     if (only) return text(`Restoring ${what}: ${how}.`);
     const r = await restoreClip(id, asset, { from, to, steps, upscaleWith: by, ...(use ? { use: { cut } } : {}), spendable: turnBudget() - spentThisTurn(id) });
     return text(
-      `${r.asset.id} is ${what}, a version of ${asset} (${how}; took ${Math.max(1, Math.round(r.seconds / 60))} min).${r.shots.length ? ` Shown in ${r.shots.join(", ")}.` : use ? " No clip shot of it in the cut is inside that stretch." : ` Show it in a clip shot of ${asset} with content.version: "${r.asset.id}" (or restore with use: true).`}`,
+      `${r.asset.id} is ${what}, a version of ${asset} (${how}; took ${r.seconds < 90 ? `${r.seconds}s` : `${Math.round(r.seconds / 60)} min`}).${r.shots.length ? ` Shown in ${r.shots.join(", ")}.` : use ? " No clip shot of it in the cut is inside that stretch." : ` Show it in a clip shot of ${asset} with content.version: "${r.asset.id}" (or restore with use: true).`}`,
     );
   },
 );
