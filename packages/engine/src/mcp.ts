@@ -997,6 +997,51 @@ server.registerTool(
 );
 
 server.registerTool(
+  "transcribe",
+  {
+    description:
+      "Transcribe what's said in a clip or sound file: every word with its time, and who said it when the transcriber can tell. Auto picks what suits this computer: Whisper here when it's installed and quick, otherwise a service with the person's key (ElevenLabs Scribe, which also tells speakers apart and marks laughter and applause; OpenAI's Whisper). Without `with`, say what you need: speakers: true when it matters who said what (a family tape, an interview). Services cost a little (about 22¢ to 36¢ an hour of audio). Read it back with transcript.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      with: z.enum(["whisper", "scribe", "openai-whisper"]).optional().describe("A transcriber; default Auto, the best this computer can use now"),
+      speakers: z.boolean().optional().describe("Only a transcriber that tells speakers apart"),
+    },
+  },
+  async ({ project: id, asset, with: by, speakers }) => {
+    const { transcribeAsset, transcriptLines } = await import("./transcribe.ts");
+    const { transcript: t, choice } = await transcribeAsset(id, asset, { with: by, speakers });
+    const lines = transcriptLines(t);
+    const people = new Set(t.words.map((w) => w.speaker).filter(Boolean)).size;
+    return text(
+      [
+        `${asset}: ${t.words.length} words in ${lines.length} lines${t.language ? `, in ${t.language}` : ""}${people ? `, ${people} speaker${people === 1 ? "" : "s"}` : ""}, by ${choice.label}${choice.where ? ` ${choice.where}` : ""}${t.costUsd ? ` (about $${t.costUsd.toFixed(2)})` : ""}.`,
+        ...lines.slice(0, 12).map((l) => `- ${formatTime(l.s)}${l.speaker ? ` ${l.speaker}` : ""}: ${l.text}`),
+        ...(lines.length > 12 ? [`… transcript has the rest (search it, or ask for a stretch with from/to).`] : []),
+      ].join("\n"),
+    );
+  },
+);
+
+server.registerTool(
+  "transcript",
+  {
+    description:
+      "What was said in a transcribed clip, a line at a time: when, who (when the transcriber told speakers apart) and the words. Narrow it to a stretch (from, to, in seconds) or to the lines that have every word of `search`, to find a line that fits.",
+    inputSchema: { project: projectArg, asset: z.string(), from: z.number().optional(), to: z.number().optional(), search: z.string().optional() },
+  },
+  async ({ project: id, asset, from, to, search }) => {
+    const { readTranscript, transcriptLines } = await import("./transcribe.ts");
+    const t = readTranscript(id, asset);
+    if (!t) return text(`${asset} hasn't been transcribed; transcribe it first.`);
+    const lines = transcriptLines(t, { from, to, search });
+    if (!lines.length) return text(search ? `Nothing in ${asset} says "${search}".` : "Nothing said in that stretch.");
+    const shown = lines.slice(0, 200);
+    return text([...shown.map((l) => `- ${formatTime(l.s)}–${formatTime(l.e)}${l.speaker ? ` ${l.speaker}` : ""}: ${l.text}`), ...(lines.length > shown.length ? [`(${lines.length - shown.length} more; narrow it with from/to)`] : [])].join("\n"));
+  },
+);
+
+server.registerTool(
   "split_at_cuts",
   {
     description:

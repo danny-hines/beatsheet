@@ -262,6 +262,16 @@ export const Asset = z.object({
   provenance: Provenance.optional(),
   color: z.string().optional().describe("Stand-in swatch when no thumbnail exists yet"),
   subjects: z.array(SubjectTrack).optional().describe("Faces, people and things found or followed in it, for effects that follow them"),
+  transcript: z
+    .object({
+      by: z.string().describe("The transcriber: whisper, scribe, openai-whisper"),
+      language: z.string().optional(),
+      at: z.string(),
+      words: z.number().int().describe("How many words were said"),
+      speakers: z.number().int().optional().describe("How many people it heard, when the transcriber tells them apart"),
+    })
+    .optional()
+    .describe("What was said in it, word by word, kept beside the project in transcripts/<id>.json"),
   playable: z
     .object({
       deinterlace: z.boolean().optional().describe("Interlaced (tape, DV, a DVD): each field becomes a frame, so it plays at twice its frame rate"),

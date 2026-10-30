@@ -5,6 +5,7 @@ import { actions, useStore, type State } from "../store";
 import { Mark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
 import { MakeSection, useMakeSummary } from "./MakeSettings";
+import { TranscribeSection, useTranscribeSummary } from "./TranscribeSettings";
 
 type SetupInfo = NonNullable<State["setup"]>;
 
@@ -23,6 +24,7 @@ const ABOUT = {
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
   abilities: "Everything the agent can do with what's set up now.",
   make: "What making pictures and video may spend, and which models Auto tries first.",
+  transcribe: "Turning what's said in a clip into words with their times: on this computer, or a service with your key.",
 };
 
 /** The agent list, asked for once; each CLI takes a moment to answer. */
@@ -115,6 +117,7 @@ const PANES = [
   { id: "voices", label: "Voices" },
   { id: "services", label: "Media services" },
   { id: "make", label: "Making" },
+  { id: "transcribe", label: "Transcription" },
   { id: "abilities", label: "What it can do" },
 ] as const;
 type Pane = (typeof PANES)[number]["id"];
@@ -127,6 +130,7 @@ export function SettingsDialog() {
   const [pane, setPane] = useState<Pane>(() => (PANES.some((p) => p.id === asked) ? (asked as Pane) : "agent"));
   const voices = useVoices();
   const makeSummary = useMakeSummary();
+  const transcribeSummary = useTranscribeSummary();
   const close = () => actions.setSettingsOpen(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
@@ -143,6 +147,7 @@ export function SettingsDialog() {
     voices: voiceLabel(voices, voices?.default ?? voices?.fallback),
     services: added ? `${added} added` : "None added",
     make: makeSummary,
+    transcribe: transcribeSummary,
     abilities: `${BUILT_IN.length + ON_THIS_MAC.filter((x) => localAbility(setup, x)).length + setup.capabilities.length} things`,
   };
   const title = PANES.find((p) => p.id === pane)!.label;
@@ -179,6 +184,8 @@ export function SettingsDialog() {
               <ServicesSection services={setup.services} />
             ) : pane === "make" ? (
               <MakeSection />
+            ) : pane === "transcribe" ? (
+              <TranscribeSection />
             ) : (
               <Abilities setup={setup} />
             )}

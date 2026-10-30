@@ -11,6 +11,8 @@ import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type Rect } from "@beats
 import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
 import { listAgents, RUNTIME } from "./agents.ts";
 import { PLANS, planStates } from "./plans.ts";
+import { readTranscript, transcribeAsset, transcribeChoices, transcriberStates, transcriptLines } from "./transcribe.ts";
+import { cancelWhisperInstall, installWhisper, MODELS, removeWhisper, whisperStatus, type ModelSize } from "./whispercpp.ts";
 import { addServiceKey, capabilities, findSavedKeys, listServices, recheckService, removeServiceKey } from "./services.ts";
 import { readSettings, updateSettings } from "./settings.ts";
 import { answerMessage, currentTurn, keepProposals, skipAsk, takeNotes, undoAgentTurn, type Answer } from "./turns.ts";
@@ -113,7 +115,7 @@ export function sendFile(req: IncomingMessage, res: ServerResponse, file: string
 
 export type Job = {
   id: string;
-  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate";
+  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe";
   project: string;
   format?: string;
   status: "running" | "done" | "error";
@@ -129,6 +131,7 @@ const JOB_WORDS: Record<Job["kind"], string> = {
   subjects: "finding people",
   record: "saving a recording",
   narrate: "voicing the narration",
+  transcribe: "transcribing",
 };
 /** Kept for older imports. */
 export type RenderJob = Job;
@@ -365,6 +368,32 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, samStatus());
     }
     // Kokoro on this Mac, installed and removed like SAM 3.
+    // Transcribing: Whisper on this computer (its install, sized for this machine), the order Auto tries transcribers
+    // in, and the size of Whisper's model.
+    if (id === "transcribe" && req.method === "GET") {
+      const t = readSettings().transcribe ?? {};
+      return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), ranking: t.ranking ?? [], whisperModel: t.whisperModel });
+    }
+    if (id === "transcribe" && req.method === "POST") {
+      const change = body as unknown as { ranking?: string[]; whisperModel?: ModelSize | null };
+      updateSettings((s) => {
+        const t = (s.transcribe ??= {});
+        if (change.ranking) t.ranking = change.ranking;
+        if (change.whisperModel === null) delete t.whisperModel;
+        else if (change.whisperModel && change.whisperModel in MODELS) t.whisperModel = change.whisperModel;
+      });
+      const t = readSettings().transcribe ?? {};
+      return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), ranking: t.ranking ?? [], whisperModel: t.whisperModel });
+    }
+    if (id === "whisper" && action === "install" && req.method === "POST") return json(res, 202, await installWhisper((body as { model?: ModelSize }).model));
+    if (id === "whisper" && action === "cancel" && req.method === "POST") {
+      cancelWhisperInstall();
+      return json(res, 200, await whisperStatus());
+    }
+    if (id === "whisper" && !action && req.method === "DELETE") {
+      removeWhisper();
+      return json(res, 200, await whisperStatus());
+    }
     if (id === "kokoro" && req.method === "GET") return json(res, 200, kokoroStatus());
     if (id === "kokoro" && action === "install" && req.method === "POST") return json(res, 202, installKokoro());
     if (id === "kokoro" && action === "cancel" && req.method === "POST") {
@@ -558,6 +587,26 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const body = JSON.parse((await readBody(req)) || "{}") as { from?: string; to?: string };
     if (!body.from || !body.to) return json(res, 400, { error: "Renamed from what, to what?" });
     return json(res, 200, { moved: renameInJobs(id, body.from, body.to) });
+  }
+  // What was said in a clip: who could transcribe it here and for how much, then doing it (a job), then reading it.
+  if (section === "projects" && id && action === "transcribe" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const a = loadProject(id).project.assets.find((x) => x.id === q.get("asset"));
+    return json(res, 200, await transcribeChoices(a?.duration, q.get("speakers") === "1"));
+  }
+  if (section === "projects" && id && action === "transcribe" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; with?: string; speakers?: boolean };
+    if (!body.asset) return json(res, 400, { error: "Transcribe which clip?" });
+    const job = startJob("transcribe", id, async (j) => {
+      const r = await transcribeAsset(id, body.asset!, { with: body.with, speakers: body.speakers, onProgress: (f) => (j.progress = f * 0.95) });
+      return `${r.transcript.words.length}`;
+    });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "transcripts" && parts[3] && req.method === "GET") {
+    const t = readTranscript(id, parts[3]);
+    if (!t) return json(res, 404, { error: "It hasn't been transcribed" });
+    return json(res, 200, { ...t, lines: transcriptLines(t) });
   }
   // A long file (a tape, a DVD) split into its shots, as moments.
   if (section === "projects" && id && action === "split" && req.method === "POST") {

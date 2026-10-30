@@ -1,6 +1,6 @@
 import { formatTime, slugify, type Asset, type Moment, type Rect } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
-import { hideBroken, posterUrl, proxyUrl, stripUrl, OS, pathParts } from "../lib";
+import { hideBroken, posterUrl, proxyUrl, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
 import { actions, getState, useStore } from "../store";
 import { Stars, TextField } from "./ui";
@@ -264,6 +264,8 @@ export function AssetView({ a }: { a: Asset }) {
         </>
       )}
 
+      {a.kind !== "image" && !a.cutout && <Said a={a} seek={seek} />}
+
       {(isVideo || a.kind === "image") && !a.cutout && (
         <SubjectTools a={a} t={isVideo ? t : 0} boxing={boxing} setBoxing={setBoxing} hover={hover} setHover={setHover} seek={seek} />
       )}
@@ -359,6 +361,138 @@ export function AssetView({ a }: { a: Asset }) {
         </dl>
       </details>
     </div>
+  );
+}
+
+type Choice = { id: string; label: string; ok: boolean; why?: string; kind?: string; where?: string; seconds?: number; usd?: number };
+type Said = { by: string; language?: string; lines: { s: number; e: number; text: string; speaker?: string }[]; costUsd?: number };
+
+const about = (c: Choice) => [c.where, c.usd !== undefined ? `~$${c.usd < 0.01 ? "0.01" : c.usd.toFixed(2)}` : "free", c.seconds !== undefined ? `~${c.seconds < 90 ? `${Math.max(5, c.seconds)}s` : `${Math.round(c.seconds / 60)} min`}` : ""].filter(Boolean).join(" · ");
+
+/**
+ * What's said in a clip: transcribed by whichever transcriber suits this computer (Whisper here, or a service with a
+ * key; Auto picks), then read a line at a time, each a click away from where it's said.
+ */
+function Said({ a, seek }: { a: Asset; seek: (t: number) => void }) {
+  const projectId = useStore((s) => s.projectId)!;
+  const [said, setSaid] = useState<Said>();
+  const [choices, setChoices] = useState<{ auto?: Choice; ready: Choice[]; setup: Choice[] }>();
+  const [pick, setPick] = useState("");
+  const [speakers, setSpeakers] = useState(false);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [again, setAgain] = useState(false);
+  const has = !!a.transcript;
+  useEffect(() => {
+    setSaid(undefined);
+    if (!has) return;
+    void fetch(`/api/projects/${projectId}/transcripts/${a.id}`)
+      .then((r) => (r.ok ? (r.json() as Promise<Said>) : undefined))
+      .then(setSaid);
+  }, [projectId, a.id, a.transcript?.at]); // eslint-disable-line react-hooks/exhaustive-deps
+  const asking = !has || again;
+  useEffect(() => {
+    if (!asking) return;
+    void fetch(`/api/projects/${projectId}/transcribe?asset=${encodeURIComponent(a.id)}${speakers ? "&speakers=1" : ""}`)
+      .then((r) => r.json() as Promise<{ auto?: Choice; ready: Choice[]; setup: Choice[] }>)
+      .then(setChoices);
+  }, [projectId, a.id, speakers, asking]);
+  const chosen = pick ? choices?.ready.find((c) => c.id === pick) : choices?.auto;
+  const go = async () => {
+    setError("");
+    setBusy(0);
+    try {
+      await actions.flushSave();
+      await runJob(`/api/projects/${projectId}/transcribe`, { asset: a.id, ...(pick ? { with: pick } : {}), speakers }, setBusy);
+      await actions.reload();
+      setAgain(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const t = a.transcript;
+  return (
+    <>
+      <h4>
+        What's said{" "}
+        {t && (
+          <span className="dim small">
+            {t.words.toLocaleString()} words{t.speakers ? ` · ${t.speakers} speaker${t.speakers === 1 ? "" : "s"}` : ""} · {t.by}
+          </span>
+        )}
+      </h4>
+      {said && !again && (
+        <>
+          <ul className="said-list">
+            {said.lines.map((l, i) => (
+              <li key={i}>
+                <button className="mono small link" onClick={() => seek(l.s)} title="Jump to it">
+                  {formatTime(l.s)}
+                </button>
+                {l.speaker && <span className="said-speaker small">{l.speaker.replace(/^speaker_/, "")}</span>}
+                <span className="small">{l.text}</span>
+              </li>
+            ))}
+          </ul>
+          {!said.lines.length && <p className="dim small">Nothing was said in it.</p>}
+          <button className="link small" onClick={() => setAgain(true)}>
+            Transcribe it again…
+          </button>
+        </>
+      )}
+      {asking && (
+        <>
+          <div className="make-row">
+            <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Transcriber" title="Who transcribes it">
+              <option value="">{choices?.auto ? `Auto (${choices.auto.label}${about(choices.auto) ? ` · ${about(choices.auto)}` : ""})` : "Auto"}</option>
+              {choices?.ready.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                  {about(c) ? ` · ${about(c)}` : ""}
+                </option>
+              ))}
+              {!!choices?.setup.length && (
+                <optgroup label="Can't use now">
+                  {choices.setup.map((c) => (
+                    <option key={c.id} disabled>
+                      {c.label}: {c.why}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            <label className="check small" title="Only a transcriber that can tell people apart">
+              <input type="checkbox" checked={speakers} onChange={(e) => (setSpeakers(e.target.checked), setPick(""))} /> Who's speaking
+            </label>
+          </div>
+          {busy !== null ? (
+            <div className="progress thin">
+              <div style={{ width: `${Math.round(busy * 100)}%` }} />
+            </div>
+          ) : (
+            <div className="make-row">
+              <button className="primary" disabled={!chosen} onClick={() => void go()}>
+                Transcribe{chosen && about(chosen) ? ` · ${about(chosen)}` : ""}
+              </button>
+              {again && (
+                <button className="link small" onClick={() => setAgain(false)}>
+                  Keep this one
+                </button>
+              )}
+              {choices && !choices.ready.length && (
+                <button className="link small" onClick={() => actions.setSettingsOpen(true, "transcribe")}>
+                  Set one up
+                </button>
+              )}
+            </div>
+          )}
+          {choices && !choices.ready.length && <p className="dim small">{choices.setup.map((c) => `${c.label}: ${c.why}`).join(". ")}.</p>}
+        </>
+      )}
+      {error && <p className="warn small">{error}</p>}
+    </>
   );
 }
 

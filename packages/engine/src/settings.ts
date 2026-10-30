@@ -46,6 +46,8 @@ export type Settings = {
     /** A hard limit on what making may spend in all, from `since` on, whoever asks: the person, the agent or a script. */
     limit?: { usd: number; since: string };
   };
+  /** Transcribing what's said: the order Auto tries transcribers in (ids in TRANSCRIBERS), and the size of Whisper's model here. */
+  transcribe?: { ranking?: string[]; whisperModel?: "fast" | "good" | "best" };
 };
 
 export function readSettings(): Settings {
