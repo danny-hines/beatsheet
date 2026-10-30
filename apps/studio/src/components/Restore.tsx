@@ -150,10 +150,16 @@ export function CleanSound({ a, hear, setHear }: { a: Asset; hear: "own" | "clea
                 </optgroup>
               )}
             </select>
-            <select value={strength} onChange={(e) => setStrength(e.target.value as "light" | "full")} aria-label="How much" title="How much to take out">
-              <option value="light">Light: keeps a little of the room</option>
-              <option value="full">Full: only the voices</option>
-            </select>
+            {chosen?.id === "isolator" ? (
+              <span className="dim small" title="It makes the voices anew, so they can't be mixed back with the room">
+                Only the voices
+              </span>
+            ) : (
+              <select value={strength} onChange={(e) => setStrength(e.target.value as "light" | "full")} aria-label="How much" title="How much to take out">
+                <option value="light">Light: keeps a little of the room</option>
+                <option value="full">Full: only the voices</option>
+              </select>
+            )}
           </div>
           {a.transcript && (
             <label className="check small" title="Clean all of it, music and all, not just where people talk">

@@ -117,6 +117,40 @@ async function isolate(wav: string, out: string, seconds: number, work: string):
   await exec("ffmpeg", ["-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", list, "-c:a", "pcm_s16le", out]);
 }
 
+/**
+ * Four seconds of a file's sound from `from`, as 16-bit mono samples at 48 kHz, with only what's above 1.5 kHz: the
+ * edges of consonants line up sharply, where the low hum of music under a voice would blur where they match.
+ */
+async function samplesOf(file: string, from: number): Promise<Int16Array> {
+  const { stdout } = await exec("ffmpeg", ["-v", "error", "-ss", String(from), "-t", "4", "-i", file, "-ac", "1", "-ar", String(RATE), "-af", "highpass=f=1500,highpass=f=1500", "-f", "s16le", "-"], {
+    encoding: "buffer",
+    maxBuffer: 1e8,
+  });
+  return new Int16Array(stdout.buffer, stdout.byteOffset, stdout.length >> 1);
+}
+
+/** Where two sounds match best, `a` against `b` moved by each lag in [from, to], every `step`th sample compared. */
+function bestLag(a: Int16Array, b: Int16Array, from: number, to: number, step: number): number {
+  let best = -Infinity, lag = 0;
+  for (let k = from; k <= to; k++) {
+    let s = 0;
+    for (let i = Math.max(0, -k); i < a.length && i + k < b.length; i += step) s += a[i]! * b[i + k]!;
+    if (s > best) [best, lag] = [s, k];
+  }
+  return lag;
+}
+
+/**
+ * How many samples (at 48 kHz) the cleaned voices come after the sound as recorded (less than none: before): a service
+ * can hand them back a few milliseconds off, and mixed with the original that sounds hollow. Measured where people
+ * talk (`at`: a few times, seconds into it), within 50 ms either way, and the middle answer taken.
+ */
+export async function lagOf(orig: string, voices: string, at: number[] = [0]): Promise<number> {
+  const lags: number[] = [];
+  for (const t of at) lags.push(bestLag(await samplesOf(orig, t), await samplesOf(voices, t), -2400, 2400, 3));
+  return lags.sort((x, y) => x - y)[Math.floor(lags.length / 2)]!;
+}
+
 /** A WAV's samples as 16-bit mono at 48 kHz, in a raw file. */
 const toRaw = (wav: string, raw: string) => exec("ffmpeg", ["-v", "error", "-y", "-i", wav, "-f", "s16le", "-ac", "1", "-ar", String(RATE), raw]);
 
@@ -157,8 +191,9 @@ const scratch = () => {
 
 /**
  * Cleans the voices in a clip (or sound file) with the cleaner asked for, else Auto's pick here, and has its clips
- * play the cleaned sound. Only where people talk, when it has a transcript (unless `everywhere`); light (the default)
- * leaves a little of the room. Cleaning it again with the same cleaner only mixes again, unless `again`.
+ * play the cleaned sound. Only where people talk, when it has a transcript (unless `everywhere`); light (the default,
+ * with DeepFilterNet) leaves a little of the room. Cleaning it again with the same cleaner only mixes again, unless
+ * `again`.
  */
 export async function cleanSound(
   projectId: string,
@@ -199,8 +234,24 @@ export async function cleanSound(
       } else {
         costUsd = choice.usd ?? 0;
         assertSpendable(costUsd, { spendable: opts.spendable });
-        await isolate(orig, voices, seconds, work);
+        const back = join(work, "isolated.wav");
+        await isolate(orig, back, seconds, work);
         recordSpend(projectId, { what: `Cleaned the voices in ${a.label ?? a.id}`, by: "elevenlabs:audio-isolation", usd: costUsd });
+        // Put back in step with the picture, measured where it talks.
+        const said = speechSpans(readTranscript(projectId, a.id)?.words ?? []);
+        const talk: [number, number][] = said.length ? said : [[0, seconds]];
+        const total = talk.reduce((n, [s, e]) => n + e - s, 0);
+        const at = [0.2, 0.5, 0.8].map((f) => {
+          let left = f * total;
+          for (const [s, e] of talk) {
+            if (left <= e - s) return Math.max(0, Math.min(s + left, seconds - 4));
+            left -= e - s;
+          }
+          return 0;
+        });
+        const lag = await lagOf(orig, back, at);
+        const shift = lag > 1 ? ["-af", `atrim=start_sample=${lag},asetpts=PTS-STARTPTS`] : lag < -1 ? ["-af", `adelay=${-lag}S`] : [];
+        await exec("ffmpeg", ["-v", "error", "-y", "-i", back, ...shift, "-ac", "1", "-ar", String(RATE), "-c:a", "pcm_s16le", voices]);
       }
     }
     onProgress(0.88);
@@ -210,7 +261,9 @@ export async function cleanSound(
     const [origRaw, voicesRaw, mixed] = [join(work, "orig.raw"), join(work, "voices.raw"), join(work, "mix.raw")];
     await toRaw(orig, origRaw);
     await toRaw(voices, voicesRaw);
-    const strength = opts.strength ?? "light";
+    // The Voice Isolator makes the voices anew rather than filtering them, so they're never quite in phase with the
+    // original: the two mixed sound hollow. It's used on its own where people talk.
+    const strength = choice.id === "isolator" ? "full" : (opts.strength ?? "light");
     mixRaw(origRaw, voicesRaw, mixed, cleanCurve(spans, statSync(origRaw).size / 2 / RATE), strength === "light" ? LIGHT_KEEP : 0);
     const cleaned: NonNullable<Asset["cleaned"]> = { by: choice.id, strength, ...(spans ? { only: "speech" as const } : {}), at: new Date().toISOString(), ...(costUsd ? { costUsd } : {}) };
     const out = cleanPath(dir, { ...a, cleaned })!;

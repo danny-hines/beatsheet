@@ -1107,7 +1107,7 @@ server.registerTool(
   "clean_sound",
   {
     description:
-      "Clean the voices in a clip's sound (tape hiss, wind, hum): clips of it play the cleaned sound from then on, and the file itself stays as it was. Auto picks what suits this computer: DeepFilterNet here (free, on the processor, many times faster than the clip plays) once it's installed in Settings → Restoring, else ElevenLabs' Voice Isolator with the person's key (12¢ a minute). Both take out everything that isn't a voice, the film's music too, so transcribe the clip first: then only the stretches where people talk are cleaned, and music and sounds between the lines stay. light (the default) keeps a little of the room; full takes out everything but the voices. Cleaning again with the same cleaner only mixes again (quick); off: true goes back to the clip's own sound.",
+      "Clean the voices in a clip's sound (tape hiss, wind, hum): clips of it play the cleaned sound from then on, and the file itself stays as it was. Auto picks what suits this computer: DeepFilterNet here (free, on the processor, many times faster than the clip plays) once it's installed in Settings → Restoring, else ElevenLabs' Voice Isolator with the person's key (12¢ a minute). Both take out everything that isn't a voice, the film's music too, so transcribe the clip first: then only the stretches where people talk are cleaned, and music and sounds between the lines stay. light (the default) keeps a little of the room; full takes out everything but the voices (the Voice Isolator is always full). Cleaning again with the same cleaner only mixes again (quick); off: true goes back to the clip's own sound.",
     inputSchema: {
       project: projectArg,
       asset: z.string(),
