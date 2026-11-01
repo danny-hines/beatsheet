@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignSpeakers, chooseTranscriber, linesOf, pairFacesVoices, remapSpeakers, speakerLabel, voicesFromTurns, voiceSample, whoSpeaks, type TranscriberState } from "@beatsheet/schema";
+import { assignSpeakers, fitWordsToSound, chooseTranscriber, linesOf, pairFacesVoices, remapSpeakers, speakerLabel, voicesFromTurns, voiceSample, whoSpeaks, type TranscriberState } from "@beatsheet/schema";
 
 const keys: Record<string, TranscriberState> = {
   scribe: { state: "ready" },
@@ -217,5 +217,27 @@ describe("a transcript's lines", () => {
       { s: 2.0, e: 2.5, text: "Thank you!", speaker: "b" },
       { s: 5.0, e: 5.3, text: "Sing", speaker: "b" },
     ]);
+  });
+});
+
+describe("fitting words to the sound", () => {
+  // 50 values a second: loud 1.0–1.5 s, quiet till 3.0 s, loud 3.0–3.6 s.
+  const peaks = Array.from({ length: 250 }, (_, i) => ((i >= 50 && i < 75) || (i >= 150 && i < 180) ? 120 : 1));
+  it("pulls a word stretched over a pause back to where its sound stops, and the next to where its sound starts", () => {
+    const fitted = fitWordsToSound(
+      [
+        { w: "bread,", s: 1.0, e: 3.2 },
+        { w: "first,", s: 3.2, e: 3.6 },
+      ],
+      peaks,
+      50,
+    );
+    expect(fitted[0]).toEqual({ w: "bread,", s: 1, e: 1.54 });
+    expect(fitted[1]).toEqual({ w: "first,", s: 2.98, e: 3.6 });
+  });
+
+  it("leaves a word with no sound under it alone", () => {
+    const w = { w: "hm", s: 2.0, e: 2.4 };
+    expect(fitWordsToSound([w], peaks, 50)[0]).toBe(w);
   });
 });

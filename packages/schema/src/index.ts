@@ -16,3 +16,4 @@ export * from "./catalog.ts";
 export * from "./transcript.ts";
 export * from "./restore.ts";
 export * from "./edit.ts";
+export * from "./script.ts";

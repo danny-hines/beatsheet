@@ -386,6 +386,10 @@ export const Captions = z.object({
   position: z.enum(["bottom", "middle", "top"]).optional().describe("Default bottom, clear of the platforms' buttons"),
   size: z.number().positive().optional().describe("Scale, default 1"),
   uppercase: z.boolean().optional().describe("Default: as the look sets its big type (fonts.caps), capitals unless it says otherwise"),
+  source: z
+    .enum(["narration", "footage", "both"])
+    .optional()
+    .describe("Whose words: the narration's, what's said on camera in the footage (from its transcripts), or both; default the narration when there is any, else the footage"),
 });
 export type Captions = z.infer<typeof Captions>;
 

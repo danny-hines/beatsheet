@@ -3,8 +3,12 @@
  * straight from project.json, so a drag in the timeline and an agent's edit show up the same way.
  */
 import {
+  captionPhrases,
   centreOn,
   cover,
+  cutWords,
+  type CutWord,
+  type SaidWord,
   pictureOf,
   resolveTimeline,
   SFX_SECONDS,
@@ -43,6 +47,8 @@ export type VideoProps = {
   codeVersion?: string;
   /** Only this part of the sound plays (a track's id, or voice, music or sfx): the studio's solo, never saved. */
   solo?: string;
+  /** The words said in the cut's clips, by asset (their transcripts), for captions of what's said on camera. */
+  words?: Record<string, SaidWord[]>;
 };
 
 /** How loud a part of the mix plays: its level in the cut, off when it's muted or another part is soloed. */
@@ -70,7 +76,7 @@ export function metadataFor(props: VideoProps) {
   return { width: fmt.width, height: fmt.height, fps: fmt.fps, durationInFrames: Math.max(1, Math.ceil(seconds * fmt.fps)) };
 }
 
-export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo }) => {
+export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo, words }) => {
   const { fps } = useVideoConfig();
   const tl = useMemo(() => resolveTimeline(project, format), [project, format]);
   const assets = useMemo(() => new Map(project.assets.map((a) => [a.id, a])), [project]);
@@ -99,7 +105,7 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
           )),
       )}
       {look.grain ? <Grain amount={look.grain} /> : null}
-      {project.captions && <CaptionsLayer tl={tl} project={project} settings={project.captions} look={look} />}
+      {project.captions && <CaptionsLayer tl={tl} project={project} settings={project.captions} look={look} words={words} />}
       {tl.cues.map((c) => {
         const a = assets.get(c.asset);
         if (!a || !Number.isFinite(c.start) || !Number.isFinite(c.end) || music.muted) return null;
@@ -180,11 +186,15 @@ function LookFonts({ look, base }: { look: Look; base: string }) {
  * The narration on screen, a short phrase at a time, the word being spoken in the accent colour. Off while a shot that
  * already shows the same words (`captions: false`) plays.
  */
-function CaptionsLayer({ tl, project, settings, look }: { tl: Timeline; project: Project; settings: CaptionSettings; look: Look }) {
+function CaptionsLayer({ tl, project, settings, look, words }: { tl: Timeline; project: Project; settings: CaptionSettings; look: Look; words: VideoProps["words"] }) {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const t = frame / fps;
-  const phrases = useMemo(() => phrasesOf(tl), [tl]);
+  const phrases = useMemo(() => {
+    const footage = captionWords(project, tl, words);
+    const source = settings.source ?? (tl.lines.length ? "narration" : "footage");
+    return phrasesOf(source === "footage" ? { ...tl, lines: [] } : tl, footage);
+  }, [tl, project, words, settings.source]);
   const quiet = useMemo(() => {
     const off = new Set(project.shots.filter((s) => s.captions === false).map((s) => s.id));
     return tl.shots.filter((r) => off.has(r.id));
@@ -235,27 +245,14 @@ function CaptionsLayer({ tl, project, settings, look }: { tl: Timeline; project:
   );
 }
 
-type Phrase = { from: number; until: number; words: { w: string; s: number; e: number }[] };
+/** What's said, cut into phrases of a few words (the schema's captionPhrases), each shown from its first word to the next. */
+export const phrasesOf = (tl: Timeline, footage?: CutWord[]) => captionPhrases(tl, footage);
 
-/** Narration cut into phrases of a few words, breaking at punctuation, each shown from its first word to the next phrase. */
-export function phrasesOf(tl: Timeline): Phrase[] {
-  const out: Phrase[] = [];
-  for (const line of tl.lines) {
-    if (!Number.isFinite(line.start)) continue;
-    let cur: Phrase["words"] = [];
-    const flush = () => {
-      if (!cur.length) return;
-      out.push({ from: cur[0]!.s - 0.04, until: cur[cur.length - 1]!.e + 0.35, words: cur });
-      cur = [];
-    };
-    for (const w of line.words) {
-      cur.push(w);
-      const chars = cur.reduce((n, x) => n + x.w.length + 1, 0);
-      if (/[,.;:!?]$/.test(w.w) || cur.length >= 3 || chars > 16) flush();
-    }
-    flush();
-  }
-  return out;
+/** The words captions show: the narration's, the footage's own (from its transcripts), or both, as the cut says. */
+export function captionWords(project: Project, tl: Timeline, words: VideoProps["words"]): CutWord[] {
+  const source = project.captions?.source ?? (tl.lines.length ? "narration" : "footage");
+  if (source === "narration" || !words) return [];
+  return cutWords(project, tl, (id) => words[id]);
 }
 
 type Underlay = { r: ResolvedShot; shot: Shot; asset: Asset };

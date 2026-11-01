@@ -660,6 +660,26 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!t) return json(res, 404, { error: "It hasn't been transcribed" });
     return json(res, 200, { ...t, lines: transcriptLines(t) });
   }
+  // A word heard wrong, put right (what captions and subtitles show); its timing stays.
+  if (section === "projects" && id && action === "transcripts" && parts[3] && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { i?: number; w?: string; touch?: boolean };
+    const { correctWord } = await import("./transcribe.ts");
+    try {
+      return json(res, 200, correctWord(id, parts[3], body.i ?? -1, body.w ?? "", { touch: body.touch }));
+    } catch (err) {
+      return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  // What's said in a cut as a subtitle file (.srt or .vtt), from its narration and its footage's transcripts.
+  if (section === "projects" && id && action === "subtitles" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const kind = q.get("kind") === "vtt" ? "vtt" : "srt";
+    const { subtitlesFor } = await import("./transcribe.ts");
+    const text = subtitlesFor(id, { cut: q.get("cut") ?? undefined, format: q.get("format") ?? undefined, kind });
+    res.setHeader("content-type", kind === "vtt" ? "text/vtt; charset=utf-8" : "application/x-subrip; charset=utf-8");
+    res.setHeader("content-disposition", `attachment; filename="${id}.${kind}"`);
+    return res.end(text);
+  }
   // Its voices cleaned of hiss and hum: who could do it here and for how much, then doing it (a job), or undoing it.
   if (section === "projects" && id && action === "clean" && req.method === "GET") {
     const q = new URL(req.url ?? "", "http://local").searchParams;

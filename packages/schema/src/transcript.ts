@@ -343,3 +343,46 @@ export function linesOf(t: Pick<Transcript, "words">, opts: { pause?: number; lo
   if (cur) out.push(cur);
   return out;
 }
+
+/**
+ * Words fitted to the sound: a transcriber often stretches a word over the pause after it (whisper.cpp does), which
+ * would keep a caption up through silence and hide the pause from anything looking for one. Each word's end (and
+ * start) is pulled in to where the sound is actually loud, from the clip's waveform (`peaks`, `rate` a second, 0..255).
+ * A word with no loud moment at all is left as it was.
+ */
+export function fitWordsToSound(words: SaidWord[], peaks: ArrayLike<number>, rate: number): SaidWord[] {
+  if (!peaks.length) return words;
+  // Loud means well above the clip's own quiet (its tenth-quietest moment), whatever the recording's level.
+  const sorted = Array.from(peaks).sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
+  const loud = Math.max(6, floor * 2.5);
+  const at = (t: number) => Math.min(peaks.length - 1, Math.max(0, Math.floor(t * rate)));
+  // A word has short quiet moments inside it (before a "t" or a "p"); a quarter of a second is a pause.
+  const gap = Math.max(1, Math.round(0.25 * rate));
+  const fitted = words.map((w) => {
+    const end = Math.max(at(w.s), at(w.e) - 1);
+    let a = at(w.s);
+    while (a <= end && (peaks[a] ?? 0) < loud) a++;
+    if (a > end) return w;
+    // From its first loud moment on, until the sound stops for a pause (what's loud after that is the next word,
+    // which the transcriber started late).
+    let last = a;
+    for (let i = a, quiet = 0; i <= end; i++) {
+      if ((peaks[i] ?? 0) >= loud) (last = i), (quiet = 0);
+      else if (++quiet >= gap) break;
+    }
+    const s = Math.max(w.s, a / rate - 0.02);
+    const e = Math.min(w.e, (last + 1) / rate + 0.04);
+    return e - s >= 0.05 && (s !== w.s || e !== w.e) ? { ...w, s: Math.round(s * 1000) / 1000, e: Math.round(e * 1000) / 1000 } : w;
+  });
+  // A word heard starting late (already loud where it starts) starts where its sound does, after the word before.
+  return fitted.map((w, k) => {
+    const before = k ? fitted[k - 1]!.e : 0;
+    let i = at(w.s);
+    if ((peaks[i] ?? 0) < loud) return w;
+    while (i - 1 >= 0 && (i - 1) / rate >= before && (peaks[i - 1] ?? 0) >= loud) i--;
+    if (i === at(w.s)) return w;
+    const s = Math.max(before, i / rate - 0.02);
+    return s < w.s - 0.01 ? { ...w, s: Math.round(s * 1000) / 1000 } : w;
+  });
+}

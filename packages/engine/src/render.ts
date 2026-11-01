@@ -14,6 +14,7 @@ import type { MediaQuality, VideoProps } from "@beatsheet/video";
 import { startServer } from "./http.ts";
 import { REPO } from "./paths.ts";
 import { loadProject } from "./store.ts";
+import { wordsInCut } from "./transcribe.ts";
 
 const run = promisify(execFile);
 /** WebGL for three.js scenes, in headless Chrome. */
@@ -29,7 +30,7 @@ async function prepare(id: string, cut: string | undefined, format: string | und
   const dir = loaded.dir;
   const fmt = project.formats.find((f) => f.id === format) ?? project.formats[0]!;
   const [url, origin] = await Promise.all([getBundle(), startServer()]);
-  const inputProps: VideoProps = { project, format: fmt.id, mediaBase: `${origin}/media/${id}`, quality };
+  const inputProps: VideoProps = { project, format: fmt.id, mediaBase: `${origin}/media/${id}`, quality, words: wordsInCut(id, project) };
   const composition = await selectComposition({ serveUrl: url, id: "beatsheet", inputProps, chromiumOptions });
   return { project, dir, fmt, url, inputProps, composition };
 }

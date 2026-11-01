@@ -17,6 +17,7 @@ import {
   type NoteTarget,
   type Project,
   type ProjectFile,
+  type SaidWord,
   type Timeline,
 } from "@beatsheet/schema";
 import { useSyncExternalStore } from "react";
@@ -74,13 +75,15 @@ export type State = {
   rate: number;
   /** The one part of the sound playing in the studio (a track, or voice, music or sfx); never saved. */
   solo?: string;
+  /** The words said in the cut's clips (their transcripts), by asset, as of when each was transcribed or corrected. */
+  said: Record<string, { at: string; words: SaidWord[] }>;
   /** In and out points marked on the cut (I and O): a stretch to take out, note or export. */
   marks: { in?: number; out?: number };
   /** In and out points marked on a clip in the Library (I and O while it's open), for putting that stretch in the cut. */
   source?: { asset: string; in?: number; out?: number };
   /** Timeline zoom in pixels per second; 0 means fit to width on next layout. */
   zoom: number;
-  side: "inspect" | "notes" | "agent";
+  side: "inspect" | "notes" | "agent" | "script";
   /** Agent sessions that have beatsheet's tools loaded right now, hosted here or running in a terminal. */
   agents: Presence[];
   /** The agent session the studio hosts: its transcript, approvals and whether it's working. */
@@ -120,6 +123,7 @@ let state: State = {
   playing: false,
   rate: 1,
   marks: {},
+  said: {},
   zoom: 0,
   side: "agent",
   agents: [],
@@ -343,6 +347,7 @@ export const actions = {
       selection: undefined,
       also: [],
       marks: {},
+      said: {},
       source: undefined,
       playhead: 0,
       playing: false,
@@ -580,6 +585,22 @@ export const actions = {
     const at = (x: string) => tl.shots.find((r) => r.id === x)?.start ?? NaN;
     const [lo, hi] = [Math.min(at(a.id), at(b.id)), Math.max(at(a.id), at(b.id))];
     setState({ also: tl.shots.filter((r) => r.track === a.track && r.id !== a.id && r.start >= lo - 1e-3 && r.start <= hi + 1e-3).map((r) => r.id) });
+  },
+  /**
+   * Fetches the words of the transcribed clips the cut plays, each once per version of its transcript (a correction
+   * changes it), for the Script tab and for captions of what's said on camera.
+   */
+  async loadSaid() {
+    const { project, projectId } = state;
+    if (!project || !projectId) return;
+    const used = new Set(project.shots.flatMap((s) => (s.content.kind === "clip" ? [s.content.asset] : [])));
+    const want = project.assets.filter((a) => used.has(a.id) && a.transcript && state.said[a.id]?.at !== a.transcript.at);
+    for (const a of want) {
+      const res = await fetch(`/api/projects/${projectId}/transcripts/${a.id}`).catch(() => undefined);
+      if (!res?.ok || state.projectId !== projectId) continue;
+      const t = (await res.json()) as { words: SaidWord[] };
+      setState({ said: { ...state.said, [a.id]: { at: a.transcript!.at, words: t.words } } });
+    }
   },
   /** Plays at a speed (negative plays backwards); 0 pauses. */
   shuttle(rate: number) {

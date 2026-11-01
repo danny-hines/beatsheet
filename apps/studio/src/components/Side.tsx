@@ -17,6 +17,7 @@ import { LookPanel, SceneProps } from "./Designed";
 import { LineVoice, NarrationOverview } from "./Narration";
 import { ShotLook } from "./Subjects";
 import { Takes } from "./Takes";
+import { Script } from "./Script";
 import { CastView } from "./Cast";
 import { AnchorChip, Empty, TextField } from "./ui";
 
@@ -41,8 +42,11 @@ export function SidePanel() {
         <button className={side === "inspect" ? "on" : ""} onClick={() => actions.setSide("inspect")}>
           Inspect
         </button>
+        <button className={side === "script" ? "on" : ""} onClick={() => actions.setSide("script")} title="The cut as what's said in it: edit the words to edit the cut">
+          Script
+        </button>
       </div>
-      <div className={`side-body ${side === "agent" ? "agent" : ""}`}>{side === "inspect" ? <Inspector /> : side === "notes" ? <Notes /> : <AgentPanel />}</div>
+      <div className={`side-body ${side === "agent" ? "agent" : ""}`}>{side === "inspect" ? <Inspector /> : side === "notes" ? <Notes /> : side === "script" ? <Script /> : <AgentPanel />}</div>
     </>
   );
 }

@@ -1062,3 +1062,19 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .tk-btn.on { color: #1a1408; background: var(--accent); border-color: var(--accent); }
 .tk-btn.on.solo { background: var(--accent-2); border-color: var(--accent-2); }
 .shot-look label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); flex: none; align-self: flex-end; }
+
+/* The Script tab: the cut's words, to edit it by. */
+.script-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.script-tools button { font-size: 12px; padding: 2px 8px; }
+.script-sel { margin: 0; color: var(--accent-2); }
+.script-text { outline: none; line-height: 1.75; font-size: 14px; max-height: 52vh; overflow: auto; padding: 4px 2px; border-radius: 6px; }
+.script-text:focus-visible { box-shadow: 0 0 0 1px var(--line-2); }
+.script-text p { margin: 0 0 10px; }
+.script-who { display: block; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.script-word { cursor: text; border-radius: 3px; padding: 1px 0; }
+.script-word:hover { background: #2a2e36; }
+.script-word.now { color: var(--accent); }
+.script-word.sel { background: rgba(92, 200, 232, 0.28); }
+.script-word.filler { color: var(--dim); font-style: italic; }
+.script-fix { font-size: 13px; padding: 0 3px; }
+.script label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); flex: none; align-self: flex-end; }

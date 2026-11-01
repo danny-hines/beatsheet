@@ -6,11 +6,12 @@
  * that it has one. Keys are read inside the engine and never pass through the agent.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { makePeaks } from "./media.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { assignSpeakers, chooseTranscriber, linesOf, remapSpeakers, TRANSCRIBERS, type SaidWord, type Transcript, type TranscriberChoice, type TranscriberState } from "@beatsheet/schema";
+import { assignSpeakers, captionPhrases, chooseTranscriber, cutWords, fitWordsToSound, resolveTimeline, subtitles, linesOf, remapSpeakers, TRANSCRIBERS, type Project, type SaidWord, type Transcript, type TranscriberChoice, type TranscriberState } from "@beatsheet/schema";
 import { assetPath, projectDir } from "./paths.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { loadProject, updateFile } from "./store.ts";
@@ -55,6 +56,33 @@ export async function transcribeChoices(seconds: number | undefined, speakers = 
 export const transcriptFile = (projectId: string, assetId: string) => join(projectDir(projectId), "transcripts", `${assetId}.json`);
 
 /** An asset's transcript, when it has one. */
+/** Words fitted to the sound of their file (see fitWordsToSound), from its waveform made for the purpose. */
+async function fittedToSound(file: string, words: SaidWord[]): Promise<SaidWord[]> {
+  const dir = mkdtempSync(join(tmpdir(), "beatsheet-fit-"));
+  try {
+    const out = join(dir, "peaks.json");
+    await makePeaks(file, out);
+    const { rate, peaks } = JSON.parse(readFileSync(out, "utf8")) as { rate: number; peaks: string };
+    return fitWordsToSound(words, Buffer.from(peaks, "base64"), rate);
+  } catch {
+    return words;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The words said in the clips a cut plays, by asset: what its captions of the footage are made from. */
+export function wordsInCut(projectId: string, project: Pick<Project, "shots" | "assets">): Record<string, SaidWord[]> {
+  const out: Record<string, SaidWord[]> = {};
+  for (const s of project.shots) {
+    const c = s.content;
+    if (c.kind !== "clip" || out[c.asset] || !project.assets.find((a) => a.id === c.asset)?.transcript) continue;
+    const words = readTranscript(projectId, c.asset)?.words;
+    if (words) out[c.asset] = words;
+  }
+  return out;
+}
+
 export function readTranscript(projectId: string, assetId: string): Transcript | undefined {
   try {
     return JSON.parse(readFileSync(transcriptFile(projectId, assetId), "utf8")) as Transcript;
@@ -200,6 +228,8 @@ export async function transcribeAsset(
   const r =
     choice.id === "whisper" ? await onWhisper(file, onProgress, opts.people) : choice.id === "scribe" ? await onScribe(file, a.duration, opts.people) : await onOpenAI(file, a.duration, onProgress);
   if (r.costUsd) recordSpend(projectId, { what: `Transcribed ${a.label ?? a.id}`, by: choice.id === "scribe" ? "elevenlabs:scribe_v2" : "openai:whisper-1", usd: r.costUsd });
+  // Each word pulled in to where its sound is, so pauses show as pauses.
+  r.words = await fittedToSound(file, r.words);
   const transcript: Transcript = { by: choice.id, ...(r.model ? { model: r.model } : {}), ...(r.language ? { language: r.language } : {}), at: new Date().toISOString(), words: r.words, ...(r.events ? { events: r.events } : {}), ...(r.costUsd !== undefined ? { costUsd: r.costUsd } : {}) };
   const before = readTranscript(projectId, assetId);
   const out = transcriptFile(projectId, assetId);
@@ -231,4 +261,38 @@ export async function transcribeAsset(
 export function transcriptLines(t: Transcript, opts: { from?: number; to?: number; search?: string } = {}) {
   const words = opts.search?.toLowerCase().split(/\s+/).filter(Boolean);
   return linesOf(t).filter((l) => (opts.from === undefined || l.e >= opts.from) && (opts.to === undefined || l.s <= opts.to) && (!words?.length || words.every((w) => l.text.toLowerCase().includes(w))));
+}
+
+/** Puts right a word the transcriber heard wrong (its timing stays), so captions and subtitles show it right. */
+export function correctWord(projectId: string, assetId: string, i: number, w: string, opts: { touch?: boolean } = {}): { i: number; w: string; at: string } {
+  const t = readTranscript(projectId, assetId);
+  if (!t) throw new Error("It hasn't been transcribed");
+  const word = t.words[i];
+  if (!word) throw new Error(`There's no word ${i}`);
+  const text = w.trim();
+  if (!text || /\s/.test(text)) throw new Error("One word, without spaces (split a word by transcribing again)");
+  word.w = text;
+  writeFileSync(transcriptFile(projectId, assetId), JSON.stringify(t));
+  // The asset says when its words last changed, so the studio and renders pick them up. The studio says so itself,
+  // as one of its own edits (so undo keeps working); anyone else has it done here.
+  const at = new Date().toISOString();
+  if (opts.touch !== false)
+    updateFile(projectId, (d) => {
+      const x = d.assets.find((y) => y.id === assetId);
+      if (x?.transcript) x.transcript.at = at;
+    });
+  return { i, w: text, at };
+}
+
+/**
+ * A cut's subtitles: what's said in it as an .srt or .vtt, the narration and the footage's own words (or whichever
+ * its captions are set to), timed for one of its formats.
+ */
+export function subtitlesFor(projectId: string, opts: { cut?: string; format?: string; kind: "srt" | "vtt" }): string {
+  const { project } = loadProject(projectId, opts.cut);
+  const tl = resolveTimeline(project, opts.format);
+  const source = project.captions?.source ?? "both";
+  const words = wordsInCut(projectId, project);
+  const footage = source === "narration" ? [] : cutWords(project, tl, (id) => words[id]);
+  return subtitles(captionPhrases(source === "footage" ? { ...tl, lines: [] } : tl, footage), opts.kind);
 }
