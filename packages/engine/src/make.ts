@@ -5,7 +5,7 @@
  * unfinished jobs, and a lock file beside each stops two processes driving the same one. A finished take is added like
  * any other asset and, when the job was for a shot, becomes one of that shot's takes.
  */
-import { randomInt } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
@@ -17,6 +17,7 @@ import {
   castPrompt,
   fewestStillRefs,
   chooseModels,
+  driveWindow,
   FIDELITY,
   fitModel,
   HANDLE,
@@ -25,6 +26,7 @@ import {
   type Asset,
   type CastMember,
   type Choices,
+  type Drive,
   type FitOk,
   type MakeOp,
   type MakeRequest,
@@ -34,6 +36,32 @@ import {
   type Shot,
   type ShotContent,
 } from "@beatsheet/schema";
+import {
+  chunksFor,
+  chunksIn,
+  comfyAhead,
+  comfyCancel,
+  comfyDownload,
+  comfyJob,
+  comfyMissing,
+  comfySubmit,
+  comfyUpload,
+  comfyUrl,
+  comfyVideo,
+  fill,
+  fitClip,
+  fitPicture,
+  fitSize,
+  loadWorkflow,
+  nodesTitled,
+  outputMarker,
+  OWN_WORKFLOWS,
+  profileFor,
+  trimTake,
+  workflowPath,
+  WORKFLOWS,
+  type ComfyPrompt,
+} from "./comfy.ts";
 import { DIRECT, directImage } from "./direct.ts";
 import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
@@ -73,6 +101,8 @@ export type MakeJob = {
     start?: string;
     end?: string;
     refs?: string[];
+    /** The stretch of a clip a take that copies movement follows (the take is made a little wider where the clip has room: driveWindow). */
+    drive?: Drive;
     seconds?: number;
     aspect?: string;
     seed?: number;
@@ -83,6 +113,11 @@ export type MakeJob = {
   status: "queued" | "running" | "done" | "failed" | "canceled";
   /** The service's request, once it's been sent. */
   remote?: FalRequest;
+  /**
+   * A job on ComfyUI, saved before it's sent: our own prompt id, the server, the output nodes, the frames to keep and
+   * at what rate, the workflow profile, and the filled prompt itself, to send again if ComfyUI restarts and forgets it.
+   */
+  comfy?: { id: string; url: string; outputs: string[]; frames: number; fps: number; profile: string; prompt: ComfyPrompt };
   /** The take, saved the moment it arrived from a service that answers in one request and doesn't keep it (GPT Image). */
   file?: string;
   /** Place in the service's queue, while waiting. */
@@ -158,12 +193,20 @@ function saveJob(projectId: string, job: MakeJob): MakeJob {
  * does a plan the person's agent CLI is signed in on.
  */
 export function serviceStates(): Record<string, ServiceState> {
-  const saved = readSettings().services;
-  return { ...Object.fromEntries(SERVICES.map((s) => [s.id, saved[s.id] ? { label: s.label, state: "ready" } : { label: s.label, state: "missing" }])), ...planStates() };
+  const { services: saved, comfy } = readSettings();
+  return {
+    ...Object.fromEntries(SERVICES.map((s) => [s.id, saved[s.id] ? { label: s.label, state: "ready" } : { label: s.label, state: "missing" }])),
+    ...planStates(),
+    // ComfyUI counts as ready once it's connected (in Settings → Making), as a key does; a failed check says why.
+    comfy: !comfy ? { label: "ComfyUI", state: "missing" } : comfy.ok === false ? { label: "ComfyUI", state: "failing", detail: comfy.detail ?? "It didn't answer last time" } : { label: "ComfyUI", state: "ready" },
+  };
 }
 
+/** Routes that run on the person's own machines rather than a service with a key. */
+const LOCAL_ROUTES = ["comfy"];
+
 /** Something to make, as the agent's tools and the studio ask for it. */
-export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start">> & {
+export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive">> & {
   op: MakeOp;
   cut?: string;
   /** A placeholder or generated shot it's for: its length, the cut's shape and its description fill in what's missing, and the takes land on it. */
@@ -174,6 +217,11 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start">> & {
   cast?: string[];
   /** Asset id of the picture a clip starts from, or "board": the shot's chosen still. */
   start?: string;
+  /**
+   * For a clip that copies movement: the clip to follow, from a second of it (default 0) to another (default the shot's
+   * length later). Without it, a generated shot's clips follow what its takes followed before; null for none.
+   */
+  drive?: { asset: string; from?: number; to?: number } | null;
   model?: string;
 };
 
@@ -227,6 +275,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const uses = castOf(prompt, project.cast, [...(ask.cast ?? []), ...shotCast, ...(!member && lookStyle ? [lookStyle] : [])]);
   const start = ask.start === "board" ? boardOf(project, shot) : ask.start;
   if (ask.start === "board" && !start) throw new Error(`Shot "${ask.shot}" has no board yet: make stills for it first`);
+  const drive = ask.op === "video" ? driveFor(project, ask.drive === undefined && shot?.content.kind === "generated" ? shot.content.drive : ask.drive, needs?.seconds) : undefined;
 
   let refs = ask.refs?.length ? ask.refs : undefined;
   let sent = castPrompt(prompt, uses);
@@ -269,11 +318,31 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     start,
     end: ask.end,
     refs,
-    seconds: ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined),
+    ...(drive ? { drive } : {}),
+    // A take that follows a clip is as long as the stretch it follows.
+    seconds: drive ? Math.round((drive.to - drive.from) * 1000) / 1000 : (ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined)),
     aspect: ask.aspect ?? sheetAspect ?? aspectOf(format.width, format.height),
     count: ask.count,
     ...(ask.via ? { via: ask.via } : {}),
   };
+}
+
+/**
+ * The stretch of a clip a take follows, in full: from a second of it (default its start) to another (default the
+ * shot's length later, else the clip's end), within the clip. Says what's wrong with one that can't be followed.
+ */
+function driveFor(project: Project, ask: { asset: string; from?: number; to?: number } | null | undefined, shotSeconds: number | undefined): Drive | undefined {
+  if (!ask) return undefined;
+  const clip = project.assets.find((a) => a.id === ask.asset);
+  if (!clip) throw new Error(`No clip "${ask.asset}" to follow`);
+  if (clip.kind !== "video") throw new Error(`"${ask.asset}" is a ${clip.kind}; the movement to copy comes from a clip`);
+  const end = clip.duration ?? Infinity;
+  const from = Math.max(0, ask.from ?? 0);
+  const to = Math.min(end, ask.to ?? (shotSeconds !== undefined ? from + shotSeconds : end));
+  if (!Number.isFinite(to)) throw new Error(`Say where to stop following "${clip.id}" (its length isn't known)`);
+  if (!(to - from >= 0.1)) throw new Error(`Nothing to follow in "${clip.id}" between ${from}s and ${to}s${from >= end ? ` (it's ${end}s long)` : ""}`);
+  const r = (x: number) => Math.round(x * 1000) / 1000;
+  return { asset: clip.id, from: r(from), to: r(to) };
 }
 
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
@@ -444,6 +513,7 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
           start: p.req.start,
           end: p.req.end,
           refs: p.req.refs,
+          ...(p.req.drive ? { drive: p.req.drive } : {}),
           seconds: p.fit.seconds,
           aspect: p.fit.aspect,
           seed: takesSeed(p.shape) ? randomInt(2 ** 31) : undefined,
@@ -469,12 +539,12 @@ export function startMake(projectId: string, ask: MakeAsk, opts: { spendable?: n
 
 /** Stops jobs that haven't finished. The service is asked to drop them too; one already running may still bill. */
 export async function cancelJobs(projectId: string, ids: string[]): Promise<MakeJob[]> {
-  const key = await getSecret("fal");
+  const jobs = ids.map((id) => readJob(projectId, id)).filter((j): j is MakeJob => !!j && isOpen(j));
+  const key = jobs.some((j) => j.remote) ? await getSecret("fal") : undefined;
   const out: MakeJob[] = [];
-  for (const id of ids) {
-    const job = readJob(projectId, id);
-    if (!job || !isOpen(job)) continue;
+  for (const job of jobs) {
     if (job.remote && key) await falCancel(key, job.remote);
+    if (job.comfy) await comfyCancel(job.comfy.url, job.comfy.id);
     out.push(saveJob(projectId, { ...job, status: "canceled" }));
   }
   return out;
@@ -509,8 +579,8 @@ export function retryJobs(projectId: string, ids: string[]): MakeJob[] {
   for (const id of ids) {
     const job = readJob(projectId, id);
     if (!job || job.status !== "failed") continue;
-    const kept = job.charged && (job.remote || (job.file && existsSync(job.file)));
-    const again = kept ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, file: undefined, charged: undefined };
+    const kept = job.charged && (job.remote || job.comfy || (job.file && existsSync(job.file)));
+    const again = kept ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, comfy: undefined, file: undefined, charged: undefined };
     out.push(saveJob(projectId, { ...again, error: undefined }));
   }
   if (out.length) void driveJobs(projectId);
@@ -601,7 +671,7 @@ async function drive(projectId: string) {
     await Promise.all(
       mine.map(async (job) => {
         try {
-          await step(projectId, job, await keyFor(job.route));
+          await step(projectId, job, LOCAL_ROUTES.includes(job.route) ? undefined : await keyFor(job.route));
           tries.delete(job.id);
         } catch (err) {
           const n = (tries.get(job.id) ?? 0) + 1;
@@ -620,6 +690,7 @@ async function drive(projectId: string) {
 
 /** One step of a job: send it, or ask where it is, or bring in what it made. */
 async function step(projectId: string, job: MakeJob, key: string | undefined) {
+  if (job.route === "comfy") return stepComfy(projectId, job);
   const plan = PLAN_ROUTES.includes(job.route);
   if (!key && !job.file && !plan) {
     const name = SERVICES.find((s) => s.id === job.route)?.label ?? job.route;
@@ -720,6 +791,85 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
 }
 
 /**
+ * A job on ComfyUI (comfy.ts). First the picture and the stretch of the clip are fitted to the size the workflow makes
+ * (the picture's shape at about 704×1280), the clip padded out to whole chunks, both sent up and the workflow filled
+ * in; the job is saved with its prompt id before the prompt is sent. After that each step asks where it is, and once
+ * it's done the take is fetched, trimmed back to the stretch's length and brought in. A ComfyUI that restarted (and so
+ * forgot its queue) is sent the saved prompt again.
+ */
+async function stepComfy(projectId: string, job: MakeJob) {
+  // Canceled since this round of steps began: nothing more to do (cancelJobs stopped it in ComfyUI).
+  const now = readJob(projectId, job.id);
+  if (now && !isOpen(now)) return;
+  if (job.file) return finish(projectId, job, { file: job.file });
+  const url = job.comfy?.url ?? comfyUrl();
+  if (!url) throw new FalError("ComfyUI isn't connected. The person can connect it in Settings → Making.", true);
+  if (!job.comfy) {
+    const spec = WORKFLOWS[job.endpoint];
+    if (!spec) throw new FalError(`beatsheet doesn't know the ComfyUI workflow "${job.endpoint}"`, true);
+    const profile = profileFor(job.endpoint, job.quality);
+    if (!profile) throw new FalError(`There's no ${spec.label} workflow here: export one from ComfyUI (File → Export (API)) as ${job.endpoint}.full.api.json into ${OWN_WORKFLOWS}`, true);
+    const workflow = loadWorkflow(workflowPath(job.endpoint, profile)!);
+    const { project, dir } = loadProject(projectId, job.cut);
+    const r = job.request;
+    const picture = project.assets.find((a) => a.id === r.start);
+    const clip = r.drive && project.assets.find((a) => a.id === r.drive!.asset);
+    if (!picture || !clip) throw new FalError(`The ${picture ? "clip" : "picture"} this take was asked from isn't in the project any more`, true);
+    const win = driveWindow(r.drive!, r.seconds ?? r.drive!.to - r.drive!.from, clip.duration);
+    const frames = Math.max(1, Math.round((win.to - win.from) * spec.fps));
+    const { chunks, capacity } = chunksFor(frames, spec.first, spec.extend);
+    const most = chunksIn(workflow);
+    if (chunks > most) throw new FalError(`The ${spec.label} workflow makes up to ${((spec.first + spec.extend * (most - 1)) / spec.fps).toFixed(1)}s; this is ${(frames / spec.fps).toFixed(1)}s. Split the shot in two`, true);
+    const size = fitSize(picture.width ?? 1280, picture.height ?? 720, spec.area, spec.multiple);
+    const work = join(dir, ".cache", "comfy", job.id);
+    const ref = join(work, "ref.png");
+    const drive = join(work, "drive.mp4");
+    await fitPicture(assetPath(project, dir, picture), ref, size.width, size.height);
+    await fitClip(assetPath(project, dir, clip), drive, win.from, win.to, size.width, size.height, spec.fps, capacity);
+    const marker = outputMarker(workflow, chunks);
+    const prompt = fill(workflow, {
+      STUDIO_REF_IMAGE: await comfyUpload(url, ref, `${job.id}_ref.png`),
+      STUDIO_DRIVING_VIDEO: await comfyUpload(url, drive, `${job.id}_drive.mp4`),
+      STUDIO_SEED: r.seed ?? randomInt(2 ** 31),
+      STUDIO_WIDTH: size.width,
+      STUDIO_HEIGHT: size.height,
+      STUDIO_FPS: spec.fps,
+      STUDIO_PROMPT: r.sent ?? r.prompt,
+      [marker]: `beatsheet/${job.id}`,
+    });
+    const missing = await comfyMissing(url, prompt);
+    if (missing.length) throw new FalError(`ComfyUI is missing what the ${spec.label} workflow needs: ${missing.join("; ")}`, true);
+    job = updateJob(projectId, job, { status: "running", comfy: { id: randomUUID(), url, outputs: nodesTitled(prompt, marker), frames, fps: spec.fps, profile, prompt } });
+    await comfySubmit(url, prompt, job.comfy!.id, job.comfy!.outputs);
+    return;
+  }
+  const c = job.comfy;
+  const s = await comfyJob(c.url, c.id);
+  // ComfyUI restarted (it keeps its queue in memory), or the prompt never got there: it's sent again.
+  if (!s) return comfySubmit(c.url, c.prompt, c.id, c.outputs);
+  if (s.status === "cancelled") throw new FalError("It was stopped in ComfyUI", true);
+  if (s.status === "failed") {
+    const e = s.execution_error ?? {};
+    const said = [e.node_type && `${e.node_type} (#${e.node_id})`, [e.exception_type, e.exception_message].filter(Boolean).join(": ")].filter(Boolean).join(": ") || "it failed";
+    throw new FalError(`ComfyUI couldn't make it: ${said.trim()}${/out of memory/i.test(said) ? " (a shorter stretch, or a rough rather than a final, needs less)" : ""}`.slice(0, 1500), true);
+  }
+  if (s.status !== "completed") {
+    const position = s.status === "pending" ? await comfyAhead(c.url, c.id).catch(() => undefined) : undefined;
+    if (position !== job.position || job.status !== "running") updateJob(projectId, job, job.status === "running" ? { position } : { status: "running", position });
+    return;
+  }
+  if (!job.charged) job = updateJob(projectId, job, { charged: true });
+  const video = await comfyVideo(c.url, c.id, c.outputs);
+  if (!video) throw new FalError("ComfyUI finished but didn't save a video", true);
+  const raw = join(projectDir(projectId), ".cache", "comfy", job.id, "raw.mp4");
+  await comfyDownload(c.url, video, raw);
+  const file = join(projectDir(projectId), "made", "takes", `${job.id}.mp4`);
+  await trimTake(raw, file, c.fps, c.frames);
+  job = updateJob(projectId, job, { file, position: undefined });
+  await finish(projectId, job, { file });
+}
+
+/**
  * Brings a finished take in and puts it where it was asked for. Takes come in one at a time, so two finishing together
  * don't take the same id or write the same preview. What goes wrong here is the project's side (a file in use, a write
  * that clashed): the take is still at the service (or saved), so it's tried again.
@@ -788,7 +938,7 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
       prompt: r.sent ?? r.prompt,
       ...(r.cast?.length ? { cast: r.cast } : {}),
       seed: out.seed ?? r.seed,
-      ...(r.start || r.end || r.refs?.length ? { refs: [r.start, r.end, ...(r.refs ?? [])].filter((x): x is string => !!x) } : {}),
+      ...(r.start || r.end || r.refs?.length || r.drive ? { refs: [r.start, r.end, ...(r.refs ?? []), r.drive?.asset].filter((x): x is string => !!x) } : {}),
       costUsd: job.usd,
       createdAt: new Date().toISOString(),
       op: job.op,
@@ -797,6 +947,8 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
         ...(r.seconds !== undefined ? { seconds: r.seconds } : {}),
         ...(r.aspect ? { aspect: r.aspect } : {}),
         ...(job.quality ? { quality: job.quality } : {}),
+        ...(r.drive ? { drive: r.drive } : {}),
+        ...(job.comfy ? { workflow: `${job.endpoint}.${job.comfy.profile}` } : {}),
         ...(bars ? { letterbox: `removed ${bars.top + bars.bottom}px of bars` } : {}),
       },
       job: job.id,
@@ -838,8 +990,14 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
       const better = asset.kind === "video" && (showing?.kind === "image" || (job.quality === "final" && qualityOf(showing) !== "final"));
       if (!showing || better) {
         const r = job.request;
-        const spare = asset.kind === "video" && asset.duration && r.shotSeconds ? Math.min(HANDLE, Math.max(0, (asset.duration - r.shotSeconds) / 2)) : 0;
-        const { start: _s, end: _e, in: _i, refs: _r, ...rest } = g;
+        // A take that follows a clip starts where the stretch asked for does; others have their spare evenly either side.
+        const clip = r.drive && p.assets.find((a) => a.id === r.drive!.asset);
+        const spare = r.drive
+          ? driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, clip ? clip.duration : undefined).lead
+          : asset.kind === "video" && asset.duration && r.shotSeconds
+            ? Math.min(HANDLE, Math.max(0, (asset.duration - r.shotSeconds) / 2))
+            : 0;
+        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, ...rest } = g;
         Object.assign(rest, {
           take: asset.id,
           prompt: r.prompt,
@@ -848,6 +1006,7 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
           ...(r.start ? { start: r.start } : {}),
           ...(r.end ? { end: r.end } : {}),
           ...(r.refs?.length ? { refs: r.refs } : {}),
+          ...(r.drive ? { drive: r.drive } : {}),
           ...(spare > 0 ? { in: Math.round(spare * 1000) / 1000 } : {}),
         });
         s.content = rest;
@@ -864,7 +1023,18 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
 /** One line about a job, for the agent's tools. */
 export function describeJob(j: MakeJob): string {
   const model = CATALOG.find((m) => m.id === j.model)?.label ?? j.model;
-  const what = [j.shot ? `shot ${j.shot}` : j.sheet ? `sheet for @${j.sheet}` : j.op, model, j.quality ?? "", j.request.seconds ? `${j.request.seconds}s` : "", j.request.aspect ?? ""].filter(Boolean).join(" · ");
+  const d = j.request.drive;
+  const what = [
+    j.shot ? `shot ${j.shot}` : j.sheet ? `sheet for @${j.sheet}` : j.op,
+    model,
+    j.quality ?? "",
+    j.request.seconds ? `${j.request.seconds}s` : "",
+    j.request.aspect ?? "",
+    d ? `following ${d.asset} ${d.from}–${d.to}s` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  const queue = j.route === "comfy" ? "ComfyUI's" : "fal's";
   const where =
     j.status === "done"
       ? `done: ${j.asset}`
@@ -875,7 +1045,7 @@ export function describeJob(j: MakeJob): string {
           : j.status === "queued"
             ? "about to be sent"
             : j.position !== undefined
-              ? `waiting, ${j.position + 1} in fal's queue`
+              ? `waiting, ${j.position + 1} in ${queue} queue`
               : "being made";
   return `${j.id} (${what}): ${where}`;
 }

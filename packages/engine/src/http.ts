@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
 import { createHash } from "node:crypto";
 import { makeFrames, makePeaks } from "./media.ts";
+import { checkComfy, COMFY_DEFAULT, comfyUrl, connectComfy, disconnectComfy, OWN_WORKFLOWS, recheckComfy } from "./comfy.ts";
 import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } from "./fixtools.ts";
 
 const TOOLS: ToolId[] = ["deepfilter", "realesrgan", "rife"];
@@ -478,6 +479,20 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       const make = saved.make ?? {};
       return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans() });
     }
+    // ComfyUI, for the models that run on the person's own graphics card: connecting it (checked first, like a key),
+    // checking it again, and what each workflow here would need from it.
+    if (id === "comfy") {
+      const view = (check: Awaited<ReturnType<typeof checkComfy>>) => ({ connected: readSettings().comfy, check, suggested: COMFY_DEFAULT, folder: OWN_WORKFLOWS });
+      if (req.method === "GET") return json(res, 200, view(comfyUrl() ? await recheckComfy() : await checkComfy(undefined)));
+      if (req.method === "POST") {
+        const url = (body as { url?: string }).url;
+        return json(res, 200, view(url ? await connectComfy(url) : await recheckComfy()));
+      }
+      if (req.method === "DELETE") {
+        disconnectComfy();
+        return json(res, 200, view(await checkComfy(undefined)));
+      }
+    }
     if (id === "service" && action && req.method === "POST") return json(res, 200, body.key ? await addServiceKey(action, body.key) : await recheckService(action));
     if (id === "service" && action && req.method === "DELETE") {
       await removeServiceKey(action);
@@ -569,6 +584,9 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const op = q.get("op") === "video" ? "video" : "image";
     const seconds = Number(q.get("seconds"));
     const quality = q.get("quality");
+    // The clip a take copies movement from: drive (an asset id, or "none" for none), from and to.
+    const follow = q.get("drive");
+    const at = (k: string) => (q.get(k) === null || q.get(k) === "" ? undefined : Number(q.get(k)));
     try {
       return json(
         res,
@@ -579,6 +597,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           shot: q.get("shot") ?? undefined,
           sheet: q.get("sheet") ?? undefined,
           start: q.get("start") ?? undefined,
+          ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,
           count: Number(q.get("count")) || undefined,

@@ -195,7 +195,7 @@ function Pass({ draft, set, onStarted, forSelect }: { draft: Draft; set: (d: Par
       <div className="make-row">
         <button className="primary" disabled={!all || !ok || sending} onClick={() => void make()}>
           Make {draft.count} {what} for each of {all} shot{all === 1 ? "" : "s"}
-          {usd !== undefined && ok ? ` · ${usd === 0 ? "on your plan" : money(usd)}` : ""}
+          {usd !== undefined && ok ? ` · ${usd === 0 ? (CATALOG.find((m) => m.id === model)?.routes.every((r) => r.via === "comfy") ? "on your graphics card" : "on your plan") : money(usd)}` : ""}
         </button>
         {error && <span className="warn small">{error}</span>}
       </div>

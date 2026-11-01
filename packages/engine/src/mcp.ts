@@ -587,16 +587,45 @@ const makeArgs = {
   start: z.string().optional().describe('The picture a video starts from: an asset id, or "board" for each shot\'s chosen still'),
   end: z.string().optional().describe("Asset id of a picture a video ends on"),
   refs: z.array(z.string()).optional().describe("Asset ids of reference pictures, instead of the cast's own"),
+  drive: z
+    .object({
+      asset: z.string().describe("The clip whose movement to copy: someone acting the shot out, or the original footage"),
+      from: z.number().min(0).optional().describe("The second of the clip to start at; default 0"),
+      to: z.number().optional().describe("The second to stop at; default the shot's length after from"),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      'For video: copy the movement in a stretch of a clip onto the people in the start picture (SCAIL-2, on the person\'s own graphics card): a fight, a dance, a stunt acted out by anyone. Start from a board that has the same people, framed and placed as in the clip. A generated shot whose takes followed a clip follows it again unless this is null. The prompt should be long and detailed: who, what they wear, where, the action, "static camera"',
+    ),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
 };
-type MakeToolArgs = { cut?: string; op: (typeof MAKE_OPS)[number]; shot?: string; shots?: string[]; sheet?: string; prompt?: string; cast?: string[]; quality?: "rough" | "final"; start?: string; end?: string; refs?: string[]; seconds?: number; aspect?: string; count?: number; model?: string; via?: string };
+type MakeToolArgs = {
+  cut?: string;
+  op: (typeof MAKE_OPS)[number];
+  shot?: string;
+  shots?: string[];
+  sheet?: string;
+  prompt?: string;
+  cast?: string[];
+  quality?: "rough" | "final";
+  start?: string;
+  end?: string;
+  refs?: string[];
+  drive?: { asset: string; from?: number; to?: number } | null;
+  seconds?: number;
+  aspect?: string;
+  count?: number;
+  model?: string;
+  via?: string;
+};
 /** One request per shot when there are several, else the one. */
 const asksFor = ({ shots, ...ask }: MakeToolArgs): MakeAsk[] => (shots?.length ? shots.map((shot) => ({ ...ask, shot })) : [ask]);
 const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
 const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
-/** What it costs where it runs: nothing extra on a plan. */
-const costAt = (x: { route: string; usd?: number }) => (PLAN_ROUTES.includes(x.route) ? "no charge, from the plan's allowance" : usd(x.usd));
+/** What it costs where it runs: nothing extra on a plan, nothing at all on the person's own graphics card. */
+const costAt = (x: { route: string; usd?: number }) => (PLAN_ROUTES.includes(x.route) ? "no charge, from the plan's allowance" : x.route === "comfy" ? "no charge, on the person's own graphics card" : usd(x.usd));
 const fitLine = (f: Fit) => {
   const note = CATALOG.find((m) => m.id === f.model)?.note;
   if (!f.ok) return `- ${f.label} (${f.model}): ${f.why.reason}`;
@@ -629,10 +658,10 @@ server.registerTool(
     }
     const { req, choices } = makeChoices(id, asks[0]!);
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.start ? "from a start frame" : req.aspect}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
     ];
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
-    if (choices.setup.length) out.push("Needs something the person has to set up (Settings → Media services):", ...choices.setup.map(fitLine));
+    if (choices.setup.length) out.push("Needs something the person has to set up (a key in Settings → Media services; ComfyUI in Settings → Making):", ...choices.setup.map(fitLine));
     if (choices.unfit.length) out.push("Can't make this:", ...choices.unfit.map(fitLine));
     return text(out.join("\n"));
   },
@@ -642,7 +671,7 @@ server.registerTool(
   "generate",
   {
     description:
-      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
+      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). A clip can also copy the movement in a stretch of a clip (drive) onto the people in its board: a fight or a dance acted out by anyone. Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
     inputSchema: {
       ...makeArgs,
       count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),
@@ -656,10 +685,10 @@ server.registerTool(
     const what = (p: (typeof plans)[number]) => (p.ask.shot ? `shot ${p.ask.shot}` : p.ask.sheet ? `a sheet for @${p.ask.sheet}` : args.op === "image" ? "a still" : "a clip");
     const lines = plans.map(
       (p) =>
-        `- ${p.jobs.length} take${p.jobs.length === 1 ? "" : "s"} of ${what(p)} with ${p.fit.label}: ${[p.fit.seconds && `${p.fit.seconds}s`, p.fit.aspect, usd(p.fit.usd)].filter(Boolean).join(", ")}. Jobs ${p.jobs.map((j) => j.id).join(", ")}.`,
+        `- ${p.jobs.length} take${p.jobs.length === 1 ? "" : "s"} of ${what(p)} with ${p.fit.label}: ${[p.fit.seconds && `${p.fit.seconds}s`, p.fit.aspect, costAt(p.fit)].filter(Boolean).join(", ")}. Jobs ${p.jobs.map((j) => j.id).join(", ")}.`,
     );
     const where = args.sheet ? "They join its pictures as they finish." : args.shot || args.shots?.length ? "They land on the shots as their takes as they finish." : "They land in the project's assets as they finish.";
-    return text([`Making ${usd(total) || "it"} in all, ${minutes(Math.max(...plans.map((p) => p.fit.wait ?? 0)))}:`, ...lines, `${where} Call jobs with wait to see them come in.`].join("\n"));
+    return text([`Making ${total > 0 ? usd(total) : "it"} in all, ${minutes(Math.max(...plans.map((p) => p.fit.wait ?? 0)))}:`, ...lines, `${where} Call jobs with wait to see them come in.`].join("\n"));
   },
 );
 

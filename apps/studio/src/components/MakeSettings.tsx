@@ -1,8 +1,9 @@
 /**
  * Settings → Making: the hard limit on what making may spend in all (the person's, the agent's and any script's
- * takes alike), what the agent may spend in a turn before it asks, the order Auto tries models in, and the plans that
- * make stills without a key.
+ * takes alike), what the agent may spend in a turn before it asks, the order Auto tries models in, the plans that
+ * make stills without a key, and ComfyUI for the models that run on the person's own graphics card.
  */
+import type { ComfyCheck } from "@beatsheet/engine";
 import { CATALOG, type MakeOp, type ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 
@@ -80,6 +81,7 @@ export function MakeSection() {
           <p className="dim small">A still made on a plan comes out of its allowance, not your money. Where you also have a key, the model picker offers both, and the plan is used unless you pick the key.</p>
         </section>
       )}
+      <ComfySection />
       <section>
         <h4>What Auto tries first</h4>
         <Ranking op="image" label="Stills" order={s.ranking?.image} onChange={(ids) => change({ ranking: { image: ids } })} />
@@ -87,6 +89,102 @@ export function MakeSection() {
         <p className="dim small">For video, Auto keeps to the quality asked for (roughs or finals) and goes down this list within it.</p>
       </section>
     </div>
+  );
+}
+
+type Comfy = { connected?: { url: string; addedAt: string; detail?: string; ok?: boolean }; check: ComfyCheck; suggested: string; folder: string };
+
+/**
+ * ComfyUI, for the models that run on the person's own graphics card: its address, checked before it's kept, and each
+ * workflow beatsheet has with what the server would be missing to run it.
+ */
+function ComfySection() {
+  const [c, setC] = useState<Comfy>();
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(
+    () =>
+      void fetch("/api/settings/comfy")
+        .then((r) => r.json() as Promise<Comfy>)
+        .then((x) => {
+          setC(x);
+          setUrl(x.connected?.url ?? x.suggested);
+        }),
+    [],
+  );
+  if (!c) return null;
+  const call = async (method: string, body?: Record<string, unknown>) => {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch("/api/settings/comfy", { method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const next = (await res.json()) as Comfy;
+      setC(next);
+      if (body && !next.check.ok) setError(next.check.detail);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const on = !!c.connected;
+  return (
+    <section>
+      <h4>Your graphics card</h4>
+      <p className="dim small">
+        SCAIL-2 copies the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board. It runs in ComfyUI on your own graphics card, at no charge.
+      </p>
+      <div className="make-row">
+        <span>ComfyUI at</span>
+        <input value={url} onChange={(e) => setUrl(e.target.value)} disabled={on || busy} placeholder={c.suggested} aria-label="ComfyUI's address" />
+        {on ? (
+          <>
+            <button onClick={() => void call("POST")} disabled={busy}>
+              Check again
+            </button>
+            <button onClick={() => void call("DELETE")} disabled={busy}>
+              Disconnect
+            </button>
+          </>
+        ) : (
+          <button className="primary" onClick={() => void call("POST", { url })} disabled={busy || !url.trim()}>
+            {busy ? "Checking…" : "Connect"}
+          </button>
+        )}
+      </div>
+      {on && (
+        <p className="small">
+          {c.check.ok ? (
+            <>
+              <span className="good">✓</span> {c.check.detail}
+            </>
+          ) : (
+            <span className="warn">{c.check.detail}</span>
+          )}
+        </p>
+      )}
+      {error && <p className="warn small">{error}</p>}
+      {!!c.check.workflows.length && (
+        <ul className="make-plans">
+          {c.check.workflows.map((w) => (
+            <li key={`${w.name}.${w.profile}`}>
+              <span>
+                {w.label}{" "}
+                <span className="dim small">
+                  · {w.profile === "full" ? "full, for finals" : "fast, for roughs"}
+                  {w.own ? " · your own export" : ""}
+                </span>
+              </span>
+              <span className={`small ${w.problems.length ? "warn" : on && c.check.ok ? "" : "dim"}`}>{w.problems.length ? w.problems.join("; ") : on && c.check.ok ? "Ready" : "Connect to check"}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="dim small">
+        Your own exports from ComfyUI (File → Export (API)) go in {c.folder}, named like scail2-animation.full.api.json, and take the place of the ones beatsheet comes with.
+      </p>
+    </section>
   );
 }
 

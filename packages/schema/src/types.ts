@@ -568,6 +568,14 @@ export const ShotContent = z.discriminatedUnion("kind", [
     cast: z.array(z.string()).optional().describe("Cast and sets in it beyond the ones its prompt names (@cat): cat, or cat/heist for a variant"),
     start: z.string().optional().describe("Asset id of the picture a video take starts from (usually the shot's board)"),
     end: z.string().optional().describe("Asset id of the picture a video take ends on"),
+    drive: z
+      .object({
+        asset: z.string().describe("The clip to follow: someone acting the shot out, or the original footage"),
+        from: z.number().min(0).describe("The second of the clip it starts at"),
+        to: z.number().optional().describe("The second it ends at; default the shot's length after `from`"),
+      })
+      .optional()
+      .describe("For video takes that copy movement: the people in the start picture move as the people in this stretch of a clip do (SCAIL-2)"),
     in: z.number().optional().describe("Seconds into the take: takes are made a little longer than the shot, so it can be retimed"),
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id, as for a clip: where the take sits in a format of another shape"),
     effects: z.array(ClipEffect).optional().describe("As for a clip, following a subject found on the take"),

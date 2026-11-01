@@ -29,7 +29,7 @@ A clip that starts from a board keeps everything the board settled, so never ski
 
 - Leave the model to Auto unless there's a reason; it picks the first ready model of the quality asked for. `list_models` says what each is good for.
 - Keep to one model per pass: mixing models across shots changes how they look. Name it with `model` once you've picked.
-- Stills: Nano Banana (fal). With the person's own keys, also Muse Image (Meta, 1¢ a still, good for many boards) and GPT Image (OpenAI, about 2¢; follows long, exact prompts and draws legible text like a sign or a note). GPT Image also runs on the person's ChatGPT plan through Codex, and Muse Image on a Muse Code plan where Meta has turned its image tool on: no charge, from the plan's allowance, about half a minute each. list_models says where each model runs (`via`); generate uses the plan unless you pass the key's `via`. A plan's allowance runs out, so for a big pass of boards a cheap key (Muse Image, 1¢) can be kinder. Roughs: Kling 2.5 Turbo (or Wan 2.2, cheaper, any length up to 10s). Finals: Kling 3 Pro, from a board only.
+- Stills: Nano Banana (fal). With the person's own keys, also Muse Image (Meta, 1¢ a still, good for many boards) and GPT Image (OpenAI, about 2¢; follows long, exact prompts and draws legible text like a sign or a note). GPT Image also runs on the person's ChatGPT plan through Codex, and Muse Image on a Muse Code plan where Meta has turned its image tool on: no charge, from the plan's allowance, about half a minute each. list_models says where each model runs (`via`); generate uses the plan unless you pass the key's `via`. A plan's allowance runs out, so for a big pass of boards a cheap key (Muse Image, 1¢) can be kinder. Roughs: Kling 2.5 Turbo (or Wan 2.2, cheaper, any length up to 10s). Finals: Kling 3 Pro, from a board only. Clips that copy the movement in another clip: SCAIL-2, on the person's own graphics card through ComfyUI (see Copying movement below).
 - Boards and sheets from different still models look different (grain, color, how faces are drawn). Make a cast member's sheet and the boards with one model, then keep it.
 - A shot longer than any model makes is refused with the reason: split it into two shots.
 
@@ -56,6 +56,16 @@ The board already says what's in the frame, so say what changes:
 Don't cut to another scene or bring in new people mid-clip; that's another shot.
 
 **Carrying a clip on.** A clip that ends mid-action continues in the next shot from its last frame: `still_from_clip` on it, then `generate` (op `video`) with `start` set to that still, and a prompt for what happens next. The cut between them lands on the same frame, so it reads as one continuous move.
+
+## Copying movement from a clip
+
+When the action is hard to describe or a service won't draw it (a fight, two people grappling, a dance, a stunt), copy it instead: SCAIL-2 moves the people in a shot's board the way the people in a stretch of a clip move. The clip can be the original footage (a remake of an old film) or the person and friends acting the shot out on a phone and bringing it in. It runs in ComfyUI on the person's own graphics card, at no charge; `list_models` says when ComfyUI isn't connected (Settings → Making).
+
+- `generate` with op `video`, `start: "board"` and `drive: { asset, from, to }`: the clip and the stretch of it, in seconds. Without `to`, the shot's length after `from`. Up to about 7.7 seconds; split a longer action into shots. The take is the stretch plus half a second either side where the clip has it, and the shot starts where the stretch does.
+- The board is who and where; the clip is only how they move. Make the board with the same number of people, framed and placed as in the clip's first frame, left to right in the same order: SCAIL-2 matches people by position. A board where two people stand apart (which still models will draw) turns into the fight when the clip has them clash.
+- Write the prompt long and specific, as SCAIL-2 was trained on: who each person is and wears, the place, the light, the action, and "static camera" when the clip's camera holds still.
+- The shot keeps what it followed, so a final (`quality: "final"`, the full workflow) follows the same stretch without saying it again. `drive: null` makes an ordinary clip instead.
+- Look at the rough beside the clip it followed (`frame` on both at the same moment): hands, props and anyone who leaves the frame are where it slips. A prop the board doesn't hold won't appear.
 
 ## Cast and sets
 
@@ -86,3 +96,4 @@ What keeps the cat the same cat from shot to shot.
 - Before a pass over many shots, estimate it: `list_models` with `shots`. If it's over what's left, ask first: a `choose` hand-off whose options say what they'd cost ("Rough clips for all 16 shots · about $5.60", "Just the 6 key shots · about $2.10").
 - A pass over several shots starts all or nothing, so nothing is half made.
 - When fal refuses something (its safety checker), rephrase what's in the shot; don't try to get around it.
+- SCAIL-2 on the person's own graphics card costs nothing, but a 3-second rough took 13 minutes on an RTX 4090 and the card does one at a time; a final (the full workflow) takes hours. Say roughly how long a pass will take rather than what it costs, and ask before a pass of finals.

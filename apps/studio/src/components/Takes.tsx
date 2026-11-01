@@ -13,8 +13,8 @@ import { TextField } from "./ui";
 
 const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 export const money = (usd?: number) => (usd === undefined ? "" : `~$${usd.toFixed(2)}`);
-/** What it costs where it runs: a plan's allowance rather than money. */
-export const cost = (f: { usd?: number }) => (f.usd === 0 ? "on your plan" : money(f.usd));
+/** What it costs where it runs: a plan's allowance, or the person's own graphics card, rather than money. */
+export const cost = (f: { usd?: number; route?: string }) => (f.route === "comfy" ? "on your graphics card" : f.usd === 0 ? "on your plan" : money(f.usd));
 const wait = (s?: number) => (s === undefined ? "" : s < 90 ? `~${Math.max(10, Math.round(s / 10) * 10)}s` : `~${Math.round(s / 60)} min`);
 /** A model, where it runs when it runs in more than one place, what it costs and how long it takes; or why it can't. */
 const fitLabel = (f: Fit, where = false) => {
@@ -139,10 +139,14 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const [fromBoard, setFromBoard] = useState(true);
   const [model, setModel] = useState("");
   const [count, setCount] = useState(2);
+  // A clip can copy the movement in a stretch of another (SCAIL-2): the one the shot's takes followed, until changed.
+  const clips = p.assets.filter((a) => a.kind === "video" && !a.cutout && !a.version && a.provenance?.source !== "generated");
+  const [follow, setFollow] = useState<{ asset: string; from: number; to?: number } | undefined>(c.kind === "generated" ? c.drive : undefined);
   const start = op === "video" && fromBoard ? board : undefined;
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
+  const drive = op === "video" ? (follow ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
-  const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined });
+  const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined, ...drive });
   const chosen = fitOf(choices, model);
   // A model picked for stills can't make video, and the other way round.
   useEffect(() => {
@@ -229,13 +233,46 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
           Start from the chosen still
         </label>
       )}
+      {op === "video" && clips.length > 0 && (
+        <>
+          <label className="check-row small" title="The people in the still move as the people in a stretch of a clip do: someone acting the shot out, or the original footage">
+            <input type="checkbox" checked={!!follow} onChange={(e) => setFollow(e.target.checked ? { asset: clips[0]!.id, from: 0 } : undefined)} />
+            Copy the movement in a clip
+          </label>
+          {follow && (
+            <div className="make-row small">
+              <select value={follow.asset} onChange={(e) => setFollow({ asset: e.target.value, from: 0 })} aria-label="The clip to follow">
+                {clips.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label ?? a.id}
+                  </option>
+                ))}
+              </select>
+              <span>from</span>
+              <Seconds value={follow.from} onCommit={(from) => setFollow({ ...follow, from: from ?? 0 })} label="Second of the clip to start at" />
+              <span>to</span>
+              <Seconds value={follow.to} placeholder={length ? String(round2(follow.from + length)) : "end"} onCommit={(to) => setFollow({ ...follow, to })} label="Second of the clip to stop at" />
+            </div>
+          )}
+        </>
+      )}
       <WhyNot choices={choices} />
       <div className="make-row">
         <button
           className="primary"
           disabled={!chosen || !prompt.trim() || sending}
           onClick={() =>
-            void make({ op, cut: cutId, shot: shot.id, prompt, count, ...(op === "video" ? { quality } : {}), ...pickOf(model), ...(start ? { start } : {}), ...(length ? { seconds: length } : {}) })
+            void make({
+              op,
+              cut: cutId,
+              shot: shot.id,
+              prompt,
+              count,
+              ...(op === "video" ? { quality, drive: follow ?? null } : {}),
+              ...pickOf(model),
+              ...(start ? { start } : {}),
+              ...(length ? { seconds: length } : {}),
+            })
           }
         >
           Make {count} {what}
@@ -289,19 +326,38 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
   );
 }
 
-/** When nothing can make it: why not, for each model, and where to add a key. */
+/** When nothing can make it: why not, for each model, and where to add a key (or connect ComfyUI). */
 export function WhyNot({ choices }: { choices?: Choices }) {
   if (!choices || choices.ready.length) return null;
+  const comfy = choices.setup.some((f) => !f.ok && f.why.kind === "connect" && f.why.services.includes("comfy"));
+  const keys = choices.setup.some((f) => !f.ok && !(f.why.kind === "connect" && f.why.services.includes("comfy")));
   return (
     <p className="dim small">
       {[...choices.unfit, ...choices.setup].map((f) => (!f.ok ? `${f.label}: ${f.why.reason}` : "")).join(". ")}.{" "}
-      {!!choices.setup.length && (
+      {keys && (
         <button className="link small" onClick={() => actions.setSettingsOpen(true, "services")}>
           Media services
+        </button>
+      )}{" "}
+      {comfy && (
+        <button className="link small" onClick={() => actions.setSettingsOpen(true, "make")}>
+          Connect ComfyUI
         </button>
       )}
     </p>
   );
+}
+
+/** A number of seconds, saved when it's left; empty for none. */
+function Seconds({ value, placeholder, label, onCommit }: { value?: number; placeholder?: string; label: string; onCommit: (s: number | undefined) => void }) {
+  const [text, setText] = useState(value === undefined ? "" : String(value));
+  useEffect(() => setText(value === undefined ? "" : String(value)), [value]);
+  const commit = () => {
+    const s = text.trim() === "" ? undefined : Number(text);
+    if (s === undefined || (Number.isFinite(s) && s >= 0)) onCommit(s === undefined ? undefined : round2(s));
+    else setText(value === undefined ? "" : String(value));
+  };
+  return <input className="seconds" type="number" min={0} step={0.1} value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && commit()} aria-label={label} />;
 }
 
 /** One take: its poster, playing on hover when it's a clip. */

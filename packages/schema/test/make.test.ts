@@ -9,6 +9,7 @@ import {
   checkReferences,
   chooseModels,
   cutView,
+  driveWindow,
   fitModel,
   HANDLE,
   fewestStillRefs,
@@ -175,8 +176,10 @@ describe("choosing between models", () => {
     expect(chooseModels(CATALOG, { op: "video", prompt: "a cat leaves", start: "board", seconds: 3.2 }, services).auto).toMatchObject({ model: "kling-2.5-turbo", seconds: 5 });
     for (const m of CATALOG)
       for (const r of m.routes) {
-        expect(r.endpoints.text ?? r.endpoints.start ?? r.endpoints.refs, `${m.id} on ${r.via}`).toBeTruthy();
-        if (m.takes.start) expect(r.endpoints.start, `${m.id} starts from a picture on ${r.via}`).toBeTruthy();
+        expect(r.endpoints.text ?? r.endpoints.start ?? r.endpoints.refs ?? r.endpoints.drive, `${m.id} on ${r.via}`).toBeTruthy();
+        // One that follows a clip takes its start picture with the clip, at the one endpoint.
+        if (m.takes.drive) expect(r.endpoints.drive, `${m.id} follows a clip on ${r.via}`).toBeTruthy();
+        else if (m.takes.start) expect(r.endpoints.start, `${m.id} starts from a picture on ${r.via}`).toBeTruthy();
         if (m.takes.refs) expect(r.endpoints.refs, `${m.id} takes references on ${r.via}`).toBeTruthy();
       }
   });
@@ -468,5 +471,41 @@ describe("a generated shot framed like a clip", () => {
     expect(pictureOf(make({ shots: [shot("face-1")] }).shots[0]!.content)).toMatchObject({ asset: "take1", reframe: { land: { follow: "face-1" } } });
     expect(checkCut(make({ shots: [shot("face-1")] }))).toEqual([]);
     expect(checkCut(make({ shots: [shot("face-9")] })).map((i) => i.message)).toEqual(['"take1" has no subject "face-9"', '"take1" has no subject "face-9"']);
+  });
+});
+
+describe("copying movement from a clip", () => {
+  const scail = CATALOG.find((m) => m.id === "scail-2")!;
+  const comfy: ServiceState = { label: "ComfyUI", state: "ready" };
+  const drive = { asset: "fight", from: 2, to: 5 };
+
+  it("needs a stretch of a clip and a picture of who moves, and runs on ComfyUI at no charge", () => {
+    expect(fitModel(scail, { op: "video", prompt: "x", start: "board", seconds: 3 }, { comfy })).toMatchObject({ ok: false, why: { kind: "fit", reason: expect.stringContaining("Copies the movement") } });
+    expect(fitModel(scail, { op: "video", prompt: "x", drive, seconds: 3 }, { comfy })).toMatchObject({ ok: false, why: { reason: expect.stringContaining("Needs a picture of who moves") } });
+    expect(fitModel(scail, { op: "video", prompt: "x", start: "board", drive, seconds: 3 }, { comfy })).toMatchObject({ ok: true, route: "comfy", where: "ComfyUI", endpoint: "scail2-animation", seconds: 4, usd: 0 });
+    expect(fitModel(scail, { op: "video", prompt: "x", start: "board", drive, seconds: 3 }, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["comfy"] } });
+  });
+
+  it("is the only model that follows a clip, so Auto picks it for a rough or a final, and the others say why not", () => {
+    for (const quality of ["rough", "final"] as const) {
+      const choices = chooseModels(CATALOG, { op: "video", prompt: "x", start: "board", drive, seconds: 3, quality }, { fal, comfy });
+      expect(choices.auto?.model).toBe("scail-2");
+      expect(choices.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't copy movement from a clip" } });
+    }
+    // Without a clip to follow, it isn't offered.
+    expect(chooseModels(CATALOG, { op: "video", prompt: "x", start: "board", seconds: 3 }, { fal, comfy }).auto?.model).not.toBe("scail-2");
+  });
+
+  it("refuses a stretch longer than its workflow makes, and says splitting it would do", () => {
+    expect(fitModel(scail, { op: "video", prompt: "x", start: "board", drive: { ...drive, to: 12 }, seconds: 10 }, { comfy })).toMatchObject({ ok: false, why: { fix: "split" } });
+  });
+
+  it("widens the stretch by the take's spare evenly where the clip has room, else on the side that has it", () => {
+    expect(driveWindow(drive, 4, 20)).toEqual({ from: 1.5, to: 5.5, lead: 0.5 });
+    // At the clip's start, all of it after; at its end, all of it before.
+    expect(driveWindow({ ...drive, from: 0, to: 3 }, 4, 20)).toEqual({ from: 0, to: 4, lead: 0 });
+    expect(driveWindow({ ...drive, from: 17, to: 20 }, 4, 20)).toEqual({ from: 16, to: 20, lead: 1 });
+    // A clip with no room either side is followed as it is.
+    expect(driveWindow({ ...drive, from: 0, to: 3 }, 4, 3)).toEqual({ from: 0, to: 3, lead: 0 });
   });
 });

@@ -113,4 +113,22 @@ export const CATALOG: CatalogModel[] = [
     // fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video: $0.112 a second with its own sound off. Only from a picture.
     routes: [{ via: "fal", shape: "kling-3", endpoints: { start: "fal-ai/kling-video/v3/pro/image-to-video" }, price: { perSecond: 0.112 } }],
   },
+  {
+    id: "scail-2",
+    label: "SCAIL-2",
+    by: "Z.ai",
+    note: "Copies the movement in a clip onto the people in a board: a fight, a dance or a stunt acted out by anyone, two people at once. On your own graphics card, through ComfyUI.",
+    ops: ["video"],
+    // No tier: it's the one model that follows a clip, for roughs (its fast workflow) and finals (its full one) alike.
+    takes: { start: true, drive: true },
+    // Its workflow chains 81 frames at 30 a second, then 76 more for each of two extensions: 233 frames, 7.8 seconds.
+    // Shorter stretches are padded out with their last frame and trimmed back.
+    lengths: { min: 1, max: 7.7 },
+    aspects: ["any"],
+    // A 3-second rough (two chunks, the fast workflow at 1248×704) took 13 minutes on an RTX 4090, about a minute a
+    // step. The full workflow's 40 steps at cfg 5 will take hours.
+    wait: 800,
+    // huggingface.co/zai-org/SCAIL-2 (MIT). The endpoint is the workflow's name in the ComfyUI folder (comfy.ts).
+    routes: [{ via: "comfy", shape: "scail-2", endpoints: { drive: "scail2-animation" }, price: { perSecond: 0 } }],
+  },
 ];

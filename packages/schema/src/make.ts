@@ -11,8 +11,8 @@ import type { CastMember, CastProposal, Project, ProjectFile } from "./types.ts"
 export const MAKE_OPS = ["image", "video"] as const;
 export type MakeOp = (typeof MAKE_OPS)[number];
 
-/** The shape of a request a service has its own endpoint for. */
-export type RequestShape = "text" | "start" | "refs";
+/** The shape of a request a service has its own endpoint for: a clip that copies movement from another is "drive". */
+export type RequestShape = "text" | "start" | "refs" | "drive";
 
 /** One place a model runs, and what it costs there. */
 export type ModelRoute = {
@@ -36,8 +36,11 @@ export type CatalogModel = {
   ops: MakeOp[];
   /** For video: whether it's for roughs (fast and cheap, to judge the cut) or finals (the best there is). */
   tier?: Quality;
-  /** What it can be given besides a prompt: a picture to start from, one to end on, and how many references. */
-  takes: { start?: boolean; end?: boolean; refs?: number };
+  /**
+   * What it can be given besides a prompt: a picture to start from, one to end on, and how many references. `drive`:
+   * it copies the movement of the people in a clip onto the people in the start picture, and needs both.
+   */
+  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean };
   /** For video: the lengths it makes, as a list or a range, in seconds. */
   lengths?: number[] | { min: number; max: number };
   /** The aspects it makes ("16:9"), or "any". When it starts from a picture, the picture's shape decides instead. */
@@ -61,7 +64,9 @@ export type MakeRequest = {
   start?: string;
   end?: string;
   refs?: string[];
-  /** How long it has to play, in seconds (the shot's length). */
+  /** For video that copies movement: the stretch of a clip to follow. */
+  drive?: Drive;
+  /** How long it has to play, in seconds (the shot's length, or the stretch it follows). */
   seconds?: number;
   /** The shape it has to fill: "9:16". */
   aspect?: string;
@@ -106,6 +111,23 @@ export type Fit = FitOk | { ok: false; model: string; label: string; why: Why };
 /** Takes are made this much longer at each end, when the model allows, so the shot can be retimed without another. */
 export const HANDLE = 0.5;
 
+/** A stretch of a clip whose movement a take copies, in seconds of the clip. */
+export type Drive = { asset: string; from: number; to: number };
+
+/**
+ * The stretch of the clip a take that copies movement follows: the one asked for, widened to the take's length where
+ * the clip has room (evenly either side, else on the side that has it), and how far into it the asked-for stretch
+ * starts (where the shot starts in the take).
+ */
+export function driveWindow(drive: Drive, seconds: number, duration = Infinity): { from: number; to: number; lead: number } {
+  const want = drive.to - drive.from;
+  const extra = Math.max(0, seconds - want);
+  const before = Math.min(drive.from, Math.max(extra / 2, extra - Math.max(0, duration - drive.to)));
+  const r = (x: number) => Math.round(x * 1000) / 1000;
+  const from = drive.from - before;
+  return { from: r(from), to: r(Math.min(duration, from + Math.max(seconds, want))), lead: r(before) };
+}
+
 /** The aspects models are asked for, widest first. */
 export const ASPECTS = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"] as const;
 
@@ -134,7 +156,7 @@ const money = (usd: number) => `$${usd < 1 ? usd.toFixed(2) : usd.toFixed(2).rep
 const list = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}`);
 
 /** Which of a service's endpoints a request needs. */
-export const shapeOf = (req: Pick<MakeRequest, "start" | "refs">): RequestShape => (req.refs?.length ? "refs" : req.start ? "start" : "text");
+export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive">): RequestShape => (req.drive ? "drive" : req.refs?.length ? "refs" : req.start ? "start" : "text");
 
 /** The length to ask for, or why it can't be made. */
 function lengthFor(model: CatalogModel, wanted: number | undefined): { seconds: number } | { why: Why } {
@@ -180,6 +202,9 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const no = (why: Why): Fit => ({ ok: false, model: model.id, label: model.label, why });
   const count = Math.max(1, req.count ?? 1);
   if (!model.ops.includes(req.op)) return no({ kind: "fit", reason: `${model.label} doesn't make ${req.op === "image" ? "images" : "video"}` });
+  if (req.drive && !model.takes.drive) return no({ kind: "fit", reason: "Doesn't copy movement from a clip" });
+  if (model.takes.drive && !req.drive) return no({ kind: "fit", reason: "Copies the movement in a clip: say which stretch of which clip to follow" });
+  if (req.drive && !req.start) return no({ kind: "fit", reason: "Needs a picture of who moves: start from the shot's board" });
   if (req.start && !model.takes.start) return no({ kind: "fit", reason: "Doesn't start from a picture" });
   if (req.end && !req.start) return no({ kind: "fit", reason: "An end frame needs a start frame too", fix: "drop-end" });
   if (req.end && !model.takes.end) return no({ kind: "fit", reason: "Doesn't take an end frame", fix: "drop-end" });
@@ -207,7 +232,8 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const state = (r: ModelRoute): ServiceState => services[r.via] ?? { label: r.via, state: "missing" };
   const routes = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
   if (!routes.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
-  if (!routes.length) return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : "only a prompt"}` });
+  if (!routes.length)
+    return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : shape === "drive" ? "a clip to follow" : "only a prompt"}` });
   const ready = routes
     .filter((r) => state(r).state === "ready")
     .map((r) => ({ r, usd: costOn(r, req.op, seconds, count), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))

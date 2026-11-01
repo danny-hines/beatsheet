@@ -238,7 +238,7 @@ A short, fixed list of what can be asked for. The verbs above are presets of the
 
 - `image`: a still, from a prompt and references
 - `edit-image`: a still, changed by an instruction
-- `video`: a clip, from a prompt, start and end frames, and references
+- `video`: a clip, from a prompt, start and end frames, and references; or one that copies the movement in a stretch of another clip onto the people in its start frame (`drive`)
 - `extend`: more of a clip, before or after
 - `edit-video`: a clip, changed by an instruction (relight, angle, restyle, remove)
 - `swap`: a clip with a subject replaced by a cast member
@@ -306,6 +306,8 @@ Auto is the default: the first ready model in a ranking for each operation, whic
 ## Running models yourself
 
 Open-weights models (Wan, LTX-2, SCAIL-2, Qwen-Image, Flux) can run on your own graphics card or a rented one instead of through a service. That can be much cheaper, it's private (photos of your family never leave the machine), and sometimes it's the only way: an open model often runs in ComfyUI the day it's released, before any service hosts it. What it costs is setup and, on most home cards, time.
+
+**What's built so far.** The `comfy` route, with one model on it: SCAIL-2 in animation mode, which copies the movement in a stretch of a clip (`drive` on the request and on the generated shot) onto the people in the shot's board. It's how a fight, a dance or a stunt gets made without asking a service to draw people touching: someone acts it out (or it's in the original footage), and the board says who they are and where. [comfy.ts](../packages/engine/src/comfy.ts) drives a ComfyUI that's already running, on this machine or the network, connected in Settings → Making the way a key is (checked first: it has to answer from a graphics card). The workflows ship in `packages/engine/comfy` as ComfyUI API exports whose nodes are titled `STUDIO_*` (the picture, the clip, the seed, the size, the prompt, one output per chunk count); an export of your own with the same name in the `comfy` folder beside beatsheet's settings takes their place. Roughs use the fast workflow and finals the full one. The picture and the stretch (with up to half a second either side where the clip has it) are fitted to the board's shape at about 704×1280, the clip held out to whole chunks of 81 + 76 frames, and the take trimmed back. beatsheet makes the prompt id and saves it with the job before sending, so a restart follows the same render, and a ComfyUI that restarted is sent the saved prompt again. Progress is by polling `/api/jobs`; there's no websocket, no install from beatsheet, no RunPod and no speed estimate yet.
 
 ### ComfyUI as the runtime
 
