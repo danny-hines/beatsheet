@@ -3,15 +3,39 @@
  * photos, posters and filmstrips for thumbnails, and an average colour for placeholders. Renders use the originals.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
+import { replaceFile } from "./platform.ts";
 
 const run = promisify(execFile);
 
-const ensureDir = (file: string) => mkdirSync(dirname(file), { recursive: true });
-const tmpFor = (file: string) => file.replace(/(\.\w+)$/, `.tmp$1`);
+/**
+ * Makes `out` in a temporary file of its own and moves it into place, so nothing sees it half-made. One job per file at
+ * a time: the import and the studio asking for a poster can both want the same preview, and two ffmpegs writing one file
+ * spoil it. Another process (the CLI, an agent's tools) can still get there first; then its file stands.
+ */
+const making = new Map<string, Promise<void>>();
+let jobs = 0;
+export function makeOnce(out: string, make: (tmp: string) => Promise<void>): Promise<void> {
+  if (existsSync(out)) return Promise.resolve();
+  const running = making.get(out);
+  if (running) return running;
+  const job = (async () => {
+    mkdirSync(dirname(out), { recursive: true });
+    // The extension stays last: ffmpeg and sharp choose the format from it.
+    const tmp = out.replace(/(\.\w+)$/, `.${process.pid}-${++jobs}.tmp$1`);
+    try {
+      await make(tmp);
+      if (!existsSync(out)) replaceFile(tmp, out);
+    } finally {
+      rmSync(tmp, { force: true });
+    }
+  })().finally(() => making.delete(out));
+  making.set(out, job);
+  return job;
+}
 
 async function ffmpeg(args: string[]) {
   await run("ffmpeg", ["-v", "error", "-y", ...args], { maxBuffer: 16 * 1024 * 1024 });
@@ -31,60 +55,44 @@ export function hardwareProxy(platform: NodeJS.Platform = process.platform): { d
 }
 
 /** Short side 720, 30 fps, keyframe every 15 frames. Hardware encode, with a software fallback. */
-export async function makeVideoProxy(src: string, out: string): Promise<void> {
-  if (existsSync(out)) return;
-  ensureDir(out);
-  const tmp = tmpFor(out);
+export function makeVideoProxy(src: string, out: string): Promise<void> {
   const scale = "fps=30,scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)'";
   const audio = ["-c:a", "aac", "-b:a", "128k", "-ac", "2", "-movflags", "+faststart"];
-  try {
-    const hw = hardwareProxy();
-    await ffmpeg([...hw.decode, "-i", src, "-vf", scale, ...hw.encode, ...audio, tmp]);
-  } catch {
-    await ffmpeg(["-i", src, "-vf", scale, "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "15", "-keyint_min", "15", "-sc_threshold", "0", ...audio, tmp]);
-  }
-  renameSync(tmp, out);
+  return makeOnce(out, async (tmp) => {
+    try {
+      const hw = hardwareProxy();
+      await ffmpeg([...hw.decode, "-i", src, "-vf", scale, ...hw.encode, ...audio, tmp]);
+    } catch {
+      await ffmpeg(["-i", src, "-vf", scale, "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-g", "15", "-keyint_min", "15", "-sc_threshold", "0", ...audio, tmp]);
+    }
+  });
 }
 
 /**
  * A copy of old video that plays like new: each interlaced field made a frame (bwdif, so motion stays as smooth as on
  * the tape, at twice the frame rate), pixels made square, in H.264 at a quality that keeps what tape has.
  */
-export async function makePlayable(src: string, out: string, how: { deinterlace?: boolean; sar?: number }): Promise<void> {
-  if (existsSync(out)) return;
-  ensureDir(out);
-  const tmp = tmpFor(out);
+export function makePlayable(src: string, out: string, how: { deinterlace?: boolean; sar?: number }): Promise<void> {
   const vf = [...(how.deinterlace ? ["bwdif=mode=send_field:deint=all"] : []), ...(how.sar ? [`scale=trunc(iw*${how.sar}/2)*2:ih`] : []), "setsar=1", "format=yuv420p"].join(",");
-  await ffmpeg(["-i", src, "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp]);
-  renameSync(tmp, out);
+  return makeOnce(out, (tmp) => ffmpeg(["-i", src, "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp]));
 }
 
 /** A screen-sized, upright JPEG of a photo (browsers can't show HEIC, and 50 MP photos scrub badly). */
-export async function makeImageProxy(src: string, out: string): Promise<void> {
-  if (existsSync(out)) return;
-  ensureDir(out);
-  const tmp = tmpFor(out);
-  await sharp(src).rotate().resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toFile(tmp);
-  renameSync(tmp, out);
+export function makeImageProxy(src: string, out: string): Promise<void> {
+  return makeOnce(out, async (tmp) => void (await sharp(src).rotate().resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toFile(tmp)));
 }
 
-export async function makePoster(src: string, out: string, kind: "video" | "image", duration?: number): Promise<void> {
-  if (existsSync(out)) return;
-  ensureDir(out);
-  const tmp = tmpFor(out);
-  if (kind === "image") await sharp(src).rotate().resize({ width: 480, height: 480, fit: "inside" }).jpeg({ quality: 78 }).toFile(tmp);
-  else await ffmpeg(["-ss", String(Math.max(0, (duration ?? 1) * 0.4)), "-i", src, "-frames:v", "1", "-vf", "scale=-2:360", "-q:v", "4", tmp]);
-  renameSync(tmp, out);
+export function makePoster(src: string, out: string, kind: "video" | "image", duration?: number): Promise<void> {
+  return makeOnce(out, async (tmp) => {
+    if (kind === "image") await sharp(src).rotate().resize({ width: 480, height: 480, fit: "inside" }).jpeg({ quality: 78 }).toFile(tmp);
+    else await ffmpeg(["-ss", String(Math.max(0, (duration ?? 1) * 0.4)), "-i", src, "-frames:v", "1", "-vf", "scale=-2:360", "-q:v", "4", tmp]);
+  });
 }
 
 /** Eight evenly spaced frames side by side: what the agent looks at to log a clip without watching it. */
-export async function makeStrip(src: string, out: string, duration: number, frames = 8): Promise<void> {
-  if (existsSync(out)) return;
-  ensureDir(out);
-  const tmp = tmpFor(out);
+export function makeStrip(src: string, out: string, duration: number, frames = 8): Promise<void> {
   const step = Math.max(0.1, duration / frames);
-  await ffmpeg(["-i", src, "-vf", `fps=1/${step.toFixed(3)},scale=-2:180,tile=${frames}x1`, "-frames:v", "1", "-q:v", "5", tmp]);
-  renameSync(tmp, out);
+  return makeOnce(out, (tmp) => ffmpeg(["-i", src, "-vf", `fps=1/${step.toFixed(3)},scale=-2:180,tile=${frames}x1`, "-frames:v", "1", "-q:v", "5", tmp]));
 }
 
 export async function averageColor(image: string): Promise<string> {

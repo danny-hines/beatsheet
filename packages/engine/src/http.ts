@@ -903,19 +903,6 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   json(res, 404, { error: "not found" });
 }
 
-/** One preview job per file at a time, however many requests ask for it. */
-const caching = new Map<string, Promise<void>>();
-function cacheOnce(key: string, job: () => Promise<void>): Promise<void> {
-  let p = caching.get(key);
-  if (!p) {
-    p = job()
-      .catch(() => {})
-      .finally(() => caching.delete(key));
-    caching.set(key, p);
-  }
-  return p;
-}
-
 async function media(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   const [id, what, ...rest] = parts;
   const { project, dir } = loadProject(id!);
@@ -925,9 +912,10 @@ async function media(req: IncomingMessage, res: ServerResponse, parts: string[])
     if (!a) return json(res, 404, { error: `no asset ${assetId}` });
     const c = cachePaths(dir, a.id);
     const original = assetPath(project, dir, a);
-    // Files added after import (by an agent, say) get their previews the first time one is asked for.
+    // Files added after import (by an agent, say) get their previews the first time one is asked for. One that's being
+    // made already (by the import, or another request) is waited for, not made again.
     const missing = (kind === "poster" && !existsSync(c.poster)) || (kind === "strip" && a.kind === "video" && !existsSync(c.strip));
-    if (missing && existsSync(original)) await cacheOnce(`${id}/${a.id}`, () => ensureCached(project, dir, a));
+    if (missing && existsSync(original)) await ensureCached(project, dir, a).catch(() => {});
     if (kind === "sound") {
       const { soundFile } = await import("./clean.ts");
       return sendFile(req, res, soundFile(project, dir, a));
