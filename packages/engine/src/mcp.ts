@@ -802,12 +802,26 @@ server.registerTool(
 server.registerTool(
   "render",
   {
-    description: "Export the cut as an MP4. Drafts use the small preview copies and take seconds; final renders read the original footage.",
-    inputSchema: { project: projectArg, cut: cutArg, format: z.string().optional(), draft: z.boolean().optional() },
+    description:
+      "Export the cut. Drafts use the small preview copies and take seconds; final renders read the original footage. kind: mp4 (H.264, the default), hevc (smaller), prores (422 HQ, for finishing elsewhere), alpha (ProRes 4444 keeping transparency, for titles and cut-outs over other video), webm, gif (no sound, small), wav or mp3 (the mix alone). from/to export just that stretch of the cut. timeline: otio or xml writes the cut as a timeline file instead (OpenTimelineIO for DaVinci Resolve, Final Cut Pro 7 XML for Premiere), pointing at the original footage. still: a full-size PNG of that moment (seconds into the cut).",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      format: z.string().optional(),
+      draft: z.boolean().optional(),
+      kind: z.enum(["mp4", "hevc", "prores", "alpha", "webm", "gif", "wav", "mp3"]).optional(),
+      from: z.number().nonnegative().optional(),
+      to: z.number().positive().optional(),
+      timeline: z.enum(["otio", "xml"]).optional(),
+      still: z.number().nonnegative().optional(),
+    },
   },
-  async ({ project: id, cut, format, draft }) => {
-    const { renderProject } = await import("./render.ts");
-    const out = await renderProject(id, { cut, format, quality: draft ? "proxy" : "original" });
+  async ({ project: id, cut, format, draft, kind, from, to, timeline, still }) => {
+    const { renderProject, renderPoster, timelineFile } = await import("./render.ts");
+    if (timeline) return text(`Wrote ${await timelineFile(id, { cut, format, kind: timeline })}`);
+    if (still !== undefined) return text(`Wrote ${await renderPoster(id, { cut, format, t: still })}`);
+    const range = from !== undefined || to !== undefined ? { from: from ?? 0, to: to ?? resolveTimeline(loadProject(id, cut).project, format).duration } : undefined;
+    const out = await renderProject(id, { cut, format, quality: draft ? "proxy" : "original", kind, range });
     return text(`Wrote ${out}`);
   },
 );

@@ -53,6 +53,8 @@ export type VideoProps = {
   solo?: string;
   /** The words said in the cut's clips, by asset (their transcripts), for captions of what's said on camera. */
   words?: Record<string, SaidWord[]>;
+  /** Nothing behind the picture where nothing's drawn (an export that keeps transparency), rather than black. */
+  transparent?: boolean;
 };
 
 /** How loud a part of the mix plays: its level in the cut, off when it's muted or another part is soloed. */
@@ -80,7 +82,7 @@ export function metadataFor(props: VideoProps) {
   return { width: fmt.width, height: fmt.height, fps: fmt.fps, durationInFrames: Math.max(1, Math.ceil(seconds * fmt.fps)) };
 }
 
-export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo, words }) => {
+export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo, words, transparent }) => {
   const { fps } = useVideoConfig();
   const tl = useMemo(() => resolveTimeline(project, format), [project, format]);
   const assets = useMemo(() => new Map(project.assets.map((a) => [a.id, a])), [project]);
@@ -94,7 +96,7 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
   const music = loudnessOf(project, "music", solo), voice = loudnessOf(project, "voice", solo), sfx = loudnessOf(project, "sfx", solo);
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#000" }}>
+    <AbsoluteFill style={{ backgroundColor: transparent ? undefined : "#000" }}>
       <LookFonts look={look} base={mediaBase} />
       {project.tracks.map((track) => {
         if (track.hidden) return null;

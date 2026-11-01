@@ -473,6 +473,7 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
         </button>
         {t !== undefined && <span className="mono dim small">{formatTime(t)}</span>}
         {fmt && <span className="dim small">{fmt}</span>}
+        {n.author === "reviewer" && <span className="pill" title="Left on a shared review">{n.by ?? "A reviewer"}</span>}
         {n.region && <span className="dim small" title="Points at part of the frame">▣</span>}
         <span className="spacer" />
         {!compact && <span className={`status st-${n.status}`}>{STATUS_LABEL[n.status]}</span>}

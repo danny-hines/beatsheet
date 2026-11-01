@@ -7,7 +7,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
+import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
 import { createHash } from "node:crypto";
 import { makeFrames, makePeaks } from "./media.ts";
 import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } from "./fixtools.ts";
@@ -921,20 +921,55 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, { asset: a.id, label: a.label, bpm: a.grid?.bpm });
   }
   if (section === "projects" && id && action === "render" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; quality?: "proxy" | "original"; saveAs?: string };
-    // Where the person chose in the save dialog: an .mp4 in a folder that exists.
-    if (body.saveAs !== undefined && (!isAbsolute(body.saveAs) || !/\.mp4$/i.test(body.saveAs) || !existsSync(dirname(body.saveAs))))
-      return json(res, 400, { error: "Save the video as an .mp4 in a folder that exists" });
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; quality?: "proxy" | "original"; saveAs?: string; kind?: ExportKind; range?: { from: number; to: number } };
+    const kind = body.kind && body.kind in EXPORT_KINDS ? body.kind : "mp4";
+    const ext = EXPORT_KINDS[kind].ext;
+    // Where the person chose in the save dialog: a file of that kind in a folder that exists.
+    if (body.saveAs !== undefined && (!isAbsolute(body.saveAs) || !body.saveAs.toLowerCase().endsWith(`.${ext}`) || !existsSync(dirname(body.saveAs))))
+      return json(res, 400, { error: `Save it as a .${ext} in a folder that exists` });
+    if (body.range && !(body.range.to > body.range.from)) return json(res, 400, { error: "That stretch ends before it starts" });
     const job = startJob(
       "render",
       id,
       async (j) => {
         const { renderProject } = await import("./render.ts");
-        return renderProject(id, { cut: body.cut, format: body.format, quality: body.quality, saveAs: body.saveAs, onProgress: (p) => (j.progress = p) });
+        return renderProject(id, { cut: body.cut, format: body.format, quality: body.quality, saveAs: body.saveAs, kind, range: body.range, onProgress: (p) => (j.progress = p) });
       },
       { format: body.format },
     );
     return json(res, 202, job);
+  }
+  // A full-size picture of the cut at a moment (a thumbnail), and the cut as a timeline file for another editor.
+  if (section === "projects" && id && action === "poster" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; t?: number; saveAs?: string };
+    if (body.saveAs !== undefined && (!isAbsolute(body.saveAs) || !/\.png$/i.test(body.saveAs) || !existsSync(dirname(body.saveAs)))) return json(res, 400, { error: "Save it as a .png in a folder that exists" });
+    const { renderPoster } = await import("./render.ts");
+    const job = startJob("render", id, () => renderPoster(id, { cut: body.cut, format: body.format, t: body.t ?? 0, saveAs: body.saveAs }), { format: body.format });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "timeline-file" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; kind?: "otio" | "xml" };
+    const { timelineFile } = await import("./render.ts");
+    return json(res, 200, { path: await timelineFile(id, { cut: body.cut, format: body.format, kind: body.kind === "xml" ? "xml" : "otio" }) });
+  }
+  // Sharing an export for review on the local network: the links, sharing one, and stopping.
+  if (section === "projects" && id && action === "shares" && req.method === "GET") {
+    const { sharesOf } = await import("./share.ts");
+    return json(res, 200, await sharesOf(id));
+  }
+  if (section === "projects" && id && action === "shares" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; format?: string; file?: string; offset?: number };
+    const { project, dir } = loadProject(id, body.cut);
+    // Only an export of this project: a file in its out folder, or one the studio saved for it.
+    const file = body.file && isAbsolute(body.file) ? body.file : body.file ? join(dir, "out", body.file) : undefined;
+    if (!file || !existsSync(file) || !/.(mp4|mov|webm)$/i.test(file)) return json(res, 400, { error: "Share which export?" });
+    const { share } = await import("./share.ts");
+    return json(res, 200, await share(id, { cut: project.cut.id, format: body.format, file, offset: Math.max(0, Number(body.offset ?? 0)) || undefined }));
+  }
+  if (section === "projects" && id && action === "shares" && parts[3] && req.method === "DELETE") {
+    const { unshare } = await import("./share.ts");
+    unshare(parts[3]);
+    return json(res, 200, { ok: true });
   }
   if (section === "jobs" && id && req.method === "GET") {
     const job = jobs.get(id);

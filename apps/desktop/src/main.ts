@@ -86,16 +86,17 @@ ipcMain.handle("beatsheet:pick", async (_e, kind: "folder" | "audio" | "file") =
 });
 
 // Where an export goes: the person names it and picks the folder (the last one used, else Movies).
-ipcMain.handle("beatsheet:save-video", async (_e, opts: { name: string; dir?: string }) => {
+ipcMain.handle("beatsheet:save-video", async (_e, opts: { name: string; dir?: string; ext?: string; kind?: string }) => {
+  const ext = /^[a-z0-9]{2,5}$/.test(opts.ext ?? "") ? opts.ext! : "mp4";
   const options = {
     title: "Export",
     buttonLabel: "Export",
     defaultPath: join(opts.dir ?? app.getPath("videos"), opts.name),
-    filters: [{ name: "MP4 video", extensions: ["mp4"] }],
+    filters: [{ name: opts.kind ?? `${ext.toUpperCase()} file`, extensions: [ext] }],
     properties: ["createDirectory", "showOverwriteConfirmation"] as ("createDirectory" | "showOverwriteConfirmation")[],
   };
   const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
-  return r.canceled || !r.filePath ? null : r.filePath.toLowerCase().endsWith(".mp4") ? r.filePath : `${r.filePath}.mp4`;
+  return r.canceled || !r.filePath ? null : r.filePath.toLowerCase().endsWith(`.${ext}`) ? r.filePath : `${r.filePath}.${ext}`;
 });
 ipcMain.handle("beatsheet:reveal", (_e, path: string) => shell.showItemInFolder(path));
 ipcMain.handle("beatsheet:open-file", (_e, path: string) => shell.openPath(path));

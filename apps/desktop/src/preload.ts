@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld("beatsheet", {
   platform: process.platform,
   pick: (kind: "folder" | "audio" | "file") => ipcRenderer.invoke("beatsheet:pick", kind) as Promise<string | null>,
   pickFootage: (kind?: "files" | "folder") => ipcRenderer.invoke("beatsheet:pick-footage", kind) as Promise<string[] | null>,
-  saveVideo: (opts: { name: string; dir?: string }) => ipcRenderer.invoke("beatsheet:save-video", opts) as Promise<string | null>,
+  saveVideo: (opts: { name: string; dir?: string; ext?: string; kind?: string }) => ipcRenderer.invoke("beatsheet:save-video", opts) as Promise<string | null>,
   reveal: (path: string) => ipcRenderer.invoke("beatsheet:reveal", path),
   openFile: (path: string) => ipcRenderer.invoke("beatsheet:open-file", path) as Promise<string>,
   pathFor: (file: File) => webUtils.getPathForFile(file),

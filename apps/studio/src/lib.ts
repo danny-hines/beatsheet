@@ -166,7 +166,7 @@ type Desktop = {
   /** Opens System Settings at the privacy pane for the camera, the microphone or screen recording. */
   openPrivacy?: (kind: "camera" | "microphone" | "screen") => void;
   /** The save dialog for an export: where it goes and what it's called. Null if they cancel. */
-  saveVideo?: (opts: { name: string; dir?: string }) => Promise<string | null>;
+  saveVideo?: (opts: { name: string; dir?: string; ext?: string; kind?: string }) => Promise<string | null>;
   /** Shows a file in Finder, or opens it in its app. */
   reveal?: (path: string) => void;
   openFile?: (path: string) => Promise<string>;

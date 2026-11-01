@@ -1,8 +1,8 @@
 import type { Job } from "@beatsheet/engine";
-import { formatTime, type Brief, type CutSpec, type Reference } from "@beatsheet/schema";
+import { EXPORT_KINDS, formatTime, type Brief, type CutSpec, type ExportKind, type Reference } from "@beatsheet/schema";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { desktop, isTyping, OS, keys, WINDOWS } from "../lib";
+import { desktop, isTyping, OS, keys, runJob, WINDOWS } from "../lib";
 import { actions, getState, timelineFor, useProject, useStore } from "../store";
 import { keptReferences, ReferencesField } from "./References";
 import { NumberField, TextField } from "./ui";
@@ -143,6 +143,7 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog title={`Export · ${p.cut.name}`} onClose={onClose}>
       {open > 0 && <p className="warn small">{open} notes on this cut are still open or with the agent.</p>}
+      <MoreExports />
       <div className="format-cards">
         {p.formats.map((f) => {
           const tl = timelineFor(p, f.id);
@@ -175,23 +176,30 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
  */
 function RenderControls({ format, label }: { format: string; label: string }) {
   const projectId = useStore((s) => s.projectId)!;
+  const marks = useStore((s) => s.marks);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
+  const [kind, setKind] = useState<ExportKind>("mp4");
+  const [onlyMarked, setOnlyMarked] = useState(false);
+  const range = onlyMarked && marks.in !== undefined && marks.out !== undefined ? { from: marks.in, to: marks.out } : undefined;
+  const [rendered, setRendered] = useState<{ from: number; to: number } | undefined>();
   const start = async (quality: "proxy" | "original") => {
     setError("");
     let saveAs: string | undefined;
+    const ext = EXPORT_KINDS[kind].ext;
     if (desktop?.saveVideo) {
       const { doc, cutId } = getState();
       const cut = doc?.cuts.find((c) => c.id === cutId);
-      const name = `${[doc?.title, doc && doc.cuts.length > 1 ? cut?.name : undefined, label].filter(Boolean).join(" - ")}${quality === "proxy" ? " (draft)" : ""}.mp4`.replace(/[/:\\]/g, "-");
-      const chosen = await desktop.saveVideo({ name, dir: lastExportDir() });
+      const name = `${[doc?.title, doc && doc.cuts.length > 1 ? cut?.name : undefined, label, range ? `${formatTime(range.from)}-${formatTime(range.to)}` : undefined].filter(Boolean).join(" - ")}${quality === "proxy" ? " (draft)" : ""}.${ext}`.replace(/[/:\\]/g, "-");
+      const chosen = await desktop.saveVideo({ name, dir: lastExportDir(), ext, kind: EXPORT_KINDS[kind].label });
       if (!chosen) return;
       saveAs = chosen;
       rememberExportDir(chosen.slice(0, Math.max(chosen.lastIndexOf("/"), WINDOWS ? chosen.lastIndexOf("\\") : -1)));
     }
-    const res = await fetch(`/api/projects/${projectId}/render`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cut: getState().cutId, format, quality, saveAs }) });
+    const res = await fetch(`/api/projects/${projectId}/render`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cut: getState().cutId, format, quality, saveAs, kind, range }) });
     if (!res.ok) return setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "The export didn't start");
     let j = (await res.json()) as Job;
+    setRendered(range);
     setJob(j);
     while (j.status === "running") {
       await new Promise((r) => setTimeout(r, 700));
@@ -205,6 +213,21 @@ function RenderControls({ format, label }: { format: string; label: string }) {
   const inProject = !!output?.includes(`/${projectId}/out/`);
   return (
     <div className="render">
+      <div className="row">
+        <select value={kind} onChange={(e) => setKind(e.target.value as ExportKind)} title={EXPORT_KINDS[kind].why}>
+          {(Object.keys(EXPORT_KINDS) as ExportKind[]).map((k) => (
+            <option key={k} value={k}>
+              {EXPORT_KINDS[k].label}
+            </option>
+          ))}
+        </select>
+        {marks.in !== undefined && marks.out !== undefined && (
+          <label className="check small" title="Just the stretch marked with I and O on the timeline">
+            <input type="checkbox" checked={onlyMarked} onChange={(e) => setOnlyMarked(e.target.checked)} /> {formatTime(marks.in)}–{formatTime(marks.out)} only
+          </label>
+        )}
+      </div>
+      <div className="dim small">{EXPORT_KINDS[kind].why}</div>
       <div className="row">
         <button onClick={() => start("proxy")} disabled={job?.status === "running"} title="Fast, from the preview copies">
           Draft {label}
@@ -222,7 +245,8 @@ function RenderControls({ format, label }: { format: string; label: string }) {
       {(error || job?.status === "error") && <div className="warn small">{error || job?.error}</div>}
       {job?.status === "done" && file && (
         <div className="rendered">
-          {inProject && <video src={`/media/${projectId}/out/${file}?v=${job.id}`} controls />}
+          {inProject && /\.(mp4|webm|mov)$/i.test(file) && <video src={`/media/${projectId}/out/${file}?v=${job.id}`} controls />}
+          {inProject && /\.gif$/i.test(file) && <img src={`/media/${projectId}/out/${file}?v=${job.id}`} alt="" />}
           <div className="mono small dim">{job.output}</div>
           <div className="row">
             {desktop?.reveal && <button onClick={() => desktop!.reveal!(job.output!)}>Show in {OS.files}</button>}
@@ -232,7 +256,99 @@ function RenderControls({ format, label }: { format: string; label: string }) {
                 Download
               </a>
             )}
+            {/\.(mp4|webm|mov)$/i.test(file) && <ShareButton file={job.output!} format={format} offset={rendered?.from} />}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Shares an export for review on this network: a link anyone here opens in a browser, where they watch it and leave
+ * notes at a moment, which come into the cut's notes with their name.
+ */
+function ShareButton({ file, format, offset }: { file: string; format: string; offset?: number }) {
+  const projectId = useStore((s) => s.projectId)!;
+  const [link, setLink] = useState<{ url: string; token: string } | null>(null);
+  const [error, setError] = useState("");
+  const go = async () => {
+    setError("");
+    const res = await fetch(`/api/projects/${projectId}/shares`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cut: getState().cutId, format, file, offset }) });
+    const out = (await res.json()) as { url?: string; token?: string; error?: string };
+    if (!res.ok || !out.url) return setError(out.error ?? "It couldn't be shared");
+    setLink({ url: out.url, token: out.token! });
+  };
+  if (!link)
+    return (
+      <>
+        <button onClick={() => void go()} title="A link anyone on this network can open to watch it and leave notes">
+          Share for review
+        </button>
+        {error && <span className="warn small">{error}</span>}
+      </>
+    );
+  return (
+    <div className="share-link">
+      <input readOnly value={link.url} onFocus={(e) => e.currentTarget.select()} />
+      <button onClick={() => void navigator.clipboard?.writeText(link.url)}>Copy</button>
+      <button
+        className="link small"
+        onClick={() => void fetch(`/api/projects/${projectId}/shares/${link.token}`, { method: "DELETE" }).then(() => setLink(null))}
+        title="The link stops working"
+      >
+        Stop sharing
+      </button>
+      <p className="dim small">Anyone on this network with the link can watch it and leave notes; they come into the Notes tab with their name. {OS.computer === "PC" ? "Windows may ask to let beatsheet through its firewall." : ""}</p>
+    </div>
+  );
+}
+
+/** A still of the frame at the playhead, and the cut as a timeline file for another editor. */
+export function MoreExports() {
+  const projectId = useStore((s) => s.projectId)!;
+  const format = useStore((s) => s.format);
+  const [busy, setBusy] = useState("");
+  const [made, setMade] = useState("");
+  const still = async () => {
+    setBusy("still");
+    setMade("");
+    try {
+      const out = await runJob(`/api/projects/${projectId}/poster`, { cut: getState().cutId, format, t: getState().playhead });
+      setMade(out ?? "");
+    } finally {
+      setBusy("");
+    }
+  };
+  const timeline = async (kind: "otio" | "xml") => {
+    setBusy(kind);
+    setMade("");
+    try {
+      const res = await fetch(`/api/projects/${projectId}/timeline-file`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cut: getState().cutId, format, kind }) });
+      setMade(((await res.json()) as { path?: string }).path ?? "");
+    } finally {
+      setBusy("");
+    }
+  };
+  return (
+    <div className="card more-exports">
+      <h3>More ways out</h3>
+      <div className="row">
+        <button disabled={!!busy} onClick={() => void still()} title="Full size, from the original footage: a thumbnail or a poster">
+          {busy === "still" ? "Making it…" : `Still of ${formatTime(getState().playhead)}`}
+        </button>
+        <button disabled={!!busy} onClick={() => void timeline("otio")} title="OpenTimelineIO: opens in DaVinci Resolve, pointing at the original footage">
+          Timeline for Resolve (.otio)
+        </button>
+        <button disabled={!!busy} onClick={() => void timeline("xml")} title="Final Cut Pro 7 XML: Premiere Pro imports it, pointing at the original footage">
+          Timeline for Premiere (.xml)
+        </button>
+      </div>
+      <p className="dim small">Footage comes through as clips of the original files; designed shots, titles and captions as gaps named for what's in them.</p>
+      {made && (
+        <div className="row">
+          <span className="mono small dim">{made}</span>
+          {desktop?.reveal && <button onClick={() => desktop!.reveal!(made)}>Show in {OS.files}</button>}
         </div>
       )}
     </div>

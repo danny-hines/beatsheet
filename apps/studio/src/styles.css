@@ -1099,3 +1099,12 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .mixer-row { display: grid; grid-template-columns: 96px 1fr 64px 20px; align-items: center; gap: 6px; }
 .mixer-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mixer-db { text-align: right; color: var(--dim); }
+
+/* Exports: more ways out, and a link shared for review. */
+.more-exports { margin-bottom: 12px; }
+.more-exports h3 { margin: 0 0 8px; font-size: 14px; }
+.more-exports .row, .render .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.share-link { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; width: 100%; }
+.share-link input { flex: 1; min-width: 220px; }
+.share-link p { flex-basis: 100%; margin: 0; }
+.rendered img { max-width: 100%; border-radius: 6px; }
