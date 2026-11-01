@@ -14,6 +14,7 @@ import { Preview, Transport } from "./components/Preview";
 import { useTurn } from "./components/Turn";
 import { clearMarks, copySelected, deleteSelected, duplicate, mark, nudge, paste, selectTrack, shuttleKey, slip, sourceClock, splitHere } from "./editing";
 import { desktop, isTyping, noteHere, pictureTrack, WINDOWS } from "./lib";
+import { angleKey } from "./multicam";
 import { actions, getState, hasPlayer, setState, timelineFor, useStore } from "./store";
 
 export function App() {
@@ -269,6 +270,7 @@ function useKeys() {
           if (e.code === "KeyI" && !e.altKey) return mark("in", sourceClock.t), true;
           if (e.code === "KeyO" && !e.altKey) return mark("out", sourceClock.t), true;
           if (e.code === "KeyX" && e.altKey) return clearMarks(), true;
+          if (/^Digit[1-9]$/.test(e.code) && !e.altKey && !e.shiftKey) return angleKey(Number(e.code.slice(5)));
           if (e.code === "Comma") return (e.altKey ? slip(-frames) : nudge(-frames)), true;
           if (e.code === "Period") return (e.altKey ? slip(frames) : nudge(frames)), true;
           return false;

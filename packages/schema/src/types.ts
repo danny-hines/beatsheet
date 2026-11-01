@@ -262,6 +262,13 @@ export const Asset = z.object({
   provenance: Provenance.optional(),
   color: z.string().optional().describe("Stand-in swatch when no thumbnail exists yet"),
   subjects: z.array(SubjectTrack).optional().describe("Faces, people and things found or followed in it, for effects that follow them"),
+  angle: z
+    .object({
+      group: z.string().describe("The recordings of one event from several cameras share a group"),
+      offset: z.number().describe("Seconds into the group's time this file starts: group time = file time + offset"),
+    })
+    .optional()
+    .describe("One camera's recording of an event others filmed too, lined up with them by sound (multicam)"),
   transcript: z
     .object({
       by: z.string().describe("The transcriber: whisper, scribe, openai-whisper"),

@@ -110,3 +110,18 @@ describe("captions and subtitles", () => {
     expect(subtitles(phrases, "vtt").startsWith("WEBVTT\n\n00:00:00.460 --> 00:00:03.550\n")).toBe(true);
   });
 });
+
+describe("a word said across a cut", () => {
+  it("is heard once, in the shot that plays its middle", () => {
+    const p = make({
+      shots: [
+        { id: "s1", track: "pic", duration: 2.4, content: { kind: "clip", asset: "talk", in: 0.5 }, fidelity: "rough" },
+        { id: "s2", track: "pic", duration: 5.6, content: { kind: "clip", asset: "talk", in: 2.9 }, fidelity: "rough" },
+      ],
+    });
+    const w = cutWords(p, resolveTimeline(p), words);
+    // "making" (2.85–3.2 in the clip) is cut at 2.9: its middle plays in s2.
+    expect(w.filter((x) => x.w === "making").map((x) => x.shot)).toEqual(["s2"]);
+    expect(w.map((x) => x.w)).toEqual(["So,", "um,", "today", "we're", "making", "bread.", "First,", "flour."]);
+  });
+});

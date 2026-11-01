@@ -120,7 +120,7 @@ export function sendFile(req: IncomingMessage, res: ServerResponse, file: string
 
 export type Job = {
   id: string;
-  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe" | "clean" | "restore";
+  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe" | "clean" | "restore" | "angles";
   project: string;
   format?: string;
   status: "running" | "done" | "error";
@@ -139,6 +139,7 @@ const JOB_WORDS: Record<Job["kind"], string> = {
   transcribe: "transcribing",
   clean: "cleaning the sound",
   restore: "restoring",
+  angles: "lining up cameras",
 };
 /** Kept for older imports. */
 export type RenderJob = Job;
@@ -696,6 +697,18 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return JSON.stringify({ by: r.choice.label, spans: r.spans, reused: r.reused, costUsd: r.costUsd });
     });
     return json(res, 202, job);
+  }
+  // Several cameras on one event, lined up by their sound (a job), and which of them has each speaker.
+  if (section === "projects" && id && action === "angles" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { assets?: string[] };
+    const { syncAngles } = await import("./multicam.ts");
+    const job = startJob("angles", id, async (j) => JSON.stringify(await syncAngles(id, body.assets ?? [], (f) => (j.progress = f * 0.98))));
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "angles" && req.method === "GET") {
+    const group = new URL(req.url ?? "", "http://local").searchParams.get("group") ?? "";
+    const { speakersOfGroup } = await import("./multicam.ts");
+    return json(res, 200, await speakersOfGroup(id, group));
   }
   if (section === "projects" && id && action === "clean" && req.method === "DELETE") {
     const q = new URL(req.url ?? "", "http://local").searchParams;

@@ -594,6 +594,9 @@ export const actions = {
     const { project, projectId } = state;
     if (!project || !projectId) return;
     const used = new Set(project.shots.flatMap((s) => (s.content.kind === "clip" ? [s.content.asset] : [])));
+    // Other cameras on the same event: a camera without a transcript is heard through theirs.
+    const groups = new Set(project.assets.filter((a) => used.has(a.id) && a.angle).map((a) => a.angle!.group));
+    for (const a of project.assets) if (a.angle && groups.has(a.angle.group)) used.add(a.id);
     const want = project.assets.filter((a) => used.has(a.id) && a.transcript && state.said[a.id]?.at !== a.transcript.at);
     for (const a of want) {
       const res = await fetch(`/api/projects/${projectId}/transcripts/${a.id}`).catch(() => undefined);

@@ -6,6 +6,7 @@
 import { renameCast, speakerLabel, type Asset, type CastMember } from "@beatsheet/schema";
 import { useState } from "react";
 import { hideBroken, posterUrl } from "../lib";
+import { lineUp } from "../multicam";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { Failed, money, useChoices, useMake, WhyNot } from "./Takes";
 import { PopMenu, TextField } from "./ui";
@@ -233,12 +234,20 @@ export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: nu
           {one && <hr />}
         </>
       )}
+      {as.filter((a) => a.kind === "video").length > 1 && (
+        <>
+          <button role="menuitem" onClick={pick(() => void lineUp(as.filter((a) => a.kind === "video")))} title="Several cameras on one event: lined up by their sound, so the cut can switch between them in step">
+            Line up as angles of one event
+          </button>
+          <hr />
+        </>
+      )}
       {one && (
         <button role="menuitem" onClick={pick(() => actions.noteOn({ kind: "asset", asset: one.id }, { x: x + 160, y: y - 20 }))}>
           Note about this…
         </button>
       )}
-      {!photos.length && !one && <p className="dim small menu-note">Pick photos to make a cast member from them.</p>}
+      {!photos.length && !one && as.filter((a) => a.kind === "video").length < 2 && <p className="dim small menu-note">Pick photos to make a cast member from them.</p>}
     </PopMenu>
   );
 }

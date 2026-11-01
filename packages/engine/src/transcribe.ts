@@ -74,11 +74,13 @@ async function fittedToSound(file: string, words: SaidWord[]): Promise<SaidWord[
 /** The words said in the clips a cut plays, by asset: what its captions of the footage are made from. */
 export function wordsInCut(projectId: string, project: Pick<Project, "shots" | "assets">): Record<string, SaidWord[]> {
   const out: Record<string, SaidWord[]> = {};
-  for (const s of project.shots) {
-    const c = s.content;
-    if (c.kind !== "clip" || out[c.asset] || !project.assets.find((a) => a.id === c.asset)?.transcript) continue;
-    const words = readTranscript(projectId, c.asset)?.words;
-    if (words) out[c.asset] = words;
+  const used = new Set(project.shots.flatMap((s) => (s.content.kind === "clip" ? [s.content.asset] : [])));
+  // Other cameras on the same event too: a camera without a transcript is heard through theirs.
+  const groups = new Set(project.assets.filter((a) => used.has(a.id) && a.angle).map((a) => a.angle!.group));
+  for (const a of project.assets) {
+    if (!a.transcript || !(used.has(a.id) || (a.angle && groups.has(a.angle.group)))) continue;
+    const words = readTranscript(projectId, a.id)?.words;
+    if (words) out[a.id] = words;
   }
   return out;
 }

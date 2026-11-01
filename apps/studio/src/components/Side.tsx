@@ -1,10 +1,12 @@
 import {
+  anglesOf,
   describeTarget,
   FIDELITY,
   formatTime,
   type Fidelity,
   type Note,
   type Project,
+  switchAngle,
   type Shot,
   type Timeline,
 } from "@beatsheet/schema";
@@ -18,6 +20,7 @@ import { LineVoice, NarrationOverview } from "./Narration";
 import { ShotLook } from "./Subjects";
 import { Takes } from "./Takes";
 import { Script } from "./Script";
+import { cutToTalkers } from "../multicam";
 import { CastView } from "./Cast";
 import { AnchorChip, Empty, TextField } from "./ui";
 
@@ -229,6 +232,7 @@ const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
  */
 function ShotTiming({ shot }: { shot: Shot }) {
   const p = useProject();
+  const tl = useTimeline();
   const editShot = (fn: (s: Shot) => void) => actions.edit((d) => fn(d.shots.find((s) => s.id === shot.id)!));
   const c = shot.content;
   const clip = c.kind === "clip" ? c : undefined;
@@ -263,6 +267,23 @@ function ShotTiming({ shot }: { shot: Shot }) {
               onDoubleClick={() => editShot((s) => s.content.kind === "clip" && void delete s.content.volume)}
             />
           </label>
+        </div>
+      )}
+      {clip && a?.angle && (
+        <div className="look-row">
+          <label title="Which camera it shows, from the same moment (the number keys cut to one at the playhead)">
+            Angle
+            <select value={clip.asset} onChange={(e) => actions.edit((d) => void switchAngle(d, tl, shot.id, e.target.value))}>
+              {anglesOf(p, a.angle.group).map((x, k) => (
+                <option key={x.id} value={x.id}>
+                  {k + 1}. {x.label ?? x.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="small" style={{ alignSelf: "flex-end" }} onClick={() => void cutToTalkers(shot.id)} title="Cuts this run of shots so whoever's talking is on screen, each on the camera that hears them best">
+            Cut to whoever's talking
+          </button>
         </div>
       )}
       {clip && video && (

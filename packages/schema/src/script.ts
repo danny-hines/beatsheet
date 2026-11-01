@@ -27,14 +27,29 @@ export function cutWords(p: Project, tl: Timeline, wordsOf: WordsOf, track?: str
     if (r.track !== pic || !Number.isFinite(r.start) || !Number.isFinite(r.end)) continue;
     const c = shots.get(r.id)?.content;
     if (c?.kind !== "clip") continue;
-    const words = wordsOf(c.asset);
+    // A camera without a transcript of its own hears what another camera on the same event did, shifted into its time.
+    let heard = c.asset;
+    let words = wordsOf(c.asset);
+    let shift = 0;
+    const own = p.assets.find((a) => a.id === c.asset);
+    if (!words?.length && own?.angle) {
+      const other = p.assets.find((a) => a.angle?.group === own.angle!.group && a.id !== own.id && wordsOf(a.id)?.length);
+      if (other) {
+        heard = other.id;
+        words = wordsOf(other.id);
+        shift = own.angle.offset - other.angle!.offset;
+      }
+    }
     if (!words?.length) continue;
     const speed = c.speed ?? 1;
     const from = r.sourceIn ?? c.in ?? 0;
     const to = from + (r.end - r.start) * speed;
     words.forEach((w, i) => {
-      if (w.s < from - 0.02 || w.e > to + 0.02 || !w.w.trim()) return;
-      out.push({ w: w.w.trim(), s: r.start + (w.s - from) / speed, e: r.start + (w.e - from) / speed, shot: r.id, asset: c.asset, i, ...(w.speaker ? { speaker: w.speaker } : {}) });
+      const s = w.s - shift, e = w.e - shift;
+      // A word belongs to the shot that plays its middle, so one said across a cut is still heard once.
+      const mid = (s + e) / 2;
+      if (mid < from || mid >= to || !w.w.trim()) return;
+      out.push({ w: w.w.trim(), s: r.start + (s - from) / speed, e: r.start + (e - from) / speed, shot: r.id, asset: heard, i, ...(w.speaker ? { speaker: w.speaker } : {}) });
     });
   }
   return out.sort((a, b) => a.s - b.s);

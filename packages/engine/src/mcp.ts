@@ -6,8 +6,8 @@
  * The agents the studio hosts get it in their session config; an agent in a terminal loads it from .mcp.json. Any
  * other MCP client can run it with `node packages/engine/src/mcp.ts`.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -17,6 +17,14 @@ import {
   buildBatch,
   CATALOG,
   cutOf,
+  cutToSpeakers,
+  cutWords,
+  fillerSpans,
+  groupWords,
+  pauseSpans,
+  removeSpans,
+  spanOf,
+  speakerLabel,
   CAST_ID,
   describeAnchor,
   formatPreset,
@@ -1166,6 +1174,121 @@ server.registerTool(
     );
   },
 );
+
+server.registerTool(
+  "edit_by_words",
+  {
+    description:
+      "Edit talking footage by what's said in it, as the person does in the Script tab: the cut's words come from the transcripts of the clips its picture plays (transcribe them first). remove takes out each phrase (its words in order, as said, e.g. \"and a lot of patience\"), with half of each pause around it so it still sounds natural, and the rest comes up to meet it. fillers takes out every um and uh; pauses shortens every pause longer than `longest` seconds to `keep`. With nothing to do, it lists the cut's words with their times, to read the cut by.",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      remove: z.array(z.string()).optional().describe("Phrases to take out, word for word"),
+      fillers: z.boolean().optional(),
+      pauses: z.object({ longest: z.number().positive().optional(), keep: z.number().nonnegative().optional() }).optional().describe("Default: longer than 0.7 s, shortened to 0.3 s"),
+    },
+  },
+  async ({ project: id, cut, remove, fillers, pauses }) => {
+    const { project, version } = loadProject(id, cut);
+    const tl = resolveTimeline(project);
+    const { wordsInCut } = await import("./transcribe.ts");
+    const said = wordsInCut(id, project);
+    const words = cutWords(project, tl, (a) => said[a]);
+    if (!words.length) return text("None of the footage this cut plays has been transcribed: transcribe its clips first.");
+    if (!remove?.length && !fillers && !pauses) {
+      const lines: string[] = [];
+      words.forEach((w, k) => {
+        if (!k || w.speaker !== words[k - 1]!.speaker || w.s - words[k - 1]!.e > 1.2) lines.push(`${formatTime(w.s)}${w.speaker ? ` ${speakerLabel(w.speaker)}` : ""}:`);
+        lines[lines.length - 1] += ` ${w.w}`;
+      });
+      return text(lines.join("\n"));
+    }
+    const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9']/g, "");
+    const spans: [number, number][] = [];
+    const missing: string[] = [];
+    for (const phrase of remove ?? []) {
+      const want = phrase.split(/\s+/).map(clean).filter(Boolean);
+      const at = words.findIndex((_, k) => want.every((x, j) => words[k + j] && clean(words[k + j]!.w) === x));
+      if (at < 0 || !want.length) missing.push(phrase);
+      else spans.push(spanOf(words, at, at + want.length - 1));
+    }
+    if (fillers) spans.push(...fillerSpans(words));
+    if (pauses) spans.push(...pauseSpans(words, pauses));
+    const before = tl.duration;
+    const next = structuredClone(project);
+    removeSpans(next, tl, spans);
+    const saved = saveProject(id, next, version);
+    const after = resolveTimeline(saved.project);
+    return text(
+      `${formatTime(before - after.duration)} taken out in ${spans.length} place${spans.length === 1 ? "" : "s"}; the cut is ${formatTime(after.duration)} now.${missing.length ? ` Not found, word for word: ${missing.map((m) => `"${m}"`).join(", ")}.` : ""}`,
+    );
+  },
+);
+
+server.registerTool(
+  "subtitles",
+  {
+    description: "Write a cut's subtitles as a file (.srt or .vtt) in the project's out folder: its narration and what's said on camera (or whichever its captions are set to), timed for one of its formats. Returns the file's path.",
+    inputSchema: { project: projectArg, cut: cutArg, format: z.string().optional(), kind: z.enum(["srt", "vtt"]).optional() },
+  },
+  async ({ project: id, cut, format, kind }) => {
+    const { subtitlesFor } = await import("./transcribe.ts");
+    const { project, dir } = loadProject(id, cut);
+    const k = kind ?? "srt";
+    const file = join(dir, "out", `${id}-${project.cut.id}${format ? `-${format}` : ""}.${k}`);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, subtitlesFor(id, { cut, format, kind: k }));
+    return text(file);
+  },
+);
+
+server.registerTool(
+  "sync_angles",
+  {
+    description:
+      "Line up recordings of one event from several cameras (or a camera and a separate recorder) by their sound, so a clip shot can switch between them in step: each gets asset.angle { group, offset }. Then cut_to_speakers puts whoever is talking on screen, or switch a shot's angle by giving it the other file and the same moment (in + its offset − the other's offset).",
+    inputSchema: { project: projectArg, assets: z.array(z.string()).min(2) },
+  },
+  async ({ project: id, assets }) => {
+    const { syncAngles } = await import("./multicam.ts");
+    const r = await syncAngles(id, assets);
+    return text(
+      `Group "${r.group}": ${r.angles.map((a, k) => `${k + 1}. ${a.asset} at +${a.offset}s (match ${a.confidence})`).join(", ")}.${r.left.length ? ` Left out: ${r.left.map((l) => `${l.asset} (${l.why})`).join("; ")}.` : ""}`,
+    );
+  },
+);
+
+server.registerTool(
+  "cut_to_speakers",
+  {
+    description:
+      "Cut a stretch of clip shots from one multicam group (sync_angles) so whoever is talking is on screen: split where the speaker changes, each on the camera that hears them loudest (or as `angles` says, speaker label to asset id). Needs one of the group's cameras transcribed with who's speaking. Holds through pauses and doesn't cut away for an interjection shorter than `least` seconds.",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      group: z.string(),
+      from: z.number().nonnegative().optional().describe("Cut seconds; default the start of the cut"),
+      to: z.number().positive().optional().describe("Cut seconds; default its end"),
+      angles: z.record(z.string(), z.string()).optional(),
+      least: z.number().positive().optional().describe("Default 1.5"),
+    },
+  },
+  async ({ project: id, cut, group, from, to, angles, least }) => {
+    const { speakersOfGroup } = await import("./multicam.ts");
+    const found = await speakersOfGroup(id, group);
+    const { project, version } = loadProject(id, cut);
+    const master = project.assets.find((a) => a.id === found.master);
+    if (!master) return text(`None of group "${group}"'s cameras is transcribed: transcribe one with who's speaking.`);
+    const map = { ...found.angles, ...angles };
+    const next = structuredClone(project);
+    const tl = resolveTimeline(next);
+    const a = from ?? 0, b = to ?? tl.duration;
+    const n = cutToSpeakers(next, tl, groupWords(next, tl, master, found.words, a, b), a, b, (sp) => map[sp], { least });
+    saveProject(id, next, version);
+    return text(`${n ? `The picture changes angle ${n} time${n === 1 ? "" : "s"}` : "No change of angle needed"}: ${Object.entries(map).map(([sp, x]) => `${speakerLabel(sp)} on ${x}`).join(", ")}.`);
+  },
+);
+
 
 server.registerTool(
   "still_from_clip",
