@@ -1,6 +1,7 @@
 import { formatTime, slugify, speakerLabel, TRANSCRIBERS, whoSpeaks, type Asset, type Moment, type Rect } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
-import { hideBroken, posterUrl, proxyUrl, runJob, stripUrl, OS, pathParts } from "../lib";
+import { mark, putSource, sourceClock } from "../editing";
+import { hideBroken, posterUrl, proxyUrl, RANGE_DRAG, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
 import { CleanSound, RestoreClip, useCleanSound } from "./Restore";
 import { actions, getState, setState, useProject, useStore } from "../store";
@@ -22,7 +23,13 @@ export function AssetView({ a }: { a: Asset }) {
   const cutId = useStore((s) => s.cutId);
   const project = useStore((s) => s.project)!;
   const video = useRef<HTMLVideoElement>(null);
-  const [t, setT] = useState(0);
+  const [t, setTime] = useState(0);
+  // I and O mark the clip where it's playing.
+  const setT = (at: number) => {
+    sourceClock.t = at;
+    setTime(at);
+  };
+  const source = useStore((s) => (s.source?.asset === a.id ? s.source : undefined));
   const [playing, setPlaying] = useState(false);
   const [marking, setMarking] = useState<number | null>(null);
   const [revealError, setRevealError] = useState("");
@@ -152,7 +159,7 @@ export function AssetView({ a }: { a: Asset }) {
           </div>
           {isVideo && (
             <>
-              <Scrubber a={a} t={t} duration={duration} moments={moments} onSeek={seek} projectId={projectId} />
+              <Scrubber a={a} t={t} duration={duration} moments={moments} onSeek={seek} projectId={projectId} source={source} />
               <div className="clip-bar">
                 <button className="icon" onClick={toggle} title="Play / pause this clip">
                   {playing ? "❚❚" : "▶"}
@@ -161,8 +168,33 @@ export function AssetView({ a }: { a: Asset }) {
                   {formatTime(t)} <span className="dim">/ {formatTime(duration)}</span>
                 </span>
                 <span className="spacer" />
+                <button className="link small" onClick={() => mark("in", t)} title="Mark where the stretch to use starts (I)">
+                  In
+                </button>
+                <button className="link small" onClick={() => mark("out", t)} title="Mark where it ends (O)">
+                  Out
+                </button>
                 <button className="link small" onClick={() => setMarking(t)} title="Mark a moment worth landing on a beat">
                   ◆ Mark {formatTime(t)}
+                </button>
+              </div>
+              <div className="clip-bar">
+                <span
+                  className="range-chip"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(RANGE_DRAG, JSON.stringify({ asset: a.id, in: source?.in, out: source?.out }));
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}
+                  title="Drag onto the timeline to put it in there"
+                >
+                  {source?.in !== undefined || source?.out !== undefined
+                    ? `${formatTime(source.in ?? 0)} → ${formatTime(source.out ?? duration)} (${formatTime((source.out ?? duration) - (source.in ?? 0))})`
+                    : "The whole clip"}
+                </span>
+                <span className="spacer" />
+                <button className="small" onClick={() => putSource(a.id)} title="Over whatever's on the picture at the playhead, the cuts either side staying where they are">
+                  Put in at the playhead
                 </button>
               </div>
             </>
@@ -627,7 +659,9 @@ function SplitAtCuts({ a }: { a: Asset }) {
 }
 
 /** The clip's filmstrip as a scrub bar, with its moments marked and the playhead on top. */
-function Scrubber({ a, t, duration, moments, onSeek, projectId }: { a: Asset; t: number; duration: number; moments: Moment[]; onSeek: (t: number) => void; projectId: string }) {
+function Scrubber({ a, t, duration, moments, onSeek, projectId, source }: { a: Asset; t: number; duration: number; moments: Moment[]; onSeek: (t: number) => void; projectId: string; source?: { in?: number; out?: number } }) {
+  const from = source?.in ?? 0, to = source?.out ?? duration;
+  const marked = !!source && (source.in !== undefined || source.out !== undefined);
   const bar = useRef<HTMLDivElement>(null);
   const at = (clientX: number) => {
     const r = bar.current!.getBoundingClientRect();
@@ -648,6 +682,7 @@ function Scrubber({ a, t, duration, moments, onSeek, projectId }: { a: Asset; t:
         moments.map((m) => (
           <span key={m.id} className="clip-moment" style={{ left: `${(m.t / duration) * 100}%` }} title={`${formatTime(m.t)} ${m.label}`} />
         ))}
+      {duration > 0 && marked && <span className="clip-range" style={{ left: `${(from / duration) * 100}%`, width: `${(Math.max(0, to - from) / duration) * 100}%` }} />}
       {duration > 0 && <span className="clip-head" style={{ left: `${(t / duration) * 100}%` }} />}
     </div>
   );

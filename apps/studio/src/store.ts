@@ -56,6 +56,8 @@ export type State = {
   version?: string;
   /** A short message about something that happened behind the user's back, like an agent's edit. */
   notice?: string;
+  /** A word about an edit that just happened (or couldn't), shown for a moment in the timeline's toolbar. */
+  hint?: string;
   loadError?: string[];
   /** Earlier and later versions of the whole file, for undo and redo. */
   past: ProjectFile[];
@@ -64,8 +66,16 @@ export type State = {
   saveError?: string;
   format: string;
   selection?: Selection;
+  /** More shots selected with the one in `selection` (⇧-click for a run on a track, ⌘-click for one more). */
+  also: string[];
   playhead: number;
   playing: boolean;
+  /** How fast the player plays: 1, faster with L, backwards with J. */
+  rate: number;
+  /** In and out points marked on the cut (I and O): a stretch to take out, note or export. */
+  marks: { in?: number; out?: number };
+  /** In and out points marked on a clip in the Library (I and O while it's open), for putting that stretch in the cut. */
+  source?: { asset: string; in?: number; out?: number };
   /** Timeline zoom in pixels per second; 0 means fit to width on next layout. */
   zoom: number;
   side: "inspect" | "notes" | "agent";
@@ -103,8 +113,11 @@ let state: State = {
   save: "saved",
   format: "",
   mode: "edit",
+  also: [],
   playhead: 0,
   playing: false,
+  rate: 1,
+  marks: {},
   zoom: 0,
   side: "agent",
   agents: [],
@@ -326,8 +339,12 @@ export const actions = {
       save: "saved",
       format: p.formats[0]!.id,
       selection: undefined,
+      also: [],
+      marks: {},
+      source: undefined,
       playhead: 0,
       playing: false,
+      rate: 1,
       zoom: 0,
       mode,
     });
@@ -380,7 +397,7 @@ export const actions = {
     const { doc, projectId } = state;
     if (!doc || !projectId || cutId === state.cutId) return;
     player?.pause();
-    setState(showDoc(doc, { cutId, selection: undefined, playhead: 0, playing: false, zoom: 0 }));
+    setState(showDoc(doc, { cutId, selection: undefined, also: [], marks: {}, playhead: 0, playing: false, zoom: 0 }));
     showCut(projectId, state.cutId!);
     pickUpCut(projectId, state.cutId!);
   },
@@ -540,7 +557,37 @@ export const actions = {
   },
 
   select(selection: Selection | undefined) {
-    setState({ selection, side: selection && selection.kind !== "note" ? "inspect" : state.side });
+    setState({ selection, also: [], side: selection && selection.kind !== "note" ? "inspect" : state.side });
+  },
+  /** Adds a shot to the selection or takes it out (⌘-click), or selects the run from the selected one to it (⇧-click). */
+  selectMore(id: string, how: "toggle" | "run") {
+    const sel = state.selection;
+    if (sel?.kind !== "shot") return actions.select({ kind: "shot", id });
+    if (how === "toggle") {
+      if (sel.id === id) {
+        const [next, ...rest] = state.also;
+        return setState(next ? { selection: { kind: "shot", id: next }, also: rest } : { selection: undefined, also: [] });
+      }
+      return setState({ also: state.also.includes(id) ? state.also.filter((x) => x !== id) : [...state.also, id] });
+    }
+    const p = state.project;
+    const a = p?.shots.find((s) => s.id === sel.id);
+    const b = p?.shots.find((s) => s.id === id);
+    if (!p || !a || !b || a.track !== b.track) return actions.select({ kind: "shot", id });
+    const tl = timelineFor(p, state.format);
+    const at = (x: string) => tl.shots.find((r) => r.id === x)?.start ?? NaN;
+    const [lo, hi] = [Math.min(at(a.id), at(b.id)), Math.max(at(a.id), at(b.id))];
+    setState({ also: tl.shots.filter((r) => r.track === a.track && r.id !== a.id && r.start >= lo - 1e-3 && r.start <= hi + 1e-3).map((r) => r.id) });
+  },
+  /** Plays at a speed (negative plays backwards); 0 pauses. */
+  shuttle(rate: number) {
+    if (!rate) {
+      setState({ rate: 1 });
+      if (state.playing) actions.togglePlay();
+      return;
+    }
+    setState({ rate });
+    if (!state.playing) actions.togglePlay();
   },
   seek(t: number) {
     const p = state.project;

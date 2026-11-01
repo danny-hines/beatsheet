@@ -15,6 +15,7 @@ export function Preview({ at }: { at?: number }) {
   const projectId = useStore((s) => s.projectId)!;
   const playhead = useStore((s) => s.playhead);
   const formatId = useStore((s) => s.format);
+  const rate = useStore((s) => s.rate);
   const t = at ?? playhead;
   const format = project.formats.find((f) => f.id === formatId)!;
   const frame = useRef<HTMLDivElement>(null);
@@ -61,7 +62,7 @@ export function Preview({ at }: { at?: number }) {
     p.seekTo(Math.round(getState().playhead * fps));
     const onFrame = (e: { detail: { frame: number } }) => getState().playing && setState({ playhead: e.detail.frame / fps });
     const onPlay = () => setState({ playing: true });
-    const onPause = () => setState({ playing: false, playhead: p.getCurrentFrame() / fps });
+    const onPause = () => setState({ playing: false, rate: 1, playhead: p.getCurrentFrame() / fps });
     p.addEventListener("frameupdate", onFrame);
     p.addEventListener("play", onPlay);
     p.addEventListener("pause", onPause);
@@ -143,6 +144,7 @@ export function Preview({ at }: { at?: number }) {
             compositionWidth={meta.width}
             compositionHeight={meta.height}
             fps={meta.fps}
+            playbackRate={rate}
             style={{ width: "100%", height: "100%" }}
             clickToPlay={false}
             doubleClickToFullscreen={false}

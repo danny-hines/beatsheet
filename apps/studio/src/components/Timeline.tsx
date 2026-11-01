@@ -1,6 +1,7 @@
-import { anchorForTime, describeAnchor, formatTime, snapPoints, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
+import { anchorForTime, describeAnchor, formatTime, moveShot, slipShot, snapPoints, trimEnd, trimStart, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
+import { deleteSelected, putSource, splitHere } from "../editing";
+import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 
 const PAD = 48;
@@ -8,13 +9,20 @@ const RULER_H = 22;
 const H = { voice: 46, music: 46, picture: 58, overlay: 28, text: 28, audio: 28, sfx: 28, notes: 22 } as const;
 const SECTION_COLORS = ["#5b4a8f", "#3f6f8f", "#8f5b3f", "#3f8f6b", "#8f3f5e", "#6b8f3f"];
 
-type Drag = { shot: string; edge: "start" | "end"; t: number; anchor?: Anchor; label: string; snapped: boolean };
+/** What a drag on the timeline is doing: moving a cut (an edge), moving a shot, or slipping the footage under it. */
+type Drag =
+  | { mode: "edge"; shot: string; edge: "start" | "end"; t: number; anchor?: Anchor; label: string; snapped: boolean }
+  | { mode: "move"; shot: string; grab: number; t: number; track: string; anchor?: Anchor; label: string; snapped: boolean }
+  | { mode: "slip"; shot: string; x0: number; delta: number };
 
 export function Timeline() {
   const project = useProject();
   const tl = useTimeline();
   const zoom = useStore((s) => s.zoom);
   const selection = useStore((s) => s.selection);
+  const also = useStore((s) => s.also);
+  const marks = useStore((s) => s.marks);
+  const hint = useStore((s) => s.hint);
   const format = useStore((s) => s.format);
   const projectId = useStore((s) => s.projectId)!;
   const scroller = useRef<HTMLDivElement>(null);
@@ -39,10 +47,16 @@ export function Timeline() {
   const x = (t: number) => t * z;
   const assets = useMemo(() => assetMap(project), [project]);
   const shotById = useMemo(() => new Map(project.shots.map((s) => [s.id, s])), [project]);
+  const fps = project.formats.find((f) => f.id === format)?.fps ?? 30;
 
   const timeAt = (clientX: number) => {
     const rect = canvas.current!.getBoundingClientRect();
     return Math.max(0, (clientX - rect.left) / z);
+  };
+  const snap = (t: number, free: boolean, exclude?: string) => {
+    if (!dragPoints.current.length) dragPoints.current = snapPoints(tl, { excludeShot: exclude });
+    const res = anchorForTime(t, dragPoints.current, free ? 0 : 8 / z);
+    return { t: res.snapped && res.point ? res.point.t : t, anchor: res.anchor, label: describeAnchor(res.anchor, project), snapped: res.snapped };
   };
 
   // ---- A note on anything: right-click an item, or ⇧-drag along the ruler to pick a stretch of the cut.
@@ -76,99 +90,171 @@ export function Timeline() {
     actions.noteOn({ kind: "range", from: r2(from), to: r2(to) }, { x: e.clientX, y: e.clientY }, { at: r2(from) });
   };
 
-  // ---- Scrubbing in the lanes. Pressing on empty space moves the playhead there; pressing on a shot, line or cue
-  // selects it, and dragging from there scrubs (so a lane full of shots can still be scrubbed).
-  const press = useRef<{ x0: number; moving: boolean } | null>(null);
-  const scrub = (e: ReactPointerEvent, now = true) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const lane = (e.currentTarget as HTMLElement).closest(".lane") as HTMLElement | null;
-    lane?.setPointerCapture(e.pointerId);
-    press.current = { x0: e.clientX, moving: now };
-    if (now) actions.seek(timeAt(e.clientX));
+  // ---- Scrubbing on empty space in the lanes: pressing moves the playhead there, dragging scrubs.
+  const scrubbing = useRef(false);
+  const lane = {
+    onPointerDown: (e: ReactPointerEvent) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      scrubbing.current = true;
+      actions.seek(timeAt(e.clientX));
+    },
+    onPointerMove: (e: ReactPointerEvent) => scrubbing.current && actions.seek(timeAt(e.clientX)),
+    onPointerUp: () => void (scrubbing.current = false),
+    onPointerCancel: () => void (scrubbing.current = false),
   };
-  const scrubMove = (e: ReactPointerEvent) => {
-    const p = press.current;
-    if (!p || !(e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) return;
-    if (!p.moving && Math.abs(e.clientX - p.x0) < 4) return;
-    p.moving = true;
-    actions.seek(timeAt(e.clientX));
+  // Lines and music cues select on a press, and scrub when dragged.
+  const pickAndScrub = (e: ReactPointerEvent, sel: Selection) => {
+    e.stopPropagation();
+    actions.select(sel);
+    lane.onPointerDown(e);
   };
-  const scrubEnd = () => void (press.current = null);
-  const lane = { onPointerDown: (e: ReactPointerEvent) => scrub(e), onPointerMove: scrubMove, onPointerUp: scrubEnd, onPointerCancel: scrubEnd };
 
-  // ---- Dragging a cut.
-  const startDrag = (e: ReactPointerEvent, shot: string, edge: "start" | "end") => {
+  // ---- Shots: a press selects (⇧ a run, ⌘ one more), and a drag moves the shot (⌘-drag slips its footage).
+  const press = useRef<{ shot: string; x0: number; t0: number; slip: boolean; armed: boolean } | null>(null);
+  const shotDown = (e: ReactPointerEvent, r: { id: string; start: number }) => {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    const mod = e.metaKey || e.ctrlKey;
+    const chosen = (selection?.kind === "shot" && selection.id === r.id) || also.includes(r.id);
+    if (e.shiftKey) actions.selectMore(r.id, "run");
+    else if (mod && !chosen) actions.selectMore(r.id, "toggle");
+    else if (!chosen) actions.select({ kind: "shot", id: r.id });
+    else if (selection?.kind === "shot" && selection.id !== r.id) setState({ selection: { kind: "shot", id: r.id }, also: [selection.id, ...also.filter((x) => x !== r.id)] });
+    const shot = shotById.get(r.id);
+    if (!shot || shot.locked || e.shiftKey) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    press.current = { shot: r.id, x0: e.clientX, t0: timeAt(e.clientX), slip: mod, armed: mod && chosen };
+  };
+  const shotMove = (e: ReactPointerEvent) => {
+    const p = press.current;
+    if (!p) return;
+    if (!drag && Math.abs(e.clientX - p.x0) < 4) return;
+    const r = tl.shots.find((s) => s.id === p.shot)!;
+    if (p.slip) return setDrag({ mode: "slip", shot: p.shot, x0: p.x0, delta: -(e.clientX - p.x0) / z });
+    const lane = (document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null)?.closest<HTMLElement>(".lane[data-track]");
+    const shot = shotById.get(p.shot)!;
+    const kind = project.tracks.find((t) => t.id === shot.track)?.kind;
+    const dest = lane?.dataset.track && project.tracks.find((t) => t.id === lane.dataset.track)?.kind === kind ? lane.dataset.track : shot.track;
+    const grab = p.t0 - r.start;
+    const at = timeAt(e.clientX);
+    // A picture shot lands where the pointer is; anything else by its left edge, which snaps.
+    const s = kind === "picture" ? { t: at, anchor: undefined, label: "", snapped: false } : snap(at - grab, e.altKey, p.shot);
+    setDrag({ mode: "move", shot: p.shot, grab, track: dest, ...s });
+  };
+  const shotUp = (e: ReactPointerEvent) => {
+    const p = press.current;
+    press.current = null;
+    if (!p) return;
+    // A ⌘-click on a shot already selected, without a drag, takes it out of the selection.
+    if (!drag && p.armed) actions.selectMore(p.shot, "toggle");
+    finishDrag();
+    e.stopPropagation();
+  };
+
+  // ---- Dragging a cut (a shot's edge).
+  const startEdge = (e: ReactPointerEvent, shot: string, edge: "start" | "end") => {
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragPoints.current = snapPoints(tl, { excludeShot: shot });
     const r = tl.shots.find((s) => s.id === shot)!;
-    setDrag({ shot, edge, t: edge === "start" ? r.start : r.end, label: "", snapped: false });
+    setDrag({ mode: "edge", shot, edge, t: edge === "start" ? r.start : r.end, label: "", snapped: false });
     actions.select({ kind: "shot", id: shot });
   };
-  const moveDrag = (e: ReactPointerEvent) => {
-    if (!drag) return;
-    const t = timeAt(e.clientX);
-    const res = anchorForTime(t, dragPoints.current, e.altKey ? 0 : 8 / z);
-    setDrag({ ...drag, t: res.snapped && res.point ? res.point.t : t, anchor: res.anchor, label: describeAnchor(res.anchor, project), snapped: res.snapped });
+  const moveEdge = (e: ReactPointerEvent) => {
+    if (drag?.mode !== "edge") return;
+    setDrag({ ...drag, ...snap(timeAt(e.clientX), e.altKey) });
   };
-  const endDrag = () => {
-    if (drag?.anchor) {
-      const { shot, edge, anchor } = drag;
-      actions.edit((d) => {
-        const s = d.shots.find((x) => x.id === shot);
-        if (!s) return;
-        if (edge === "start") s.start = anchor;
-        else {
-          s.end = anchor;
-          delete s.duration;
-        }
+  const finishDrag = () => {
+    const d = drag;
+    setDrag(null);
+    dragPoints.current = [];
+    if (!d) return;
+    if (d.mode === "edge" && d.anchor) {
+      const { shot, edge, anchor, t } = d;
+      actions.edit((draft) => {
+        if (edge === "start") return void trimStart(draft, tl, shot, anchor, t);
+        // A shot that runs until the next one starts: its end is the next one's start, so that's what moves.
+        const s = draft.shots.find((x) => x.id === shot)!;
+        const r = tl.shots.find((x) => x.id === shot)!;
+        const next = tl.shots.find((x) => x.track === s.track && x.id !== shot && Math.abs(x.start - r.end) < 1e-3);
+        if (!s.end && s.duration === undefined && next) trimStart(draft, tl, next.id, anchor, t);
+        else trimEnd(draft, tl, shot, anchor, t);
       });
     }
-    setDrag(null);
+    if (d.mode === "move") {
+      const { shot, t, anchor, track } = d;
+      actions.edit((draft) => void moveShot(draft, tl, shot, t, anchor ?? { kind: "time", t: Math.round(t * 1000) / 1000 }, track));
+    }
+    if (d.mode === "slip" && Math.abs(d.delta) > 0.5 / fps) {
+      const s = shotById.get(d.shot);
+      const speed = s?.content.kind === "clip" ? s.content.speed ?? 1 : 1;
+      actions.edit((draft) => void slipShot(draft, tl, d.shot, d.delta * speed));
+    }
   };
 
-  // ---- A picture dragged in from the Library: where it would go, then putting it there.
+  // ---- A picture dragged in from the Library (or a marked stretch of a clip): where it would go, then putting it there.
   const [dropAt, setDropAt] = useState<{ track: string; t: number; label: string; snapped: boolean } | null>(null);
   const dropHandlers = (track: string) => ({
     onDragOver: (e: React.DragEvent) => {
-      if (!e.dataTransfer.types.includes(ASSET_DRAG)) return;
+      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(RANGE_DRAG)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
-      const t = timeAt(e.clientX);
-      if (!dragPoints.current.length || dropAt === null) dragPoints.current = snapPoints(tl);
-      const res = anchorForTime(t, dragPoints.current, e.altKey ? 0 : 8 / z);
-      const at = res.snapped && res.point ? res.point.t : t;
-      if (dropAt?.track !== track || Math.abs(dropAt.t - at) > 0.001) setDropAt({ track, t: at, label: describeAnchor(res.anchor, project), snapped: res.snapped });
+      if (dropAt === null) dragPoints.current = [];
+      const s = snap(timeAt(e.clientX), e.altKey);
+      if (dropAt?.track !== track || Math.abs(dropAt.t - s.t) > 0.001) setDropAt({ track, t: s.t, label: s.label, snapped: s.snapped });
     },
     onDragLeave: (e: React.DragEvent) => {
       if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) setDropAt(null);
     },
     onDrop: (e: React.DragEvent) => {
+      setDropAt(null);
+      const s = snap(timeAt(e.clientX), e.altKey);
+      dragPoints.current = [];
+      const range = e.dataTransfer.getData(RANGE_DRAG);
+      if (range) {
+        e.preventDefault();
+        putSource(JSON.parse(range).asset as string, s.t, track, s.anchor);
+        return;
+      }
       const id = e.dataTransfer.getData(ASSET_DRAG);
       const a = id ? project.assets.find((x) => x.id === id) : undefined;
-      setDropAt(null);
-      dragPoints.current = [];
       if (!a) return;
       e.preventDefault();
-      const t = timeAt(e.clientX);
-      const res = anchorForTime(t, snapPoints(tl), e.altKey ? 0 : 8 / z);
       let placed: string | undefined;
-      actions.edit((d) => void (placed = dropAsset(d, tl, track, res.snapped && res.point ? res.point.t : t, res.anchor, a)));
+      actions.edit((d) => void (placed = dropAsset(d, tl, track, s.t, s.anchor, a)));
       if (placed) actions.select({ kind: "shot", id: placed });
     },
   });
 
   const formatNotes = project.notes.filter((n) => n.status !== "dismissed" && (!n.format || n.format === format));
+  const isSel = (id: string) => (selection?.kind === "shot" && selection.id === id) || also.includes(id);
+  const moving = drag?.mode === "move" ? drag : undefined;
+  const slipping = drag?.mode === "slip" ? drag : undefined;
+  const landing = moving && project.tracks.find((t) => t.id === moving.track)?.kind === "picture" ? tl.shots.find((r) => r.track === moving.track && moving.t >= r.start && moving.t < r.end) : undefined;
+  const marked = marks.in !== undefined || marks.out !== undefined;
 
   return (
     <section className="timeline">
       <div className="tl-toolbar">
         <span className="tl-title">Timeline</span>
-        <span className="tl-hint">
-          Drag the left edge of a shot to move its cut, or a picture from the Library onto a shot. It snaps to {project.spine === "music" ? "bars and beats" : "words and lines"}; hold {keys("⌥")} to place it freely.
+        <button className="tl-tool" onClick={splitHere} title={`Split at the playhead (${keys("⌘B")} or S)`}>
+          ✂ Split
+        </button>
+        <button className="tl-tool" onClick={() => deleteSelected(false)} title={`Delete the selection; the shot before holds on (${keys("⌫")}). ${keys("⇧⌫")} closes the gap.`}>
+          Delete
+        </button>
+        <span className={`tl-hint ${hint ? "news" : ""}`}>
+          {hint ??
+            `Drag a shot to move it, ${keys("⌘")}-drag to slip its footage, drag an edge to move its cut. It snaps to ${project.spine === "music" ? "bars and beats" : "words and lines"}; hold ${keys("⌥")} to place it freely. I and O mark a stretch.`}
         </span>
         <span className="spacer" />
+        {marked && (
+          <button className="link small" onClick={() => setState({ marks: {} })} title="Clear the in and out marks">
+            {marks.in !== undefined ? formatTime(marks.in) : "…"} → {marks.out !== undefined ? formatTime(marks.out) : "…"} ✕
+          </button>
+        )}
         <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out">−</button>
         <button onClick={() => setState({ zoom: 0 })}>Fit</button>
         <button onClick={() => actions.setZoom(z * 1.5)} title="Zoom in">+</button>
@@ -185,7 +271,7 @@ export function Timeline() {
           <div className="tl-label" style={{ height: H.notes }}>Notes</div>
         </div>
         <div className="tl-scroll" ref={scroller}>
-          <div className="tl-canvas" ref={canvas} style={{ width }} onPointerMove={moveDrag} onPointerUp={endDrag}>
+          <div className="tl-canvas" ref={canvas} style={{ width }} onPointerMove={(e) => (drag?.mode === "edge" ? moveEdge(e) : shotMove(e))} onPointerUp={(e) => (press.current ? shotUp(e) : finishDrag())}>
             <div className="tl-ruler" style={{ height: RULER_H }} onPointerDown={rulerDown} onPointerMove={rulerMove} onPointerUp={rulerUp} title={`Click or drag to move the playhead; ${WINDOWS ? "Shift-drag" : "⇧-drag"} to note a stretch of the cut`}>
               <Ruler z={z} duration={duration} />
               {stretch && Math.abs(stretch.to - stretch.from) > 0 && (
@@ -201,11 +287,7 @@ export function Timeline() {
                     className={`line-block ${selection?.kind === "line" && selection.id === l.id ? "sel" : ""}`}
                     style={{ left: x(l.start), width: Math.max(2, x(l.end) - x(l.start)) }}
                     title={`${l.id}: ${l.text}`}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      actions.select({ kind: "line", id: l.id });
-                      scrub(e, false);
-                    }}
+                    onPointerDown={(e) => pickAndScrub(e, { kind: "line", id: l.id })}
                     onContextMenu={noteMenu({ kind: "line", line: l.id }, { kind: "line", id: l.id })}
                   >
                     <span className="line-text">{l.text}</span>
@@ -242,11 +324,7 @@ export function Timeline() {
                     className={`cue-block ${selection?.kind === "cue" && selection.id === c.id ? "sel" : ""}`}
                     style={{ left: x(c.start), width: x(c.end) - x(c.start) }}
                     title={`${c.id}: ${c.asset} from ${formatTime(c.trackFrom)}`}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      actions.select({ kind: "cue", id: c.id });
-                      scrub(e, false);
-                    }}
+                    onPointerDown={(e) => pickAndScrub(e, { kind: "cue", id: c.id })}
                     onContextMenu={noteMenu({ kind: "cue", cue: c.id }, { kind: "cue", id: c.id })}
                   />
                 ))}
@@ -275,34 +353,38 @@ export function Timeline() {
             )}
 
             {project.tracks.map((track) => (
-              <div key={track.id} className={`lane track-${track.kind} ${dropAt?.track === track.id ? "dropping" : ""}`} style={{ height: H[track.kind] }} {...lane} {...(track.kind === "picture" || track.kind === "overlay" ? dropHandlers(track.id) : {})}>
+              <div
+                key={track.id}
+                data-track={track.id}
+                className={`lane track-${track.kind} ${dropAt?.track === track.id || (moving && moving.track === track.id && track.kind !== "picture") ? "dropping" : ""}`}
+                style={{ height: H[track.kind] }}
+                {...lane}
+                {...(track.kind === "picture" || track.kind === "overlay" ? dropHandlers(track.id) : {})}
+              >
                 {tl.shots
                   .filter((s) => s.track === track.id && Number.isFinite(s.start) && Number.isFinite(s.end))
                   .map((r) => {
                     const shot = shotById.get(r.id)!;
-                    const sel = selection?.kind === "shot" && selection.id === r.id;
+                    const sel = isSel(r.id);
                     const notes = formatNotes.filter((n) => n.target.kind === "shot" && n.target.shot === r.id && n.status !== "done").length;
-                    const endHandle = !!shot.end || shot.duration !== undefined;
                     const thumb = track.kind === "picture" && shotAsset(shot) ? `url(${posterUrl(projectId, shotAsset(shot)!)})` : undefined;
+                    const lifted = moving?.shot === r.id;
                     return (
                       <div
                         key={r.id}
-                        className={`shot-block kind-${shot.content.kind} fid-${shot.fidelity} ${sel ? "sel" : ""}`}
+                        className={`shot-block kind-${shot.content.kind} fid-${shot.fidelity} ${sel ? "sel" : ""} ${lifted ? "lifted" : ""} ${landing?.id === r.id && !lifted ? "landing" : ""} ${shot.locked ? "locked" : ""}`}
                         style={{ left: x(r.start), width: Math.max(3, x(r.end) - x(r.start)), "--swatch": shotSwatch(shot, assets), "--thumb": thumb } as CSSProperties}
                         title={`${r.id} · ${shot.label ?? ""}\n${formatTime(r.start)} → ${formatTime(r.end)}\n${shotSummary(shot, assets)}`}
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          actions.select({ kind: "shot", id: r.id });
-                          scrub(e, false);
-                        }}
+                        onPointerDown={(e) => shotDown(e, r)}
                         onContextMenu={noteMenu({ kind: "shot", shot: r.id }, { kind: "shot", id: r.id })}
                       >
                         <span className="shot-label">{shot.label ?? r.id}</span>
                         <ShotBadges shot={shot} format={format} assets={assets} />
                         {track.kind === "picture" && <span className="shot-sub">{shotSummary(shot, assets)}</span>}
                         {notes > 0 && <span className="shot-notes">{notes}</span>}
-                        {!shot.locked && <span className="handle start" onPointerDown={(e) => startDrag(e, r.id, "start")} />}
-                        {!shot.locked && endHandle && <span className="handle end" onPointerDown={(e) => startDrag(e, r.id, "end")} />}
+                        {slipping?.shot === r.id && <span className="slip-label">slip {slipping.delta >= 0 ? "+" : "−"}{formatTime(Math.abs(slipping.delta))}</span>}
+                        {!shot.locked && <span className="handle start" onPointerDown={(e) => startEdge(e, r.id, "start")} />}
+                        {!shot.locked && <span className="handle end" onPointerDown={(e) => startEdge(e, r.id, "end")} />}
                       </div>
                     );
                   })}
@@ -331,6 +413,13 @@ export function Timeline() {
             {tl.markers.map((m) => (
               <div key={m.id} className="marker" style={{ left: x(m.t) }} title={m.label} />
             ))}
+            {marked && (
+              <div
+                className="tl-marks"
+                style={{ left: x(marks.in ?? 0), width: Math.max(1, x(marks.out ?? duration) - x(marks.in ?? 0)) }}
+                title="The marked stretch: Delete takes it out, N notes it"
+              />
+            )}
             <Playhead z={z} />
             {dropAt && (
               <div className={`drag-ghost ${dropAt.snapped ? "snapped" : ""}`} style={{ left: x(dropAt.t) }}>
@@ -340,11 +429,19 @@ export function Timeline() {
                 </span>
               </div>
             )}
-            {drag && (
+            {drag?.mode === "edge" && (
               <div className={`drag-ghost ${drag.snapped ? "snapped" : ""}`} style={{ left: x(drag.t) }}>
                 <span className="drag-label">
                   {drag.snapped ? "snaps to " : ""}
                   {drag.label} · {formatTime(drag.t)}
+                </span>
+              </div>
+            )}
+            {moving && !landing && (
+              <div className={`drag-ghost ${moving.snapped ? "snapped" : ""}`} style={{ left: x(moving.t) }}>
+                <span className="drag-label">
+                  {moving.snapped ? `on ${moving.label} · ` : ""}
+                  {formatTime(moving.t)}
                 </span>
               </div>
             )}
@@ -387,6 +484,7 @@ function Playhead({ z }: { z: number }) {
 function ShotBadges({ shot, format, assets }: { shot: Shot; format: string; assets: Map<string, Asset> }) {
   const c = shot.content;
   const marks: [string, string][] = [];
+  if (shot.locked) marks.push(["🔒", "Locked"]);
   if (c.kind === "clip") {
     const a = assets.get(c.asset);
     const who = (id: string) => a?.subjects?.find((s) => s.id === id)?.label ?? id;
@@ -395,6 +493,7 @@ function ShotBadges({ shot, format, assets }: { shot: Shot; format: string; asse
     const follow = c.reframe?.[format]?.follow;
     if (follow) marks.push(["⤧", `Keeps ${who(follow)} in frame`]);
     if (c.look) marks.push(["◐", `Look: ${c.look}`]);
+    if (c.speed && c.speed !== 1) marks.push([`${c.speed}×`, `Plays at ${c.speed}× speed`]);
   }
   if (shot.transition?.kind) marks.push(["↗", `Comes in: ${shot.transition.kind}`]);
   if (!marks.length) return null;

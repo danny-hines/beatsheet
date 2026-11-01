@@ -95,6 +95,8 @@ export const round2 = (x: number) => Math.round(x * 100) / 100;
 
 /** What a picture dragged from the Library (or the board) carries: its asset id. */
 export const ASSET_DRAG = "application/x-beatsheet-asset";
+/** What a marked stretch of a clip dragged from its viewer carries: { asset, in, out }. */
+export const RANGE_DRAG = "application/x-beatsheet-range";
 export { dropAsset, putInShot } from "./place";
 
 export function nextId(prefix: string, existing: { id: string }[]): string {

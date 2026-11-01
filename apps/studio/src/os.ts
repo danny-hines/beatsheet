@@ -9,7 +9,7 @@ export const words = (windows: boolean) =>
 export function shortcut(mac: string, windows: boolean): string {
   if (!windows) return mac;
   const mods = [mac.includes("⌘") && "Ctrl", mac.includes("⇧") && "Shift", mac.includes("⌥") && "Alt"].filter(Boolean);
-  const rest = mac.replace(/[⌘⇧⌥]/g, "");
+  const rest = mac.replace(/[⌘⇧⌥]/g, "").replace("⌫", "Backspace");
   return [...mods, rest].filter(Boolean).join("+");
 }
 

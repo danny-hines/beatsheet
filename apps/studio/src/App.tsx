@@ -12,6 +12,7 @@ import { SidePanel } from "./components/Side";
 import { Timeline } from "./components/Timeline";
 import { Preview, Transport } from "./components/Preview";
 import { useTurn } from "./components/Turn";
+import { clearMarks, copySelected, deleteSelected, duplicate, mark, nudge, paste, selectTrack, shuttleKey, slip, sourceClock, splitHere } from "./editing";
 import { desktop, isTyping, noteHere, pictureTrack, WINDOWS } from "./lib";
 import { actions, getState, hasPlayer, setState, timelineFor, useStore } from "./store";
 
@@ -246,7 +247,37 @@ function useKeys() {
         actions.redo();
         return;
       }
-      if (isTyping(e) || mod) return;
+      if (isTyping(e)) return;
+      const editing = s.mode === "edit";
+      const key = e.key.toLowerCase();
+      if (mod) {
+        // ⌘B splits, ⌘D duplicates, ⌘A selects the track; copy, cut and paste come as the page's own events.
+        if (!editing || e.altKey) return;
+        if (key === "b") splitHere();
+        else if (key === "d") duplicate();
+        else if (key === "a") selectTrack();
+        else return;
+        e.preventDefault();
+        return;
+      }
+      if (editing) {
+        const frames = e.shiftKey ? 10 : 1;
+        const handled = (() => {
+          if (key === "s" && !e.altKey) return splitHere(), true;
+          if (e.key === "Backspace" || e.key === "Delete") return deleteSelected(e.shiftKey), true;
+          if (key === "j" || key === "k" || key === "l") return shuttleKey(key), true;
+          if (e.code === "KeyI" && !e.altKey) return mark("in", sourceClock.t), true;
+          if (e.code === "KeyO" && !e.altKey) return mark("out", sourceClock.t), true;
+          if (e.code === "KeyX" && e.altKey) return clearMarks(), true;
+          if (e.code === "Comma") return (e.altKey ? slip(-frames) : nudge(-frames)), true;
+          if (e.code === "Period") return (e.altKey ? slip(frames) : nudge(frames)), true;
+          return false;
+        })();
+        if (handled) {
+          e.preventDefault();
+          return;
+        }
+      }
       const fps = s.project.formats.find((f) => f.id === s.format)?.fps ?? 30;
       if (e.key === " ") {
         e.preventDefault();
@@ -278,6 +309,33 @@ function useKeys() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Copy, cut and paste of shots: the page's own events, so they work from the keyboard and from the app's Edit menu
+    // alike. Text being edited or selected keeps them.
+    const forShots = (e: ClipboardEvent) => {
+      const s = getState();
+      const el = document.activeElement as HTMLElement | null;
+      const typing = !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      return !!s.project && s.mode === "edit" && !typing && !document.getSelection()?.toString();
+    };
+    const onCopy = (e: ClipboardEvent) => forShots(e) && copySelected() && e.preventDefault();
+    const onCut = (e: ClipboardEvent) => {
+      if (!forShots(e) || !copySelected()) return;
+      e.preventDefault();
+      deleteSelected(false);
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (!forShots(e)) return;
+      e.preventDefault();
+      paste();
+    };
+    document.addEventListener("copy", onCopy);
+    document.addEventListener("cut", onCut);
+    document.addEventListener("paste", onPaste);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("copy", onCopy);
+      document.removeEventListener("cut", onCut);
+      document.removeEventListener("paste", onPaste);
+    };
   }, []);
 }
