@@ -78,6 +78,10 @@ What separates a great one from an edit anyone could do in 20 minutes:
    - `review_cut` again until it's clean.
 9. **Hand off** with kind `review`: what you made, the choices worth a second opinion, and what to judge.
 
+## Talking footage
+
+When the story is told by people on camera (an interview, a vlog, a how-to) rather than by narration, the footage's own words are the spine. Transcribe the clips (with who's speaking when there's more than one person), then read the cut with `edit_by_words` and nothing else: it lists what's said, by speaker, with times. Take out what doesn't serve the story by phrase (`remove`), then `fillers: true` and `pauses` to tighten it; keep a breath before a punchline. With several cameras on one event, `sync_angles` lines them up and `cut_to_speakers` puts whoever's talking on screen; then cut away to b-roll over the words with clips on an overlay track. `even_out` sets the shots to one level. Captions of what's said on camera: `captions: { source: "footage" }`; `subtitles` writes the .srt.
+
 ## Before you hand off: the taste check
 
 - Would the first 2 seconds make you stop scrolling?
