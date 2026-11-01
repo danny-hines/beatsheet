@@ -5,6 +5,7 @@
 import {
   anchorAt,
   copyShots,
+  frozen,
   placeAt,
   overwrite,
   pasteShots,
@@ -20,6 +21,8 @@ import {
 } from "@beatsheet/schema";
 import { pictureTrack } from "./lib";
 import { actions, getState, setState, timelineFor } from "./store";
+
+const LOCKED = "That's locked: unlock the shot (in the inspector) or its track (L beside the track's name) to change it.";
 
 let clipboard: Clipboard | undefined;
 
@@ -61,6 +64,9 @@ export function splitHere() {
     ids = v.tl.shots.filter((r) => r.track === pic && t > r.start && t < r.end).map((r) => r.id);
   }
   if (!ids.length) return say("Nothing to split under the playhead.");
+  const free = ids.filter((id) => !frozen(v.p, v.p.shots.find((s) => s.id === id)!));
+  if (!free.length) return say(LOCKED);
+  ids = free;
   actions.edit((d) => {
     for (const id of ids) splitShot(d, resolveTimeline(d, v.s.format), id, t, { at });
   });
@@ -76,8 +82,8 @@ export function deleteSelected(ripple: boolean) {
   const ids = selectedShots();
   const { in: from, out: to } = v.s.marks;
   if (ids.length) {
-    const locked = ids.filter((id) => v.p.shots.find((s) => s.id === id)?.locked);
-    if (locked.length === ids.length) return say("It's locked: unlock it in the inspector to change it.");
+    const locked = ids.filter((id) => frozen(v.p, v.p.shots.find((s) => s.id === id)!));
+    if (locked.length === ids.length) return say(LOCKED);
     actions.edit((d) => removeShots(d, v.tl, ids, { ripple }));
     actions.select(undefined);
     return;
@@ -150,7 +156,8 @@ export function nudge(frames: number) {
   if (!v || !id) return;
   const s = v.p.shots.find((x) => x.id === id);
   const r = v.tl.shots.find((x) => x.id === id);
-  if (!s || !r || s.locked) return;
+  if (!s || !r) return;
+  if (frozen(v.p, s)) return say(LOCKED);
   const d = frames / v.fps;
   const kind = v.p.tracks.find((t) => t.id === s.track)?.kind;
   actions.edit((draft) => {

@@ -1043,3 +1043,22 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .tl-marks { position: absolute; top: 0; bottom: 0; background: rgba(92, 200, 232, 0.08); border-left: 2px solid var(--accent-2); border-right: 2px solid var(--accent-2); pointer-events: none; z-index: 4; }
 .clip-range { position: absolute; top: 0; bottom: 0; background: rgba(92, 200, 232, 0.22); border-left: 2px solid var(--accent-2); border-right: 2px solid var(--accent-2); pointer-events: none; }
 .range-chip { font-size: 12px; padding: 2px 8px; border: 1px dashed var(--accent-2); border-radius: 5px; color: var(--accent-2); cursor: grab; user-select: none; }
+
+/* What the timeline's blocks show of their media, and each lane's switches. */
+.strip { position: absolute; left: 0; right: 0; top: 0; overflow: hidden; pointer-events: none; opacity: 0.85; }
+.strip span { position: absolute; top: 0; bottom: 0; background-repeat: no-repeat; border-right: 1px solid rgba(0, 0, 0, 0.35); }
+.shot-block .shot-label, .shot-block .shot-sub { position: relative; }
+.wave { display: block; pointer-events: none; color: rgba(255, 255, 255, 0.55); }
+.shot-wave { position: absolute; left: 0; bottom: 0; color: rgba(140, 230, 170, 0.8); background: rgba(0, 0, 0, 0.35); }
+.shot-wave.quiet { color: rgba(255, 255, 255, 0.25); }
+.line-wave { position: absolute; left: 0; top: 0; color: rgba(92, 200, 232, 0.35); }
+.line-block .line-text { position: relative; }
+.cue-wave { position: absolute; left: 0; top: 0; color: rgba(170, 150, 230, 0.55); }
+.tl-label { position: relative; gap: 4px; }
+.tl-label.off span:first-child { text-decoration: line-through; opacity: 0.6; }
+.tk-btns { position: absolute; right: 3px; bottom: 2px; display: flex; gap: 2px; }
+.tk-btn { font-size: 9px; line-height: 12px; padding: 0 3px; min-width: 13px; border-radius: 3px; opacity: 0; background: #22252b; color: var(--dim); border-color: var(--line-2); }
+.tl-label:hover .tk-btn, .tk-btn.on { opacity: 1; }
+.tk-btn.on { color: #1a1408; background: var(--accent); border-color: var(--accent); }
+.tk-btn.on.solo { background: var(--accent-2); border-color: var(--accent-2); }
+.shot-look label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); flex: none; align-self: flex-end; }

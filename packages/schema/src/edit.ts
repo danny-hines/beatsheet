@@ -62,6 +62,8 @@ export function placeAt(tl: Timeline, t: number, tolerance = SAME): { anchor: An
 /** The cut's timeline again after a step of an edit, in the same format. */
 const again = (p: Project, tl: Timeline) => resolveTimeline(p, tl.format);
 const resolved = (tl: Timeline, id: string) => tl.shots.find((r) => r.id === id);
+/** A shot that can't be edited by hand: locked itself, or on a locked track. */
+export const frozen = (p: Project, s: Shot) => !!s.locked || !!p.tracks.find((t) => t.id === s.track)?.locked;
 const onTrack = (p: Project, track: string) => p.shots.filter((s) => s.track === track);
 const speedOf = (s: Shot) => (s.content.kind === "clip" ? s.content.speed ?? 1 : 1);
 /** Whether a shot's picture plays through time (footage or a video take) rather than holding (a still, a card). */
@@ -127,7 +129,7 @@ function splitMotion(m: Motion, f: number): [Motion, Motion] {
 export function splitShot(p: Project, tl: Timeline, id: string, t: number, opts: { at?: Anchor; id?: string } = {}): string | undefined {
   const s = p.shots.find((x) => x.id === id);
   const r = resolved(tl, id);
-  if (!s || !r || s.locked || !(t > r.start + SHORTEST - SAME && t < r.end - SHORTEST + SAME)) return;
+  if (!s || !r || frozen(p, s) || !(t > r.start + SHORTEST - SAME && t < r.end - SHORTEST + SAME)) return;
   const second: Shot = structuredClone(s);
   second.id = opts.id ?? pieceId(p, s.id);
   second.start = opts.at ?? anchorAt(tl, t);
@@ -173,7 +175,7 @@ export type RemoveOpts = {
  * a note on one moves to the stretch of the cut it covered.
  */
 export function removeShots(p: Project, tl: Timeline, ids: string[], opts: RemoveOpts = {}) {
-  const gone = new Set(ids.filter((id) => p.shots.some((s) => s.id === id && !s.locked)));
+  const gone = new Set(ids.filter((id) => p.shots.some((s) => s.id === id && !frozen(p, s))));
   if (!gone.size) return;
   const picture = new Set(p.tracks.filter((t) => t.kind === "picture").map((t) => t.id));
   // The cut's end comes from its picture when nothing else gives it one; then the last shot must keep a length.
@@ -284,7 +286,7 @@ export function overwrite(p: Project, tl: Timeline, track: string, t: number, le
   const fresh = { ...structuredClone(body), id, track } as Shot;
   const inside = work.shots.filter((r) => r.track === track && Number.isFinite(r.start) && r.start >= t - SAME && r.start < until - SAME);
   const first = inside[0] && Math.abs(inside[0].start - t) < SAME ? p.shots.find((s) => s.id === inside[0]!.id) : undefined;
-  if (first && !first.locked) {
+  if (first && !frozen(p, first)) {
     // Takes the place of the first piece in the stretch, timing and all; the rest of the stretch goes after.
     for (const k of ["start", "end", "duration"] as const) if (first[k] !== undefined) (fresh as Record<string, unknown>)[k] = first[k];
     const was = new Set([first.id]);
@@ -324,7 +326,7 @@ export function overwrite(p: Project, tl: Timeline, track: string, t: number, le
 export function trimStart(p: Project, tl: Timeline, id: string, at: Anchor, t: number): boolean {
   const s = p.shots.find((x) => x.id === id);
   const r = resolved(tl, id);
-  if (!s || !r || s.locked || t >= r.end - SHORTEST) return false;
+  if (!s || !r || frozen(p, s) || t >= r.end - SHORTEST) return false;
   const list = onTrack(p, s.track);
   const prev = list[list.indexOf(s) - 1];
   const pr = prev && resolved(tl, prev.id);
@@ -333,7 +335,7 @@ export function trimStart(p: Project, tl: Timeline, id: string, at: Anchor, t: n
   const delta = t - r.start;
   const c = s.content;
   if ((c.kind === "clip" && !c.sync) || (c.kind === "generated" && plays(p, s))) c.in = round3(Math.max(0, sourceIn(s, r) + delta * speedOf(s)));
-  if (prev && touching && (prev.end || prev.duration !== undefined) && !prev.locked) {
+  if (prev && touching && (prev.end || prev.duration !== undefined) && !frozen(p, prev)) {
     delete prev.end;
     delete prev.duration;
   }
@@ -346,7 +348,7 @@ export function trimStart(p: Project, tl: Timeline, id: string, at: Anchor, t: n
 export function trimEnd(p: Project, tl: Timeline, id: string, at: Anchor, t: number): boolean {
   const s = p.shots.find((x) => x.id === id);
   const r = resolved(tl, id);
-  if (!s || !r || s.locked || t <= r.start + SHORTEST) return false;
+  if (!s || !r || frozen(p, s) || t <= r.start + SHORTEST) return false;
   const list = onTrack(p, s.track);
   const next = list[list.indexOf(s) + 1];
   const nr = next && !next.start ? resolved(tl, next.id) : undefined;
@@ -364,7 +366,7 @@ export function trimEnd(p: Project, tl: Timeline, id: string, at: Anchor, t: num
 export function slipShot(p: Project, tl: Timeline, id: string, delta: number): number {
   const s = p.shots.find((x) => x.id === id);
   const r = resolved(tl, id);
-  if (!s || !r || s.locked || !plays(p, s)) return 0;
+  if (!s || !r || frozen(p, s) || !plays(p, s)) return 0;
   const c = s.content;
   const len = (r.end - r.start) * speedOf(s);
   const assetId = c.kind === "clip" ? c.asset : c.kind === "generated" ? c.take : undefined;
@@ -390,7 +392,7 @@ export function slipShot(p: Project, tl: Timeline, id: string, delta: number): n
 export function moveShot(p: Project, tl: Timeline, id: string, t: number, at: Anchor, track?: string): boolean {
   const s = p.shots.find((x) => x.id === id);
   const r = resolved(tl, id);
-  if (!s || !r || s.locked) return false;
+  if (!s || !r || frozen(p, s)) return false;
   const to = track ?? s.track;
   const kind = p.tracks.find((x) => x.id === to)?.kind;
   if (!kind || kind !== p.tracks.find((x) => x.id === s.track)?.kind) return false;
@@ -431,7 +433,7 @@ function reorder(p: Project, tl: Timeline, s: Shot, t: number): boolean {
   if (from < 0 || to === from) return false;
   const [lo, hi] = [Math.min(from, to), Math.max(from, to)];
   const span = list.slice(lo, hi + 1);
-  if (span.some((x) => x.locked)) return false;
+  if (span.some((x) => frozen(p, x))) return false;
   const moved = [...span];
   moved.splice(to - lo, 0, ...moved.splice(from - lo, 1));
   // A clip that landed a moment on a beat lands it no longer: it plays from where it did.

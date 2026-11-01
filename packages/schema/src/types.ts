@@ -397,8 +397,21 @@ export const Track = z.object({
   id: z.string(),
   kind: z.enum(["picture", "overlay", "text", "audio", "sfx"]),
   label: z.string(),
+  muted: z.boolean().optional().describe("The sound of its clips is off"),
+  hidden: z.boolean().optional().describe("Its shots aren't drawn (their sound still plays unless muted)"),
+  locked: z.boolean().optional().describe("Its shots can't be edited by hand, as if each were locked"),
+  gain: z.number().min(0).max(4).optional().describe("How loud its clips play, times their own volume; default 1"),
 });
 export type Track = z.infer<typeof Track>;
+
+/** How loud a part of the mix plays, or whether it's off. */
+export const Level = z.object({
+  gain: z.number().min(0).max(4).optional().describe("1 as it is; 0.5 is about 6 dB quieter"),
+  muted: z.boolean().optional(),
+});
+export type Level = z.infer<typeof Level>;
+export const Mix = z.object({ voice: Level.optional(), music: Level.optional(), sfx: Level.optional() });
+export type Mix = z.infer<typeof Mix>;
 
 export const Reframe = z.object({
   x: z.number().min(0).max(1).describe("Focus point, 0..1 across the source"),
@@ -457,6 +470,8 @@ export const ShotContent = z.discriminatedUnion("kind", [
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id"),
     look: z.string().optional().describe("mono, dim, blur, mono-dim, warm, cool or faded"),
     volume: z.number().optional(),
+    fadeIn: z.number().min(0).optional().describe("Seconds its sound fades up over at the start of the shot"),
+    fadeOut: z.number().min(0).optional().describe("Seconds its sound fades away over at the end of the shot"),
     version: z
       .string()
       .optional()
@@ -591,6 +606,7 @@ const cutBody = {
   music: Music.optional(),
   captions: Captions.optional().describe("Narration as words on screen; present means on"),
   sfx: z.array(SfxCue).optional(),
+  mix: Mix.optional().describe("Levels for the narration, the music and the sound effects, beside each track's own"),
   tracks: z.array(Track),
   shots: z.array(Shot),
   markers: z.array(Marker).optional(),

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { makeOnce, makeVideoProxy } from "../src/media.ts";
+import { makeFrames, makeOnce, makePeaks, makeVideoProxy } from "../src/media.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "beatsheet-media-"));
 const ff = (...args: string[]) => execFileSync("ffmpeg", ["-v", "error", "-y", ...args]);
@@ -62,5 +62,39 @@ describe("making previews", () => {
     expect(decode.status).toBe(0);
     expect(decode.stderr).toBe("");
     expect(readdirSync(join(dir, ".cache", "proxy"))).toEqual(["clip.mp4"]);
+  });
+});
+
+describe("what the timeline shows of a clip", () => {
+  it("draws its sound fifty times a second, loud where the tone plays and silent after", async () => {
+    const wav = join(dir, "tone.wav");
+    // A second of tone, then a second of silence.
+    ff("-f", "lavfi", "-i", "sine=f=440:d=1", "-af", "apad=pad_dur=1", "-ar", "48000", wav);
+    const out = join(dir, "peaks", "tone.json");
+    await makePeaks(wav, out);
+    const { rate, peaks } = JSON.parse(readFileSync(out, "utf8")) as { rate: number; peaks: string };
+    const values = [...Buffer.from(peaks, "base64")];
+    expect(rate).toBe(50);
+    expect(values.length).toBeGreaterThanOrEqual(99);
+    expect(values.length).toBeLessThanOrEqual(101);
+    expect(Math.min(...values.slice(5, 45))).toBeGreaterThan(20);
+    expect(Math.max(...values.slice(60))).toBe(0);
+  });
+
+  it("gives a file with no sound an empty waveform", async () => {
+    const silent = join(dir, "silent.mp4");
+    ff("-f", "lavfi", "-i", "testsrc2=s=320x240:r=30:d=1", "-c:v", "libx264", "-pix_fmt", "yuv420p", silent);
+    const out = join(dir, "peaks", "silent.json");
+    await makePeaks(silent, out);
+    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({ rate: 50, peaks: "" });
+  });
+
+  it("makes a filmstrip with a frame a second for a short clip", async () => {
+    const out = join(dir, "frames", "clip.jpg");
+    await makeFrames(join(dir, "clip.mp4"), out, 3);
+    const probe = execFileSync("ffprobe", ["-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", out]).toString().trim();
+    const [w, h] = probe.split(",").map(Number);
+    expect(h).toBe(72);
+    expect(w).toBe(128 * 3);
   });
 });

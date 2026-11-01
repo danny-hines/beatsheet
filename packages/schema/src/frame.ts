@@ -80,3 +80,15 @@ export function centreOn(src: { width: number; height: number }, out: { width: n
   const axis = (frame: number, drawn: number, u: number) => (Math.abs(frame - drawn) < 0.5 ? 0.5 : Math.min(1, Math.max(0, (frame / 2 - u * drawn) / (frame - drawn))));
   return { x: axis(out.width, dw, at.x), y: axis(out.height, dh, at.y) };
 }
+
+/**
+ * A clip's filmstrip on the timeline: a frame every `step` seconds from its start (at most 60 frames), `count` in all,
+ * side by side in one picture. The engine makes it and the studio picks frames out of it by time.
+ */
+export function filmFrames(duration: number): { step: number; count: number } {
+  const step = Math.max(1, Math.ceil(duration / 60));
+  return { step, count: Math.max(1, Math.ceil(duration / step)) };
+}
+
+/** How many loudness values a waveform has per second. */
+export const PEAK_RATE = 50;

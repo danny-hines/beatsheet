@@ -41,7 +41,17 @@ export type VideoProps = {
   quality: MediaQuality;
   /** Changes when the project's scene code changes, so scenes reload. */
   codeVersion?: string;
+  /** Only this part of the sound plays (a track's id, or voice, music or sfx): the studio's solo, never saved. */
+  solo?: string;
 };
+
+/** How loud a part of the mix plays: its level in the cut, off when it's muted or another part is soloed. */
+export type Loudness = { gain: number; muted: boolean };
+export function loudnessOf(project: Project, part: string, solo?: string): Loudness {
+  const track = project.tracks.find((t) => t.id === part);
+  const own = track ? { gain: track.gain, muted: track.muted } : project.mix?.[part as "voice" | "music" | "sfx"];
+  return { gain: own?.gain ?? 1, muted: !!own?.muted || (!!solo && solo !== part) };
+}
 
 export function assetUrl(base: string, a: Asset, quality: MediaQuality): string {
   if (quality === "proxy" && a.kind === "video") return `${base}/asset/${a.id}/proxy`;
@@ -60,7 +70,7 @@ export function metadataFor(props: VideoProps) {
   return { width: fmt.width, height: fmt.height, fps: fmt.fps, durationInFrames: Math.max(1, Math.ceil(seconds * fmt.fps)) };
 }
 
-export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion }) => {
+export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo }) => {
   const { fps } = useVideoConfig();
   const tl = useMemo(() => resolveTimeline(project, format), [project, format]);
   const assets = useMemo(() => new Map(project.assets.map((a) => [a.id, a])), [project]);
@@ -71,18 +81,19 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
   const look = project.look ?? {};
   const duck = useMemo(() => ducker(tl, project.music?.duck), [tl, project.music?.duck]);
   const scene = { project, tl, assets, base: mediaBase, quality, format, codeVersion };
+  const music = loudnessOf(project, "music", solo), voice = loudnessOf(project, "voice", solo), sfx = loudnessOf(project, "sfx", solo);
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       <LookFonts look={look} base={mediaBase} />
       {project.tracks.map((track) =>
-        tl.shots
+        track.hidden ? null : tl.shots
           .filter((r) => r.track === track.id && Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start)
           .map((r) => (
             // Premounting loads and seeks each shot's media a second early, so cuts don't stall playback.
             <Sequence key={r.id} from={f(r.start)} durationInFrames={Math.max(1, f(r.end) - f(r.start))} premountFor={fps} name={`${r.id} ${shots.get(r.id)?.label ?? ""}`}>
               <Entrance shot={shots.get(r.id)!} r={r} assets={assets} format={format} underlay={underlay}>
-                <ShotView shot={shots.get(r.id)!} r={r} track={track} assets={assets} base={mediaBase} quality={quality} muteClips={hasMusic} format={format} underlay={underlay} scene={scene} />
+                <ShotView shot={shots.get(r.id)!} r={r} track={track} assets={assets} base={mediaBase} quality={quality} muteClips={hasMusic} format={format} underlay={underlay} scene={scene} loud={loudnessOf(project, track.id, solo)} />
               </Entrance>
             </Sequence>
           )),
@@ -91,7 +102,7 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
       {project.captions && <CaptionsLayer tl={tl} project={project} settings={project.captions} look={look} />}
       {tl.cues.map((c) => {
         const a = assets.get(c.asset);
-        if (!a || !Number.isFinite(c.start) || !Number.isFinite(c.end)) return null;
+        if (!a || !Number.isFinite(c.start) || !Number.isFinite(c.end) || music.muted) return null;
         const dur = Math.max(1, f(c.end) - f(c.start));
         return (
           <Sequence key={c.id} from={f(c.start)} durationInFrames={dur} premountFor={fps} name={`music ${c.id}`}>
@@ -100,29 +111,29 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
               onError={mediaError(a.label ?? a.id)}
               trimBefore={f(c.trackFrom)}
               // Fades in and out, and dips under the narration.
-              volume={(fr) => c.gain * Math.min(1, c.fadeIn ? fr / (c.fadeIn * fps) : 1, c.fadeOut ? (dur - fr) / (c.fadeOut * fps) : 1) * duck(c.start + fr / fps)}
+              volume={(fr) => music.gain * c.gain * Math.min(1, c.fadeIn ? fr / (c.fadeIn * fps) : 1, c.fadeOut ? (dur - fr) / (c.fadeOut * fps) : 1) * duck(c.start + fr / fps)}
             />
           </Sequence>
         );
       })}
       {tl.lines.map((l) => {
         const file = project.voice?.lines.find((x) => x.id === l.id)?.file;
-        if (!file) return null;
+        if (!file || voice.muted) return null;
         return (
           <Sequence key={l.id} from={f(l.start)} durationInFrames={f(l.end) - f(l.start) + 8} name={`voice ${l.id}`}>
-            <Audio src={fileUrl(mediaBase, file)} onError={mediaError(`line ${l.id}`)} />
+            <Audio src={fileUrl(mediaBase, file)} volume={voice.gain} onError={mediaError(`line ${l.id}`)} />
           </Sequence>
         );
       })}
       {tl.sfx.map((x) => {
-        if (!Number.isFinite(x.t)) return null;
+        if (!Number.isFinite(x.t) || sfx.muted) return null;
         const a = assets.get(x.sound);
         const src = a ? assetUrl(mediaBase, a, "original") : (SFX_SOUNDS as readonly string[]).includes(x.sound) ? `${mediaBase}/sfx/${x.sound}` : undefined;
         if (!src) return null;
         return (
           // As long as the sound itself (a little over), so a run of quick pops doesn't hold a pile of audio open.
           <Sequence key={x.id} from={Math.max(0, f(x.t))} durationInFrames={Math.max(1, f((a?.duration ?? SFX_SECONDS[x.sound as keyof typeof SFX_SECONDS] ?? 2) + 0.1))} name={`sound ${x.id}`}>
-            <Audio src={src} volume={x.gain} onError={mediaError(`sound ${x.sound}`)} />
+            <Audio src={src} volume={x.gain * sfx.gain} onError={mediaError(`sound ${x.sound}`)} />
           </Sequence>
         );
       })}
@@ -278,6 +289,7 @@ function ShotView(props: {
   format: string;
   underlay: FindUnderlay;
   scene: SceneEnv;
+  loud: Loudness;
 }) {
   const { shot, r, track, assets } = props;
   const c = shot.content;
@@ -346,8 +358,8 @@ export function placement(shot: Shot, r: ResolvedShot, a: Asset, format: string,
   return { pos, zoom, sourceT, speed, trimSeconds, cover: cover(src, out, pos, zoom) };
 }
 
-function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset; base: string; quality: MediaQuality; muteClips: boolean; format: string; underlay: FindUnderlay; grade?: Grade }) {
-  const { shot, r, a, version, base, quality, muteClips, format, underlay, grade } = props;
+function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset; base: string; quality: MediaQuality; muteClips: boolean; format: string; underlay: FindUnderlay; grade?: Grade; loud: Loudness }) {
+  const { shot, r, a, version, base, quality, muteClips, format, underlay, grade, loud } = props;
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const c = shot.content;
@@ -362,8 +374,13 @@ function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset
     transform: p.zoom !== 1 ? `scale(${p.zoom})` : undefined,
   };
   const effects = !a.cutout ? pictureOf(c)?.effects : undefined;
-  const volume = c.kind === "clip" ? c.volume : undefined;
-  const muted = a.cutout ? true : volume === undefined ? muteClips : volume === 0;
+  const own = c.kind === "clip" ? c.volume : undefined;
+  const muted = a.cutout || loud.muted ? true : own === undefined ? muteClips : own === 0;
+  // Its own volume times its track's, fading up at the start and away at the end when it says so.
+  const fadeIn = c.kind === "clip" ? c.fadeIn : undefined, fadeOut = c.kind === "clip" ? c.fadeOut : undefined;
+  const level = (own ?? 1) * loud.gain;
+  const frames = (r.end - r.start) * fps;
+  const volume = fadeIn || fadeOut ? (fr: number) => level * Math.max(0, Math.min(1, fadeIn ? fr / (fadeIn * fps) : 1, fadeOut ? (frames - fr) / (fadeOut * fps) : 1)) : level === 1 ? undefined : level;
   // A version of the clip (restored, made again) shows in its place where it covers what the shot plays.
   const vAt = version && !a.cutout ? versionAt(version, a.id, r.sourceIn ?? 0, (r.sourceIn ?? 0) + (r.end - r.start) * p.speed) : undefined;
   const shown = vAt !== undefined ? version! : a;

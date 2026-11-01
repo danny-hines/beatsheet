@@ -16,6 +16,7 @@ export function Preview({ at }: { at?: number }) {
   const playhead = useStore((s) => s.playhead);
   const formatId = useStore((s) => s.format);
   const rate = useStore((s) => s.rate);
+  const solo = useStore((s) => s.solo);
   const t = at ?? playhead;
   const format = project.formats.find((f) => f.id === formatId)!;
   const frame = useRef<HTMLDivElement>(null);
@@ -25,7 +26,7 @@ export function Preview({ at }: { at?: number }) {
   const drew = useRef(false);
 
   const codeVersion = useStore((s) => s.codeVersion);
-  const inputProps = useMemo<VideoProps>(() => ({ project, format: formatId, mediaBase: `/media/${projectId}`, quality: "proxy", codeVersion }), [project, formatId, projectId, codeVersion]);
+  const inputProps = useMemo<VideoProps>(() => ({ project, format: formatId, mediaBase: `/media/${projectId}`, quality: "proxy", codeVersion, solo }), [project, formatId, projectId, codeVersion, solo]);
   const meta = useMemo(() => metadataFor(inputProps), [inputProps]);
 
   // If the composition throws, Remotion's player shows ⚠️ until it's made again. Show what went wrong instead, and

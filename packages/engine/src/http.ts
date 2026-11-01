@@ -7,7 +7,9 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { SFX_SOUNDS, slugify, type Brief, type CutSpec, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
+import { PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
+import { createHash } from "node:crypto";
+import { makeFrames, makePeaks } from "./media.ts";
 import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } from "./fixtools.ts";
 
 const TOOLS: ToolId[] = ["deepfilter", "realesrgan", "rife"];
@@ -920,6 +922,20 @@ async function media(req: IncomingMessage, res: ServerResponse, parts: string[])
       const { soundFile } = await import("./clean.ts");
       return sendFile(req, res, soundFile(project, dir, a));
     }
+    // The waveform of what the clip's shots play (its cleaned sound, once cleaned), made the first time it's asked for.
+    if (kind === "peaks") {
+      if (a.kind === "image") return json(res, 200, { rate: PEAK_RATE, peaks: "" });
+      const { soundFile } = await import("./clean.ts");
+      const out = a.cleaned ? c.peaks.replace(/\.json$/, `-${Date.parse(a.cleaned.at).toString(36)}.json`) : c.peaks;
+      await makePeaks(soundFile(project, dir, a), out);
+      res.setHeader("cache-control", "no-cache");
+      return sendFile(req, res, out);
+    }
+    if (kind === "frames") {
+      if (a.kind !== "video") return json(res, 404, { error: "only a video has a filmstrip" });
+      await makeFrames(existsSync(c.proxy) ? c.proxy : original, c.frames, a.duration ?? 1);
+      return sendFile(req, res, c.frames);
+    }
     const pick =
       kind === "proxy" ? (existsSync(c.proxy) ? c.proxy : original)
       : kind === "image" ? (existsSync(c.image) ? c.image : original)
@@ -936,6 +952,16 @@ async function media(req: IncomingMessage, res: ServerResponse, parts: string[])
     return sendFile(req, res, path);
   }
   if (what === "out") return sendFile(req, res, join(dir, "out", rest.join("/")));
+  // The waveform of a file the cut plays from its folders (a voiced line, say), with the same limits as playing it.
+  if (what === "peaks") {
+    const path = mediaPath(project, dir, rest.join("/"));
+    const roots = [...project.sources.map((s) => sourceRoot(project, dir, s.id)), dir].map((r) => r + sep);
+    if (!roots.some((r) => path.startsWith(r)) || !existsSync(path)) return json(res, 404, { error: "no such file" });
+    const key = createHash("sha1").update(`${path}|${statSync(path).mtimeMs}`).digest("hex").slice(0, 16);
+    const out = join(dir, ".cache", "peaks", `file-${key}.json`);
+    await makePeaks(path, out);
+    return sendFile(req, res, out);
+  }
   // A scene's code, compiled for the page (React, Remotion, three and the kit come from the page itself).
   if (what === "code") {
     const file = sceneFile(id!, rest.join("/"));

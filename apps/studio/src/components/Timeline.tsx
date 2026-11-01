@@ -1,8 +1,9 @@
-import { anchorForTime, describeAnchor, formatTime, moveShot, slipShot, snapPoints, trimEnd, trimStart, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
+import { anchorForTime, describeAnchor, formatTime, frozen, moveShot, slipShot, snapPoints, trimEnd, trimStart, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { deleteSelected, putSource, splitHere } from "../editing";
 import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
+import { Strip, Wave } from "./TrackMedia";
 
 const PAD = 48;
 const RULER_H = 22;
@@ -23,6 +24,7 @@ export function Timeline() {
   const also = useStore((s) => s.also);
   const marks = useStore((s) => s.marks);
   const hint = useStore((s) => s.hint);
+  const solo = useStore((s) => s.solo);
   const format = useStore((s) => s.format);
   const projectId = useStore((s) => s.projectId)!;
   const scroller = useRef<HTMLDivElement>(null);
@@ -123,7 +125,7 @@ export function Timeline() {
     else if (!chosen) actions.select({ kind: "shot", id: r.id });
     else if (selection?.kind === "shot" && selection.id !== r.id) setState({ selection: { kind: "shot", id: r.id }, also: [selection.id, ...also.filter((x) => x !== r.id)] });
     const shot = shotById.get(r.id);
-    if (!shot || shot.locked || e.shiftKey) return;
+    if (!shot || frozen(project, shot) || e.shiftKey) return;
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     press.current = { shot: r.id, x0: e.clientX, t0: timeAt(e.clientX), slip: mod, armed: mod && chosen };
   };
@@ -229,6 +231,7 @@ export function Timeline() {
   });
 
   const formatNotes = project.notes.filter((n) => n.status !== "dismissed" && (!n.format || n.format === format));
+  const lineFiles = new Map((project.voice?.lines ?? []).filter((l) => l.file).map((l) => [l.id, l.file!]));
   const isSel = (id: string) => (selection?.kind === "shot" && selection.id === id) || also.includes(id);
   const moving = drag?.mode === "move" ? drag : undefined;
   const slipping = drag?.mode === "slip" ? drag : undefined;
@@ -262,11 +265,11 @@ export function Timeline() {
       <div className="tl-body">
         <div className="tl-labels">
           <div style={{ height: RULER_H }} />
-          {tl.lines.length > 0 && <div className="tl-label" style={{ height: H.voice }}>Voice</div>}
-          {tl.cues.length > 0 && <div className="tl-label" style={{ height: H.music }}>Music</div>}
-          {tl.sfx.length > 0 && <div className="tl-label" style={{ height: H.sfx }}>Sound</div>}
+          {tl.lines.length > 0 && <LaneLabel part="voice" label="Voice" height={H.voice} solo={solo} />}
+          {tl.cues.length > 0 && <LaneLabel part="music" label="Music" height={H.music} solo={solo} />}
+          {tl.sfx.length > 0 && <LaneLabel part="sfx" label="Sound" height={H.sfx} solo={solo} />}
           {project.tracks.map((t) => (
-            <div key={t.id} className="tl-label" style={{ height: H[t.kind] }} title={t.label}><span>{t.label}</span></div>
+            <LaneLabel key={t.id} part={t.id} label={t.label} height={H[t.kind]} solo={solo} />
           ))}
           <div className="tl-label" style={{ height: H.notes }}>Notes</div>
         </div>
@@ -290,6 +293,7 @@ export function Timeline() {
                     onPointerDown={(e) => pickAndScrub(e, { kind: "line", id: l.id })}
                     onContextMenu={noteMenu({ kind: "line", line: l.id }, { kind: "line", id: l.id })}
                   >
+                    {lineFiles.get(l.id) && <Wave url={`/media/${projectId}/peaks/${encodeURIComponent(lineFiles.get(l.id)!)}`} from={0} seconds={l.end - l.start} width={Math.max(2, x(l.end) - x(l.start))} height={H.voice - 12} className="line-wave" />}
                     <span className="line-text">{l.text}</span>
                     {z >= 30 &&
                       l.words.map((w, i) => (
@@ -326,7 +330,9 @@ export function Timeline() {
                     title={`${c.id}: ${c.asset} from ${formatTime(c.trackFrom)}`}
                     onPointerDown={(e) => pickAndScrub(e, { kind: "cue", id: c.id })}
                     onContextMenu={noteMenu({ kind: "cue", cue: c.id }, { kind: "cue", id: c.id })}
-                  />
+                  >
+                    <Wave url={`/media/${projectId}/asset/${c.asset}/peaks`} from={c.trackFrom} seconds={c.end - c.start} width={Math.max(1, x(c.end) - x(c.start))} height={H.music - 27} className="cue-wave" />
+                  </div>
                 ))}
               </div>
             )}
@@ -367,24 +373,30 @@ export function Timeline() {
                     const shot = shotById.get(r.id)!;
                     const sel = isSel(r.id);
                     const notes = formatNotes.filter((n) => n.target.kind === "shot" && n.target.shot === r.id && n.status !== "done").length;
-                    const thumb = track.kind === "picture" && shotAsset(shot) ? `url(${posterUrl(projectId, shotAsset(shot)!)})` : undefined;
+                    const media = shotMedia(shot, r, assets);
+                    const thumb = track.kind === "picture" && shotAsset(shot) && !media?.strip ? `url(${posterUrl(projectId, shotAsset(shot)!)})` : undefined;
                     const lifted = moving?.shot === r.id;
+                    const w = Math.max(3, x(r.end) - x(r.start));
                     return (
                       <div
                         key={r.id}
-                        className={`shot-block kind-${shot.content.kind} fid-${shot.fidelity} ${sel ? "sel" : ""} ${lifted ? "lifted" : ""} ${landing?.id === r.id && !lifted ? "landing" : ""} ${shot.locked ? "locked" : ""}`}
+                        className={`shot-block kind-${shot.content.kind} fid-${shot.fidelity} ${sel ? "sel" : ""} ${lifted ? "lifted" : ""} ${landing?.id === r.id && !lifted ? "landing" : ""} ${frozen(project, shot) ? "locked" : ""}`}
                         style={{ left: x(r.start), width: Math.max(3, x(r.end) - x(r.start)), "--swatch": shotSwatch(shot, assets), "--thumb": thumb } as CSSProperties}
                         title={`${r.id} · ${shot.label ?? ""}\n${formatTime(r.start)} → ${formatTime(r.end)}\n${shotSummary(shot, assets)}`}
                         onPointerDown={(e) => shotDown(e, r)}
                         onContextMenu={noteMenu({ kind: "shot", shot: r.id }, { kind: "shot", id: r.id })}
                       >
+                        {media?.strip && track.kind !== "text" && (
+                          <Strip url={`/media/${projectId}/asset/${media.asset.id}/frames`} duration={media.asset.duration ?? 1} from={media.from} seconds={media.seconds} width={w} height={H[track.kind] - 10} aspect={media.aspect} />
+                        )}
+                        {media?.sound && <Wave url={`/media/${projectId}/asset/${media.asset.id}/peaks`} from={media.from} seconds={media.seconds} width={w} height={14} className={`shot-wave ${media.quiet ? "quiet" : ""}`} />}
                         <span className="shot-label">{shot.label ?? r.id}</span>
                         <ShotBadges shot={shot} format={format} assets={assets} />
                         {track.kind === "picture" && <span className="shot-sub">{shotSummary(shot, assets)}</span>}
                         {notes > 0 && <span className="shot-notes">{notes}</span>}
                         {slipping?.shot === r.id && <span className="slip-label">slip {slipping.delta >= 0 ? "+" : "−"}{formatTime(Math.abs(slipping.delta))}</span>}
-                        {!shot.locked && <span className="handle start" onPointerDown={(e) => startEdge(e, r.id, "start")} />}
-                        {!shot.locked && <span className="handle end" onPointerDown={(e) => startEdge(e, r.id, "end")} />}
+                        {!frozen(project, shot) && <span className="handle start" onPointerDown={(e) => startEdge(e, r.id, "start")} />}
+                        {!frozen(project, shot) && <span className="handle end" onPointerDown={(e) => startEdge(e, r.id, "end")} />}
                       </div>
                     );
                   })}
@@ -449,6 +461,73 @@ export function Timeline() {
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * What a clip shot plays of its file: the stretch (from where, for how long, at its speed), whether it has frames to
+ * show and sound to draw, and whether that sound is heard (clips are quiet under music unless given a volume).
+ */
+function shotMedia(shot: Shot, r: { start: number; end: number; sourceIn?: number }, assets: Map<string, Asset>) {
+  const c = shot.content;
+  if (c.kind !== "clip") return undefined;
+  const asset = assets.get(c.asset);
+  if (!asset || asset.kind !== "video") return undefined;
+  const speed = c.speed ?? 1;
+  return {
+    asset,
+    from: r.sourceIn ?? c.in ?? 0,
+    seconds: (r.end - r.start) * speed,
+    strip: true,
+    sound: !asset.cutout,
+    quiet: c.volume === 0,
+    aspect: asset.width && asset.height ? asset.width / asset.height : 16 / 9,
+  };
+}
+
+/** A lane's name, and its switches: mute, solo, and for tracks hide and lock. */
+function LaneLabel({ part, label, height, solo }: { part: string; label: string; height: number; solo?: string }) {
+  const project = useProject();
+  const track = project.tracks.find((t) => t.id === part);
+  const level = track ?? project.mix?.[part as "voice" | "music" | "sfx"];
+  const sounds = !track || track.kind === "picture" || track.kind === "overlay" || track.kind === "audio" || track.kind === "sfx";
+  const flip = (key: "muted" | "hidden" | "locked") =>
+    actions.edit((d) => {
+      const t = d.tracks.find((x) => x.id === part);
+      if (t) return void (t[key] ? delete t[key] : (t[key] = true));
+      if (key !== "muted") return;
+      const k = part as "voice" | "music" | "sfx";
+      const mix = (d.mix ??= {});
+      const l = (mix[k] ??= {});
+      if (l.muted) delete l.muted;
+      else l.muted = true;
+    });
+  return (
+    <div className={`tl-label ${track?.hidden ? "off" : ""}`} style={{ height }} title={label}>
+      <span>{label}</span>
+      <span className="tk-btns">
+        {sounds && (
+          <button className={`tk-btn ${level?.muted ? "on" : ""}`} onClick={() => flip("muted")} title={level?.muted ? "Unmute" : "Mute"}>
+            M
+          </button>
+        )}
+        {sounds && (
+          <button className={`tk-btn ${solo === part ? "on solo" : ""}`} onClick={() => setState({ solo: solo === part ? undefined : part })} title={solo === part ? "Hear everything again" : "Hear only this (in the studio; nothing is saved)"}>
+            S
+          </button>
+        )}
+        {track && track.kind !== "audio" && track.kind !== "sfx" && (
+          <button className={`tk-btn ${track.hidden ? "on" : ""}`} onClick={() => flip("hidden")} title={track.hidden ? "Show it" : "Hide it"}>
+            H
+          </button>
+        )}
+        {track && (
+          <button className={`tk-btn ${track.locked ? "on" : ""}`} onClick={() => flip("locked")} title={track.locked ? "Unlock it" : "Lock it: its shots can't be changed by hand"}>
+            L
+          </button>
+        )}
+      </span>
+    </div>
   );
 }
 

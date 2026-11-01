@@ -78,5 +78,7 @@ export function cachePaths(dir: string, assetId: string) {
     image: join(c, "image", `${assetId}.jpg`),
     poster: join(c, "poster", `${assetId}.jpg`),
     strip: join(c, "strip", `${assetId}.jpg`),
+    frames: join(c, "frames", `${assetId}.jpg`),
+    peaks: join(c, "peaks", `${assetId}.json`),
   };
 }

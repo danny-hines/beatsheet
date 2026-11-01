@@ -72,6 +72,8 @@ export type State = {
   playing: boolean;
   /** How fast the player plays: 1, faster with L, backwards with J. */
   rate: number;
+  /** The one part of the sound playing in the studio (a track, or voice, music or sfx); never saved. */
+  solo?: string;
   /** In and out points marked on the cut (I and O): a stretch to take out, note or export. */
   marks: { in?: number; out?: number };
   /** In and out points marked on a clip in the Library (I and O while it's open), for putting that stretch in the cut. */

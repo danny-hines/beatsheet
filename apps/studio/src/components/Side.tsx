@@ -104,6 +104,7 @@ function Inspector() {
         )}
         {(shot.content.kind === "placeholder" || shot.content.kind === "generated") && <Takes key={shot.id} shot={shot} seconds={r ? r.end - r.start : undefined} />}
         <SceneProps shot={shot} />
+        <ShotTiming shot={shot} />
         <label>
           Intent
           <TextField multiline value={shot.intent ?? ""} placeholder="What this shot is for" onCommit={(v) => editShot((s) => void (s.intent = v || undefined))} />
@@ -212,6 +213,84 @@ function ProjectOverview({ p, tl }: { p: Project; tl: Timeline }) {
       )}
       <NarrationOverview p={p} />
       <LookPanel p={p} />
+    </div>
+  );
+}
+
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+
+/**
+ * A shot's timing and sound, set by hand: how fast its footage plays, how loud, its fades, how long its entrance
+ * takes, and whether it's locked.
+ */
+function ShotTiming({ shot }: { shot: Shot }) {
+  const p = useProject();
+  const editShot = (fn: (s: Shot) => void) => actions.edit((d) => fn(d.shots.find((s) => s.id === shot.id)!));
+  const c = shot.content;
+  const clip = c.kind === "clip" ? c : undefined;
+  const a = clip ? p.assets.find((x) => x.id === clip.asset) : undefined;
+  const video = a?.kind === "video";
+  const underMusic = !!p.music?.cues.length;
+  const num = (v: string) => (v.trim() === "" ? undefined : Math.max(0, Number(v)));
+  return (
+    <div className="shot-look">
+      <h4>Timing &amp; sound</h4>
+      {clip && video && (
+        <div className="look-row">
+          <label title="How fast the footage plays; the shot keeps its place in the cut">
+            Speed
+            <select value={String(clip.speed ?? 1)} onChange={(e) => editShot((s) => s.content.kind === "clip" && void (Number(e.target.value) === 1 ? delete s.content.speed : (s.content.speed = Number(e.target.value))))}>
+              {[...new Set([...SPEEDS, clip.speed ?? 1])].sort((x, y) => x - y).map((v) => (
+                <option key={v} value={v}>
+                  {v}×
+                </option>
+              ))}
+            </select>
+          </label>
+          <label title={underMusic && clip.volume === undefined ? "Quiet under the music until you give it a volume" : "How loud its own sound plays"}>
+            Volume {clip.volume === undefined ? (underMusic ? "(off under music)" : "") : `${Math.round(clip.volume * 100)}%`}
+            <input
+              type="range"
+              min={0}
+              max={2}
+              step={0.05}
+              value={clip.volume ?? (underMusic ? 0 : 1)}
+              onChange={(e) => editShot((s) => s.content.kind === "clip" && void (s.content.volume = Number(e.target.value)))}
+              onDoubleClick={() => editShot((s) => s.content.kind === "clip" && void delete s.content.volume)}
+            />
+          </label>
+        </div>
+      )}
+      {clip && video && (
+        <div className="look-row">
+          <label title="Seconds its sound fades up over">
+            Fade in
+            <input type="number" min={0} step={0.1} value={clip.fadeIn ?? ""} placeholder="0" onChange={(e) => editShot((s) => s.content.kind === "clip" && void ((s.content.fadeIn = num(e.target.value)) === undefined && delete s.content.fadeIn))} />
+          </label>
+          <label title="Seconds its sound fades away over">
+            Fade out
+            <input type="number" min={0} step={0.1} value={clip.fadeOut ?? ""} placeholder="0" onChange={(e) => editShot((s) => s.content.kind === "clip" && void ((s.content.fadeOut = num(e.target.value)) === undefined && delete s.content.fadeOut))} />
+          </label>
+        </div>
+      )}
+      <div className="look-row">
+        {shot.transition && (
+          <label title="How long its entrance takes, in seconds">
+            Comes in over
+            <input
+              type="number"
+              min={0.05}
+              step={0.05}
+              value={shot.transition.duration ?? ""}
+              placeholder="0.35"
+              onChange={(e) => editShot((s) => s.transition && void ((s.transition.duration = num(e.target.value)) === undefined && delete s.transition.duration))}
+            />
+          </label>
+        )}
+        <label className="check" title="A locked shot can't be changed by hand or by the agent">
+          <input type="checkbox" checked={!!shot.locked} onChange={(e) => editShot((s) => void (e.target.checked ? (s.locked = true) : delete s.locked))} /> Locked
+        </label>
+      </div>
     </div>
   );
 }

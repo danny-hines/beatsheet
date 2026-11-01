@@ -2,8 +2,9 @@
  * Derived media: small H.264 copies of videos for smooth scrubbing (keyframe every half second), screen-sized JPEGs of
  * photos, posters and filmstrips for thumbnails, and an average colour for placeholders. Renders use the originals.
  */
-import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { filmFrames, PEAK_RATE } from "@beatsheet/schema";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
@@ -93,6 +94,52 @@ export function makePoster(src: string, out: string, kind: "video" | "image", du
 export function makeStrip(src: string, out: string, duration: number, frames = 8): Promise<void> {
   const step = Math.max(0.1, duration / frames);
   return makeOnce(out, (tmp) => ffmpeg(["-i", src, "-vf", `fps=1/${step.toFixed(3)},scale=-2:180,tile=${frames}x1`, "-frames:v", "1", "-q:v", "5", tmp]));
+}
+
+/** The timeline's filmstrip: a small frame every few seconds (filmFrames says how often), side by side. */
+export function makeFrames(src: string, out: string, duration: number): Promise<void> {
+  const { step, count } = filmFrames(duration);
+  return makeOnce(out, (tmp) => ffmpeg(["-i", src, "-vf", `fps=1/${step},scale=-2:72,tile=${count}x1`, "-frames:v", "1", "-q:v", "6", tmp]));
+}
+
+/**
+ * A waveform: how loud the sound is, PEAK_RATE times a second (the loudest sample in each stretch, 0..255), as JSON
+ * with the values in base64. A file without sound has none.
+ */
+export function makePeaks(src: string, out: string): Promise<void> {
+  return makeOnce(out, async (tmp) => {
+    const sr = 8000;
+    const per = sr / PEAK_RATE;
+    const peaks: number[] = [];
+    let max = 0, n = 0, odd: number | undefined;
+    await new Promise<void>((done, fail) => {
+      const p = spawn("ffmpeg", ["-v", "error", "-i", src, "-vn", "-ac", "1", "-ar", String(sr), "-f", "s16le", "-"]);
+      p.stdout.on("data", (chunk: Buffer) => {
+        let i = 0;
+        // A sample split across two chunks.
+        if (odd !== undefined) {
+          take(Math.abs((((chunk[0]! << 8) | odd) << 16) >> 16));
+          odd = undefined;
+          i = 1;
+        }
+        for (; i + 1 < chunk.length; i += 2) take(Math.abs(chunk.readInt16LE(i)));
+        if (i < chunk.length) odd = chunk[i];
+      });
+      p.on("error", fail);
+      // No sound at all is a waveform of nothing, not a failure.
+      p.on("close", () => done());
+    });
+    function take(v: number) {
+      if (v > max) max = v;
+      if (++n >= per) {
+        peaks.push(Math.min(255, Math.round((max / 32768) * 255)));
+        max = 0;
+        n = 0;
+      }
+    }
+    if (n) peaks.push(Math.min(255, Math.round((max / 32768) * 255)));
+    writeFileSync(tmp, JSON.stringify({ rate: PEAK_RATE, peaks: Buffer.from(peaks).toString("base64") }));
+  });
 }
 
 export async function averageColor(image: string): Promise<string> {
