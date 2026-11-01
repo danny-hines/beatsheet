@@ -295,7 +295,7 @@ export async function followBox(projectId: string, assetId: string, at: number, 
 }
 
 const LOOK_OPTIONS = ["", "mono", "mono-dim", "dim", "blur", "warm", "cool", "faded"];
-const ENTRANCE_OPTIONS = ["", "pop", "fade", "slide-up", "zoom", "whip", "flash", "wipe", "glitch", "blur", "slam"];
+const ENTRANCE_OPTIONS = ["", "dissolve", "pop", "fade", "slide-up", "zoom", "whip", "flash", "wipe", "glitch", "blur", "slam"];
 const EFFECT_LABEL: Record<ClipEffect["kind"], string> = { blur: "Blur", label: "Name tag", spotlight: "Spotlight" };
 
 /**

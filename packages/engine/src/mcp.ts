@@ -1259,6 +1259,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  "even_out",
+  {
+    description: "Even out how loud people are from shot to shot: measures what each clip shot plays (EBU R128) and sets each one's volume so they sit at the shots' middle level. The final export is mastered for loudness anyway; this is about the shots matching each other.",
+    inputSchema: { project: projectArg, cut: cutArg },
+  },
+  async ({ project: id, cut }) => {
+    const { evenOut } = await import("./multicam.ts");
+    const levels = await evenOut(id, cut);
+    if (!levels.length) return text("Nothing in the cut has sound to even out.");
+    const { project, version } = loadProject(id, cut);
+    const next = structuredClone(project);
+    for (const l of levels) {
+      const s = next.shots.find((x) => x.id === l.shot);
+      if (s?.content.kind === "clip") s.content.volume = l.volume;
+    }
+    saveProject(id, next, version);
+    return text(levels.map((l) => `${l.shot}: ${l.lufs.toFixed(1)} LUFS → volume ${l.volume}`).join("\n"));
+  },
+);
+
+server.registerTool(
   "cut_to_speakers",
   {
     description:

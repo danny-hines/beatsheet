@@ -1078,3 +1078,24 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .script-word.filler { color: var(--dim); font-style: italic; }
 .script-fix { font-size: 13px; padding: 0 3px; }
 .script label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); flex: none; align-self: flex-end; }
+
+/* Finishing a shot: keys, its frame, its grade and the colour wheels. */
+.key-row { display: grid; grid-template-columns: 62px 1fr 44px 22px; align-items: center; gap: 6px; font-size: 12px; }
+.key-btn { padding: 0 4px; font-size: 11px; line-height: 16px; color: var(--dim); }
+.key-btn.some { color: var(--accent-2); }
+.key-btn.on { color: #1a1408; background: var(--accent); border-color: var(--accent); }
+.key-dot { position: absolute; bottom: 15px; width: 7px; height: 7px; margin-left: -3.5px; background: var(--accent); transform: rotate(45deg); border-radius: 1px; box-shadow: 0 0 0 1px #000a; pointer-events: none; }
+.box-row label { min-width: 0; }
+.box-row input { width: 100%; }
+.grade-controls { display: flex; flex-direction: column; gap: 2px; }
+.wheels { display: flex; gap: 10px; justify-content: space-between; margin-top: 6px; }
+.wheel { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+.wheel input[type="range"] { width: 100%; }
+.wheel-disc { position: relative; width: 74px; height: 74px; border-radius: 50%; cursor: crosshair; touch-action: none; background: radial-gradient(circle, #888 0%, transparent 70%), conic-gradient(from 90deg, #f44, #f4f, #44f, #4ff, #4f4, #ff4, #f44); box-shadow: inset 0 0 0 1px #0008; }
+.wheel-puck { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px #000a; pointer-events: none; }
+
+/* The mix. */
+.mixer { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; min-width: 300px; }
+.mixer-row { display: grid; grid-template-columns: 96px 1fr 64px 20px; align-items: center; gap: 6px; }
+.mixer-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mixer-db { text-align: right; color: var(--dim); }

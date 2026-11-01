@@ -11,7 +11,7 @@ import {
   type Timeline,
 } from "@beatsheet/schema";
 import { useMemo, useState } from "react";
-import { AGENT_NAMES, assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, selectionForTarget, shotSummary, targetFromSelection, WINDOWS, pathParts } from "../lib";
+import { AGENT_NAMES, assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, runJob, selectionForTarget, shotSummary, targetFromSelection, WINDOWS, pathParts } from "../lib";
 import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
 import { AgentPanel } from "./AgentPanel";
 import { AssetView } from "./AssetView";
@@ -21,6 +21,7 @@ import { ShotLook } from "./Subjects";
 import { Takes } from "./Takes";
 import { Script } from "./Script";
 import { cutToTalkers } from "../multicam";
+import { ShotFrame, ShotGrade, ShotKeys } from "./ShotFinish";
 import { CastView } from "./Cast";
 import { AnchorChip, Empty, TextField } from "./ui";
 
@@ -117,6 +118,9 @@ function Inspector() {
           <TextField multiline value={shot.intent ?? ""} placeholder="What this shot is for" onCommit={(v) => editShot((s) => void (s.intent = v || undefined))} />
         </label>
         <ShotLook shot={shot} />
+        <ShotKeys shot={shot} />
+        <ShotFrame shot={shot} />
+        <ShotGrade shot={shot} />
         <NotesFor />
       </div>
     );
@@ -227,6 +231,30 @@ function ProjectOverview({ p, tl }: { p: Project; tl: Timeline }) {
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
 /**
+ * Smooth slow motion: the stretch of the clip the shot plays, given the frames in between (RIFE, on this computer) so
+ * there's a new frame for every one the cut shows, as a version the shot shows in its place.
+ */
+async function smooth(shot: Shot, tl: Timeline) {
+  const { project, projectId, cutId } = getState();
+  const r = tl.shots.find((x) => x.id === shot.id);
+  const c = shot.content;
+  if (!project || !projectId || !r || c.kind !== "clip") return;
+  const a = project.assets.find((x) => x.id === c.asset);
+  const speed = c.speed ?? 1;
+  const from = r.sourceIn ?? c.in ?? 0;
+  const fps = Math.min(120, Math.round((a?.fps ?? 30) / speed));
+  setState({ hint: "Making the frames in between (RIFE)…" });
+  try {
+    await actions.flushSave();
+    await actions.quietly(() => runJob(`/api/projects/${projectId}/restore`, { asset: c.asset, from: Math.max(0, from - 0.5), to: from + (r.end - r.start) * speed + 0.5, steps: { fps }, use: true, cut: cutId }));
+    await actions.reload();
+    setState({ hint: `Smooth: ${fps} frames a second of it, played at ${speed}×.` });
+  } catch (err) {
+    setState({ hint: `Couldn't make it smooth: ${err instanceof Error ? err.message : String(err)}` });
+  }
+}
+
+/**
  * A shot's timing and sound, set by hand: how fast its footage plays, how loud, its fades, how long its entrance
  * takes, and whether it's locked.
  */
@@ -284,6 +312,47 @@ function ShotTiming({ shot }: { shot: Shot }) {
           <button className="small" style={{ alignSelf: "flex-end" }} onClick={() => void cutToTalkers(shot.id)} title="Cuts this run of shots so whoever's talking is on screen, each on the camera that hears them best">
             Cut to whoever's talking
           </button>
+        </div>
+      )}
+      {clip && video && (
+        <div className="look-row">
+          <label title="The speed it ends at: slowing into a moment, or speeding out of one">
+            Ramps to
+            <select
+              value={clip.ramp ? String(clip.ramp.to) : ""}
+              onChange={(e) => editShot((s) => s.content.kind === "clip" && void (e.target.value ? (s.content.ramp = { ...(s.content.ramp ?? {}), to: Number(e.target.value) }) : delete s.content.ramp))}
+            >
+              <option value="">Steady</option>
+              {SPEEDS.filter((v) => v !== (clip.speed ?? 1)).map((v) => (
+                <option key={v} value={v}>
+                  {v}×
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check" title="Holds the frame it starts on for the whole shot">
+            <input type="checkbox" checked={!!clip.freeze} onChange={(e) => editShot((s) => s.content.kind === "clip" && void (e.target.checked ? (s.content.freeze = true) : delete s.content.freeze))} /> Freeze
+          </label>
+        </div>
+      )}
+      {clip && video && (clip.speed ?? 1) < 1 && !clip.ramp && !clip.freeze && (
+        <p className="small dim">
+          Slowed down, it repeats frames.{" "}
+          <button className="link small" onClick={() => void smooth(shot, tl)} title="Makes the frames in between with RIFE on this computer, and shows them in the shot">
+            Make it smooth
+          </button>
+        </p>
+      )}
+      {clip && video && (
+        <div className="look-row">
+          <label title="Seconds its sound starts before its picture: you hear them before you see them (a J-cut)">
+            Sound early
+            <input type="number" min={0} step={0.1} value={clip.lead ?? ""} placeholder="0" onChange={(e) => editShot((s) => s.content.kind === "clip" && void ((s.content.lead = num(e.target.value) || undefined) === undefined && delete s.content.lead))} />
+          </label>
+          <label title="Seconds its sound goes on after its picture, over the next shot (an L-cut)">
+            Sound late
+            <input type="number" min={0} step={0.1} value={clip.trail ?? ""} placeholder="0" onChange={(e) => editShot((s) => s.content.kind === "clip" && void ((s.content.trail = num(e.target.value) || undefined) === undefined && delete s.content.trail))} />
+          </label>
         </div>
       )}
       {clip && video && (

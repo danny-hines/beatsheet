@@ -7,7 +7,11 @@ import {
   centreOn,
   cover,
   cutWords,
+  keyed,
+  keyValue,
+  rampSteps,
   type CutWord,
+  type Layout,
   type SaidWord,
   pictureOf,
   resolveTimeline,
@@ -31,7 +35,7 @@ import {
   type Track,
 } from "@beatsheet/schema";
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
-import { AbsoluteFill, Audio, continueRender, delayRender, getRemotionEnvironment, Img, interpolate, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, continueRender, delayRender, Freeze, getRemotionEnvironment, Img, interpolate, OffthreadVideo, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
 import { Grain, SceneContext, type SceneInfo } from "./kit/index.tsx";
 import { GradeDefs, gradeFilter, Vignette } from "./grade.tsx";
 import { SceneComponent } from "./runtime.tsx";
@@ -92,17 +96,31 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
   return (
     <AbsoluteFill style={{ backgroundColor: "#000" }}>
       <LookFonts look={look} base={mediaBase} />
-      {project.tracks.map((track) =>
-        track.hidden ? null : tl.shots
-          .filter((r) => r.track === track.id && Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start)
-          .map((r) => (
+      {project.tracks.map((track) => {
+        if (track.hidden) return null;
+        const list = tl.shots.filter((r) => r.track === track.id && Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
+        return list.map((r, k) => {
+          const shot = shots.get(r.id)!;
+          // The next shot dissolving in: this one carries on under it for as long as the dissolve takes.
+          const next = list[k + 1] && shots.get(list[k + 1]!.id);
+          const tail = next?.transition?.kind === "dissolve" && Math.abs(list[k + 1]!.start - r.end) < 0.01 ? dissolveSeconds(next) : 0;
+          return (
             // Premounting loads and seeks each shot's media a second early, so cuts don't stall playback.
-            <Sequence key={r.id} from={f(r.start)} durationInFrames={Math.max(1, f(r.end) - f(r.start))} premountFor={fps} name={`${r.id} ${shots.get(r.id)?.label ?? ""}`}>
-              <Entrance shot={shots.get(r.id)!} r={r} assets={assets} format={format} underlay={underlay}>
-                <ShotView shot={shots.get(r.id)!} r={r} track={track} assets={assets} base={mediaBase} quality={quality} muteClips={hasMusic} format={format} underlay={underlay} scene={scene} loud={loudnessOf(project, track.id, solo)} />
-              </Entrance>
+            <Sequence key={r.id} from={f(r.start)} durationInFrames={Math.max(1, f(r.end + tail) - f(r.start))} premountFor={fps} name={`${r.id} ${shot.label ?? ""}`}>
+              <Placed shot={shot}>
+                <Entrance shot={shot} r={r} assets={assets} format={format} underlay={underlay}>
+                  <ShotView shot={shot} r={r} track={track} assets={assets} base={mediaBase} quality={quality} muteClips={hasMusic} format={format} underlay={underlay} scene={scene} loud={loudnessOf(project, track.id, solo)} tail={tail} />
+                </Entrance>
+              </Placed>
             </Sequence>
-          )),
+          );
+        });
+      })}
+      {/* J- and L-cuts: a clip's sound before or after its picture, played on its own. */}
+      {project.tracks.map((track) =>
+        tl.shots
+          .filter((r) => r.track === track.id && Number.isFinite(r.start) && Number.isFinite(r.end))
+          .map((r) => <ApartSound key={`sound-${r.id}`} shot={shots.get(r.id)!} r={r} assets={assets} base={mediaBase} quality={quality} muteClips={hasMusic} loud={loudnessOf(project, track.id, solo)} />),
       )}
       {look.grain ? <Grain amount={look.grain} /> : null}
       {project.captions && <CaptionsLayer tl={tl} project={project} settings={project.captions} look={look} words={words} />}
@@ -287,6 +305,8 @@ function ShotView(props: {
   underlay: FindUnderlay;
   scene: SceneEnv;
   loud: Loudness;
+  /** Seconds it carries on past its end, under a shot dissolving in. */
+  tail?: number;
 }) {
   const { shot, r, track, assets } = props;
   const c = shot.content;
@@ -355,8 +375,8 @@ export function placement(shot: Shot, r: ResolvedShot, a: Asset, format: string,
   return { pos, zoom, sourceT, speed, trimSeconds, cover: cover(src, out, pos, zoom) };
 }
 
-function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset; base: string; quality: MediaQuality; muteClips: boolean; format: string; underlay: FindUnderlay; grade?: Grade; loud: Loudness }) {
-  const { shot, r, a, version, base, quality, muteClips, format, underlay, grade, loud } = props;
+function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset; base: string; quality: MediaQuality; muteClips: boolean; format: string; underlay: FindUnderlay; grade?: Grade; loud: Loudness; tail?: number }) {
+  const { shot, r, a, version, base, quality, muteClips, format, underlay, grade, loud, tail = 0 } = props;
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
   const c = shot.content;
@@ -371,20 +391,19 @@ function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset
     transform: p.zoom !== 1 ? `scale(${p.zoom})` : undefined,
   };
   const effects = !a.cutout ? pictureOf(c)?.effects : undefined;
-  const own = c.kind === "clip" ? c.volume : undefined;
-  const muted = a.cutout || loud.muted ? true : own === undefined ? muteClips : own === 0;
-  // Its own volume times its track's, fading up at the start and away at the end when it says so.
-  const fadeIn = c.kind === "clip" ? c.fadeIn : undefined, fadeOut = c.kind === "clip" ? c.fadeOut : undefined;
-  const level = (own ?? 1) * loud.gain;
-  const frames = (r.end - r.start) * fps;
-  const volume = fadeIn || fadeOut ? (fr: number) => level * Math.max(0, Math.min(1, fadeIn ? fr / (fadeIn * fps) : 1, fadeOut ? (frames - fr) / (fadeOut * fps) : 1)) : level === 1 ? undefined : level;
+  const ownVolume = c.kind === "clip" ? c.volume : undefined;
+  // Its sound plays apart from the picture when it leads or trails it (a J- or L-cut): see ApartSound.
+  const split = c.kind === "clip" && (!!c.lead || !!c.trail);
+  const muted = a.cutout || loud.muted || split ? true : ownVolume === undefined ? muteClips : ownVolume === 0;
+  const volume = clipVolume(shot, r, loud, fps, tail);
   // A version of the clip (restored, made again) shows in its place where it covers what the shot plays.
   const vAt = version && !a.cutout ? versionAt(version, a.id, r.sourceIn ?? 0, (r.sourceIn ?? 0) + (r.end - r.start) * p.speed) : undefined;
   const shown = vAt !== undefined ? version! : a;
   // The sound stays the clip's own, cleaned when it has been: then it plays beside the picture, which is muted.
   const apart = !a.cutout && (vAt !== undefined || !!a.cleaned);
-  // The project's grade, then the shot's own look (mono behind a cut-out, say).
-  style.filter = gradeFilter(grade, c.kind === "clip" && c.look ? LOOKS[c.look] : undefined);
+  // The project's grade, then the shot's own grade, then its look (mono behind a cut-out, say).
+  const own = c.kind === "clip" || c.kind === "generated" ? c.grade : undefined;
+  style.filter = [gradeFilter(grade), gradeFilter(own), c.kind === "clip" && c.look ? LOOKS[c.look] : undefined].filter(Boolean).join(" ") || undefined;
   const motion = pictureOf(c)?.motion;
   const move = motion ? poseAt(motion, frame / fps / Math.max(0.01, r.end - r.start), width, height) : undefined;
   // In the player a file that won't load (still being made, gone missing) shows as a card; a render still fails on it.
@@ -394,19 +413,21 @@ function Picture(props: { shot: Shot; r: ResolvedShot; a: Asset; version?: Asset
   return (
     <AbsoluteFill style={{ overflow: "hidden", transform: move }}>
       <GradeDefs grade={grade} />
+      {c.kind !== "text" && c.kind !== "coded" && c.kind !== "placeholder" && <GradeDefs grade={c.grade} />}
       {a.kind === "image" ? (
         <Img src={assetUrl(base, a, quality)} style={style} pauseWhenLoading onError={onError && (() => onError())} />
       ) : (
-        <OffthreadVideo
+        <Footage
+          clip={c.kind === "clip" ? c : undefined}
+          r={r}
           src={assetUrl(base, shown, quality)}
           onError={onError}
-          trimBefore={Math.max(0, Math.round((vAt ?? p.trimSeconds) * fps))}
-          playbackRate={p.speed}
+          trimSeconds={vAt ?? p.trimSeconds}
+          speed={p.speed}
           muted={apart || muted}
           volume={apart ? undefined : volume}
           style={style}
           transparent={!!a.cutout}
-          pauseWhenBuffering
         />
       )}
       {a.kind === "video" && apart && !muted && (
@@ -520,7 +541,7 @@ function SubjectEffect({ effect, track, t, cover: cv }: { effect: ClipEffect; tr
   );
 }
 
-const ENTRANCES = ["pop", "fade", "slide-up", "zoom", "whip", "flash", "wipe", "glitch", "blur", "slam"];
+const ENTRANCES = ["pop", "fade", "slide-up", "zoom", "whip", "flash", "wipe", "glitch", "blur", "slam", "dissolve"];
 
 /**
  * How a shot comes in (its `transition`): pop, fade, slide-up or zoom. A cut-out grows from its own middle, so the
@@ -535,7 +556,7 @@ function Entrance(props: { shot: Shot; r: ResolvedShot; assets: Map<string, Asse
 function EntranceMotion({ shot, r, assets, format, underlay, kind, children }: { shot: Shot; r: ResolvedShot; assets: Map<string, Asset>; format: string; underlay: FindUnderlay; kind: string; children: React.ReactNode }) {
   const frame = useCurrentFrame();
   const { fps, width, height } = useVideoConfig();
-  const dur = Math.max(0.05, shot.transition?.duration ?? (kind === "whip" ? 0.22 : kind === "glitch" ? 0.2 : kind === "slam" ? 0.5 : 0.35)) * fps;
+  const dur = (kind === "dissolve" ? dissolveSeconds(shot) : Math.max(0.05, shot.transition?.duration ?? (kind === "whip" ? 0.22 : kind === "glitch" ? 0.2 : kind === "slam" ? 0.5 : 0.35))) * fps;
   const p = Math.min(1, frame / dur);
   if (p >= 1) return <AbsoluteFill>{children}</AbsoluteFill>;
   if (kind === "flash") return (
@@ -553,7 +574,7 @@ function EntranceMotion({ shot, r, assets, format, underlay, kind, children }: {
   }
   const easeOut = 1 - Math.pow(1 - p, 3);
   let style: CSSProperties;
-  if (kind === "fade") style = { opacity: p };
+  if (kind === "fade" || kind === "dissolve") style = { opacity: p };
   else if (kind === "slide-up") style = { opacity: Math.min(1, p * 2), transform: `translateY(${(1 - easeOut) * 12}%)` };
   else if (kind === "zoom") style = { opacity: Math.min(1, p * 2), transform: `scale(${1.15 - 0.15 * easeOut})`, transformOrigin: origin };
   else if (kind === "whip") style = { transform: `translateX(${(1 - easeOut) * 100}%)`, filter: `blur(${(1 - p) * 24}px)` };
@@ -634,5 +655,190 @@ function Chip({ shot }: { shot: Shot }) {
         {shot.label ?? shot.id}
       </div>
     </AbsoluteFill>
+  );
+}
+
+/** How long a dissolve into `shot` takes: its transition's duration, half a second unless it says. */
+export const dissolveSeconds = (shot: Shot) => Math.max(0.05, shot.transition?.duration ?? 0.5);
+
+/**
+ * A clip's sound level, frame by frame from its shot's start: its own volume and its track's, its volume keys, its
+ * fades, and dissolves (fading up as it dissolves in, and away over `tail` as the next one dissolves in over it).
+ */
+export function clipVolume(shot: Shot, r: ResolvedShot, loud: Loudness, fps: number, tail = 0): number | ((fr: number) => number) | undefined {
+  const c = shot.content;
+  const level = (c.kind === "clip" ? c.volume ?? 1 : 1) * loud.gain;
+  const fadeIn = c.kind === "clip" ? c.fadeIn : undefined;
+  const fadeOut = c.kind === "clip" ? c.fadeOut : undefined;
+  const keys = keyed(shot.keys, "volume");
+  const dissolve = shot.transition?.kind === "dissolve" ? dissolveSeconds(shot) : 0;
+  const len = r.end - r.start;
+  if (!fadeIn && !fadeOut && !keys && !dissolve && !tail) return level === 1 ? undefined : level;
+  return (fr: number) => {
+    const t = fr / fps;
+    let v = level * (keys ? keyValue(shot.keys, "volume", t, 1) : 1);
+    if (fadeIn) v *= Math.min(1, t / fadeIn);
+    if (fadeOut) v *= Math.min(1, Math.max(0, (len - t) / fadeOut));
+    if (dissolve) v *= Math.min(1, t / dissolve);
+    if (tail && t > len) v *= Math.max(0, 1 - (t - len) / tail);
+    return Math.max(0, v);
+  };
+}
+
+/** A volume (or a volume over frames) as seen from `offset` frames later. */
+const later = (v: number | ((fr: number) => number) | undefined, offset: number) => (typeof v === "function" ? (fr: number) => v(fr + offset) : v);
+
+/** A clip's footage: as it plays, held on one frame (freeze), or with its speed ramping (a few steady stretches). */
+function Footage(props: {
+  clip?: Extract<Shot["content"], { kind: "clip" }>;
+  r: ResolvedShot;
+  src: string;
+  onError?: (err?: unknown) => void;
+  trimSeconds: number;
+  speed: number;
+  muted: boolean;
+  volume: number | ((fr: number) => number) | undefined;
+  style: CSSProperties;
+  transparent: boolean;
+}) {
+  const { clip, r, src, onError, trimSeconds, speed, muted, volume, style, transparent } = props;
+  const { fps } = useVideoConfig();
+  if (clip?.freeze)
+    return (
+      <Freeze frame={0}>
+        <OffthreadVideo src={src} onError={onError} trimBefore={Math.max(0, Math.round(trimSeconds * fps))} muted style={style} transparent={transparent} pauseWhenBuffering />
+      </Freeze>
+    );
+  if (clip?.ramp) {
+    const steps = rampSteps(speed, clip.ramp.to, r.end - r.start, clip.ramp.ease);
+    return (
+      <>
+        {steps.map((st, i) => {
+          const from = Math.round(st.t * fps);
+          return (
+            <Sequence key={i} from={from} durationInFrames={Math.max(1, Math.round((st.t + st.seconds) * fps) - from)} name={`ramp ${st.speed.toFixed(2)}×`}>
+              <OffthreadVideo
+                src={src}
+                onError={onError}
+                trimBefore={Math.max(0, Math.round((trimSeconds + st.source) * fps))}
+                playbackRate={Math.max(0.0625, st.speed)}
+                muted={muted}
+                volume={muted ? undefined : later(volume, from)}
+                style={style}
+                transparent={transparent}
+                pauseWhenBuffering
+              />
+            </Sequence>
+          );
+        })}
+      </>
+    );
+  }
+  return <OffthreadVideo src={src} onError={onError} trimBefore={Math.max(0, Math.round(trimSeconds * fps))} playbackRate={speed} muted={muted} volume={volume} style={style} transparent={transparent} pauseWhenBuffering />;
+}
+
+/**
+ * A clip's sound when it starts before its picture (a J-cut, `lead`) or goes on after it (an L-cut, `trail`): played
+ * on its own from `lead` seconds before the shot to `trail` after, easing in and out at the far ends.
+ */
+function ApartSound({ shot, r, assets, base, quality, muteClips, loud }: { shot: Shot; r: ResolvedShot; assets: Map<string, Asset>; base: string; quality: MediaQuality; muteClips: boolean; loud: Loudness }) {
+  const { fps } = useVideoConfig();
+  const c = shot.content;
+  if (c.kind !== "clip" || (!c.lead && !c.trail) || loud.muted || c.freeze) return null;
+  const a = assets.get(c.asset);
+  if (!a || a.kind !== "video" || a.cutout || (c.volume === undefined ? muteClips : c.volume === 0)) return null;
+  const speed = c.speed ?? 1;
+  // It can't start before the file does, or before the cut.
+  const lead = Math.min(c.lead ?? 0, (r.sourceIn ?? 0) / speed, r.start);
+  const trail = c.trail ?? 0;
+  const from = Math.round((r.start - lead) * fps);
+  const frames = Math.max(1, Math.round((r.end + trail) * fps) - from);
+  const level = (c.volume ?? 1) * loud.gain;
+  const edge = 0.12 * fps;
+  const volume = (fr: number) => level * Math.min(1, lead ? fr / edge : 1, trail ? (frames - fr) / edge : 1);
+  return (
+    <Sequence from={from} durationInFrames={frames} name={`sound of ${shot.id}`}>
+      <Audio src={soundUrl(base, a, quality)} trimBefore={Math.max(0, Math.round(((r.sourceIn ?? 0) - lead * speed) * fps))} playbackRate={speed} volume={volume} pauseWhenBuffering onError={mediaError(`the sound of ${a.label ?? a.id}`)} />
+    </Sequence>
+  );
+}
+
+const BLEND_CSS: Record<string, CSSProperties["mixBlendMode"]> = { screen: "screen", multiply: "multiply", overlay: "overlay", lighten: "lighten", darken: "darken", add: "plus-lighter", difference: "difference" };
+
+/** A mask's CSS: a soft-edged ellipse or rectangle, or (inverted) what's outside it. */
+function maskStyle(mask: Layout["mask"]): CSSProperties {
+  if (!mask) return {};
+  const { box, feather = 0, invert } = mask;
+  const pc = (x: number) => `${Math.round(x * 10000) / 100}%`;
+  const [inside, outside] = invert ? ["transparent", "#000"] : ["#000", "transparent"];
+  if (mask.shape === "ellipse") {
+    const image = `radial-gradient(ellipse ${pc(box.w / 2)} ${pc(box.h / 2)} at ${pc(box.x + box.w / 2)} ${pc(box.y + box.h / 2)}, ${inside} ${pc(Math.max(0, 1 - feather * 2))}, ${outside} 100%)`;
+    return { maskImage: image, WebkitMaskImage: image };
+  }
+  if (invert) {
+    // What's outside a rectangle: the frame with a hole in it.
+    const [l, t, r, b] = [box.x, box.y, box.x + box.w, box.y + box.h].map(pc);
+    return { clipPath: `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${l} ${t}, ${r} ${t}, ${r} ${b}, ${l} ${b}, ${l} ${t})` };
+  }
+  const fx = Math.min(box.w / 2, feather), fy = Math.min(box.h / 2, feather);
+  const across = `linear-gradient(to right, transparent ${pc(box.x)}, #000 ${pc(box.x + fx)}, #000 ${pc(box.x + box.w - fx)}, transparent ${pc(box.x + box.w)})`;
+  const down = `linear-gradient(to bottom, transparent ${pc(box.y)}, #000 ${pc(box.y + fy)}, #000 ${pc(box.y + box.h - fy)}, transparent ${pc(box.y + box.h)})`;
+  return { maskImage: `${across}, ${down}`, WebkitMaskImage: `${across}, ${down}`, maskComposite: "intersect", WebkitMaskComposite: "source-in" };
+}
+
+/**
+ * A green or blue screen keyed out, as a colour matrix: how much more of the screen's colour than of the other two a
+ * pixel has decides how see-through it is, and some of that colour is taken off what's left.
+ */
+export function keyMatrix(key: NonNullable<Layout["key"]>): number[] {
+  const s = key.strength ?? 0.5, sp = key.spill ?? 0.5;
+  const k = 4 + 8 * s, t0 = 0.25 - 0.2 * s;
+  const g = key.color === "green";
+  // Rows R, G, B, A of a 4×5 matrix, against R, G, B, A and 1.
+  const spillRow = g ? [sp / 2, 1 - sp, sp / 2, 0, 0] : [sp / 2, sp / 2, 1 - sp, 0, 0];
+  const alpha = g ? [k / 2, -k, k / 2, 0, 1 + k * t0] : [k / 2, k / 2, -k, 0, 1 + k * t0];
+  const red = [1, 0, 0, 0, 0];
+  const rows = g ? [red, spillRow, [0, 0, 1, 0, 0], alpha] : [red, [0, 1, 0, 0, 0], spillRow, alpha];
+  return rows.flat().map((x) => Math.round(x * 1000) / 1000);
+}
+
+/**
+ * Where a shot is in the frame and how it mixes in: its box (picture in picture), its keys (scale, position,
+ * rotation, opacity over time), rounded corners, a mask, a blend, and a colour keyed out.
+ */
+function Placed({ shot, children }: { shot: Shot; children: ReactNode }) {
+  const frame = useCurrentFrame();
+  const { fps, width, height } = useVideoConfig();
+  const L = shot.layout, keys = shot.keys;
+  if (!L && !keys?.length) return <>{children}</>;
+  const t = frame / fps;
+  const box = L?.box ?? { x: 0, y: 0, w: 1, h: 1 };
+  const k = (prop: "scale" | "x" | "y" | "rotate" | "opacity", d: number) => keyValue(keys, prop, t, d);
+  const id = L?.key ? `bs-key-${shot.id.replace(/[^\w-]/g, "_")}` : undefined;
+  const style: CSSProperties = {
+    position: "absolute",
+    left: box.x * width,
+    top: box.y * height,
+    width: box.w * width,
+    height: box.h * height,
+    overflow: "hidden",
+    opacity: k("opacity", 1) * (L?.opacity ?? 1),
+    mixBlendMode: L?.blend ? BLEND_CSS[L.blend] : undefined,
+    borderRadius: L?.radius ? L.radius * Math.min(box.w * width, box.h * height) : undefined,
+    transform: `translate(${k("x", 0) * width}px, ${k("y", 0) * height}px) rotate(${k("rotate", 0)}deg) scale(${k("scale", 1)})`,
+    filter: id ? `url(#${id})` : undefined,
+    ...maskStyle(L?.mask),
+  };
+  return (
+    <div style={style}>
+      {id && L?.key && (
+        <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden>
+          <filter id={id} colorInterpolationFilters="sRGB">
+            <feColorMatrix type="matrix" values={keyMatrix(L.key).join(" ")} />
+          </filter>
+        </svg>
+      )}
+      {children}
+    </div>
   );
 }

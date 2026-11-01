@@ -196,3 +196,46 @@ export async function speakersOfGroup(projectId: string, group: string): Promise
   return { master: master.id, words, angles: speakerAngles(inGroup, angles, loudness) };
 }
 
+
+/**
+ * How loud each clip shot in a cut plays what's said (integrated loudness, EBU R128, of the stretch of its sound it
+ * plays), and the volume that brings each to the others' middle: so a quiet interview answer and a loud question
+ * sit together. Shots with nothing much to hear are left alone.
+ */
+export async function evenOut(projectId: string, cut?: string): Promise<{ shot: string; lufs: number; volume: number }[]> {
+  const { project, dir } = loadProject(projectId, cut);
+  const { resolveTimeline } = await import("@beatsheet/schema");
+  const { soundFile } = await import("./clean.ts");
+  const tl = resolveTimeline(project);
+  const measured: { shot: string; lufs: number }[] = [];
+  for (const r of tl.shots) {
+    const s = project.shots.find((x) => x.id === r.id);
+    const c = s?.content;
+    if (c?.kind !== "clip" || c.volume === 0 || c.freeze || !Number.isFinite(r.start)) continue;
+    const a = project.assets.find((x) => x.id === c.asset);
+    if (!a || a.kind !== "video" || a.cutout) continue;
+    const from = r.sourceIn ?? c.in ?? 0, seconds = (r.end - r.start) * (c.speed ?? 1);
+    if (seconds < 0.4) continue;
+    const lufs = await loudness(soundFile(project, dir, a), from, seconds);
+    if (lufs !== undefined && lufs > -50) measured.push({ shot: r.id, lufs });
+  }
+  if (!measured.length) return [];
+  const sorted = measured.map((m) => m.lufs).sort((x, y) => x - y);
+  const middle = sorted[Math.floor(sorted.length / 2)]!;
+  return measured.map((m) => ({ ...m, volume: Math.round(Math.min(4, Math.max(0.25, Math.pow(10, (middle - m.lufs) / 20))) * 100) / 100 }));
+}
+
+/** A stretch of a file's integrated loudness in LUFS (EBU R128), or nothing when it can't be measured. */
+function loudness(file: string, from: number, seconds: number): Promise<number | undefined> {
+  return new Promise((done) => {
+    const p = spawn("ffmpeg", ["-hide_banner", "-nostats", "-ss", String(from), "-t", String(seconds), "-i", file, "-vn", "-af", "ebur128", "-f", "null", "-"]);
+    let err = "";
+    p.stderr.on("data", (d: Buffer) => (err += d.toString()));
+    p.on("error", () => done(undefined));
+    p.on("close", () => {
+      // The summary at the end: "I: -23.4 LUFS".
+      const m = [...err.matchAll(/I:\s+(-?[\d.]+) LUFS/g)].at(-1);
+      done(m ? Number(m[1]) : undefined);
+    });
+  });
+}

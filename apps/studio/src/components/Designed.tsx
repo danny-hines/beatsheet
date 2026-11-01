@@ -4,6 +4,7 @@ import { useState } from "react";
 import { actions } from "../store";
 import { TextField } from "./ui";
 import { StyleSelect } from "./Cast";
+import { GradeControls } from "./GradeControls";
 
 const MOVES: Record<string, Motion | undefined> = {
   none: undefined,
@@ -91,14 +92,6 @@ export function SceneProps({ shot }: { shot: Shot }) {
 const SWATCHES = ["paper", "ink", "accent", "accent2"];
 
 /** How the grade's sliders run: range and step, and the value that leaves the footage as shot. */
-const GRADE: { key: keyof Grade; label: string; min: number; max: number; step: number; none: number }[] = [
-  { key: "warmth", label: "Warmth", min: -1, max: 1, step: 0.05, none: 0 },
-  { key: "saturation", label: "Saturation", min: 0, max: 2, step: 0.05, none: 1 },
-  { key: "contrast", label: "Contrast", min: 0.5, max: 1.5, step: 0.05, none: 1 },
-  { key: "fade", label: "Fade", min: 0, max: 1, step: 0.05, none: 0 },
-  { key: "vignette", label: "Vignette", min: 0, max: 1, step: 0.05, none: 0 },
-];
-
 /** The project's look: its colours, display font, grain and grade. Scenes, titles, captions and footage all draw with it. */
 export function LookPanel({ p }: { p: Project }) {
   const look: Look = p.look ?? {};
@@ -127,22 +120,7 @@ export function LookPanel({ p }: { p: Project }) {
         <TextField value={look.fonts?.display ?? ""} placeholder="Arial Black" onCommit={(v) => set((l) => void (l.fonts = { ...(l.fonts ?? {}), display: v.trim() || undefined }))} />
       </div>
       <LookSlider key={`grain-${look.grain ?? 0}`} label="Grain" min={0} max={0.2} step={0.01} value={look.grain ?? 0} onCommit={(v) => set((l) => void (l.grain = v || undefined))} />
-      {GRADE.map((g) => (
-        <LookSlider
-          key={`${g.key}-${look.grade?.[g.key] ?? g.none}`}
-          label={g.label}
-          min={g.min}
-          max={g.max}
-          step={g.step}
-          value={look.grade?.[g.key] ?? g.none}
-          onCommit={(v) =>
-            set((l) => {
-              const grade: Grade = { ...(l.grade ?? {}), [g.key]: Math.abs(v - g.none) < 1e-6 ? undefined : v };
-              l.grade = Object.values(grade).some((x) => x !== undefined) ? grade : undefined;
-            })
-          }
-        />
-      ))}
+      <GradeControls grade={look.grade} onChange={(g) => set((l) => void (g ? (l.grade = g) : delete l.grade))} />
     </section>
   );
 }

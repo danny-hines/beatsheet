@@ -122,6 +122,14 @@ export const Grade = z.object({
   brightness: z.number().min(0).max(2).optional().describe("1 as shot"),
   fade: z.number().min(0).max(1).optional().describe("Lifted blacks, like film or a faded print; 0.3 is gentle"),
   vignette: z.number().min(0).max(1).optional().describe("Darker corners; 0.3 is gentle"),
+  wheels: z
+    .object({
+      lift: z.tuple([z.number(), z.number(), z.number()]).optional().describe("Red, green, blue added to the shadows, -0.2..0.2; 0 leaves them"),
+      gamma: z.tuple([z.number(), z.number(), z.number()]).optional().describe("Red, green, blue midtones, 0.5..2; 1 leaves them, above 1 brighter"),
+      gain: z.tuple([z.number(), z.number(), z.number()]).optional().describe("Red, green, blue highlights, 0.5..2; 1 leaves them"),
+    })
+    .optional()
+    .describe("A colourist's three wheels: shadows, midtones and highlights, each channel on its own"),
 });
 export type Grade = z.infer<typeof Grade>;
 
@@ -432,6 +440,57 @@ export const Reframe = z.object({
 });
 export type Reframe = z.infer<typeof Reframe>;
 
+export const EASES = ["linear", "in", "out", "in-out", "hold"] as const;
+
+/**
+ * A shot's values at one moment of it (`t` seconds into the shot): how big, where, turned, how opaque, how loud.
+ * Between keys each value eases from one to the next (`ease` on the earlier key; hold keeps it until the next key).
+ * A value only some keys give moves between those keys. One key is a value that stays put.
+ */
+export const Key = z.object({
+  t: z.number().min(0).describe("Seconds into the shot"),
+  ease: z.enum(EASES).optional().describe("How it gets from this key to the next; default in-out"),
+  scale: z.number().positive().optional().describe("1 as placed"),
+  x: z.number().optional().describe("Shift across, as a fraction of the frame's width"),
+  y: z.number().optional().describe("Shift down, as a fraction of the frame's height"),
+  rotate: z.number().optional().describe("Degrees"),
+  opacity: z.number().min(0).max(1).optional(),
+  volume: z.number().min(0).max(4).optional().describe("Times the clip's own volume"),
+});
+export type Key = z.infer<typeof Key>;
+export const KEYED = ["scale", "x", "y", "rotate", "opacity", "volume"] as const;
+export type Keyed = (typeof KEYED)[number];
+
+export const BLENDS = ["normal", "screen", "multiply", "overlay", "lighten", "darken", "add", "difference"] as const;
+
+/**
+ * Where a shot sits in the frame and how it mixes with what's under it: a box (picture in picture), its opacity and
+ * blend, rounded corners, a mask, and a colour keyed out (a green screen).
+ */
+export const Layout = z.object({
+  box: Rect.optional().describe("Its place in the frame, 0..1 from the top left; default all of it"),
+  opacity: z.number().min(0).max(1).optional(),
+  blend: z.enum(BLENDS).optional().describe("How it mixes with what's under it; add is screen's brighter cousin"),
+  radius: z.number().min(0).max(0.5).optional().describe("Rounded corners, as a fraction of the box's shorter side"),
+  mask: z
+    .object({
+      shape: z.enum(["rect", "ellipse"]),
+      box: Rect.describe("Within the shot's box, 0..1"),
+      feather: z.number().min(0).max(0.5).optional().describe("How soft its edge is, as a fraction of the box"),
+      invert: z.boolean().optional().describe("Shows what's outside it instead"),
+    })
+    .optional(),
+  key: z
+    .object({
+      color: z.enum(["green", "blue"]).describe("The screen's colour"),
+      strength: z.number().min(0).max(1).optional().describe("How much of the screen goes; default 0.5"),
+      spill: z.number().min(0).max(1).optional().describe("How much of its colour is taken off what's left (green fringes); default 0.5"),
+    })
+    .optional()
+    .describe("A green or blue screen keyed out"),
+});
+export type Layout = z.infer<typeof Layout>;
+
 /** Where the picture is at one end of a shot: zoomed, nudged across the frame, turned. */
 const Pose = z.object({
   scale: z.number().positive().optional().describe("1 fills the frame"),
@@ -483,6 +542,14 @@ export const ShotContent = z.discriminatedUnion("kind", [
     volume: z.number().optional(),
     fadeIn: z.number().min(0).optional().describe("Seconds its sound fades up over at the start of the shot"),
     fadeOut: z.number().min(0).optional().describe("Seconds its sound fades away over at the end of the shot"),
+    grade: Grade.optional().describe("Its own grade, on top of the look's: to match it to the shots around it"),
+    ramp: z
+      .object({ to: z.number().positive().describe("The speed it ends at"), ease: z.enum(["linear", "in", "out", "in-out"]).optional() })
+      .optional()
+      .describe("Speed changing through the shot, from `speed` (default 1) to `to`: slowing into a moment, or speeding out of one"),
+    freeze: z.boolean().optional().describe("Holds the frame at `in` for the whole shot"),
+    lead: z.number().min(0).optional().describe("Seconds its sound starts before its picture (a J-cut)"),
+    trail: z.number().min(0).optional().describe("Seconds its sound goes on after its picture (an L-cut)"),
     version: z
       .string()
       .optional()
@@ -505,6 +572,7 @@ export const ShotContent = z.discriminatedUnion("kind", [
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id, as for a clip: where the take sits in a format of another shape"),
     effects: z.array(ClipEffect).optional().describe("As for a clip, following a subject found on the take"),
     motion: Motion.optional().describe("As for a clip: a push in, a pull out, a pan, a tilt"),
+    grade: Grade.optional().describe("As for a clip: its own grade on top of the look's"),
   }),
   z.object({
     kind: z.literal("coded"),
@@ -553,11 +621,13 @@ export const Shot = z.object({
   fidelity: Fidelity,
   transition: z
     .object({
-      kind: z.string().describe("How it comes in: pop, fade, slide-up, zoom, whip, flash, wipe, glitch, blur or slam (with a shake)"),
+      kind: z.string().describe("How it comes in: pop, fade, slide-up, zoom, whip, flash, wipe, glitch, blur, slam (with a shake), or dissolve (the shot before carries on under it as it fades in, and their sounds cross)"),
       duration: z.number().optional().describe("Seconds, default 0.35"),
     })
     .optional(),
   captions: z.boolean().optional().describe("false hides the narration captions while this shot plays (when it already shows the same words)"),
+  keys: z.array(Key).optional().describe("Its values over time: scale, position, rotation, opacity, volume"),
+  layout: Layout.optional(),
   knobs: z.record(z.string(), Knob).optional().describe("Named values the UI exposes as controls"),
   only: z.array(z.string()).optional(),
   locked: z.boolean().optional(),

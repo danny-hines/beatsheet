@@ -20,13 +20,32 @@ export function gradeMatrix(g: Grade | undefined): number[] | undefined {
   return [scale[0]!, 0, 0, 0, offset[0]!, 0, scale[1]!, 0, 0, offset[1]!, 0, 0, scale[2]!, 0, offset[2]!, 0, 0, 0, 1, 0].map(r3);
 }
 
-const filterId = (m: number[]) => `bs-grade-${m.map((x) => String(x).replace("-", "m").replace(".", "p")).join("_")}`;
+/**
+ * The three wheels as a curve for each channel (17 points from black to white): lift raises the shadows and leaves
+ * white, gain scales towards the highlights, gamma bends the midtones (above 1, brighter).
+ */
+export function wheelTables(g: Grade | undefined): [number[], number[], number[]] | undefined {
+  const w = g?.wheels;
+  if (!w || (!w.lift?.some(Boolean) && !w.gamma?.some((x) => x !== 1) && !w.gain?.some((x) => x !== 1))) return undefined;
+  const curve = (c: 0 | 1 | 2) =>
+    Array.from({ length: 17 }, (_, i) => {
+      const x = i / 16;
+      const lifted = x + (w.lift?.[c] ?? 0) * (1 - x);
+      const gained = Math.min(1, Math.max(0, lifted * (w.gain?.[c] ?? 1)));
+      return r3(Math.pow(gained, 1 / Math.max(0.1, w.gamma?.[c] ?? 1)));
+    });
+  return [curve(0), curve(1), curve(2)];
+}
+
+const filterId = (m: number[] | undefined, t: number[][] | undefined) =>
+  `bs-grade-${[...(m ?? []), ...(t?.flat() ?? [])].map((x) => String(x).replace("-", "m").replace(".", "p")).join("_")}`;
 
 /** The CSS `filter` for footage in this grade, with any other filter (a shot's own look) after it. */
 export function gradeFilter(g: Grade | undefined, also?: string): string | undefined {
   const parts: string[] = [];
   const m = gradeMatrix(g);
-  if (m) parts.push(`url(#${filterId(m)})`);
+  const t = wheelTables(g);
+  if (m || t) parts.push(`url(#${filterId(m, t)})`);
   if (g?.brightness !== undefined && g.brightness !== 1) parts.push(`brightness(${g.brightness})`);
   if (g?.contrast !== undefined && g.contrast !== 1) parts.push(`contrast(${g.contrast})`);
   if (g?.saturation !== undefined && g.saturation !== 1) parts.push(`saturate(${g.saturation})`);
@@ -37,11 +56,19 @@ export function gradeFilter(g: Grade | undefined, also?: string): string | undef
 /** The SVG the grade's filter refers to; put it next to the graded picture. */
 export function GradeDefs({ grade }: { grade?: Grade }) {
   const m = gradeMatrix(grade);
-  if (!m) return null;
+  const t = wheelTables(grade);
+  if (!m && !t) return null;
   return (
     <svg width="0" height="0" style={{ position: "absolute" }} aria-hidden>
-      <filter id={filterId(m)} colorInterpolationFilters="sRGB">
-        <feColorMatrix type="matrix" values={m.join(" ")} />
+      <filter id={filterId(m, t)} colorInterpolationFilters="sRGB">
+        {m && <feColorMatrix type="matrix" values={m.join(" ")} />}
+        {t && (
+          <feComponentTransfer>
+            <feFuncR type="table" tableValues={t[0].join(" ")} />
+            <feFuncG type="table" tableValues={t[1].join(" ")} />
+            <feFuncB type="table" tableValues={t[2].join(" ")} />
+          </feComponentTransfer>
+        )}
       </filter>
     </svg>
   );

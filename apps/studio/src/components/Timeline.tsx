@@ -4,6 +4,7 @@ import { deleteSelected, putSource, splitHere } from "../editing";
 import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 import { Strip, Wave } from "./TrackMedia";
+import { Mixer } from "./Mixer";
 
 const PAD = 48;
 const RULER_H = 22;
@@ -258,6 +259,7 @@ export function Timeline() {
             {marks.in !== undefined ? formatTime(marks.in) : "…"} → {marks.out !== undefined ? formatTime(marks.out) : "…"} ✕
           </button>
         )}
+        <Mixer />
         <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out">−</button>
         <button onClick={() => setState({ zoom: 0 })}>Fit</button>
         <button onClick={() => actions.setZoom(z * 1.5)} title="Zoom in">+</button>
@@ -394,6 +396,7 @@ export function Timeline() {
                         <ShotBadges shot={shot} format={format} assets={assets} />
                         {track.kind === "picture" && <span className="shot-sub">{shotSummary(shot, assets)}</span>}
                         {notes > 0 && <span className="shot-notes">{notes}</span>}
+                        {shot.keys?.map((k, i) => <span key={i} className="key-dot" style={{ left: x(r.start + k.t) - x(r.start) }} title={`A key at ${formatTime(k.t)} into the shot`} />)}
                         {slipping?.shot === r.id && <span className="slip-label">slip {slipping.delta >= 0 ? "+" : "−"}{formatTime(Math.abs(slipping.delta))}</span>}
                         {!frozen(project, shot) && <span className="handle start" onPointerDown={(e) => startEdge(e, r.id, "start")} />}
                         {!frozen(project, shot) && <span className="handle end" onPointerDown={(e) => startEdge(e, r.id, "end")} />}

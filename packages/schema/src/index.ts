@@ -18,3 +18,4 @@ export * from "./restore.ts";
 export * from "./edit.ts";
 export * from "./script.ts";
 export * from "./multicam.ts";
+export * from "./keys.ts";

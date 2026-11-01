@@ -705,6 +705,11 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const job = startJob("angles", id, async (j) => JSON.stringify(await syncAngles(id, body.assets ?? [], (f) => (j.progress = f * 0.98))));
     return json(res, 202, job);
   }
+  // How loud each clip shot's words are, and the volume that evens them out.
+  if (section === "projects" && id && action === "even-out" && req.method === "GET") {
+    const { evenOut } = await import("./multicam.ts");
+    return json(res, 200, await evenOut(id, new URL(req.url ?? "", "http://local").searchParams.get("cut") ?? undefined));
+  }
   if (section === "projects" && id && action === "angles" && req.method === "GET") {
     const group = new URL(req.url ?? "", "http://local").searchParams.get("group") ?? "";
     const { speakersOfGroup } = await import("./multicam.ts");
