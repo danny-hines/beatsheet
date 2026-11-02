@@ -6,6 +6,7 @@
 import type { ComfyCheck, InstallStatus } from "@beatsheet/engine";
 import { CATALOG, type MakeOp, type ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
+import { OS } from "../lib";
 
 type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; ranking?: Partial<Record<string, string[]>>; spent?: number; plans?: ({ id: string } & ServiceState)[] };
 
@@ -167,12 +168,14 @@ function ComfySection() {
   // The model files this ComfyUI is missing that beatsheet can fetch, each once, and how much that is.
   const toFetch = new Map(c.check.workflows.filter((w) => !w.machine).flatMap((w) => (w.fetch ?? []).map((f) => [f.name, f.bytes] as const)));
   const fetchBytes = [...toFetch.values()].reduce((a, b) => a + b, 0);
+  // The Hugging Face repos among them that share their files only once their license is accepted.
+  const licensed = [...new Set(c.check.workflows.filter((w) => !w.machine).flatMap((w) => (w.fetch ?? []).flatMap((f) => f.gated ?? [])))];
   const nothingHere = !on && c.check.here.type === "cpu";
   return (
     <section>
       <h4>Your own hardware</h4>
       <p className="dim small">
-        SCAIL-2 and Wan 2.2 Animate copy the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board, and Wan 2.2 makes clips from a board, all in ComfyUI on your own hardware at no charge.
+        SCAIL-2 and Wan 2.2 Animate copy the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board, Wan 2.2 makes clips from a board, and FLUX 3 Image Klein makes stills and boards, all in ComfyUI on your own hardware at no charge.
       </p>
       <p className="small">
         This computer: {machineWords(c.check.here)}.{" "}
@@ -248,6 +251,20 @@ function ComfySection() {
             )}
           </div>
         )
+      )}
+      {on && c.install.state !== "installing" && c.check.local && licensed.length > 0 && (
+        <p className="dim small">
+          Some of these are shared only with people who accept their license: accept it on{" "}
+          {licensed.map((repo, i) => (
+            <span key={repo}>
+              {i > 0 && " and "}
+              <a href={`https://huggingface.co/${repo}`} target="_blank" rel="noreferrer">
+                {repo} ↗
+              </a>
+            </span>
+          ))}{" "}
+          while signed in to Hugging Face. beatsheet fetches them with the Hugging Face token SAM 3.1 uses (Settings → On {OS.here}).
+        </p>
       )}
       <p className="dim small">
         ComfyUI on another computer works too: start it with --listen and put its address here (http://192.168.1.50:8188). It has no sign-in of its own, so keep it to your home network. Your own exports from ComfyUI (File → Export (API)) go in {c.folder}, named like scail2-animation.full.api.json, and take the place of the ones beatsheet comes with.

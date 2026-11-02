@@ -227,7 +227,7 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
 }
 
 /** Whether a family of models takes a seed, so one can be chosen and recorded for each take. */
-export const takesSeed = (shape: string) => ["nano-banana", "wan", "wan-3", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(shape);
+export const takesSeed = (shape: string) => ["nano-banana", "wan", "wan-3", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo", "flux3-klein"].includes(shape);
 
 /** The file a finished request made: the first picture, or the video. */
 export function falOutput(result: Record<string, unknown>): { url: string; contentType?: string; seed?: number } | undefined {

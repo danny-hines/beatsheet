@@ -1,16 +1,18 @@
 /**
  * ComfyUI, on this computer or another one on the network: workflows beatsheet runs on the person's own hardware
- * (SCAIL-2 and Wan 2.2 Animate, which copy the movement in a clip onto the people in a picture, and Wan 2.2 and MiniMax
- * H3 from a picture alone). A workflow is ComfyUI's API export (File → Export (API)) with the nodes beatsheet fills
- * titled STUDIO_*: the picture (and one to end on), the clip to follow, the seed, the size, the length, the prompt and
- * the output. A STUDIO_END_IMAGE left empty is taken out, with the inputs it fed. The ones that
- * ship are in packages/engine/comfy; the person's own exports, in the comfy folder beside beatsheet's settings, take
- * their place.
+ * (SCAIL-2 and Wan 2.2 Animate, which copy the movement in a clip onto the people in a picture, Wan 2.2 and MiniMax
+ * H3 from a picture alone, and FLUX 3 Image Klein's stills). A workflow is ComfyUI's API export (File → Export (API))
+ * with the nodes beatsheet fills titled STUDIO_*: the picture (and one to end on), a still's reference pictures
+ * (STUDIO_REF_IMAGE_1, _2…), the clip to follow, the seed, the size, the length, the prompt and the output. A
+ * STUDIO_END_IMAGE left empty is taken out, with the inputs it fed, and so are the reference pictures a still isn't
+ * given. The ones that ship are in packages/engine/comfy; the person's own exports, in the comfy folder beside
+ * beatsheet's settings, take their place.
  *
  * Each workflow says what it needs to run: an NVIDIA card for fp8 weights, or Apple silicon too for the small Wan, and
  * about how much memory. The ComfyUI that's connected is checked against that (from what it says it runs on) and for
- * the nodes and model files its workflows name, which beatsheet can fetch into a ComfyUI on this computer. With none
- * connected, this computer is checked instead, so a laptop that couldn't run any of it says so and points at another.
+ * the nodes and model files its workflows name, which beatsheet can fetch into a ComfyUI on this computer (with the
+ * person's Hugging Face token, for files shared only once their license is accepted). With none connected, this
+ * computer is checked instead, so a laptop that couldn't run any of it says so and points at another.
  *
  * beatsheet makes the prompt id itself and saves it on the job before sending, so a restarted engine follows the same
  * render rather than queueing another, and a restarted ComfyUI (which forgets its queue) is sent the saved prompt
@@ -22,12 +24,13 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { cpus, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
+import sharp from "sharp";
 import type { Quality, ServiceState, Unusable } from "@beatsheet/schema";
 import { FalError } from "./fal.ts";
 import { REPO } from "./paths.ts";
 import { download, type Download } from "./pyenv.ts";
 import { gpu } from "./sam-cuda.ts";
-import { SETTINGS_DIR, readSettings, updateSettings } from "./settings.ts";
+import { SETTINGS_DIR, getSecret, readSettings, updateSettings } from "./settings.ts";
 
 const exec = promisify(execFile);
 
@@ -49,12 +52,18 @@ export type Device = { type: string; name: string; memoryGb?: number };
 
 type Workflow = {
   label: string;
+  /**
+   * It makes a still, from the prompt and as many reference pictures as it has STUDIO_REF_IMAGE_<k> nodes, in the
+   * shape asked for. It ships in one profile, full: a still is no rough.
+   */
+  still?: true;
   /** It follows a clip: the picture and the clip go in, the clip in chunks. Else it's made from a picture alone. */
   drive: boolean;
   /** About this many pixels for each profile (roughs smaller, so they're quicker), both sides a multiple of `multiple`. */
   area: Record<Profile, number>;
   multiple: number;
-  fps: number;
+  /** A clip's frame rate. */
+  fps?: number;
   /** Following a clip: frames in the first chunk, and in each one after. */
   first?: number;
   extend?: number;
@@ -119,6 +128,16 @@ export const WORKFLOWS: Record<string, Workflow> = {
     sound: true,
     needs: { devices: ["cuda"], memoryGb: { cuda: 24 }, why: "its INT8 and FP4 weights don't run on Apple's chips or a processor" },
   },
+  // BFL's distilled 5.6B in INT8, 16 steps, each reference at about a megapixel (ComfyUI's own template). Stills at
+  // GPT Image's 1536×1024 or so, in the shape asked for.
+  "flux3-klein": {
+    label: "FLUX 3 Image Klein",
+    still: true,
+    drive: false,
+    area: { full: 1536 * 1024, fast: 1536 * 1024 },
+    multiple: 16,
+    needs: { devices: ["cuda"], memoryGb: { cuda: 12 }, why: "its INT8 weights don't run on Apple's chips or a processor" },
+  },
 };
 
 /** Marker title → { node class: the input beatsheet sets }. A marker may sit on several nodes; every one is set. */
@@ -134,7 +153,7 @@ const MARKERS: Record<string, Record<string, string>> = {
   STUDIO_HEIGHT: { PrimitiveInt: "value" },
   STUDIO_FRAMES: { PrimitiveInt: "value" },
   STUDIO_FPS: { PrimitiveFloat: "value", PrimitiveInt: "value", CreateVideo: "fps" },
-  STUDIO_OUTPUT: { SaveVideo: "filename_prefix", VHS_VideoCombine: "filename_prefix" },
+  STUDIO_OUTPUT: { SaveVideo: "filename_prefix", VHS_VideoCombine: "filename_prefix", SaveImage: "filename_prefix" },
 };
 
 /** Loader inputs that name a model file, and the /models folder that has to list it. */
@@ -149,8 +168,11 @@ const LOADER_FOLDERS: Record<string, string> = {
 };
 
 const hf = (repo: string, path: string) => `https://huggingface.co/${repo}/resolve/main/${path}`;
-/** Where each model file the shipped workflows name comes from, its size and its SHA-256 (from Hugging Face's own listing). */
-export const MODEL_FILES: Record<string, Download> = {
+/**
+ * Where each model file the shipped workflows name comes from, its size and its SHA-256 (from Hugging Face's own
+ * listing). `gated`: the Hugging Face repo that shares it only with people who've accepted its license there.
+ */
+export const MODEL_FILES: Record<string, Download & { gated?: string }> = {
   "umt5_xxl_fp8_e4m3fn_scaled.safetensors": { url: hf("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"), bytes: 6735906897, sha256: "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68" },
   "clip_vision_h.safetensors": { url: hf("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/clip_vision/clip_vision_h.safetensors"), bytes: 1264219396, sha256: "64a7ef761bfccbadbaa3da77366aac4185a6c58fa5de5f589b42a65bcc21f161" },
   "wan_2.1_vae.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan_2.1_vae.safetensors"), bytes: 253815318, sha256: "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b" },
@@ -172,10 +194,17 @@ export const MODEL_FILES: Record<string, Download> = {
   "minimax_h3_video_vae_fp16.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496, sha256: "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522" },
   "minimax_h3_audio_vae_fp32.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "vae/minimax_h3_audio_vae_fp32.safetensors"), bytes: 605254808, sha256: "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48" },
   "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), bytes: 1956193000, sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e" },
+  // FLUX 3 Image Klein under the FLUX Kommunity License, which Black Forest Labs asks people to accept first. Its VAE is
+  // FLUX.2's, the same file in Comfy-Org's open Klein 4B.
+  "flux3-image-klein-int8-convrot.safetensors": { url: hf("black-forest-labs/flux-3-image-klein-comfy", "diffusion_models/flux3-image-klein-int8-convrot.safetensors"), bytes: 5827874779, sha256: "847d8933548afd93df4af2cac2498e70891bf28d9dae06d695f536992e168fe2", gated: "black-forest-labs/flux-3-image-klein-comfy" },
+  "qwen3vl_4b_int8_convrot.safetensors": { url: hf("black-forest-labs/flux-3-image-klein-comfy", "text_encoders/qwen3vl_4b_int8_convrot.safetensors"), bytes: 4858559240, sha256: "32de113cbf8282b02cbff0794b637b9d6676da09314a1db5a30bcea9bf4ee01c", gated: "black-forest-labs/flux-3-image-klein-comfy" },
+  "flux2-vae.safetensors": { url: hf("Comfy-Org/Flux-2-Klein-4B", "split_files/vae/flux2-vae.safetensors"), bytes: 336211292, sha256: "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3" },
 };
 
 /** Nodes that aren't ComfyUI's own, and the pack that has them (ComfyUI Manager installs a pack by name). */
 const NODE_PACKS: Record<string, string> = { DWPreprocessor: "comfyui_controlnet_aux" };
+/** ComfyUI's own nodes that came after 0.39, and the version that has them: an older ComfyUI needs updating. */
+const NODE_VERSIONS: Record<string, string> = { ReferenceMultiLatent: "0.41" };
 
 export type ComfyNode = { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string } };
 export type ComfyPrompt = Record<string, ComfyNode>;
@@ -237,8 +266,15 @@ export function framesFor(seconds: number, fps: number, max: number, grid = { st
   return Math.min(max, grid.offset + Math.ceil((need - grid.offset) / grid.step) * grid.step);
 }
 
+/** How many reference pictures a still's workflow takes: its STUDIO_REF_IMAGE_<k> nodes, numbered from 1. */
+export function refsIn(prompt: ComfyPrompt): number {
+  let k = 0;
+  while (nodesTitled(prompt, `STUDIO_REF_IMAGE_${k + 1}`).length) k++;
+  return k;
+}
+
 const isLink = (v: unknown) => Array.isArray(v) && v.length === 2 && typeof v[0] === "string";
-const baseOf = (marker: string) => (marker.startsWith("STUDIO_OUTPUT") ? "STUDIO_OUTPUT" : marker);
+const baseOf = (marker: string) => (marker.startsWith("STUDIO_OUTPUT") ? "STUDIO_OUTPUT" : /^STUDIO_REF_IMAGE_\d+$/.test(marker) ? "STUDIO_REF_IMAGE" : marker);
 
 /**
  * A copy of the workflow with every marked node set. Markers the workflow doesn't have are skipped; a marker on a node
@@ -269,12 +305,15 @@ export function without(workflow: ComfyPrompt, marker: string): ComfyPrompt {
   return prompt;
 }
 
-/** What's wrong with an exported workflow for beatsheet, if anything: one that follows a clip needs a clip to load. */
-export function checkWorkflow(prompt: ComfyPrompt, drive = true): string[] {
+/**
+ * What's wrong with an exported workflow for beatsheet, if anything: one that follows a clip needs a clip to load, and
+ * a still needs its prompt and its size.
+ */
+export function checkWorkflow(prompt: ComfyPrompt, spec: Pick<Workflow, "drive" | "still"> = { drive: true }): string[] {
   const problems: string[] = [];
-  for (const marker of drive ? ["STUDIO_REF_IMAGE", "STUDIO_DRIVING_VIDEO"] : ["STUDIO_REF_IMAGE", "STUDIO_FRAMES"])
-    if (nodesTitled(prompt, marker).length !== 1) problems.push(`needs exactly one node titled ${marker}`);
-  if (!Object.values(prompt).some((n) => n._meta?.title?.startsWith("STUDIO_OUTPUT"))) problems.push("needs a SaveVideo titled STUDIO_OUTPUT");
+  const markers = spec.still ? ["STUDIO_PROMPT", "STUDIO_WIDTH", "STUDIO_HEIGHT"] : spec.drive ? ["STUDIO_REF_IMAGE", "STUDIO_DRIVING_VIDEO"] : ["STUDIO_REF_IMAGE", "STUDIO_FRAMES"];
+  for (const marker of markers) if (nodesTitled(prompt, marker).length !== 1) problems.push(`needs exactly one node titled ${marker}`);
+  if (!Object.values(prompt).some((n) => n._meta?.title?.startsWith("STUDIO_OUTPUT"))) problems.push(`needs a ${spec.still ? "SaveImage" : "SaveVideo"} titled STUDIO_OUTPUT`);
   for (const [id, n] of Object.entries(prompt)) {
     const title = n._meta?.title ?? "";
     if (!title.startsWith("STUDIO_")) continue;
@@ -309,7 +348,10 @@ const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e10 ? 1 : 0)} GB
 /** What's missing, in words: each node with its pack, and each file with its size where beatsheet knows where to get it. */
 export function describeMissing(m: Missing): string[] {
   return [
-    ...m.nodes.map((cls) => `node type ${cls} isn't installed${NODE_PACKS[cls] ? ` (it comes with ${NODE_PACKS[cls]}; ComfyUI Manager installs it)` : ""}`),
+    ...m.nodes.map(
+      (cls) =>
+        `node type ${cls} isn't installed${NODE_PACKS[cls] ? ` (it comes with ${NODE_PACKS[cls]}; ComfyUI Manager installs it)` : NODE_VERSIONS[cls] ? ` (it comes with ComfyUI ${NODE_VERSIONS[cls]} and later: update ComfyUI)` : ""}`,
+    ),
     ...m.files.map((f) => `model ${f.folder}/${f.name} is missing${MODEL_FILES[f.name] ? ` (${gb(MODEL_FILES[f.name]!.bytes)})` : ""}`),
   ];
 }
@@ -532,11 +574,15 @@ export async function comfyCancel(base: string, id: string): Promise<void> {
 
 type SavedFile = { filename: string; subfolder?: string; type?: string };
 
-/** The video a finished job saved on the given output nodes: SaveVideo lists it under images, VHS under gifs. */
-export async function comfyVideo(base: string, id: string, outputs: string[]): Promise<SavedFile | undefined> {
+/**
+ * The video (or, for a still, the picture) a finished job saved on the given output nodes: SaveVideo and SaveImage list
+ * theirs under images, VHS under gifs.
+ */
+export async function comfySaved(base: string, id: string, outputs: string[], still = false): Promise<SavedFile | undefined> {
   const h = await json<Record<string, { outputs?: Record<string, Record<string, unknown>> }>>(base, `/history/${id}`);
+  const kind = still ? /\.(png|jpe?g|webp)$/i : /\.(mp4|webm|mov|mkv)$/i;
   const found = outputs.flatMap((nid) =>
-    Object.values(h[id]?.outputs?.[nid] ?? {}).flatMap((items) => (Array.isArray(items) ? (items as SavedFile[]).filter((x) => /\.(mp4|webm|mov|mkv)$/i.test(x?.filename ?? "") && (x.type ?? "output") === "output") : [])),
+    Object.values(h[id]?.outputs?.[nid] ?? {}).flatMap((items) => (Array.isArray(items) ? (items as SavedFile[]).filter((x) => kind.test(x?.filename ?? "") && (x.type ?? "output") === "output") : [])),
   );
   return found.at(-1);
 }
@@ -554,7 +600,7 @@ export async function comfyDownload(base: string, file: SavedFile, dest: string)
 
 export type ComfyCheck = ComfyHealth & {
   /** Each workflow there is, with what stops it running there, and the missing model files beatsheet could fetch (and their size). */
-  workflows: { name: string; label: string; profile: Profile; own: boolean; problems: string[]; machine?: string; missing?: Missing; fetch?: { name: string; bytes: number }[] }[];
+  workflows: { name: string; label: string; profile: Profile; own: boolean; problems: string[]; machine?: string; missing?: Missing; fetch?: { name: string; bytes: number; gated?: string }[] }[];
   /** This computer's graphics, and whether model files can be fetched into the connected ComfyUI from here. */
   here: Device;
   local: boolean;
@@ -574,7 +620,7 @@ export async function checkComfy(base: string | undefined): Promise<ComfyCheck> 
       let missing: Missing | undefined;
       try {
         const w = loadWorkflow(file);
-        problems = checkWorkflow(w, spec.drive);
+        problems = checkWorkflow(w, spec);
         if (!problems.length && base && health.ok && !machine) {
           missing = await comfyMissing(base, w);
           problems = describeMissing(missing);
@@ -582,7 +628,10 @@ export async function checkComfy(base: string | undefined): Promise<ComfyCheck> 
       } catch (err) {
         problems = [err instanceof Error ? err.message : String(err)];
       }
-      const fetch = (missing?.files ?? []).flatMap((f) => (MODEL_FILES[f.name] ? [{ name: f.name, bytes: MODEL_FILES[f.name]!.bytes }] : []));
+      const fetch = (missing?.files ?? []).flatMap((f) => {
+        const known = MODEL_FILES[f.name];
+        return known ? [{ name: f.name, bytes: known.bytes, ...(known.gated ? { gated: known.gated } : {}) }] : [];
+      });
       workflows.push({ name, label: spec.label, profile, own: file.startsWith(OWN_WORKFLOWS), problems, ...(machine ? { machine } : {}), ...(missing ? { missing } : {}), ...(fetch.length ? { fetch } : {}) });
     }
   }
@@ -659,10 +708,33 @@ export const installStatus = () => install;
 export const cancelInstall = () => stop?.abort();
 
 /**
+ * Why the person's Hugging Face token can't fetch these gated files, if it can't: there's none (SAM 3.1 takes one in
+ * Settings), or its owner hasn't accepted the license yet. Asked of Hugging Face, one file per repo.
+ */
+async function gatedProblem(names: string[], token: string | undefined): Promise<string | undefined> {
+  const repos = [...new Set(names.flatMap((n) => MODEL_FILES[n]?.gated ?? []))];
+  if (!repos.length) return undefined;
+  const pages = joined(repos.map((r) => `https://huggingface.co/${r}`));
+  if (!token)
+    return `Some of these files are shared only with people who've accepted their license: accept it at ${pages} (signed in to Hugging Face), then add a Hugging Face token in Settings → On this PC, where SAM 3.1 takes one`;
+  const who = readSettings().huggingface?.name;
+  for (const repo of repos) {
+    const file = MODEL_FILES[names.find((n) => MODEL_FILES[n]?.gated === repo)!]!;
+    const res = await fetch(file.url, { method: "HEAD", redirect: "manual", headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(20_000) }).catch(() => undefined);
+    if (!res) return "Couldn't reach Hugging Face; try again shortly";
+    if (res.status === 401 || res.status === 403)
+      return `Your Hugging Face token${who ? ` (${who})` : ""} can't fetch ${repo}'s files yet: accept the license at https://huggingface.co/${repo}, signed in as its owner, then try again`;
+  }
+  return undefined;
+}
+
+const joined = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+
+/**
  * Fetches the model files the connected ComfyUI is missing for these workflows (all of them by default) into its own
- * folders, when it's on this computer: each checked against its SHA-256, resuming where a stopped one left off. Node
- * packs aren't fetched (they need ComfyUI restarted, which ComfyUI Manager does). Returns at once; installStatus says
- * how it's going.
+ * folders, when it's on this computer: each checked against its SHA-256, resuming where a stopped one left off, and
+ * the gated ones with the person's Hugging Face token. Node packs aren't fetched (they need ComfyUI restarted, which
+ * ComfyUI Manager does). Returns at once; installStatus says how it's going.
  */
 export async function installModels(names = Object.keys(WORKFLOWS)): Promise<InstallStatus> {
   if (install.state === "installing") return install;
@@ -679,6 +751,9 @@ export async function installModels(names = Object.keys(WORKFLOWS)): Promise<Ins
   if (noFolder.length) return (install = { state: "error", detail: `ComfyUI didn't say where its ${[...new Set(noFolder.map((f) => f.folder))].join(", ")} folder is` });
   const files = [...want.values()];
   if (!files.length) return (install = { state: "done", files: [] });
+  const token = files.some((f) => MODEL_FILES[f.name]!.gated) ? await getSecret("huggingface") : undefined;
+  const gated = await gatedProblem(files.map((f) => f.name), token);
+  if (gated) return (install = { state: "error", detail: gated });
   const total = files.reduce((n, f) => n + MODEL_FILES[f.name]!.bytes, 0);
   stop = new AbortController();
   const signal = stop.signal;
@@ -689,7 +764,7 @@ export async function installModels(names = Object.keys(WORKFLOWS)): Promise<Ins
       for (const f of files) {
         const what = MODEL_FILES[f.name]!;
         install = { state: "installing", files: files.map((x) => x.name), file: f.name, done, bytes: total, progress: done / total };
-        await download(what, join(folders[f.folder]!, f.name), signal, (p) => {
+        await download(what.gated ? { ...what, headers: { Authorization: `Bearer ${token}` } } : what, join(folders[f.folder]!, f.name), signal, (p) => {
           if (install.state === "installing") install = { ...install, progress: (done + p * what.bytes) / total };
         });
         done += what.bytes;
@@ -716,6 +791,15 @@ export function fitSize(width: number, height: number, area: number, multiple: n
 }
 
 const cover = (w: number, h: number) => `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${w}:${h}`;
+
+/**
+ * A reference picture for a still: upright, its transparency on light gray (ComfyUI's loader would make it black), and
+ * no bigger than about 2 megapixels (the workflow takes each at one), so nothing is cut off.
+ */
+export async function fitReference(src: string, dest: string): Promise<void> {
+  mkdirSync(dirname(dest), { recursive: true });
+  await sharp(src).rotate().flatten({ background: "#e4e4e4" }).resize(1536, 1536, { fit: "inside", withoutEnlargement: true }).png().toFile(dest);
+}
 
 /** The picture, scaled to cover the size and cropped to it. */
 export async function fitPicture(src: string, dest: string, w: number, h: number): Promise<void> {

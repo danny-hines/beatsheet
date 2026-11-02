@@ -15,14 +15,15 @@ process.env.BEATSHEET_MAKE_POLL_MS = "5";
 const PC = JSON.stringify({ type: "cuda", name: "NVIDIA GeForce RTX 4090", memoryGb: 24 });
 process.env.BEATSHEET_MACHINE = PC;
 
-// ComfyUI is connected at the stand-in's address unless a test says it isn't, with what its last check found; no keys.
+// ComfyUI is connected at the stand-in's address unless a test says it isn't, with what its last check found; no keys
+// unless a test adds one.
 type Connected = { url: string; addedAt: string; ok?: boolean; detail?: string; device?: { type: string; name: string; memoryGb?: number }; workflows?: Record<string, string[]> };
-const settings = vi.hoisted(() => ({ comfy: undefined as undefined | Connected }));
+const settings = vi.hoisted(() => ({ comfy: undefined as undefined | Connected, secrets: {} as Record<string, string> }));
 vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async () => undefined,
+    getSecret: async (id: string) => settings.secrets[id],
     readSettings: () => ({ services: {}, checks: {}, comfy: settings.comfy }),
     updateSettings: (fn: (s: { services: object; checks: object; comfy?: Connected }) => void) => {
       const s = { services: {}, checks: {}, comfy: settings.comfy };
@@ -32,16 +33,18 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
     },
   };
 });
-// Fetching a model file writes a stand-in for it, and says what it fetched.
+// Fetching a model file writes a stand-in for it, and says what it fetched (and with what token).
 const fetched = vi.hoisted(() => [] as string[]);
+const sentHeaders = vi.hoisted(() => [] as (Record<string, string> | undefined)[]);
 vi.mock("../src/pyenv.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/pyenv.ts")>();
   const { mkdirSync, writeFileSync } = await import("node:fs");
   const { dirname } = await import("node:path");
   return {
     ...real,
-    download: async (what: { url: string }, file: string, _signal: AbortSignal, onProgress: (f: number) => void) => {
+    download: async (what: { url: string; headers?: Record<string, string> }, file: string, _signal: AbortSignal, onProgress: (f: number) => void) => {
       fetched.push(what.url);
+      sentHeaders.push(what.headers);
       mkdirSync(dirname(file), { recursive: true });
       writeFileSync(file, "weights");
       onProgress(1);
@@ -60,7 +63,9 @@ vi.mock("../src/ingest.ts", async () => {
       const used = new Set(loadFile(id).doc.assets.map((a) => a.id));
       let aid = meta.id ?? "take";
       for (let n = 2; used.has(aid); n++) aid = `${meta.id}-${n}`;
-      const asset: Asset = { id: aid, kind: "video", path: file, label: meta.label, tags: meta.tags, provenance: meta.provenance, width: 1280, height: 704, duration: 3 };
+      const asset: Asset = /\.png$/.test(file)
+        ? { id: aid, kind: "image", path: file, label: meta.label, tags: meta.tags, provenance: meta.provenance, width: 1680, height: 944 }
+        : { id: aid, kind: "video", path: file, label: meta.label, tags: meta.tags, provenance: meta.provenance, width: 1280, height: 704, duration: 3 };
       updateFile(id, (d) => void d.assets.push(asset));
       return asset;
     },
@@ -79,7 +84,8 @@ const probe = (file: string) => {
 };
 
 // ---- A stand-in for ComfyUI: what it runs on, its nodes and models, uploads, the queue (waiting, then running, then
-// done), the history and the file it saved. It can forget its jobs, as a restart does, and be missing a model.
+// done), the history and the file it saved (a clip, or a picture from a SaveImage). It can forget its jobs, as a
+// restart does, and be missing a model.
 type Seen = { uploads: string[]; prompts: { prompt: Record<string, { class_type: string; inputs: Record<string, unknown> }>; prompt_id: string; partial_execution_targets: string[] }[]; cancels: string[] };
 let seen: Seen;
 let missing: Set<string>;
@@ -88,6 +94,7 @@ let elsewhere = false;
 let server: Server;
 let base = "";
 let made = "";
+let madeStill = "";
 const polls = new Map<string, number>();
 
 // Where the stand-in keeps its models, as a ComfyUI on this computer would say.
@@ -101,6 +108,8 @@ beforeAll(async () => {
   for (const f of folders) mkdirSync(join(modelsDir, f), { recursive: true });
   made = join(root, "made.mp4");
   ff("-f", "lavfi", "-i", "testsrc2=s=1280x704:r=30", "-frames:v", "160", "-pix_fmt", "yuv420p", made);
+  madeStill = join(root, "made.png");
+  ff("-f", "lavfi", "-i", "testsrc2=s=1680x944", "-frames:v", "1", madeStill);
 
   server = createServer((req, res) => {
     const url = req.url ?? "";
@@ -153,9 +162,11 @@ beforeAll(async () => {
       const history = url.match(/^\/history\/([^/]+)$/);
       if (history) {
         const p = seen.prompts.find((x) => x.prompt_id === history[1])!;
-        return send(200, { [history[1]!]: { outputs: { [p.partial_execution_targets[0]!]: { images: [{ filename: "take_00001_.mp4", subfolder: "beatsheet", type: "output" }], animated: [true] } } } });
+        const target = p.partial_execution_targets[0]!;
+        const still = p.prompt[target]!.class_type === "SaveImage";
+        return send(200, { [history[1]!]: { outputs: { [target]: { images: [{ filename: still ? "take_00001_.png" : "take_00001_.mp4", subfolder: "beatsheet", type: "output" }], animated: [!still] } } } });
       }
-      if (url.startsWith("/view?")) return send(200, readFileSync(made));
+      if (url.startsWith("/view?")) return send(200, readFileSync(/\.png&/.test(url) ? madeStill : made));
       send(404, { error: `nothing at ${url}` });
     });
   });
@@ -179,8 +190,10 @@ beforeEach(() => {
   elsewhere = false;
   polls.clear();
   fetched.length = 0;
+  sentHeaders.length = 0;
   process.env.BEATSHEET_MACHINE = PC;
   settings.comfy = { url: base, addedAt: "2026-11-01" };
+  settings.secrets = {};
   const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -368,6 +381,50 @@ describe("MiniMax H3 from a board on ComfyUI", () => {
   });
 });
 
+describe("FLUX 3 Image Klein's stills on ComfyUI", () => {
+  const made = async (ask: Parameters<Make["startMake"]>[1]) => {
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    await make.driveJobs(PROJECT);
+    const job = make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)!;
+    return { fit, job, p: seen.prompts.find((x) => x.prompt_id === job.comfy?.id)!.prompt, uploads: seen.uploads.filter((u) => u.startsWith(job.id)) };
+  };
+
+  it("makes a still in the shape asked for from its reference pictures, taking out the nodes for the ones it isn't given", async () => {
+    // With only ComfyUI to make stills, Auto makes them there.
+    expect(make.makeChoices(PROJECT, { op: "image", prompt: "Galileo at his telescope" }).choices.auto?.model).toBe("flux3-klein");
+    const prompt = "Galileo at his telescope on a balcony at night, as in the picture";
+    const { fit, job, p, uploads } = await made({ op: "image", prompt, refs: ["board"], aspect: "16:9", model: "flux3-klein", count: 1 });
+    expect(fit).toMatchObject({ model: "flux3-klein", route: "comfy", endpoint: "flux3-klein", aspect: "16:9", usd: 0 });
+    expect(job).toMatchObject({ status: "done", comfy: { profile: "full" } });
+    expect(job.comfy!.frames).toBeUndefined();
+    expect(seen.prompts.find((x) => x.prompt_id === job.comfy!.id)!.partial_execution_targets).toEqual(["46"]);
+    // About 1536×1024's pixels, in 16:9 and in 16s.
+    expect([p["3"]!.inputs.value, p["4"]!.inputs.value]).toEqual([1680, 944]);
+    expect(p["1"]!.inputs.value).toBe(prompt);
+    expect(p["6"]!.inputs.value).toBe(job.request.seed);
+    expect(p["11"]!.inputs.image).toBe(`beatsheet/${job.id}_ref1.png`);
+    for (let k = 12; k <= 20; k++) expect(p[String(k)], `node ${k}`).toBeUndefined();
+    expect(Object.keys(p["42"]!.inputs).filter((k) => k.startsWith("images."))).toEqual(["images.image0"]);
+    expect(uploads).toEqual([`${job.id}_ref1.png`]);
+    // The board went up whole: a reference isn't cropped to the shape.
+    expect(probe(join(process.env.BEATSHEET_PROJECTS!, PROJECT, ".cache", "comfy", job.id, "ref1.png"))).toMatchObject({ width: 1280, height: 720 });
+    // The picture it saved comes in as a take, as it was.
+    expect(job.file).toMatch(/\.png$/);
+    expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === job.asset)).toMatchObject({
+      kind: "image",
+      provenance: { provider: "comfy", model: "flux3-klein", refs: ["board"], params: { workflow: "flux3-klein.full", aspect: "16:9" } },
+    });
+  });
+
+  it("makes one from the prompt alone, with no picture to load", async () => {
+    const { p, uploads } = await made({ op: "image", prompt: "An empty stone hall at dawn", aspect: "9:16", model: "flux3-klein", count: 1 });
+    expect([p["3"]!.inputs.value, p["4"]!.inputs.value]).toEqual([944, 1680]);
+    expect(Object.values(p).filter((n) => n.class_type === "LoadImage")).toEqual([]);
+    expect(Object.keys(p["42"]!.inputs).some((k) => k.startsWith("images."))).toBe(false);
+    expect(uploads).toEqual([]);
+  });
+});
+
 describe("what each machine can run", () => {
   const drive = { op: "video" as const, shot: "duel", start: "board", drive: { asset: "fight", from: 2, to: 4 } };
   const board = { op: "video" as const, shot: "duel", start: "board", drive: null };
@@ -395,6 +452,7 @@ describe("what each machine can run", () => {
     expect(reason(follow, "scail-2")).toEqual({ kind: "machine", service: "comfy", reason: "Needs an NVIDIA graphics card (its fp8 weights don't run on Apple's chips or a processor), and this computer has Apple M3 Pro" });
     const fromBoard = make.makeChoices(PROJECT, board).choices;
     expect(fromBoard.auto?.model).toBe("wan-2.2-5b");
+    expect(reason(make.makeChoices(PROJECT, { op: "image", prompt: "A stone hall" }).choices, "flux3-klein")).toMatchObject({ kind: "machine", reason: expect.stringContaining("its INT8 weights don't run on Apple's chips") });
     // A Mac with too little memory for even that.
     settings.comfy.device = { type: "mps", name: "Apple M2", memoryGb: 16 };
     expect(reason(make.makeChoices(PROJECT, board).choices, "wan-2.2-5b")).toMatchObject({ kind: "machine", reason: "Needs about 32 GB of memory, and this computer's Apple M2 has 16 GB" });
@@ -428,6 +486,40 @@ describe("what each machine can run", () => {
     rmSync(join(modelsDir, "loras", "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"));
   });
 
+  it("fetches files shared only once their license is accepted with the person's Hugging Face token, and says what to do first", async () => {
+    const klein = { "flux3-image-klein-int8-convrot.safetensors": "diffusion_models", "qwen3vl_4b_int8_convrot.safetensors": "text_encoders", "flux2-vae.safetensors": "vae" };
+    for (const f of Object.keys(klein)) missing.add(f);
+    // Hugging Face, as it answers a token: refused until its owner accepts the license, then sent on to the file.
+    let access = 403;
+    const realFetch = globalThis.fetch.bind(globalThis);
+    const hf = vi.spyOn(globalThis, "fetch").mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).startsWith("https://huggingface.co/") ? Promise.resolve(new Response(null, { status: access })) : realFetch(input, init),
+    );
+    try {
+      const connected = await comfy.connectComfy(base);
+      const gated = "black-forest-labs/flux-3-image-klein-comfy";
+      expect(connected.workflows.find((w) => w.name === "flux3-klein")!.fetch).toEqual([
+        { name: "flux3-image-klein-int8-convrot.safetensors", bytes: 5827874779, gated },
+        { name: "qwen3vl_4b_int8_convrot.safetensors", bytes: 4858559240, gated },
+        { name: "flux2-vae.safetensors", bytes: 336211292 },
+      ]);
+      expect(await comfy.installModels(["flux3-klein"])).toMatchObject({ state: "error", detail: expect.stringContaining(`accept it at https://huggingface.co/${gated} (signed in to Hugging Face), then add a Hugging Face token`) });
+      settings.secrets.huggingface = "hf_test";
+      expect(await comfy.installModels(["flux3-klein"])).toMatchObject({ state: "error", detail: expect.stringContaining(`can't fetch ${gated}'s files yet`) });
+      expect(fetched).toEqual([]);
+      access = 302;
+      expect(await comfy.installModels(["flux3-klein"])).toMatchObject({ state: "installing" });
+      for (let i = 0; i < 100 && comfy.installStatus().state === "installing"; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(comfy.installStatus()).toMatchObject({ state: "done" });
+      // The gated two with the token; FLUX.2's VAE from Comfy-Org's open copy, without it.
+      expect(fetched).toEqual(Object.keys(klein).map((f) => comfy.MODEL_FILES[f]!.url));
+      expect(sentHeaders).toEqual([{ Authorization: "Bearer hf_test" }, { Authorization: "Bearer hf_test" }, undefined]);
+    } finally {
+      hf.mockRestore();
+      for (const [f, folder] of Object.entries(klein)) rmSync(join(modelsDir, folder, f), { force: true });
+    }
+  });
+
   it("won't put files in a ComfyUI on another computer", async () => {
     elsewhere = true;
     missing.add("wan2.2_vae.safetensors");
@@ -438,17 +530,20 @@ describe("what each machine can run", () => {
 });
 
 describe("ComfyUI workflows", () => {
-  it("ships each workflow fast and full, each one beatsheet can fill, naming only model files it knows where to get", () => {
+  it("ships each clip's workflow fast and full and each still's full, each one beatsheet can fill, naming only model files it knows where to get", () => {
     for (const [name, spec] of Object.entries(comfy.WORKFLOWS)) {
-      for (const profile of comfy.PROFILES) {
+      for (const profile of spec.still ? (["full"] as const) : comfy.PROFILES) {
         const w = comfy.loadWorkflow(comfy.workflowPath(name, profile)!);
-        expect(comfy.checkWorkflow(w, spec.drive), `${name}.${profile}`).toEqual([]);
+        expect(comfy.checkWorkflow(w, spec), `${name}.${profile}`).toEqual([]);
         const files = Object.values(w).flatMap((n) => (/Loader/.test(n.class_type) ? Object.values(n.inputs).filter((v): v is string => typeof v === "string" && v.endsWith(".safetensors")) : []));
         expect(files.filter((f) => !comfy.MODEL_FILES[f]), `${name}.${profile}`).toEqual([]);
       }
     }
     expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("scail2-animation", "fast")!))).toBe(3);
     expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("wan-animate-move", "fast")!))).toBe(4);
+    expect(comfy.refsIn(comfy.loadWorkflow(comfy.workflowPath("flux3-klein", "full")!))).toBe(10);
+    // A still has no rough: it's made with the full workflow either way.
+    expect(comfy.profileFor("flux3-klein", undefined)).toBe("full");
     expect(comfy.chunksFor(90, 81, 76)).toEqual({ chunks: 2, capacity: 157 });
     expect(comfy.chunksFor(81, 81, 76)).toEqual({ chunks: 1, capacity: 81 });
     expect(comfy.fitSize(640, 480, 704 * 1280, 32)).toEqual({ width: 1088, height: 832 });
@@ -459,6 +554,7 @@ describe("ComfyUI workflows", () => {
     expect(() => comfy.fill(w, { STUDIO_SEED: 7 })).toThrow(/wired to another node/);
     expect(() => comfy.fill(w, { STUDIO_WIDTH: 640 })).toThrow(/Mystery node/);
     expect(comfy.checkWorkflow(w)).toEqual(expect.arrayContaining(["needs exactly one node titled STUDIO_REF_IMAGE", "needs a SaveVideo titled STUDIO_OUTPUT"]));
+    expect(comfy.checkWorkflow(w, { drive: false, still: true })).toEqual(expect.arrayContaining(["needs exactly one node titled STUDIO_PROMPT", "needs a SaveImage titled STUDIO_OUTPUT"]));
   });
 
   it("connects a server that answers, keeping what it runs on and that it has all each workflow needs", async () => {

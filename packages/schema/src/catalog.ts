@@ -76,6 +76,22 @@ export const CATALOG: CatalogModel[] = [
     ],
   },
   {
+    id: "flux3-klein",
+    label: "FLUX 3 Image Klein",
+    by: "Black Forest Labs",
+    note: "Open weights: stills and boards on your own graphics card through ComfyUI, in seconds and for nothing; keeps a character from reference pictures.",
+    ops: ["image"],
+    takes: { refs: 10 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    // On an RTX 4090, through beatsheet: a 944×1680 board of a cast member from its sheet took 15 seconds with the model
+    // loading, a 1680×944 still from the prompt alone 9 once it was loaded.
+    wait: 15,
+    // huggingface.co/black-forest-labs/flux-3-image-klein: 5.6B, distilled to 16 steps, up to 10 references. The FLUX
+    // Kommunity License lets people and companies under $5M a year use what it makes commercially. The endpoint is the
+    // workflow's name in the ComfyUI folder (comfy.ts).
+    routes: [{ via: "comfy", shape: "flux3-klein", endpoints: { text: "flux3-klein", refs: "flux3-klein" }, price: { perImage: 0 } }],
+  },
+  {
     id: "minimax-h3-max-turbo",
     label: "H3 Max Turbo",
     by: "MiniMax, tuned by fal",

@@ -36,6 +36,8 @@ How each model wants its prompt, beyond what SKILL.md says for every clip. From 
 
 **GPT Image (stills).** Order the prompt: the background or place, the subject, the details, then the constraints. Say what it's for ("a storyboard frame for a 9:16 video"). Label the pictures it's given ("Image 1: Mia's face") and, when editing, repeat what must stay the same. Medium quality for boards; high for lettering, faces and real people.
 
+**FLUX 3 Image Klein (stills, on the person's card).** Nothing rewrites the prompt here (BFL's prompt upsampler isn't used), so write the whole caption of the picture you want rather than an instruction: the place, the subject and what they're doing, the light, the style, with any change to a reference folded in. Say what to take from each reference by its place ("the man from the first picture, in the coat from the second"); beatsheet adds which picture is whom.
+
 **Nano Banana 2.1 and the first Nano Banana (stills).** Full sentences, as if briefing an artist. 2.1 takes up to 14 pictures, but only 4 of them people: a board with more people than that keeps the first four best. To keep someone, name the picture to keep them from. When a board is nearly right, edit it rather than make it again, but go back to the original sheet each time rather than chaining edits of edits: every still model drifts as it's edited again and again.
 
 **Character sheets, for every still model** (two tips from creators, not yet tested here): a mid-gray background, because white blows out when the sheet is used as a reference; and the face once, with the full-body view kept clear, so the video model isn't handed several faces to choose from.

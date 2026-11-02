@@ -1,0 +1,327 @@
+{
+  "1": {
+    "inputs": {
+      "value": "A photograph of a lighthouse on a cliff at dusk."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "STUDIO_PROMPT"
+    }
+  },
+  "3": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_WIDTH"
+    }
+  },
+  "4": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_HEIGHT"
+    }
+  },
+  "6": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_SEED"
+    }
+  },
+  "11": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_1"
+    }
+  },
+  "12": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_2"
+    }
+  },
+  "13": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_3"
+    }
+  },
+  "14": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_4"
+    }
+  },
+  "15": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_5"
+    }
+  },
+  "16": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_6"
+    }
+  },
+  "17": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_7"
+    }
+  },
+  "18": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_8"
+    }
+  },
+  "19": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_9"
+    }
+  },
+  "20": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE_10"
+    }
+  },
+  "30": {
+    "inputs": {
+      "unet_name": "flux3-image-klein-int8-convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "31": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_int8_convrot.safetensors",
+      "type": "flux3",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "32": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "40": {
+    "inputs": {
+      "clip": [
+        "31",
+        0
+      ],
+      "text": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Prompt"
+    }
+  },
+  "41": {
+    "inputs": {
+      "conditioning": [
+        "40",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "ConditioningZeroOut"
+    }
+  },
+  "42": {
+    "inputs": {
+      "positive": [
+        "40",
+        0
+      ],
+      "negative": [
+        "41",
+        0
+      ],
+      "vae": [
+        "32",
+        0
+      ],
+      "resolution": "resize",
+      "resolution.megapixels": 1.0,
+      "images.image0": [
+        "11",
+        0
+      ],
+      "images.image1": [
+        "12",
+        0
+      ],
+      "images.image2": [
+        "13",
+        0
+      ],
+      "images.image3": [
+        "14",
+        0
+      ],
+      "images.image4": [
+        "15",
+        0
+      ],
+      "images.image5": [
+        "16",
+        0
+      ],
+      "images.image6": [
+        "17",
+        0
+      ],
+      "images.image7": [
+        "18",
+        0
+      ],
+      "images.image8": [
+        "19",
+        0
+      ],
+      "images.image9": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "ReferenceMultiLatent",
+    "_meta": {
+      "title": "References"
+    }
+  },
+  "43": {
+    "inputs": {
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "EmptyFlux2LatentImage"
+    }
+  },
+  "44": {
+    "inputs": {
+      "model": [
+        "30",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "42",
+        1
+      ],
+      "latent_image": [
+        "43",
+        0
+      ],
+      "seed": [
+        "6",
+        0
+      ],
+      "steps": 16,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "45": {
+    "inputs": {
+      "samples": [
+        "44",
+        0
+      ],
+      "vae": [
+        "32",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "46": {
+    "inputs": {
+      "images": [
+        "45",
+        0
+      ],
+      "filename_prefix": "beatsheet/flux3-klein"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "STUDIO_OUTPUT"
+    }
+  }
+}

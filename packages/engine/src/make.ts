@@ -50,12 +50,13 @@ import {
   comfySubmit,
   comfyState,
   comfyUpload,
+  comfySaved,
   comfyUrl,
-  comfyVideo,
   describeMissing,
   fill,
   fitClip,
   fitPicture,
+  fitReference,
   fitSize,
   framesFor,
   loadWorkflow,
@@ -63,6 +64,7 @@ import {
   outputMarker,
   OWN_WORKFLOWS,
   profileFor,
+  refsIn,
   trimTake,
   without,
   workflowPath,
@@ -74,7 +76,7 @@ import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
-import { assetPath, projectDir } from "./paths.ts";
+import { assetPath, cachePaths, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { SERVICES } from "./services.ts";
 import { ledgerSince } from "./spend.ts";
@@ -123,10 +125,10 @@ export type MakeJob = {
   /** The service's request, once it's been sent. */
   remote?: FalRequest;
   /**
-   * A job on ComfyUI, saved before it's sent: our own prompt id, the server, the output nodes, the frames to keep and
-   * at what rate, the workflow profile, and the filled prompt itself, to send again if ComfyUI restarts and forgets it.
+   * A job on ComfyUI, saved before it's sent: our own prompt id, the server, the output nodes, a clip's frames to keep
+   * and at what rate, the workflow profile, and the filled prompt itself, to send again if ComfyUI restarts and forgets it.
    */
-  comfy?: { id: string; url: string; outputs: string[]; frames: number; fps: number; profile: string; prompt: ComfyPrompt };
+  comfy?: { id: string; url: string; outputs: string[]; frames?: number; fps?: number; profile: string; prompt: ComfyPrompt };
   /** The take, saved the moment it arrived from a service that answers in one request and doesn't keep it (GPT Image). */
   file?: string;
   /** Place in the service's queue, while waiting. */
@@ -279,8 +281,6 @@ function ownPhotos(project: Project, member: CastMember): string[] {
   });
 }
 
-/** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
-function boardOf(project: Project, shot: Shot | undefined): string | undefined {
 /**
  * What a character's portrait or sheet is made from, in order, and the words that say which picture is which. The
  * face comes first: for a portrait, the look's face photos (by default the person's own photos, or for a variant the
@@ -318,6 +318,8 @@ function lookRefs(project: Project, member: CastMember, variantId: string | unde
   return { refs: [...f, ...w, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
 }
 
+/** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
+function boardOf(project: Project, shot: Shot | undefined): string | undefined {
   const c = shot?.content;
   if (c?.kind !== "generated") return undefined;
   return project.assets.find((a) => a.id === c.take)?.kind === "image" ? c.take : c.start;
@@ -908,9 +910,10 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
 /**
  * A job on ComfyUI (comfy.ts). First the picture (and, for a workflow that follows a clip, the stretch of it) is fitted
  * to the size the workflow makes for this quality (the picture's shape, smaller for a rough), the clip padded out to
- * whole chunks, sent up and the workflow filled in; the job is saved with its prompt id before the prompt is sent.
- * After that each step asks where it is, and once it's done the take is fetched, trimmed to its length and brought in.
- * A ComfyUI that restarted (and so forgot its queue) is sent the saved prompt again.
+ * whole chunks, sent up and the workflow filled in; the job is saved with its prompt id before the prompt is sent. A
+ * still is made in the shape asked for, from its reference pictures (cut out, as for any model). After that each step
+ * asks where it is, and once it's done the take is fetched, a clip trimmed to its length, and brought in. A ComfyUI
+ * that restarted (and so forgot its queue) is sent the saved prompt again.
  */
 async function stepComfy(projectId: string, job: MakeJob) {
   // Canceled since this round of steps began: nothing more to do (cancelJobs stopped it in ComfyUI).
@@ -919,6 +922,7 @@ async function stepComfy(projectId: string, job: MakeJob) {
   if (job.file) return finish(projectId, job, { file: job.file });
   const url = job.comfy?.url ?? comfyUrl();
   if (!url) throw new FalError("ComfyUI isn't connected. The person can connect it in Settings → Making.", true);
+  const still = WORKFLOWS[job.endpoint]?.still;
   if (!job.comfy) {
     const spec = WORKFLOWS[job.endpoint];
     if (!spec) throw new FalError(`beatsheet doesn't know the ComfyUI workflow "${job.endpoint}"`, true);
@@ -927,6 +931,35 @@ async function stepComfy(projectId: string, job: MakeJob) {
     const loaded = loadWorkflow(workflowPath(job.endpoint, profile)!);
     const { project, dir } = loadProject(projectId, job.cut);
     const r = job.request;
+    const work = join(dir, ".cache", "comfy", job.id);
+    // Filled in, checked against what the server has, and saved with our own prompt id before it's sent.
+    const send = async (workflow: ComfyPrompt, values: Record<string, unknown>, marker: string, clip?: { frames: number; fps: number }) => {
+      values[marker] = `beatsheet/${job.id}`;
+      const prompt = fill(workflow, values);
+      const missing = describeMissing(await comfyMissing(url, prompt));
+      if (missing.length) throw new FalError(`ComfyUI is missing what the ${spec.label} workflow needs: ${missing.join("; ")}. Settings → Making can fetch the model files.`, true);
+      job = updateJob(projectId, job, { status: "running", comfy: { id: randomUUID(), url, outputs: nodesTitled(prompt, marker), ...clip, profile, prompt } });
+      await comfySubmit(url, prompt, job.comfy!.id, job.comfy!.outputs);
+    };
+    if (spec.still) {
+      const refs = r.refs ?? [];
+      const most = refsIn(loaded);
+      if (refs.length > most) throw new FalError(`The ${spec.label} workflow takes ${most} reference picture${most === 1 ? "" : "s"}; this has ${refs.length}`, true);
+      // The nodes for pictures it isn't given come out.
+      let workflow = loaded;
+      for (let k = refs.length + 1; k <= most; k++) workflow = without(workflow, `STUDIO_REF_IMAGE_${k}`);
+      const [w, h] = (r.aspect ?? "1:1").split(":").map(Number);
+      const size = fitSize(w || 1, h || 1, spec.area[profile], spec.multiple);
+      const values: Record<string, unknown> = { STUDIO_SEED: r.seed ?? randomInt(2 ** 31), STUDIO_WIDTH: size.width, STUDIO_HEIGHT: size.height, STUDIO_PROMPT: r.sent ?? r.prompt };
+      for (const [i, id] of refs.entries()) {
+        if (!project.assets.some((a) => a.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+        const file = join(work, `ref${i + 1}.png`);
+        // A photo the picture library can't read (a phone's HEIC) goes as its upright preview instead.
+        await fitReference(await refFile(project, dir, id, r.cast), file).catch(() => fitReference(cachePaths(dir, id).image, file));
+        values[`STUDIO_REF_IMAGE_${i + 1}`] = await comfyUpload(url, file, `${job.id}_ref${i + 1}.png`);
+      }
+      return send(workflow, values, "STUDIO_OUTPUT");
+    }
     const picture = project.assets.find((a) => a.id === r.start);
     if (!picture) throw new FalError("The picture this take was asked from isn't in the project any more", true);
     const ends = nodesTitled(loaded, "STUDIO_END_IMAGE").length > 0;
@@ -934,7 +967,7 @@ async function stepComfy(projectId: string, job: MakeJob) {
     // Without an end frame, the node that would load one comes out.
     const workflow = r.end ? loaded : without(loaded, "STUDIO_END_IMAGE");
     const size = fitSize(picture.width ?? 1280, picture.height ?? 720, spec.area[profile], spec.multiple);
-    const work = join(dir, ".cache", "comfy", job.id);
+    const fps = spec.fps!;
     const ref = join(work, "ref.png");
     await fitPicture(assetPath(project, dir, picture), ref, size.width, size.height);
     const values: Record<string, unknown> = {
@@ -942,7 +975,7 @@ async function stepComfy(projectId: string, job: MakeJob) {
       STUDIO_SEED: r.seed ?? randomInt(2 ** 31),
       STUDIO_WIDTH: size.width,
       STUDIO_HEIGHT: size.height,
-      STUDIO_FPS: spec.fps,
+      STUDIO_FPS: fps,
       STUDIO_PROMPT: r.sent ?? r.prompt,
     };
     let frames: number;
@@ -952,16 +985,16 @@ async function stepComfy(projectId: string, job: MakeJob) {
       const clip = r.drive && project.assets.find((a) => a.id === r.drive!.asset);
       if (!clip) throw new FalError("The clip this take was asked to follow isn't in the project any more", true);
       const win = driveWindow(r.drive!, r.seconds ?? r.drive!.to - r.drive!.from, clip.duration);
-      frames = Math.max(1, Math.round((win.to - win.from) * spec.fps));
+      frames = Math.max(1, Math.round((win.to - win.from) * fps));
       const { chunks, capacity } = chunksFor(frames, spec.first!, spec.extend!);
       const most = chunksIn(workflow);
-      if (chunks > most) throw new FalError(`The ${spec.label} workflow makes up to ${((spec.first! + spec.extend! * (most - 1)) / spec.fps).toFixed(1)}s; this is ${(frames / spec.fps).toFixed(1)}s. Split the shot in two`, true);
+      if (chunks > most) throw new FalError(`The ${spec.label} workflow makes up to ${((spec.first! + spec.extend! * (most - 1)) / fps).toFixed(1)}s; this is ${(frames / fps).toFixed(1)}s. Split the shot in two`, true);
       const drive = join(work, "drive.mp4");
-      await fitClip(assetPath(project, dir, clip), drive, win.from, win.to, size.width, size.height, spec.fps, capacity);
+      await fitClip(assetPath(project, dir, clip), drive, win.from, win.to, size.width, size.height, fps, capacity);
       values.STUDIO_DRIVING_VIDEO = await comfyUpload(url, drive, `${job.id}_drive.mp4`);
       marker = outputMarker(workflow, chunks);
     } else {
-      frames = framesFor(r.seconds ?? 5, spec.fps, spec.maxFrames!, spec.grid);
+      frames = framesFor(r.seconds ?? 5, fps, spec.maxFrames!, spec.grid);
       values.STUDIO_FRAMES = frames;
       if (r.end) {
         const end = project.assets.find((a) => a.id === r.end);
@@ -971,13 +1004,7 @@ async function stepComfy(projectId: string, job: MakeJob) {
         values.STUDIO_END_IMAGE = await comfyUpload(url, file, `${job.id}_end.png`);
       }
     }
-    values[marker] = `beatsheet/${job.id}`;
-    const prompt = fill(workflow, values);
-    const missing = describeMissing(await comfyMissing(url, prompt));
-    if (missing.length) throw new FalError(`ComfyUI is missing what the ${spec.label} workflow needs: ${missing.join("; ")}. Settings → Making can fetch the model files.`, true);
-    job = updateJob(projectId, job, { status: "running", comfy: { id: randomUUID(), url, outputs: nodesTitled(prompt, marker), frames, fps: spec.fps, profile, prompt } });
-    await comfySubmit(url, prompt, job.comfy!.id, job.comfy!.outputs);
-    return;
+    return send(workflow, values, marker, { frames, fps });
   }
   const c = job.comfy;
   const s = await comfyJob(c.url, c.id);
@@ -987,7 +1014,8 @@ async function stepComfy(projectId: string, job: MakeJob) {
   if (s.status === "failed") {
     const e = s.execution_error ?? {};
     const said = [e.node_type && `${e.node_type} (#${e.node_id})`, [e.exception_type, e.exception_message].filter(Boolean).join(": ")].filter(Boolean).join(": ") || "it failed";
-    throw new FalError(`ComfyUI couldn't make it: ${said.trim()}${/out of memory/i.test(said) ? " (a shorter stretch, or a rough rather than a final, needs less)" : ""}`.slice(0, 1500), true);
+    const less = still ? "fewer reference pictures need less" : "a shorter stretch, or a rough rather than a final, needs less";
+    throw new FalError(`ComfyUI couldn't make it: ${said.trim()}${/out of memory/i.test(said) ? ` (${less})` : ""}`.slice(0, 1500), true);
   }
   if (s.status !== "completed") {
     const position = s.status === "pending" ? await comfyAhead(c.url, c.id).catch(() => undefined) : undefined;
@@ -995,12 +1023,20 @@ async function stepComfy(projectId: string, job: MakeJob) {
     return;
   }
   if (!job.charged) job = updateJob(projectId, job, { charged: true });
-  const video = await comfyVideo(c.url, c.id, c.outputs);
-  if (!video) throw new FalError("ComfyUI finished but didn't save a video", true);
-  const raw = join(projectDir(projectId), ".cache", "comfy", job.id, "raw.mp4");
-  await comfyDownload(c.url, video, raw);
-  const file = join(projectDir(projectId), "made", "takes", `${job.id}.mp4`);
-  await trimTake(raw, file, c.fps, c.frames, WORKFLOWS[job.endpoint]?.sound);
+  const saved = await comfySaved(c.url, c.id, c.outputs, still);
+  if (!saved) throw new FalError(`ComfyUI finished but didn't save ${still ? "a picture" : "a video"}`, true);
+  const takes = join(projectDir(projectId), "made", "takes");
+  let file: string;
+  if (still) {
+    // A still comes in as it was saved.
+    file = join(takes, `${job.id}${extname(saved.filename).toLowerCase()}`);
+    await comfyDownload(c.url, saved, file);
+  } else {
+    const raw = join(projectDir(projectId), ".cache", "comfy", job.id, "raw.mp4");
+    await comfyDownload(c.url, saved, raw);
+    file = join(takes, `${job.id}.mp4`);
+    await trimTake(raw, file, c.fps!, c.frames!, WORKFLOWS[job.endpoint]?.sound);
+  }
   job = updateJob(projectId, job, { file, position: undefined });
   await finish(projectId, job, { file });
 }
