@@ -799,11 +799,22 @@ export const CastMember = z.object({
     .array(z.object({ asset: z.string(), speaker: z.string().describe("The speaker's label in the asset's transcript: speaker_0") }))
     .optional()
     .describe("Where they're heard: a speaker in a clip's transcript that is them"),
-  images: z.array(z.string()).optional().describe("Asset ids of the pictures models are given (its sheet, or cut-outs); the first is the main one"),
-  variants: z
-    .array(z.object({ id: z.string(), about: z.string().describe("What's different: wearing a tiny black eye mask"), images: z.array(z.string()).optional() }))
+  images: z
+    .array(z.string())
     .optional()
-    .describe("The same one in another outfit, state or time of day: @cat/heist"),
+    .describe("Asset ids of the pictures models are given, in order, up to three (its portrait, its sheet); the first is the main one"),
+  kept: z.array(z.string()).optional().describe("Pictures made of it (or picked for it) that models aren't given: portraits and sheets waiting to be judged"),
+  variants: z
+    .array(
+      z.object({
+        id: z.string(),
+        about: z.string().describe("What's different: wearing a tiny black eye mask"),
+        images: z.array(z.string()).optional().describe("The pictures models are given for this look, in order; with none, the plain one's"),
+        kept: z.array(z.string()).optional(),
+      }),
+    )
+    .optional()
+    .describe("The same one in another look (an outfit, a state, a time of day): @cat/heist"),
   voice: z.string().optional().describe("For a character: the voice that reads its lines"),
   style: z.string().optional().describe("For one drawn unlike the rest (a cartoon cat in a photographed street): the id of a style in the cast. Default the look's"),
 });

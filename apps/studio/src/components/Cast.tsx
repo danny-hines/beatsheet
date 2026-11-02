@@ -4,8 +4,8 @@
  * describe it and make its sheet (clean views that models are given to match).
  */
 import type { MakeJob } from "@beatsheet/engine";
-import { PICTURES_EACH, renameCast, speakerLabel, type Asset, type CastMember } from "@beatsheet/schema";
-import { useState, type HTMLAttributes } from "react";
+import { castOf, mergeLook, PICTURES_EACH, renameCast, speakerLabel, type Asset, type CastMember, type Project } from "@beatsheet/schema";
+import { useMemo, useState, type HTMLAttributes } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { lineUp } from "../multicam";
 import { actions, getState, setState, useProject, useStore } from "../store";
@@ -173,7 +173,7 @@ export function CastList() {
               <span className="asset-row-meta small">
                 <span className="mono">@{m.id}</span>
                 <span className="tag">{WORD[m.kind]}</span>
-                {!m.images?.length && <span className="dim">no sheet</span>}
+                {!m.images?.length && !m.variants?.some((v) => v.images?.length) && <span className="dim">no pictures</span>}
               </span>
             </span>
           </button>
@@ -254,30 +254,92 @@ export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: nu
   );
 }
 
-/** A cast member in Inspect: its name and @id, what it looks like, its pictures, and making its sheet. */
+/** A cast member's plain look, as its looks name it; the others are its variants' ids. */
+const PLAIN = "";
+const PLAIN_LABEL: Record<Kind, string> = { character: "Plain", place: "As it is", prop: "Plain", style: "" };
+/** What making pictures of a cast member is called, by kind. */
+const MAKE_WORD: Record<Kind, string> = { character: "Make sheets", place: "Make views", prop: "Make sheets", style: "Make stills" };
+
+/** A person's or a thing's own photo (brought in, recorded, a still from their footage), as the engine's ownPhotos tells. */
+const isOwnPhoto = (a: Asset | undefined) => a?.kind === "image" && !a.cutout && ["import", "capture", "recorded", undefined].includes(a.provenance?.source);
+
+/** How many of this cut's made shots name each of a cast member's looks (PLAIN for the plain one). */
+function shotsPerLook(p: Project, id: string): Map<string, number> {
+  const n = new Map<string, number>();
+  for (const s of p.shots) {
+    const c = s.content;
+    if (c.kind !== "generated" && c.kind !== "placeholder") continue;
+    const prompt = c.kind === "generated" ? c.prompt : c.description;
+    const uses = castOf(prompt ?? "", p.cast, c.kind === "generated" ? c.cast : undefined).filter((u) => u.member.id === id);
+    for (const look of new Set(uses.map((u) => u.variant?.id ?? PLAIN))) n.set(look, (n.get(look) ?? 0) + 1);
+  }
+  return n;
+}
+
+/** A cast member in Inspect, starting on the look its shots use most. */
 export function CastView({ id }: { id: string }) {
+  return <CastPanel key={id} id={id} />;
+}
+
+/**
+ * A cast member, built around its looks: the plain one and each variant (@galileo/old), with how many shots use each.
+ * A look's pictures are what models are given for it, in order, in three slots; portraits and sheets made of it wait
+ * beside them, kept, until one is dragged into a slot. Its footage (what portraits are made from) and its settings fold
+ * away below.
+ */
+function CastPanel({ id }: { id: string }) {
   const p = useProject();
   const projectId = useStore((s) => s.projectId)!;
   const m = p.cast?.find((x) => x.id === id);
+  const perLook = useMemo(() => shotsPerLook(p, id), [p, id]);
+  const [lookAsked, setLook] = useState<string>();
+  const [adding, setAdding] = useState(false);
   const [count, setCount] = useState(2);
-  const [sheetOf, setSheetOf] = useState("");
-  // The models sheets are made with: Auto's pick, until others are ticked to compare their sheets side by side.
+  // The models pictures are made with: Auto's pick, until others are ticked to compare theirs side by side.
   const [models, setModels] = useState<string[]>();
-  // A character's portrait (the face, in whatever a costume puts on it) rather than its sheet.
-  const [portraitAsked, setPortrait] = useState(false);
-  const portrait = portraitAsked && m?.kind === "character";
-  const sheet = sheetOf || id;
+  const [describing, setDescribing] = useState("");
+  const looks = [PLAIN, ...(m?.variants ?? []).map((v) => v.id)];
+  const look = lookAsked !== undefined && looks.includes(lookAsked) ? lookAsked : looks.reduce((best, l) => ((perLook.get(l) ?? 0) > (perLook.get(best) ?? 0) ? l : best), PLAIN);
+  const sheet = look ? `${id}/${look}` : id;
   const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
-  const goingFor = (target: string) => going.filter((j) => j.sheet === target);
-  const { choices, problem } = useChoices({ op: "image", sheet, count, portrait: portrait ? 1 : undefined });
+  const { choices, problem } = useChoices({ op: "image", sheet, count });
   const ready = choices?.ready ?? [];
   const picked = (models ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => ready.some((f) => f.model === x));
   const fits = picked.map((x) => fitOf(choices, x)!);
   const price = fits.length > 1 && fits.some((f) => f.usd) ? money(fits.reduce((sum, f) => sum + (f.usd ?? 0), 0)) : fits[0] ? cost(fits[0]) : "";
-  const sheets = count * Math.max(1, picked.length);
   const tick = (model: string, on: boolean) => setModels(ready.map((f) => f.model).filter((x) => (x === model ? on : picked.includes(x))));
-  const [describing, setDescribing] = useState("");
   if (!m) return <p className="dim small">That cast member is gone.</p>;
+
+  const variant = look ? m.variants?.find((v) => v.id === look) : undefined;
+  const edit = (fn: (m: CastMember) => void) => actions.edit((d) => fn(d.cast!.find((x) => x.id === id)!));
+  // The look being shown, in the file: the cast member itself, or its variant.
+  const editLook = (fn: (l: { images?: string[]; kept?: string[] }) => void) => edit((x) => fn(look ? x.variants!.find((v) => v.id === look)! : x));
+  const setPictures = (given: string[], kept: string[]) =>
+    editLook((l) => {
+      if (given.length) l.images = given;
+      else delete l.images;
+      if (kept.length) l.kept = kept;
+      else delete l.kept;
+    });
+  // A picture made on the wrong look goes to another: into its first slot when it has nothing, else its kept.
+  const moveToLook = (a: string, to: string) =>
+    edit((x) => {
+      const strip = (l: { images?: string[]; kept?: string[] }) => {
+        l.images = l.images?.filter((y) => y !== a);
+        l.kept = l.kept?.filter((y) => y !== a);
+        if (!l.images?.length) delete l.images;
+        if (!l.kept?.length) delete l.kept;
+      };
+      strip(look ? x.variants!.find((v) => v.id === look)! : x);
+      const target = to ? x.variants!.find((v) => v.id === to)! : x;
+      if (target.images?.length) target.kept = [...(target.kept ?? []), a];
+      else target.images = [a];
+    });
+  const given = (variant ?? m).images ?? [];
+  const kept = (variant ?? m).kept ?? [];
+  // A look with no pictures of its own is given the plain one's.
+  const borrowed = variant && !given.length && m.images?.length ? m.images.slice(0, PICTURES_EACH) : undefined;
+
   // A vision model writes what it looks like from its pictures; the words land in the field, to edit.
   const describe = async () => {
     setDescribing("Looking…");
@@ -288,8 +350,6 @@ export function CastView({ id }: { id: string }) {
       setDescribing("");
     } else setDescribing(j.error ?? "Couldn't describe it");
   };
-
-  const edit = (fn: (m: CastMember) => void) => actions.edit((d) => fn(d.cast!.find((x) => x.id === id)!));
   // A sheet or a take still being made follows a rename, so it comes in as the renamed one's.
   const moveJobs = (from: string, to: string) =>
     void fetch(`/api/projects/${projectId}/jobs/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ from, to }) }).catch(() => {});
@@ -313,24 +373,45 @@ export function CastView({ id }: { id: string }) {
     moveJobs(id, to);
     actions.select({ kind: "cast", id: to });
   };
-  const reIdVariant = (from: string) => (to: string) => {
+  const reIdLook = (from: string) => (to: string) => {
     if (m.variants?.some((x) => x.id === to)) return `@${id}/${to} is taken`;
     actions.editFile((f) => void renameCast(f, `${id}/${from}`, to));
     moveJobs(`${id}/${from}`, to);
-    if (sheetOf === `${id}/${from}`) setSheetOf(`${id}/${to}`);
+    setLook(to);
+  };
+  const removeLook = (vid: string) => {
+    edit((x) => void (x.variants = x.variants!.filter((y) => y.id !== vid)));
+    setLook(PLAIN);
+  };
+  // For someone only ever seen in this look: it becomes the plain one, and every shot that names it follows.
+  const mergeIntoPlain = (vid: string) => {
+    actions.editFile((f) => void mergeLook(f, `${id}/${vid}`));
+    void fetch(`/api/projects/${projectId}/jobs/rename`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ merge: `${id}/${vid}` }) }).catch(() => {});
+    setLook(PLAIN);
   };
   const remove = () => {
     actions.edit((d) => void (d.cast = d.cast!.filter((x) => x.id !== id)));
     actions.select(undefined);
   };
-  const photos = (m.seen ?? []).map((s) => p.assets.find((a) => a.id === s.asset)).filter((a): a is Asset => !!a);
-  const fromPhotos = !m.images?.length && photos.some((a) => a.kind === "image");
-  // Their own photos, which a portrait is made from (as the engine's ownPhotos picks them).
-  const own = [...(m.images ?? []), ...(m.seen ?? []).map((s) => s.asset)]
-    .map((a) => p.assets.find((x) => x.id === a))
-    .some((a) => a?.kind === "image" && !a.cutout && ["import", "capture", "recorded", undefined].includes(a.provenance?.source));
-  const noun = portrait ? "portrait" : "sheet";
-  const target = sheetOf ? `@${sheetOf}` : label(m);
+  const makeIt = (portrait: boolean) => {
+    const ask = { op: "image" as const, sheet, count, ...(portrait ? { portrait: true } : {}) };
+    void make(models ? picked.map((model) => ({ ...ask, model })) : ask);
+  };
+
+  const footage = (m.seen ?? []).map((s) => p.assets.find((a) => a.id === s.asset)).filter((a): a is Asset => !!a);
+  const photos = footage.filter((a) => a.kind === "image");
+  const clips = footage.length - photos.length;
+  const ownPhotos = [...(m.images ?? []), ...(m.kept ?? []), ...(m.seen ?? []).map((s) => s.asset)].some((a) => isOwnPhoto(p.assets.find((x) => x.id === a)));
+  const canMake = !!(m.about || variant?.about || photos.length || given.length || borrowed?.length);
+  const nShots = perLook.get(look) ?? 0;
+  const lookName = variant ? `@${id}/${variant.id}` : `@${id}`;
+  // Where what's made comes from, said once, under the buttons.
+  const sources = [
+    m.kind === "character" && (ownPhotos ? "Portraits are made from their photos below" : "Portraits are made from the description"),
+    `${m.kind === "character" ? "sheets" : "Pictures"} from ${given.length || borrowed?.length ? "this look's pictures" : photos.length ? "the photos below" : "the description"}`,
+  ]
+    .filter(Boolean)
+    .join("; ");
 
   return (
     <div className="inspector cast-view">
@@ -346,169 +427,199 @@ export function CastView({ id }: { id: string }) {
         </select>
       </div>
       <TextField value={m.name} placeholder={`Name this ${WORD[m.kind]}`} autoFocus={!m.name} onCommit={rename} />
-      <label>
-        {m.kind === "style" ? "What it's like" : "What it looks like"}
-        <TextField multiline value={m.about ?? ""} placeholder={ABOUT_EXAMPLE[m.kind]} onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))} />
-      </label>
-      {(!!m.images?.length || photos.some((a) => a.kind === "image")) && (
-        <p className="small">
-          <button className="link small" disabled={describing === "Looking…"} onClick={() => void describe()} title="Gemini looks at its pictures and writes what it looks like">
-            {describing === "Looking…" ? "Looking at its pictures…" : m.about ? "Describe it again from its pictures" : "Describe it from its pictures"}
-          </button>
-          {describing && describing !== "Looking…" && <span className="warn"> {describing}</span>}
-        </p>
-      )}
-      {m.kind !== "style" && (
-        <div className="insp-row">
-          <span>Style</span>
-          <StyleSelect value={m.style} fallback={`The project's: ${lookStyleName(p)}`} onChange={(s) => edit((x) => void (s ? (x.style = s) : delete x.style))} />
-        </div>
-      )}
-      {m.kind === "character" && (
-        <div className="insp-row" title="The lines it says (a line's Said by) are read in this voice">
-          <span>Voice</span>
-          <VoicePicker value={m.voice} onChange={(v) => edit((x) => void (v ? (x.voice = v) : delete x.voice))} unset="The narrator's" />
-        </div>
-      )}
-      <p className="dim small">
-        {m.kind === "style"
-          ? `Shots are drawn in it when the project's look (or a cast member) names it; prompts can name it as @${m.id}.`
-          : `Prompts name it as @${m.id}; it's described to the model and given its pictures to match.`}
-      </p>
 
-      <h4>Pictures</h4>
-      {m.images?.length || goingFor(id).length ? (
-        <Pictures projectId={projectId} ids={m.images ?? []} going={goingFor(id)} onChange={(images) => edit((x) => void (images.length ? (x.images = images) : delete x.images))} />
-      ) : (
-        <p className="dim small">{fromPhotos ? "None yet: make a sheet from its photos below." : "None yet: make a sheet from its description, or add photos of it from the Library (right-click → Add to)."}</p>
-      )}
-      <PicturesHint count={m.images?.length ?? 0} />
-      <div className="make-row">
-        {!!m.variants?.length && (
-          <select value={sheetOf} onChange={(e) => setSheetOf(e.target.value)} aria-label="Sheet for">
-            <option value="">{label(m)}</option>
-            {m.variants.map((v) => (
-              <option key={v.id} value={`${id}/${v.id}`}>
-                {v.id}
-              </option>
-            ))}
-          </select>
-        )}
-        {m.kind === "character" && (
-          <select value={portrait ? "portrait" : "sheet"} onChange={(e) => setPortrait(e.target.value === "portrait")} aria-label="A sheet or a portrait">
-            <option value="sheet">Sheet</option>
-            <option value="portrait">Portrait</option>
-          </select>
-        )}
-        <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label={picked.length > 1 ? "How many from each model" : "How many"}>
-          {[1, 2, 3, 4].map((n) => (
-            <option key={n} value={n}>
-              {n}
-            </option>
+      {m.kind !== "style" && (
+        <div className="looks" role="tablist" aria-label="Looks">
+          {looks.map((l) => (
+            <button
+              key={l || "plain"}
+              role="tab"
+              aria-selected={l === look}
+              className={`look-chip ${l === look ? "on" : ""}`}
+              onClick={() => setLook(l)}
+              title={`${l ? `@${id}/${l}` : `@${id}`}: ${perLook.get(l) ? `in ${perLook.get(l)} shot${perLook.get(l) === 1 ? "" : "s"} of this cut` : "in no shots of this cut yet"}`}
+            >
+              {l || PLAIN_LABEL[m.kind]}
+              {!!perLook.get(l) && <span className="n">{perLook.get(l)}</span>}
+            </button>
           ))}
-        </select>
-        <button
-          className="primary"
-          disabled={!picked.length || sending || (!m.about && !fromPhotos && !m.images?.length)}
-          onClick={() => {
-            const ask = { op: "image" as const, sheet, count, ...(portrait ? { portrait: true } : {}) };
-            void make(models ? picked.map((model) => ({ ...ask, model })) : ask);
-          }}
-        >
-          Make {sheets === 1 ? `a ${noun}` : `${sheets} ${noun}s`}
-          {picked.length > 1 ? ` from ${picked.length} models` : ""}
-          {price ? ` · ${price}` : ""}
-        </button>
-      </div>
-      {m.kind === "character" && (
-        <p className="dim small">
-          {portrait
-            ? own
-              ? `Head and shoulders of ${target}, from ${label(m)}'s own photos: to settle what a costume does to the face (a fake beard, a hat, makeup) before the sheet. Keep the one that still looks like them, right after their photo, then make the sheet.`
-              : `Head and shoulders of ${target}, from its description: pick the face, then make the sheet from it.`
-            : `A sheet of ${target}: the face once, close up, then the body from the front (cropped at the neck) and the back, so models aren't given several faces to choose between.`}
-        </p>
+          <button className="look-chip add" onClick={() => setAdding(!adding)} title="The same one in another outfit, state or time of day">
+            + New look
+          </button>
+        </div>
       )}
-      {ready.length > 1 && (
-        <div className="sheet-models small" title="Sheets from several models at once, to compare side by side and keep the best">
-          <span className="dim">Made with</span>
+      {adding && (
+        <LookAdd
+          taken={(m.variants ?? []).map((v) => v.id)}
+          onAdd={(vid, about) => {
+            edit((x) => void (x.variants = [...(x.variants ?? []), { id: vid, about }]));
+            setLook(vid);
+            setAdding(false);
+          }}
+          onCancel={() => setAdding(false)}
+        />
+      )}
+
+      <div className="look">
+        <div className="look-head small" title="What prompts call this look, and how many of this cut's shots do">
+          {variant ? <IdField prefix={`${m.id}/`} value={variant.id} onRename={reIdLook(variant.id)} /> : <span className="mono">@{m.id}</span>}
+          <span className="spacer" />
+          <span className="dim nowrap">{nShots ? `in ${nShots} shot${nShots === 1 ? "" : "s"}` : "in no shots yet"}</span>
+        </div>
+        <label>
+          {variant ? "What's different" : m.kind === "style" ? "What it's like" : "What it looks like"}
+          {variant ? (
+            <TextField
+              multiline
+              value={variant.about}
+              placeholder="What's different: wearing a tiny black eye mask"
+              onCommit={(t) => edit((x) => void (x.variants!.find((v) => v.id === variant.id)!.about = t))}
+            />
+          ) : (
+            <TextField multiline value={m.about ?? ""} placeholder={ABOUT_EXAMPLE[m.kind]} onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))} />
+          )}
+        </label>
+        {!variant && (!!m.images?.length || photos.length > 0) && (
+          <p className="small">
+            <button className="link small" disabled={describing === "Looking…"} onClick={() => void describe()} title="Gemini looks at its pictures and writes what it looks like">
+              {describing === "Looking…" ? "Looking at its pictures…" : m.about ? "Describe it again from its pictures" : "Describe it from its pictures"}
+            </button>
+            {describing && describing !== "Looking…" && <span className="warn"> {describing}</span>}
+          </p>
+        )}
+
+        <LookPictures
+          key={look}
+          projectId={projectId}
+          lookKey={sheet}
+          lookName={lookName}
+          given={given}
+          kept={kept}
+          borrowed={borrowed}
+          borrowedFrom={PLAIN_LABEL[m.kind] || label(m)}
+          going={going.filter((j) => j.sheet === sheet)}
+          onChange={setPictures}
+          otherLooks={looks.filter((l) => l !== look).map((l) => ({ key: l, name: l || PLAIN_LABEL[m.kind] }))}
+          onMoveTo={moveToLook}
+        />
+
+        <div className="make-row">
+          {m.kind === "character" && (
+            <button className="primary" disabled={!picked.length || sending || !canMake} onClick={() => makeIt(true)} title="Head and shoulders in this look, to settle the face (and what a costume does to it) before the sheet">
+              Make portraits
+            </button>
+          )}
+          <button
+            className={m.kind === "character" ? "" : "primary"}
+            disabled={!picked.length || sending || !canMake}
+            onClick={() => makeIt(false)}
+            title={m.kind === "character" ? "The face once, close up, then the body from the front (cropped at the neck) and the back" : undefined}
+          >
+            {MAKE_WORD[m.kind]}
+          </button>
+        </div>
+        <details className="make-options small">
+          <summary>
+            {count} each{picked.length ? ` from ${picked.map(modelLabel).join(", ")}` : ""}
+            {price ? ` · ${price}` : ""}
+          </summary>
+          <div className="make-row">
+            <span className="dim">How many from each model</span>
+            <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many from each model">
+              {[1, 2, 3, 4].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </div>
           {ready.map((f) => (
-            <label key={f.model} className="check-row">
+            <label key={f.model} className="check-row" title="Tick more than one to compare what each makes">
               <input type="checkbox" checked={picked.includes(f.model)} onChange={(e) => tick(f.model, e.target.checked)} />
               {fitLabel(f)}
             </label>
           ))}
-        </div>
-      )}
-      <WhyNot choices={choices} />
-      {(error || problem) && <p className="warn small">{error || problem}</p>}
-      {failed && !error && <Failed job={failed} what={failed.portrait ? "A portrait" : "A sheet"} retry={(j) => void retry(j)} />}
-
-      {photos.length > 0 && (
-        <>
-          <h4>Seen in</h4>
-          <Pictures projectId={projectId} ids={photos.map((a) => a.id)} unranked onChange={(ids) => edit((x) => void (x.seen = x.seen!.filter((s) => ids.includes(s.asset))))} />
-        </>
-      )}
-
-      {!!m.heard?.length && (
-        <>
-          <h4>Heard in</h4>
-          <ul className="heard-list small">
-            {m.heard.map((h) => {
-              const a = p.assets.find((x) => x.id === h.asset);
-              return (
-                <li key={`${h.asset}-${h.speaker}`}>
-                  <button className="link small" onClick={() => actions.select({ kind: "asset", id: h.asset })} title="Show the clip and what's said in it">
-                    {a?.label ?? h.asset}
-                  </button>
-                  <span className="dim"> · {speakerLabel(h.speaker)}</span>
-                  <button className="link danger small" onClick={() => edit((x) => void (x.heard = x.heard!.filter((y) => !(y.asset === h.asset && y.speaker === h.speaker))))} title="That isn't them">
-                    ×
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
-
-      <h4>Variants</h4>
-      {m.variants?.map((v, i) => {
-        const target = `${id}/${v.id}`;
-        return (
-          <div key={v.id} className="variant">
-            <div className="variant-row">
-              <IdField prefix={`${m.id}/`} value={v.id} onRename={reIdVariant(v.id)} />
-              <span className="spacer" />
-              <button className="link danger small" onClick={() => edit((x) => void (x.variants = x.variants!.filter((y) => y.id !== v.id)))} title="Remove this variant">
-                ×
-              </button>
-            </div>
-            <TextField multiline value={v.about} placeholder="What's different: wearing a tiny black eye mask" onCommit={(t) => edit((x) => void (x.variants![i]!.about = t))} />
-            {v.images?.length || goingFor(target).length ? (
-              <>
-                <Pictures projectId={projectId} ids={v.images ?? []} going={goingFor(target)} onChange={(images) => edit((x) => void (images.length ? (x.variants![i]!.images = images) : delete x.variants![i]!.images))} />
-                <PicturesHint count={v.images?.length ?? 0} />
-              </>
-            ) : (
-              <p className="dim small">
-                No pictures of its own yet, so models get {label(m)}'s pictures with this description.{" "}
-                <button className="link small" onClick={() => setSheetOf(target)}>
-                  Make sheets of it
-                </button>
-              </p>
-            )}
-          </div>
-        );
-      })}
-      <VariantAdd taken={(m.variants ?? []).map((v) => v.id)} onAdd={(vid, about) => edit((x) => void (x.variants = [...(x.variants ?? []), { id: vid, about }]))} />
-
-      <div className="make-row cast-remove">
-        <button className="link danger small" onClick={remove}>
-          Remove from the cast
-        </button>
+        </details>
+        <p className="dim small">
+          {sources}. New ones wait in Kept until you drag one into a slot{given.length ? "" : " (the first goes into slot 1)"}.
+        </p>
+        <WhyNot choices={choices} />
+        {(error || problem) && <p className="warn small">{error || problem}</p>}
+        {failed && !error && <Failed job={failed} what={failed.portrait ? "A portrait" : "A sheet"} retry={(j) => void retry(j)} />}
+        {variant && (
+          <p className="small">
+            <button
+              className="link small"
+              onClick={() => mergeIntoPlain(variant.id)}
+              title={`For when ${label(m)} is only ever seen this way: shots that name ${lookName} name @${id}, and this look's description and pictures become the ${PLAIN_LABEL[m.kind].toLowerCase()} one's (its own pictures wait in Kept). Undo takes it back.`}
+            >
+              Merge into {PLAIN_LABEL[m.kind]}
+            </button>
+            <span className="dim"> · </span>
+            <button className="link danger small" onClick={() => removeLook(variant.id)} title={`Shots that name ${lookName} get the plain look instead`}>
+              Remove this look
+            </button>
+          </p>
+        )}
       </div>
+
+      {(footage.length > 0 || !!m.heard?.length) && (
+        <details className="cast-fold">
+          <summary>
+            From your footage ·{" "}
+            {[photos.length && `${photos.length} photo${photos.length === 1 ? "" : "s"}`, clips && `${clips} clip${clips === 1 ? "" : "s"}`, m.heard?.length && "their voice"].filter(Boolean).join(", ")}
+          </summary>
+          <p className="dim small">What portraits are made from. Models aren't given these unless you drag one into a look.</p>
+          {footage.length > 0 && (
+            <Footage
+              projectId={projectId}
+              assets={footage}
+              lookName={lookName}
+              onAdd={(a) => !given.includes(a) && !kept.includes(a) && setPictures(given, [...kept, a])}
+              onRemove={(a) => edit((x) => void (x.seen = x.seen!.filter((s) => s.asset !== a)))}
+            />
+          )}
+          {!!m.heard?.length && (
+            <ul className="heard-list small">
+              {m.heard.map((h) => {
+                const a = p.assets.find((x) => x.id === h.asset);
+                return (
+                  <li key={`${h.asset}-${h.speaker}`}>
+                    <button className="link small" onClick={() => actions.select({ kind: "asset", id: h.asset })} title="Show the clip and what's said in it">
+                      {a?.label ?? h.asset}
+                    </button>
+                    <span className="dim"> · {speakerLabel(h.speaker)}</span>
+                    <button className="link danger small" onClick={() => edit((x) => void (x.heard = x.heard!.filter((y) => !(y.asset === h.asset && y.speaker === h.speaker))))} title="That isn't them">
+                      ×
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </details>
+      )}
+
+      <details className="cast-fold">
+        <summary>Settings · {[m.kind !== "style" && "style", m.kind === "character" && "voice", "remove"].filter(Boolean).join(", ")}</summary>
+        {m.kind !== "style" && (
+          <div className="insp-row">
+            <span>Style</span>
+            <StyleSelect value={m.style} fallback={`The project's: ${lookStyleName(p)}`} onChange={(s) => edit((x) => void (s ? (x.style = s) : delete x.style))} />
+          </div>
+        )}
+        {m.kind === "character" && (
+          <div className="insp-row" title="The lines it says (a line's Said by) are read in this voice">
+            <span>Voice</span>
+            <VoicePicker value={m.voice} onChange={(v) => edit((x) => void (v ? (x.voice = v) : delete x.voice))} unset="The narrator's" />
+          </div>
+        )}
+        <p className="small">
+          <button className="link danger small" onClick={remove}>
+            Remove from the cast
+          </button>
+        </p>
+      </details>
     </div>
   );
 }
@@ -535,17 +646,24 @@ function IdField({ prefix = "", value, onRename }: { prefix?: string; value: str
   );
 }
 
-/** A new variant: what's different, and a short id for it. */
-function VariantAdd({ taken, onAdd }: { taken: string[]; onAdd: (id: string, about: string) => void }) {
+/** A new look: what's different, and a short id for it from its first words. */
+function LookAdd({ taken, onAdd, onCancel }: { taken: string[]; onAdd: (id: string, about: string) => void; onCancel: () => void }) {
   const [about, setAbout] = useState("");
   const add = () => {
     if (!about.trim()) return;
-    onAdd(castIdFor(about.split(/[,;]/)[0]!.replace(/^(wearing|in|with|at) (a |an |the )?/i, ""), taken, "variant"), about.trim());
+    onAdd(castIdFor(about.split(/[,;]/)[0]!.replace(/^(wearing|in|with|at) (a |an |the )?/i, ""), taken, "look"), about.trim());
     setAbout("");
   };
   return (
     <div className="make-row">
-      <input value={about} placeholder="Another outfit or state: soaked from the rain" onChange={(e) => setAbout(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} aria-label="New variant" />
+      <input
+        autoFocus
+        value={about}
+        placeholder="What's different: soaked from the rain"
+        onChange={(e) => setAbout(e.target.value)}
+        onKeyDown={(e) => (e.key === "Enter" ? add() : e.key === "Escape" && onCancel())}
+        aria-label="New look"
+      />
       <button disabled={!about.trim()} onClick={add}>
         Add
       </button>
@@ -553,72 +671,136 @@ function VariantAdd({ taken, onAdd }: { taken: string[]; onAdd: (id: string, abo
   );
 }
 
-/** Where a picture being dragged in a strip came from: which strip, and where in it. */
+/** What's being dragged among a look's pictures: from which look and row, or a photo from the footage. */
 const PICTURE_DRAG = "application/x-beatsheet-picture";
+type Row = "given" | "kept";
+type Dragged = { look?: string; row?: Row; i?: number; asset?: string };
 
 /**
- * A strip of a cast member's (or a variant's) pictures, and its sheets on their way. Ranked, it's what models are
- * given: the main one outlined, the ones past what they get dimmed, and dragging one changes the order. Each made one
- * is marked with the model that made it, to compare sheets from several. Clicking one shows it large.
+ * A look's pictures: the three models are given, in numbered slots (the first is the main one), and the ones kept
+ * beside them, not given. Drag between them to choose; a photo from the footage can be dragged in too. A look with
+ * none of its own shows the plain one's, faded, since that's what models get. Clicking any one shows it large.
  */
-function Pictures({ projectId, ids, going = [], unranked, onChange }: { projectId: string; ids: string[]; going?: MakeJob[]; unranked?: boolean; onChange: (ids: string[]) => void }) {
+function LookPictures({
+  projectId,
+  lookKey,
+  lookName,
+  given,
+  kept,
+  borrowed,
+  borrowedFrom,
+  going,
+  onChange,
+  otherLooks,
+  onMoveTo,
+}: {
+  projectId: string;
+  lookKey: string;
+  lookName: string;
+  given: string[];
+  kept: string[];
+  borrowed?: string[];
+  borrowedFrom: string;
+  going: MakeJob[];
+  onChange: (given: string[], kept: string[]) => void;
+  /** The cast member's other looks, which a picture can be moved to. */
+  otherLooks: { key: string; name: string }[];
+  onMoveTo: (asset: string, look: string) => void;
+}) {
   const p = useProject();
-  const [large, setLarge] = useState<number>();
-  const [dragged, setDragged] = useState<number>();
-  const [over, setOver] = useState<number>();
-  const strip = ids.join(",");
-  const assets = ids.map((a) => p.assets.find((x) => x.id === a));
-  const move = (from: number, to: number) => {
-    const next = ids.filter((_, i) => i !== from);
-    next.splice(to > from ? to - 1 : to, 0, ids[from]!);
-    onChange(next);
+  const [large, setLarge] = useState<{ borrowed?: boolean; at: number }>();
+  const [over, setOver] = useState<string>();
+  // More than three given (from before there were slots) shows the rest as kept.
+  const g = given.slice(0, PICTURES_EACH);
+  const k = [...given.slice(PICTURES_EACH), ...kept];
+  const asset = (a: string) => p.assets.find((x) => x.id === a);
+  const badge = (a: string) => madeWith(asset(a)) ?? (isOwnPhoto(asset(a)) ? "Photo" : undefined);
+
+  /** Puts a picture in a slot (pushing the last one given into kept), or among the kept before another. */
+  const put = (item: string, from: { row: Row; i: number } | undefined, to: { row: Row; i: number }) => {
+    const ng = [...g];
+    const nk = [...k];
+    if (from) (from.row === "given" ? ng : nk).splice(from.i, 1);
+    else if (ng.includes(item) || nk.includes(item)) return;
+    if (to.row === "given") {
+      ng.splice(Math.min(to.i, ng.length), 0, item);
+      while (ng.length > PICTURES_EACH) nk.unshift(ng.pop()!);
+    } else nk.splice(Math.min(from?.row === "kept" && from.i < to.i ? to.i - 1 : to.i, nk.length), 0, item);
+    onChange(ng, nk);
   };
-  const caption = (i: number) => {
-    const by = madeWith(assets[i]);
-    const place = unranked ? "" : i === 0 ? "the main one" : i >= PICTURES_EACH ? "not given to models" : `given when there's room (${i + 1} of ${Math.min(ids.length, PICTURES_EACH)})`;
-    return [ids[i], by && `made with ${by}`, place].filter(Boolean).join(" · ");
+  const takeOut = (a: string) => onChange(g.filter((x) => x !== a), k.filter((x) => x !== a));
+  const dragFrom = (row: Row, i: number): HTMLAttributes<HTMLSpanElement> => ({
+    draggable: true,
+    onDragStart: (e) => {
+      e.dataTransfer.setData(PICTURE_DRAG, JSON.stringify({ look: lookKey, row, i } satisfies Dragged));
+      e.dataTransfer.effectAllowed = "move";
+    },
+    onDragEnd: () => setOver(undefined),
+  });
+  const dropOn = (row: Row, i: number, spot: string): HTMLAttributes<HTMLElement> => ({
+    onDragOver: (e) => {
+      if (!e.dataTransfer.types.includes(PICTURE_DRAG)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOver(spot);
+    },
+    onDrop: (e) => {
+      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
+      setOver(undefined);
+      e.preventDefault();
+      e.stopPropagation();
+      if (d.asset) {
+        if (asset(d.asset)?.kind === "image") put(d.asset, undefined, { row, i });
+      } else if (d.look === lookKey && d.row && d.i !== undefined) {
+        const item = (d.row === "given" ? g : k)[d.i];
+        if (item) put(item, { row: d.row, i: d.i }, { row, i });
+      }
+    },
+  });
+
+  const all = [...g, ...k];
+  const caption = (a: string) => {
+    const i = g.indexOf(a);
+    const where = i === 0 ? "slot 1, the main one" : i > 0 ? `slot ${i + 1}` : "kept, not given to models";
+    const by = madeWith(asset(a));
+    return [a, by ? `made with ${by}` : isOwnPhoto(asset(a)) ? "their own photo" : "", where].filter(Boolean).join(" · ");
   };
+  const showBorrowed = !!borrowed?.length && !g.length;
+
   return (
     <>
-      <div className="take-strip" onDragLeave={() => setOver(undefined)}>
-        {ids.map((a, i) => (
+      <div className="small dim">Models get, in this order</div>
+      <div className="slots">
+        {[0, 1, 2].map((i) => {
+          const a = g[i];
+          const b = showBorrowed ? borrowed![i] : undefined;
+          return (
+            <div key={i} className={`slot ${over === `given:${i}` ? "over" : ""}`} {...dropOn("given", i, `given:${i}`)}>
+              <span className="slot-n">{i + 1}</span>
+              {a ? (
+                <Picture projectId={projectId} id={a} main={i === 0} by={badge(a)} dnd={dragFrom("given", i)} onOpen={() => setLarge({ at: i })} onRemove={() => takeOut(a)} />
+              ) : b ? (
+                <Picture projectId={projectId} id={b} borrowed by={badge(b)} onOpen={() => setLarge({ borrowed: true, at: i })} />
+              ) : (
+                <span className="slot-empty dim small">{i === g.length ? "Drag one here" : ""}</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {showBorrowed && <p className="dim small">Nothing of its own yet, so models get the {borrowedFrom.toLowerCase()} look's pictures, with what's different in words.</p>}
+      <div className="small dim">Kept, not given{k.length ? " · drag one into a slot" : ""}</div>
+      <div className={`take-strip kept ${over === "kept:end" ? "over" : ""}`} {...dropOn("kept", k.length, "kept:end")}>
+        {k.map((a, i) => (
           <Picture
             key={a}
             projectId={projectId}
             id={a}
-            main={!unranked && i === 0}
-            spare={!unranked && i >= PICTURES_EACH}
-            by={madeWith(assets[i])}
-            className={`${dragged === i ? "dragging" : ""} ${over === i && dragged !== undefined && dragged !== i && dragged !== i - 1 ? "drop-before" : ""}`}
-            onOpen={() => setLarge(i)}
-            onRemove={() => onChange(ids.filter((y) => y !== a))}
-            drag={
-              unranked
-                ? undefined
-                : {
-                    onDragStart: (e) => {
-                      e.dataTransfer.setData(PICTURE_DRAG, JSON.stringify({ strip, i }));
-                      e.dataTransfer.effectAllowed = "move";
-                      setDragged(i);
-                    },
-                    onDragEnd: () => {
-                      setDragged(undefined);
-                      setOver(undefined);
-                    },
-                    onDragOver: (e) => {
-                      if (!e.dataTransfer.types.includes(PICTURE_DRAG)) return;
-                      e.preventDefault();
-                      setOver(i);
-                    },
-                    onDrop: (e) => {
-                      const from = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as { strip?: string; i?: number };
-                      setOver(undefined);
-                      if (from.strip !== strip || from.i === undefined || from.i === i) return;
-                      e.preventDefault();
-                      move(from.i, i);
-                    },
-                  }
-            }
+            by={badge(a)}
+            className={over === `kept:${i}` ? "drop-before" : ""}
+            dnd={{ ...dragFrom("kept", i), ...dropOn("kept", i, `kept:${i}`) }}
+            onOpen={() => setLarge({ at: g.length + i })}
+            onRemove={() => takeOut(a)}
           />
         ))}
         {going.map((j) => (
@@ -626,26 +808,94 @@ function Pictures({ projectId, ids, going = [], unranked, onChange }: { projectI
             <div className="take pending" title={`A ${j.portrait ? "portrait" : "sheet"} from ${modelLabel(j.model)} on its way`}>
               {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
               <br />
-              {modelLabel(j.model)}
+              {modelLabel(j.model)} {j.portrait ? "portrait" : "sheet"}
             </div>
           </span>
+        ))}
+        {!k.length && !going.length && <span className="dim small kept-empty">Portraits and sheets you make wait here.</span>}
+      </div>
+      {large &&
+        (large.borrowed ? (
+          <Viewer
+            projectId={projectId}
+            items={borrowed!.map((a) => ({ id: a, caption: `${a} · the ${borrowedFrom.toLowerCase()} look's, given until ${lookName} has its own` }))}
+            at={large.at}
+            onClose={() => setLarge(undefined)}
+          />
+        ) : (
+          <Viewer
+            projectId={projectId}
+            items={all.map((a) => ({ id: a, video: asset(a)?.kind === "video", caption: caption(a) }))}
+            at={large.at}
+            onClose={() => setLarge(undefined)}
+            actions={(item) => {
+              const i = g.indexOf(item.id);
+              const from = i >= 0 ? { row: "given" as const, i } : { row: "kept" as const, i: k.indexOf(item.id) };
+              return (
+                <>
+                  {i !== 0 && (
+                    <button onClick={() => put(item.id, from, { row: "given", i: 0 })} title="Slot 1: the one models get first">
+                      Make it the main one
+                    </button>
+                  )}
+                  {i < 0 && g.length > 0 && g.length < PICTURES_EACH && <button onClick={() => put(item.id, from, { row: "given", i: g.length })}>Put it in slot {g.length + 1}</button>}
+                  {i >= 0 && <button onClick={() => put(item.id, from, { row: "kept", i: 0 })}>Move to kept</button>}
+                  {otherLooks.map((l) => (
+                    <button key={l.key || "plain"} onClick={() => onMoveTo(item.id, l.key)} title={`It belongs to the ${l.name} look: it goes into that look's kept (or its first slot, when it has nothing)`}>
+                      Move to {l.name}
+                    </button>
+                  ))}
+                  <button className="danger" onClick={() => takeOut(item.id)}>
+                    Take out
+                  </button>
+                </>
+              );
+            }}
+          />
+        ))}
+    </>
+  );
+}
+
+/** The photos and clips a cast member was found in: what its portraits are made from. A photo can be dragged into a look. */
+function Footage({ projectId, assets, lookName, onAdd, onRemove }: { projectId: string; assets: Asset[]; lookName: string; onAdd: (id: string) => void; onRemove: (id: string) => void }) {
+  const [large, setLarge] = useState<number>();
+  return (
+    <>
+      <div className="take-strip">
+        {assets.map((a, i) => (
+          <Picture
+            key={a.id}
+            projectId={projectId}
+            id={a.id}
+            by={a.kind === "video" ? "Clip" : undefined}
+            dnd={
+              a.kind === "image"
+                ? {
+                    draggable: true,
+                    onDragStart: (e) => {
+                      e.dataTransfer.setData(PICTURE_DRAG, JSON.stringify({ asset: a.id } satisfies Dragged));
+                      e.dataTransfer.effectAllowed = "copy";
+                    },
+                  }
+                : undefined
+            }
+            onOpen={() => setLarge(i)}
+            onRemove={() => onRemove(a.id)}
+          />
         ))}
       </div>
       {large !== undefined && (
         <Viewer
           projectId={projectId}
-          items={ids.map((a, i) => ({ id: a, video: assets[i]?.kind === "video", caption: caption(i) }))}
+          items={assets.map((a) => ({ id: a.id, video: a.kind === "video", caption: `${a.label ?? a.id} · from your footage` }))}
           at={large}
           onClose={() => setLarge(undefined)}
-          actions={(item, i) => (
+          actions={(item) => (
             <>
-              {!unranked && (
-                <button onClick={() => move(i, 0)} disabled={i === 0} title="Put it first: the one models get first">
-                  Make it the main one
-                </button>
-              )}
-              <button className="danger" onClick={() => onChange(ids.filter((y) => y !== item.id))} title={unranked ? "It isn't them" : "Take this picture out"}>
-                Take out
+              {assets.find((a) => a.id === item.id)?.kind === "image" && <button onClick={() => onAdd(item.id)}>Add to {lookName}'s kept</button>}
+              <button className="danger" onClick={() => onRemove(item.id)} title="Take it out of where they're seen">
+                Not them
               </button>
             </>
           )}
@@ -655,49 +905,41 @@ function Pictures({ projectId, ids, going = [], unranked, onChange }: { projectI
   );
 }
 
-/** What models get of a strip of pictures, once there's more than one to choose between. */
-function PicturesHint({ count }: { count: number }) {
-  if (count < 2) return null;
-  return (
-    <p className="dim small">
-      Models get the outlined one, and up to {PICTURES_EACH - 1} more when there's room{count > PICTURES_EACH ? "; the dimmed ones are kept but not given" : ""}. Drag to change the order; click
-      one to see it large.
-    </p>
-  );
-}
-
-/** One picture in a strip: the main one outlined, a made one badged with its model. Clicking it shows it large. */
+/** One picture: the main one outlined, a made one badged with its model (or "Photo"). Clicking it shows it large. */
 function Picture({
   projectId,
   id,
   main,
-  spare,
+  borrowed,
   by,
   className = "",
-  drag,
+  dnd,
   onOpen,
   onRemove,
 }: {
   projectId: string;
   id: string;
   main?: boolean;
-  spare?: boolean;
+  borrowed?: boolean;
   by?: string;
   className?: string;
-  drag?: Pick<HTMLAttributes<HTMLSpanElement>, "onDragStart" | "onDragEnd" | "onDragOver" | "onDrop">;
+  dnd?: HTMLAttributes<HTMLSpanElement>;
   onOpen: () => void;
-  onRemove: () => void;
+  onRemove?: () => void;
 }) {
-  const title = `${id}${main ? ": the one models get first" : spare ? ": kept, not given to models" : ""}${by ? ` (made with ${by})` : ""}. Click to see it large${drag ? "; drag to change the order" : ""}`;
+  const what = by === "Photo" ? "their own photo" : by === "Clip" ? "a clip" : by ? `made with ${by}` : "";
+  const title = `${id}${main ? ": the one models get first" : ""}${what ? ` (${what})` : ""}. Click to see it large${dnd?.draggable ? "; drag to move it" : ""}`;
   return (
-    <span className={`cast-pic ${spare ? "spare" : ""} ${className}`} draggable={!!drag} {...drag}>
+    <span className={`cast-pic ${borrowed ? "borrowed" : ""} ${className}`} {...dnd}>
       <button className={`take ${main ? "on" : ""}`} onClick={onOpen} title={title}>
         <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} draggable={false} />
         {by && <span className="badge">{by}</span>}
       </button>
-      <button className="cast-pic-remove" onClick={onRemove} title="Take this picture out" aria-label="Take this picture out">
-        ×
-      </button>
+      {onRemove && (
+        <button className="cast-pic-remove" onClick={onRemove} title="Take this picture out" aria-label="Take this picture out">
+          ×
+        </button>
+      )}
     </span>
   );
 }

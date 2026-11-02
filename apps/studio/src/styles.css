@@ -975,7 +975,7 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-row { display: flex; gap: 6px; align-items: center; }
 .make-row select:last-child { flex: 1; min-width: 0; }
 
-/* Cast & sets: at the top of the Library, and a cast member in Inspect (its pictures, where it's seen, its variants). */
+/* Cast & sets: at the top of the Library, and a cast member in Inspect: its looks, each with the three pictures models get and the ones kept beside them, then its footage and settings folded away. */
 .cast-head { display: flex; align-items: center; gap: 8px; }
 .cast-row .asset-row-thumb { background: var(--panel-2); }
 .cast-line { margin: -2px 0 0; }
@@ -984,9 +984,9 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .cast-pic .take:disabled { opacity: 1; }
 .cast-pic-remove { position: absolute; top: 3px; right: 3px; padding: 0 5px; font-size: 11px; line-height: 16px; border: none; border-radius: 8px; background: rgba(0, 0, 0, 0.65); color: #fff; opacity: 0; }
 .cast-pic:hover .cast-pic-remove, .cast-pic-remove:focus-visible { opacity: 1; }
-.cast-pic.spare img { opacity: 0.4; }
 .cast-pic .take { cursor: zoom-in; }
-.cast-pic.dragging { opacity: 0.4; }
+.cast-pic .take img { object-fit: contain; }
+.cast-pic.borrowed { opacity: 0.5; }
 .cast-pic.drop-before .take { box-shadow: -3px 0 0 var(--accent); }
 .take-wrap { position: relative; flex: none; }
 .enlarge { position: absolute; top: 3px; left: 3px; display: grid; place-items: center; width: 20px; height: 18px; padding: 0; border: none; border-radius: 5px; background: rgba(0, 0, 0, 0.65); color: #fff; opacity: 0; }
@@ -994,17 +994,31 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .clip-frame .enlarge { top: 6px; left: auto; right: 6px; z-index: 2; }
 .cast-pic .take.pending { height: 72px; aspect-ratio: 16 / 9; }
 .cast-view .make-row { flex-wrap: wrap; }
-.cast-view .make-row select:first-child { min-width: 10ch; }
-.sheet-models { display: flex; flex-direction: column; gap: 2px; }
-.variant { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; }
-.variant + .variant { padding-top: 8px; border-top: 1px solid var(--line); }
-.variant-row { display: flex; align-items: center; gap: 6px; }
+.looks { display: flex; flex-wrap: wrap; gap: 6px; }
+.look-chip { padding: 2px 10px; font-size: 12px; border: 1px solid var(--line-2); border-radius: 12px; background: transparent; color: var(--dim); }
+.look-chip.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.look-chip .n { margin-left: 6px; font-size: 11px; color: var(--dim); }
+.look-chip.add { border-style: dashed; }
+.look { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.look-head { display: flex; align-items: center; gap: 6px; }
+.look-head .nowrap { white-space: nowrap; }
+.slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.slot { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; border: 1px dashed var(--line-2); border-radius: 6px; }
+.slot .cast-pic, .slot .cast-pic .take { width: 100%; height: 100%; aspect-ratio: auto; }
+.slot-n { position: absolute; top: 3px; left: 4px; z-index: 1; padding: 0 5px; font-size: 10px; border-radius: 4px; background: rgba(0, 0, 0, 0.65); color: #fff; pointer-events: none; }
+.slot.over, .take-strip.kept.over { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.take-strip.kept { min-height: 78px; align-items: center; border: 1px dashed transparent; border-radius: 6px; }
+.kept-empty { padding: 0 6px; }
+.make-options > summary, .cast-fold > summary { cursor: pointer; color: var(--dim); }
+.make-options[open] > summary { margin-bottom: 6px; }
+.cast-fold { padding-top: 8px; border-top: 1px solid var(--line); }
+.cast-fold > summary { font-size: 12px; }
+.cast-fold[open] > summary { margin-bottom: 8px; }
 .cast-id { display: flex; align-items: center; min-width: 0; }
 .cast-id input { font-family: var(--mono); font-size: 12px; width: 13ch; padding: 1px 3px; background: transparent; border-color: transparent; }
 .cast-id input:hover, .cast-id input:focus { border-color: var(--line); }
 .cast-id .warn { margin-left: 6px; white-space: nowrap; }
 .make-row input { flex: 1; min-width: 0; }
-.cast-remove { margin-top: 10px; }
 .card-menu button:disabled { opacity: 0.45; }
 
 /* Settings → Making: the spending limit, the agent's turn budget, and the order Auto tries models in. */

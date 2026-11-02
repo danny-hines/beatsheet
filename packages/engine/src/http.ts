@@ -30,7 +30,7 @@ import { narrate } from "./narrate.ts";
 import { castFromSubject } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
-import { cancelJobs, driveJobs, estimate, listJobs, makeChoices, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { cancelJobs, driveJobs, estimate, listJobs, makeChoices, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -647,7 +647,9 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   // Someone found in a clip or photo becomes a cast member (or joins one), with a still of them cut from it.
   // A cast member (or variant) was renamed in the studio: the jobs still being made follow it.
   if (section === "projects" && id && action === "jobs" && parts[3] === "rename" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as { from?: string; to?: string };
+    const body = JSON.parse((await readBody(req)) || "{}") as { from?: string; to?: string; merge?: string };
+    // A look merged into the plain one ("cat/heist" into "cat") moves its jobs the same way.
+    if (body.merge?.includes("/")) return json(res, 200, { moved: mergeInJobs(id, body.merge) });
     if (!body.from || !body.to) return json(res, 400, { error: "Renamed from what, to what?" });
     return json(res, 200, { moved: renameInJobs(id, body.from, body.to) });
   }

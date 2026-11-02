@@ -444,11 +444,13 @@ const PICTURE_ORDER: CastMember["kind"][] = ["character", "prop", "place", "styl
 export const PICTURES_EACH = 3;
 
 /**
- * The pictures of a cast member a model may be given, best first: a variant's own, then the plain one's (the same
- * face in other clothes), up to PICTURES_EACH.
+ * The pictures of a cast member a model may be given, in order, up to PICTURES_EACH: a variant's own, or the plain
+ * one's when it has none yet. Never the two mixed: the plain one's pictures show other clothes, other hair, no costume
+ * beard, and a look holds only if every picture of it agrees.
  */
 export function picturesGiven(use: Pick<CastUse, "member" | "variant">): string[] {
-  return [...new Set([...(use.variant?.images ?? []), ...(use.member.images ?? [])])].slice(0, PICTURES_EACH);
+  const own = use.variant?.images ?? [];
+  return (own.length ? own : (use.member.images ?? [])).slice(0, PICTURES_EACH);
 }
 
 /**
@@ -562,6 +564,55 @@ export function castRenaming(from: string, to: string): { key: (key: string) => 
       return next === k ? whole : `@${next}`;
     });
   return { key, text };
+}
+
+/** How the keys and @mentions that name a look ("cat/heist") change when it's merged into the plain one: to "cat". */
+export function lookMerging(look: string): { key: (key: string) => string; text: (text: string) => string } {
+  const [id] = look.split("/") as [string, string?];
+  const key = (k: string) => (k === look ? id : k);
+  const text = (t: string) => t.replace(MENTION, (whole, a: string, b?: string) => (b && `${a}/${b}` === look ? `@${id}` : whole));
+  return { key, text };
+}
+
+/**
+ * Makes a look ("galileo/old") the cast member's plain one, for a character who's only ever seen that way: the shots,
+ * placeholders, takes and labels that name @galileo/old name @galileo, the description becomes what models read for
+ * the look (the plain one's, then what's different, to edit), and the look's pictures become the plain one's, with the
+ * plain one's own kept beside them. Changes `file` in place; false (and nothing changed) when there's no such look.
+ */
+export function mergeLook(file: ProjectFile, look: string): boolean {
+  const [id, vid] = look.split("/") as [string, string?];
+  const member = file.cast?.find((m) => m.id === id);
+  const v = vid ? member?.variants?.find((x) => x.id === vid) : undefined;
+  if (!member || !v) return false;
+  const about = [member.about, v.about].filter(Boolean).join("; ");
+  if (about) member.about = about;
+  // What models were given for the look: its own pictures, or the plain one's when it had none.
+  const given = v.images?.length ? v.images : (member.images ?? []);
+  const kept = [...new Set([...(v.kept ?? []), ...(v.images?.length ? (member.images ?? []) : []), ...(member.kept ?? [])])].filter((a) => !given.includes(a));
+  if (given.length) member.images = given;
+  else delete member.images;
+  if (kept.length) member.kept = kept;
+  else delete member.kept;
+  member.variants = member.variants!.filter((x) => x !== v);
+  if (!member.variants.length) delete member.variants;
+  const { key, text } = lookMerging(look);
+  const keys = (ks: string[]) => [...new Set(ks.map(key))];
+  for (const cut of file.cuts)
+    for (const shot of cut.shots) {
+      const c = shot.content;
+      if (c?.kind === "placeholder") c.description = text(c.description);
+      if (c?.kind !== "generated") continue;
+      c.prompt = text(c.prompt);
+      if (c.cast) c.cast = keys(c.cast);
+    }
+  for (const a of file.assets) {
+    if (a.label) a.label = text(a.label);
+    const p = a.provenance;
+    if (p?.cast) p.cast = keys(p.cast);
+    if (p?.prompt) p.prompt = text(p.prompt);
+  }
+  return true;
 }
 
 /** The most reference pictures any model in a catalog takes for stills. */

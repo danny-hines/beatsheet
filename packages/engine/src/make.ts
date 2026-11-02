@@ -14,6 +14,7 @@ import {
   castOf,
   castPictures,
   castRenaming,
+  lookMerging,
   castPrompt,
   fewestStillRefs,
   chooseModels,
@@ -270,7 +271,7 @@ function sheetPrompt(member: CastMember, id: string, style: string | undefined, 
 
 /** A character's or prop's own photos (brought in, recorded, or a still from their footage), not anything made of them. */
 function ownPhotos(project: Project, member: CastMember): string[] {
-  const ids = [...new Set([...(member.images ?? []), ...(member.seen ?? []).map((s) => s.asset)])];
+  const ids = [...new Set([...(member.images ?? []), ...(member.kept ?? []), ...(member.seen ?? []).map((s) => s.asset)])];
   return ids.filter((id) => {
     const a = project.assets.find((x) => x.id === id);
     return a?.kind === "image" && !a.cutout && ["import", "capture", "recorded", undefined].includes(a.provenance?.source);
@@ -603,7 +604,15 @@ export async function cancelJobs(projectId: string, ids: string[]): Promise<Make
  * renamed one's picture, and takes say who's in them by the new id.
  */
 export function renameInJobs(projectId: string, from: string, to: string): number {
-  const { key, text } = castRenaming(from, to);
+  return remapJobs(projectId, castRenaming(from, to));
+}
+
+/** Jobs still being made for a look ("cat/heist") that's been merged into the plain one come in as the plain one's. */
+export function mergeInJobs(projectId: string, look: string): number {
+  return remapJobs(projectId, lookMerging(look));
+}
+
+function remapJobs(projectId: string, { key, text }: { key: (key: string) => string; text: (text: string) => string }): number {
   let moved = 0;
   for (const job of listJobs(projectId).filter(isOpen)) {
     const sheet = job.sheet && key(job.sheet);
@@ -1049,8 +1058,9 @@ type Generated = Extract<ShotContent, { kind: "generated" }>;
 const qualityOf = (a: Asset | undefined) => a?.provenance?.params?.quality as Quality | undefined;
 
 /**
- * Puts what a job made where it was asked for. A sheet joins its cast member's pictures (the first becomes the main
- * one). A take joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a
+ * Puts what a job made where it was asked for. A sheet or portrait becomes its cast member's (or look's) picture when
+ * it has none yet, so it works straight away; once it has one, the next are kept beside it, for the person to judge
+ * and pick, not given to models. A take joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a
  * still) and the first final over a rough, trimmed to the middle of the little extra it was made with. The shot's
  * fidelity moves up to match.
  */
@@ -1060,7 +1070,9 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
     updateFile(projectId, (d) => {
       const m = d.cast?.find((x) => x.id === id);
       const target = variant ? m?.variants?.find((v) => v.id === variant) : m;
-      if (target && !target.images?.includes(asset.id)) target.images = [...(target.images ?? []), asset.id];
+      if (!target || target.images?.includes(asset.id) || target.kept?.includes(asset.id)) return;
+      if (target.images?.length) target.kept = [...(target.kept ?? []), asset.id];
+      else target.images = [asset.id];
     });
   }
   if (!job.shot) return;

@@ -1509,10 +1509,11 @@ function overview(id: string, cut?: string, format?: string): string {
     for (const r of p.brief.references) lines.push(`- ${r.kind} ${r.label ? `"${r.label}" ` : ""}${r.value}${r.note ? ` — ${r.note}` : ""}`);
   }
   if (p.cast?.length) {
-    lines.push("Cast & sets (name them in prompts with @id):");
+    lines.push("Cast & sets (name them in prompts with @id; models are given a look's pictures in order, up to three, and never its kept ones):");
+    const kept = (k?: string[]) => (k?.length ? `; kept ${k.join(", ")}` : "");
     for (const m of p.cast)
       lines.push(
-        `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"} · ${m.images?.length ? `pictures ${m.images.join(", ")}` : "no pictures yet"}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · variants ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about})`).join(", ")}` : ""}`,
+        `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"} · ${m.images?.length ? `pictures ${m.images.join(", ")}` : "no pictures yet"}${kept(m.kept)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${v.images?.length ? `pictures ${v.images.join(", ")}` : "the plain one's pictures"}${kept(v.kept)})`).join(", ")}` : ""}`,
       );
   }
   if (p.cast?.length || p.look?.style) lines.push(`Made shots are drawn ${p.look?.style ? `in the style @${p.look.style} (/look/style)` : "as photographs (no /look/style set)"}`);

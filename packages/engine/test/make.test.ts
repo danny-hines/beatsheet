@@ -413,6 +413,16 @@ describe("cast and sets", () => {
   it("makes portraits only of characters", () => {
     expect(() => make.startMake(PROJECT, { op: "image", sheet: "alley", portrait: true })).toThrow("A portrait is of a character; @alley is a place");
   });
+
+  it("keeps the next sheet beside the picture it has, for the person to pick, rather than giving it to models", async () => {
+    make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    await make.driveJobs(PROJECT);
+    make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    await make.driveJobs(PROJECT);
+    const cat = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!;
+    expect(cat.images).toEqual(["cat-sheet"]);
+    expect(cat.kept).toEqual(["cat-sheet-2"]);
+  });
 });
 
 describe("roughs, finals and whole passes", () => {

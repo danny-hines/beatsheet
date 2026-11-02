@@ -20,6 +20,7 @@ import {
   keepCast,
   realPeople,
   renameCast,
+  mergeLook,
   Project,
   resolveTimeline,
   SCHEMA_VERSION,
@@ -359,12 +360,12 @@ describe("cast and sets in prompts", () => {
 
   it("names each one in words the model reads, described the first time, and says which picture is whom", () => {
     const uses = castOf("@cat/heist slinks down @alley, and @cat/heist looks back", cast, ["noir"]);
-    // The variant's own picture, then the plain cat's: the same cat without the mask.
+    // The variant's own picture only: the plain cat's shows it without the mask.
     const pictured = castPictures(uses);
-    expect(pictured.map((p) => p.asset)).toEqual(["cat-heist", "cat-sheet", "noir-ref"]);
+    expect(pictured.map((p) => p.asset)).toEqual(["cat-heist", "noir-ref"]);
     expect(castPrompt("@cat/heist slinks down @alley, and @cat/heist looks back", uses, pictured.map((p) => p.use))).toBe(
       "the cat (orange tabby, white chest, a notch in the left ear; wearing a tiny black eye mask) slinks down the alley (narrow, wet brick, steam from a grate), and the cat looks back." +
-        " In the style of noir (black and white, hard shadows). Reference pictures, in order: 2 pictures of the cat, noir. Keep each one's features, markings and colors as they are there; draw them in the style asked for.",
+        " In the style of noir (black and white, hard shadows). Reference pictures, in order: the cat, noir. Keep each one's features, markings and colors as they are there; draw them in the style asked for.",
     );
     // Someone not in the cast is left as written.
     expect(castPrompt("@dog barks", castOf("@dog barks", cast))).toBe("@dog barks");
@@ -408,12 +409,13 @@ describe("cast and sets in prompts", () => {
   it("checks cast pictures are the project's own, ids can follow an @, and shots name cast that exists", () => {
     const p = make({
       cast: [
-        { id: "cat", name: "the cat", kind: "character", images: ["cat-sheet"], variants: [{ id: "heist", about: "a mask" }], seen: [{ asset: "cat-sheet", subject: "face-1" }] },
+        { id: "cat", name: "the cat", kind: "character", images: ["cat-sheet"], variants: [{ id: "heist", about: "a mask", kept: ["heist-gone"] }], seen: [{ asset: "cat-sheet", subject: "face-1" }] },
         { id: "The Alley", name: "the alley", kind: "place", images: ["alley-photo"] },
       ],
       shots: [{ id: "s1", track: "pic", duration: 2, content: { kind: "generated", prompt: "x", cast: ["cat/heist", "dog"] }, fidelity: "idea" }],
     });
     expect(checkCut(p).map((i) => `${i.path}: ${i.message}`)).toEqual([
+      'cast.0: unknown asset "heist-gone"',
       'cast.0.seen.0: "cat-sheet" has no subject "face-1"',
       `cast.1.id: "The Alley" can't follow an @: use lowercase letters, numbers and dashes`,
       'cast.1: unknown asset "alley-photo"',
@@ -467,6 +469,28 @@ describe("cast and sets in prompts", () => {
     const before = JSON.stringify(f);
     expect([renameCast(f, "alley", "dog"), renameCast(f, "alley", "The Alley"), renameCast(f, "marmalade/nope", "x"), renameCast(f, "ghost", "x")]).toEqual([false, false, false, false]);
     expect(JSON.stringify(f)).toBe(before);
+  });
+
+  it("merges a look into the plain one, for someone only ever seen that way", () => {
+    const f = withCut({ schema: SCHEMA_VERSION, cuts: [], ...make() } as never, {
+      ...make({
+        cast: structuredClone(cast).map((m) => (m.id === "cat" ? { ...m, kept: ["cat-old"] } : m)),
+        assets: [{ id: "take1", kind: "image", path: "made/takes/take1.png", label: "@cat/heist in @alley", provenance: { source: "generated", prompt: "@cat/heist in @alley", cast: ["cat/heist", "cat", "alley"] } }],
+        shots: [
+          { id: "s1", track: "pic", duration: 2, content: { kind: "generated", prompt: "@cat/heist sneaks past @cat-flap, then @cat/heist naps", cast: ["cat/heist", "noir"] }, fidelity: "idea" },
+          { id: "s2", track: "pic", duration: 2, content: { kind: "placeholder", description: "@cat/heist on the roof" }, fidelity: "idea" },
+        ],
+      }),
+    });
+    expect(mergeLook(f, "cat/heist")).toBe(true);
+    // What models read for the look, and the pictures they were given; the plain one's own wait in kept.
+    const cat = f.cast![0]!;
+    expect(cat).toMatchObject({ about: "orange tabby, white chest, a notch in the left ear; wearing a tiny black eye mask", images: ["cat-heist"], kept: ["cat-sheet", "cat-old"] });
+    expect(cat.variants).toBeUndefined();
+    expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ prompt: "@cat sneaks past @cat-flap, then @cat naps", cast: ["cat", "noir"] });
+    expect(f.cuts[0]!.shots[1]!.content).toMatchObject({ description: "@cat on the roof" });
+    expect(f.assets[0]).toMatchObject({ label: "@cat in @alley", provenance: { prompt: "@cat in @alley", cast: ["cat", "alley"] } });
+    expect(mergeLook(f, "cat/heist")).toBe(false);
   });
 
   it("keeps the proposals the person picked: new ones seen in their pictures, and more pictures for one already there", () => {
@@ -528,17 +552,26 @@ describe("more cast than a model takes pictures of", () => {
   it("gives each character's main picture, then their next ones while there's room, three each at most, before places", () => {
     const cast: CastMember[] = [
       { id: "set", name: "the forest", kind: "place", images: ["forest-1", "forest-2"] },
-      { id: "will", name: "Will", kind: "character", images: ["will-1", "will-2", "will-3", "will-4"], variants: [{ id: "old", about: "a cotton-wool beard", images: ["will-1", "will-costume"] }] },
+      {
+        id: "will",
+        name: "Will",
+        kind: "character",
+        images: ["will-1", "will-2", "will-3", "will-4"],
+        variants: [
+          { id: "old", about: "a cotton-wool beard", images: ["will-portrait", "will-sheet"], kept: ["will-portrait-2"] },
+          { id: "young", about: "clean-shaven" },
+        ],
+      },
       { id: "bell", name: "Bell", kind: "character", images: ["bell-1", "bell-2"] },
     ];
     const uses = castOf("@will/old faces @bell in @set", cast);
-    // A variant's own pictures come first, then the plain one's, with none twice.
-    expect(picturesGiven(uses[0]!)).toEqual(["will-1", "will-costume", "will-2"]);
-    expect(castPictures(uses, 4).map((p) => p.asset)).toEqual(["will-1", "will-costume", "bell-1", "bell-2"]);
-    expect(castPictures(uses, 6).map((p) => p.asset)).toEqual(["will-1", "will-costume", "will-2", "bell-1", "bell-2", "forest-1"]);
-    expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["will-1", "will-costume", "will-2", "bell-1", "bell-2", "forest-1", "forest-2"]);
-    const pictured = castPictures(uses, 6).map((p) => p.use);
-    expect(castPrompt("@will/old faces @bell in @set", uses, pictured)).toMatch(/Reference pictures, in order: 3 pictures of Will, 2 pictures of Bell, the forest\./);
+    // A look gets its own pictures, never mixed with the plain one's; one with none yet gets the plain one's. Kept ones aren't given.
+    expect(picturesGiven(uses[0]!)).toEqual(["will-portrait", "will-sheet"]);
+    expect(picturesGiven(castOf("@will/young", cast)[0]!)).toEqual(["will-1", "will-2", "will-3"]);
+    expect(castPictures(uses, 4).map((p) => p.asset)).toEqual(["will-portrait", "will-sheet", "bell-1", "bell-2"]);
+    expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["will-portrait", "will-sheet", "bell-1", "bell-2", "forest-1", "forest-2"]);
+    const pictured = castPictures(uses, 5).map((p) => p.use);
+    expect(castPrompt("@will/old faces @bell in @set", uses, pictured)).toMatch(/Reference pictures, in order: 2 pictures of Will, 2 pictures of Bell, the forest./);
   });
 });
 

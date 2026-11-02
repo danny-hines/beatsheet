@@ -75,7 +75,7 @@ export function checkCut(p: Project): CheckIssue[] {
   p.cast?.forEach((m, i) => {
     castIds.add(m.id);
     if (!CAST_ID.test(m.id)) add(`cast.${i}.id`, `"${m.id}" can't follow an @: use lowercase letters, numbers and dashes`);
-    [...(m.images ?? []), ...(m.variants ?? []).flatMap((v) => v.images ?? [])].forEach((a) => ids.assets.has(a) || add(`cast.${i}`, `unknown asset "${a}"`));
+    [...(m.images ?? []), ...(m.kept ?? []), ...(m.variants ?? []).flatMap((v) => [...(v.images ?? []), ...(v.kept ?? [])])].forEach((a) => ids.assets.has(a) || add(`cast.${i}`, `unknown asset "${a}"`));
     m.seen?.forEach((s, j) => {
       const a = p.assets.find((x) => x.id === s.asset);
       if (!a) add(`cast.${i}.seen.${j}`, `unknown asset "${s.asset}"`);
