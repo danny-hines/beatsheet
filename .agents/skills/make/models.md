@@ -22,24 +22,26 @@ How each model wants its prompt, beyond what SKILL.md says for every clip. From 
 
 **MiniMax H3 on the person's card (ComfyUI).** Nothing rewrites the prompt here, and MiniMax's [prompt guide](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md) wants its own structure: three labelled fields, `integrated_multimodal_description:` (`[Shot 1]` first, later shots with a cut time like `[Shot 2] At 00:03.500, …`), `overall_soundscape:` and `non_diegetic_music:` (`N/A` for none), with dialogue as `(S1) says: <d>[English] the words</d>`. From a board, the guide puts an instruction line first that names the board `<Picture 1>` as the frame at 0.00 seconds. Its license doesn't cover the US, EU, UK or South Korea (`docs/MODELS.md`).
 
+**Wan 3.0 (fal).** Name a shot size with the move ("medium close-up, slight low angle, slow push in"), and say "one continuous shot": it cuts on its own (a four-word prompt came back as five cuts in five seconds). References by position ("the woman in Image 1"). Lines in quotes with the emotion, tone and pace, about two short sentences per 5 seconds. Say what you want to hear, or it picks its own soundtrack; its mix runs loud. beatsheet leaves fal's prompt expansion on (fal says turning it off lowers quality; whether a full prompt does better without it isn't tested). A rough is 480p: judge the motion and timing in it, not the detail.
+
+**Seedance 2.5 (fal).** The first 20–30 words carry the most weight: open with the subject and the core action. Say "one continuous shot, no cuts": it cuts on its own. Quote every spoken line with a speaker label and a tone; dialogue written as plain prose comes back as burned-in subtitles. State the camera distance for small subjects, and the contact points and what follows (the leaves scatter, the mug tips). With references (`refs`), beatsheet adds a line naming them @Image1, @Image2…; give each a job in that order ("@Image1 is Mia's face and wardrobe; @Image2 is the red bicycle"). Its 480p rough and 1080p final are made separately (finishing the draft by its `draft_id` isn't wired yet), so the final can differ from the rough. It won't draw real people; the fit check rules it out for them.
+
+**Kling 4.0 (fal).** As Kling 3: two to five sentences, motion and camera from a board, always a named move. It's the one for an orbit or a crane move, and for a long take that has to hit its beats: say when each happens ("at about 10 seconds she turns"). Unlike Kling 3 it makes its own sound (fal has no switch for it). No seed, so budget an extra take.
+
+**Gemini Omni Flash (fal).** The camera first, then the subject, action, setting and light. Say "one continuous shot". `[0-3s]` style timecodes place beats, on the music for instance. Leaving things out can be said plainly ("no dialogue"). Wide or tall only: a square or 4:5 shot comes back 16:9 or 9:16, to be reframed. It won't draw real people.
+
 **SCAIL-2 and Wan 2.2 Animate.** See Copying movement in SKILL.md: long and specific, who each person is and wears, the place, the light, and "static camera" when the clip's camera holds.
+
+**Kling Motion Control (fal).** The board is who and where; the clip is how they move, and the take is framed as the clip is. So make the board in the clip's shape, with the same number of people in the same places as its first frame. A short prompt for the scene is enough ("two knights duel in a castle courtyard at dusk"). The clip's own sound is left out.
 
 **GPT Image (stills).** Order the prompt: the background or place, the subject, the details, then the constraints. Say what it's for ("a storyboard frame for a 9:16 video"). Label the pictures it's given ("Image 1: Mia's face") and, when editing, repeat what must stay the same. Medium quality for boards; high for lettering, faces and real people.
 
-**Nano Banana (stills).** Full sentences, as if briefing an artist. To keep someone, name the picture to keep them from. When a board is nearly right, edit it rather than make it again, but go back to the original sheet each time rather than chaining edits of edits: every still model drifts as it's edited again and again.
+**Nano Banana 2.1 and the first Nano Banana (stills).** Full sentences, as if briefing an artist. 2.1 takes up to 14 pictures, but only 4 of them people: a board with more people than that keeps the first four best. To keep someone, name the picture to keep them from. When a board is nearly right, edit it rather than make it again, but go back to the original sheet each time rather than chaining edits of edits: every still model drifts as it's edited again and again.
 
 **Character sheets, for every still model** (two tips from creators, not yet tested here): a mid-gray background, because white blows out when the sheet is used as a reference; and the face once, with the full-body view kept clear, so the video model isn't handed several faces to choose from.
 
 ## Not in the catalog yet
 
-For when they're added (`docs/MODELS.md` says why each is worth it).
-
-**Seedance 2.5.** The first 20–30 words carry the most weight: open with the subject and the core action. Give every file a job in upload order: "@Image1 is the first frame; @Image2 is Mia's face and wardrobe; @Video1 is the camera move." Quote every spoken line with a speaker label and a tone; dialogue written as plain prose comes back as burned-in subtitles. State the camera distance for small subjects, and the contact points and what follows (the leaves scatter, the mug tips). Iterate as drafts at 480p and complete the chosen one by its `draft_id`: a downloaded draft uploaded again is a new, different take. Refuses real people.
-
-**Wan 3.0.** Turn `enable_prompt_expansion` off for a written prompt, and set `resolution` (it defaults to 1080p). Say "one continuous shot": a four-word prompt came back as five cuts in five seconds. Name a shot size with the move ("medium close-up, slight low angle, slow push in"). References by position ("the woman in Image 1"). Lines in quotes with emotion, tone and pace, about two short sentences per 5 seconds. Say what you want to hear, or it picks its own soundtrack; its mix runs loud.
-
-**Kling 4.0.** As Kling 3, with timed shots in `multi_prompt` and up to 8 keyframes between the start and end frames, describing the path between them. No seed, so budget an extra take.
-
-**Gemini Omni Flash.** The camera first, then subject, action, setting and light. `<FIRST_FRAME>`, `<LAST_FRAME>`, `<IMAGE_REF_0>` (counting from 0), each said to be a frame or a reference. `[0-3s]` timecodes place beats on the music. Never a real person.
+For when it's added (`docs/MODELS.md` says why it's worth it).
 
 **LTX-2.5.** One paragraph in the present tense, starting with the action, 4–8 sentences, under 200 words. Light as a source with a direction. From a board, only the change, ending on how things finish. No shot lists, no "Camera:" labels, no negatives.

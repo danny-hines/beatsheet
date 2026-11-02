@@ -18,6 +18,7 @@ import {
   parseFile,
   pictureOf,
   keepCast,
+  realPeople,
   renameCast,
   Project,
   resolveTimeline,
@@ -126,7 +127,9 @@ describe("whether a model can make a shot", () => {
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).toMatchObject({ ok: true, route: "openai", endpoint: "gpt-image-2.5-flare", usd: 0.03 });
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).not.toHaveProperty("also");
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "chatgpt" }, { openai: both.openai })).toMatchObject({ ok: false, why: { kind: "connect", reason: "Runs on chatgpt" } });
-    expect(fitModel(gpt, { op: "image", prompt: "x", via: "fal" }, both)).toMatchObject({ ok: false, why: { kind: "fit", reason: "GPT Image doesn't run on fal" } });
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "meta" }, both)).toMatchObject({ ok: false, why: { kind: "fit", reason: "GPT Image doesn't run on meta" } });
+    // fal sells it too, for someone with only a fal key.
+    expect(fitModel(gpt, { op: "image", prompt: "x" }, { fal })).toMatchObject({ ok: true, route: "fal", endpoint: "openai/gpt-image-2.5/flare/text-to-image", usd: 0.03 });
     // A plan whose image tool isn't on yet doesn't stop the key from making it.
     const muse = CATALOG.find((m) => m.id === "muse-image")!;
     const gated = { meta: { label: "Meta", state: "ready" }, "muse-code": { label: "Muse Code plan", state: "failing", detail: "not on yet" } } satisfies Record<string, ServiceState>;
@@ -173,8 +176,8 @@ describe("choosing between models", () => {
   });
 
   it("finds a model in the real catalog for a board and for a rough cut of a shot", () => {
-    expect(chooseModels(CATALOG, { op: "image", prompt: "a cat on a porch", aspect: "9:16" }, services).auto).toMatchObject({ model: "nano-banana", aspect: "9:16" });
-    expect(chooseModels(CATALOG, { op: "video", prompt: "a cat leaves", start: "board", seconds: 3.2 }, services).auto).toMatchObject({ model: "kling-2.5-turbo", seconds: 5 });
+    expect(chooseModels(CATALOG, { op: "image", prompt: "a cat on a porch", aspect: "9:16" }, services).auto).toMatchObject({ model: "nano-banana-2.1", aspect: "9:16" });
+    expect(chooseModels(CATALOG, { op: "video", prompt: "a cat leaves", start: "board", seconds: 3.2 }, services).auto).toMatchObject({ model: "minimax-h3-max-turbo", seconds: 5 });
     for (const m of CATALOG)
       for (const r of m.routes) {
         expect(r.endpoints.text ?? r.endpoints.start ?? r.endpoints.refs ?? r.endpoints.drive, `${m.id} on ${r.via}`).toBeTruthy();
@@ -254,10 +257,29 @@ describe("what a shot asks of a take", () => {
 });
 
 describe("roughs and finals", () => {
-  it("picks a rough model for a rough and Kling 3 for a final, from the shot's board", () => {
+  it("picks H3 Max Turbo for a rough and H3 Max for a final, from the shot's board", () => {
     const board = { op: "video" as const, prompt: "the cat leaves", start: "board", seconds: 3.2 };
-    expect(chooseModels(CATALOG, { ...board, quality: "rough" }, services).auto).toMatchObject({ model: "kling-2.5-turbo" });
-    expect(chooseModels(CATALOG, { ...board, quality: "final" }, services).auto).toMatchObject({ model: "kling-3", seconds: 5, usd: 0.56 });
+    expect(chooseModels(CATALOG, { ...board, quality: "rough" }, services).auto).toMatchObject({ model: "minimax-h3-max-turbo", seconds: 5, usd: 0.2 });
+    expect(chooseModels(CATALOG, { ...board, quality: "final" }, services).auto).toMatchObject({ model: "minimax-h3-max", seconds: 5, usd: 0.8 });
+  });
+
+  it("prices a model that makes both at the size it makes each: Wan 3.0's rough at 480p, its final at 1080p", () => {
+    const board = { op: "video" as const, prompt: "the cat leaves", start: "board", seconds: 3.2 };
+    const wan = CATALOG.find((m) => m.id === "wan-3")!;
+    expect(fitModel(wan, { ...board, quality: "rough" }, services)).toMatchObject({ ok: true, seconds: 5, usd: 0.25 });
+    expect(fitModel(wan, { ...board, quality: "final" }, services)).toMatchObject({ ok: true, seconds: 5, usd: 1 });
+    // With no tier, it's in both lists, where the catalog puts it.
+    const rough = chooseModels(CATALOG, { ...board, quality: "rough" }, services).ready.map((f) => f.model);
+    const final = chooseModels(CATALOG, { ...board, quality: "final" }, services).ready.map((f) => f.model);
+    expect(rough.indexOf("wan-3")).toBeLessThan(rough.indexOf("minimax-h3-max"));
+    expect(final.indexOf("wan-3")).toBeLessThan(final.indexOf("minimax-h3-max-turbo"));
+  });
+
+  it("makes a long take with the models that make one, up to 30 seconds", () => {
+    const c = chooseModels(CATALOG, { op: "video", prompt: "a long walk", start: "board", seconds: 24, quality: "final" }, services);
+    expect(c.ready.map((f) => f.model)).toEqual(["wan-3", "kling-4", "seedance-2.5"]);
+    expect(c.auto).toMatchObject({ model: "wan-3", seconds: 25, usd: 5 });
+    expect(c.unfit.find((f) => f.model === "minimax-h3-max")).toMatchObject({ why: { reason: "Makes up to 15s; this shot is 24s", fix: "split" } });
   });
 
   it("makes a final from a prompt alone with a final that takes one", () => {
@@ -266,10 +288,52 @@ describe("roughs and finals", () => {
     expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Nowhere runs Kling 3 Pro with only a prompt" } });
   });
 
-  it("falls back to a rough model when no final can make it, and says why the final can't", () => {
+  it("makes a final from references with one that takes them, and says why the others can't", () => {
     const c = chooseModels(CATALOG, { op: "video", prompt: "@cat leaves", refs: ["cat"], seconds: 3.2, quality: "final" }, services);
-    expect(c.auto?.model).toBe("minimax-h3");
+    expect(c.auto).toMatchObject({ model: "wan-3", endpoint: "alibaba/wan-3.0/reference-to-video", usd: 1 });
+    // A rough model that takes them is still there, after the finals.
+    expect(c.ready.map((f) => f.model)).toEqual(["wan-3", "seedance-2.5", "minimax-h3"]);
     expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't take references; a start frame made from them would do" } });
+  });
+});
+
+describe("real people", () => {
+  const assets: Project["assets"] = [
+    {
+      id: "beach",
+      kind: "image",
+      path: "beach.jpg",
+      subjects: [
+        { id: "face-1", label: "Theo", kind: "face", samples: [[0, 0.4, 0.2, 0.1, 0.1]] },
+        { id: "dog", label: "Biscuit", kind: "object", samples: [[0, 0.6, 0.6, 0.2, 0.2]] },
+      ],
+    },
+  ];
+  const cast: CastMember[] = [
+    { id: "theo", name: "Theo", kind: "character", seen: [{ asset: "beach", subject: "face-1" }] },
+    { id: "biscuit", name: "Biscuit", kind: "character", seen: [{ asset: "beach", subject: "dog" }] },
+    { id: "nana", name: "Nana", kind: "character", seen: [{ asset: "beach" }] },
+    { id: "robot", name: "the robot", kind: "character", about: "a tin robot" },
+    { id: "pier", name: "the pier", kind: "place", seen: [{ asset: "beach" }] },
+    { id: "tabby", name: "the tabby", kind: "character", seen: [{ asset: "cat-photo" }] },
+    { id: "grandpa", name: "Grandpa", kind: "character", seen: [{ asset: "old-photo" }] },
+  ];
+
+  it("are characters from the person's own photos, unless those say it's a thing or a pet", () => {
+    const more: Project["assets"] = [...assets, { id: "cat-photo", kind: "image", path: "cat.jpg", subjects: [] }, { id: "old-photo", kind: "image", path: "grandpa.jpg" }];
+    // Nana is the whole beach photo, which has a face in it; nobody looked for faces in Grandpa's, so he's taken to be
+    // a person; the tabby's was looked through and has none; Biscuit was picked out as a thing.
+    expect(realPeople(castOf("@theo, @biscuit, @nana, @tabby, @grandpa and @robot on @pier", cast), more)).toEqual(["Theo", "Nana", "Grandpa"]);
+    expect(realPeople(castOf("@robot walks @biscuit along @pier", cast), assets)).toEqual([]);
+  });
+
+  it("rule out the models that won't draw them, before anything else, and leave the rest", () => {
+    const shot = { op: "video" as const, prompt: "x", start: "board", seconds: 5, quality: "final" as const, realPeople: ["Theo", "Nana"] };
+    const c = chooseModels(CATALOG, shot, services);
+    expect(c.unfit.find((f) => f.model === "seedance-2.5")).toMatchObject({ why: { kind: "fit", reason: "Won't draw real people, and Theo and Nana are from your own photos" } });
+    expect(c.unfit.find((f) => f.model === "gemini-omni-flash")).toMatchObject({ why: { kind: "fit" } });
+    expect(c.ready.some((f) => f.model === "wan-3")).toBe(true);
+    expect(chooseModels(CATALOG, { ...shot, realPeople: undefined }, services).ready.some((f) => f.model === "seedance-2.5")).toBe(true);
   });
 });
 
@@ -453,8 +517,8 @@ describe("more cast than a model takes pictures of", () => {
     const prompt = "@mom, @dad, @kid and @cat at breakfast in @kitchen, a @mug on the table";
     const uses = castOf(prompt, cast);
     const pictured = castPictures(uses, fewestStillRefs(CATALOG));
-    // Nano Banana takes 4; Muse Image and GPT Image take more, and are given more once picked.
-    expect([fewestStillRefs(CATALOG), maxStillRefs(CATALOG)]).toEqual([4, 10]);
+    // The first Nano Banana takes 4; the others take more (Nano Banana 2.1, 14), and are given more once picked.
+    expect([fewestStillRefs(CATALOG), maxStillRefs(CATALOG)]).toEqual([4, 14]);
     expect(pictured.map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic"]);
     expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic", "mug-pic", "kitchen-pic"]);
     // Everyone is still described; only the pictured are named as references.
@@ -590,6 +654,6 @@ describe("models on your own hardware", () => {
     expect(drive.auto?.model).toBe("wan-2.2-animate");
     const board = chooseModels(CATALOG, { op: "video", prompt: "x", start: "board", seconds: 3 }, { comfy: mac });
     expect(board.setup.find((f) => f.model === "wan-2.2-5b")).toMatchObject({ why: { kind: "install" } });
-    expect(board.auto?.model).toBe("wan-2.2");
+    expect(board.auto?.model).toBe("minimax-h3");
   });
 });

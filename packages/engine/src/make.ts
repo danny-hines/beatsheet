@@ -21,6 +21,7 @@ import {
   FIDELITY,
   fitModel,
   HANDLE,
+  realPeople,
   shapeOf,
   shotNeeds,
   type Asset,
@@ -352,11 +353,14 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${portrait ? "In this portrait" : "In every view"}: ${variant.about}.`;
   const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
+  const people = realPeople(uses, project.assets);
   return {
     op: ask.op,
     prompt,
     sent,
     cast: [...new Set([...(ask.sheet ? [ask.sheet] : []), ...uses.map((u) => u.id)])],
+    // Some services won't draw real people, so they're ruled out for a shot with one in it.
+    ...(people.length ? { realPeople: people } : {}),
     quality: ask.quality ?? (ask.op === "video" ? "rough" : undefined),
     start,
     end: ask.end,
@@ -757,12 +761,14 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
     };
     const input = falInput(job.shape, {
       prompt: r.sent ?? r.prompt,
+      quality: job.quality,
       seconds: r.seconds,
       aspect: r.aspect,
       seed: r.seed,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
       refs: r.refs && (await Promise.all(r.refs.map(uploadRef))),
+      video: r.drive && (await falUpload(key, await driveClip(project, dir, job))),
     });
     const remote = await falSubmit(key, job.endpoint, input);
     updateJob(projectId, job, { status: "running", remote });
@@ -779,6 +785,22 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
   const out = falOutput(await falResult(key, job.remote!));
   if (!out) throw new FalError("fal finished but didn't send a file", true);
   await finish(projectId, job, out);
+}
+
+/**
+ * The stretch of the clip a take that copies movement follows, cut to a file to upload: the window driveWindow gives,
+ * in the clip's own shape at about 720p and 30 frames a second, without its sound.
+ */
+async function driveClip(project: Project, dir: string, job: MakeJob): Promise<string> {
+  const r = job.request;
+  const clip = r.drive && project.assets.find((a) => a.id === r.drive!.asset);
+  if (!clip) throw new FalError("The clip this take was asked to follow isn't in the project any more", true);
+  const win = driveWindow(r.drive!, r.seconds ?? r.drive!.to - r.drive!.from, clip.duration);
+  const scale = 720 / Math.min(clip.width ?? 1280, clip.height ?? 720);
+  const even = (n: number) => Math.round((n * scale) / 2) * 2;
+  const file = join(dir, ".cache", "drive", `${job.id}.mp4`);
+  await fitClip(assetPath(project, dir, clip), file, win.from, win.to, even(clip.width ?? 1280), even(clip.height ?? 720), 30, Math.max(1, Math.round((win.to - win.from) * 30)));
+  return file;
 }
 
 /**

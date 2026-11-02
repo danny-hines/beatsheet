@@ -22,8 +22,11 @@ export type ModelRoute = {
   shape: string;
   /** The service's own id for each shape of request it takes. */
   endpoints: Partial<Record<RequestShape, string>>;
-  /** In US dollars, from the service's own page. Estimates, not quotes. */
-  price: { perImage?: number; perSecond?: number };
+  /**
+   * In US dollars, from the service's own page. Estimates, not quotes. `finalPerSecond`: for a model that makes both,
+   * a final's price, when finals are made larger than roughs (Wan 3.0's roughs at 480p, its finals at 1080p).
+   */
+  price: { perImage?: number; perSecond?: number; finalPerSecond?: number };
   /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
   lengths?: number[] | { min: number; max: number };
   /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references. */
@@ -53,6 +56,8 @@ export type CatalogModel = {
   aspects: string[];
   /** Makes its own sound. */
   sound?: boolean;
+  /** The service won't draw real people's faces (Seedance, Gemini Omni Flash), so a shot with one goes elsewhere. */
+  refusesRealPeople?: boolean;
   /** Roughly how long one take takes, in seconds, for estimates. */
   wait?: number;
   routes: ModelRoute[];
@@ -72,6 +77,8 @@ export type MakeRequest = {
   refs?: string[];
   /** For video that copies movement: the stretch of a clip to follow. */
   drive?: Drive;
+  /** The real people in it, by name: characters made from the person's own photos or clips (realPeople). */
+  realPeople?: string[];
   /** How long it has to play, in seconds (the shot's length, or the stretch it follows). */
   seconds?: number;
   /** The shape it has to fill: "9:16". */
@@ -206,9 +213,10 @@ function aspectFor(model: CatalogModel, wanted: string | undefined): { aspect?: 
   return { why: { kind: "fit", reason: `Makes ${list(model.aspects)}, not ${wanted}` } };
 }
 
-/** What a request would cost on a route: per image, or per second of video, times the takes. */
-function costOn(route: ModelRoute, op: MakeOp, seconds: number | undefined, count: number): number | undefined {
-  const each = op === "image" ? route.price.perImage : route.price.perSecond !== undefined && seconds !== undefined ? route.price.perSecond * seconds : undefined;
+/** What a request would cost on a route: per image, or per second of video (a final's own rate when it has one), times the takes. */
+function costOn(route: ModelRoute, op: MakeOp, seconds: number | undefined, count: number, quality?: Quality): number | undefined {
+  const perSecond = (quality === "final" ? route.price.finalPerSecond : undefined) ?? route.price.perSecond;
+  const each = op === "image" ? route.price.perImage : perSecond !== undefined && seconds !== undefined ? perSecond * seconds : undefined;
   return each === undefined ? undefined : Math.round(each * count * 1000) / 1000;
 }
 
@@ -221,6 +229,10 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const no = (why: Why): Fit => ({ ok: false, model: model.id, label: model.label, why });
   const count = Math.max(1, req.count ?? 1);
   if (!model.ops.includes(req.op)) return no({ kind: "fit", reason: `${model.label} doesn't make ${req.op === "image" ? "images" : "video"}` });
+  if (model.refusesRealPeople && req.realPeople?.length) {
+    const who = req.realPeople.length < 2 ? req.realPeople[0] : `${req.realPeople.slice(0, -1).join(", ")} and ${req.realPeople.at(-1)}`;
+    return no({ kind: "fit", reason: `Won't draw real people, and ${who} ${req.realPeople.length === 1 ? "is" : "are"} from your own photos` });
+  }
   if (req.drive && !model.takes.drive) return no({ kind: "fit", reason: "Doesn't copy movement from a clip" });
   if (model.takes.drive && !req.drive) return no({ kind: "fit", reason: "Copies the movement in a clip: say which stretch of which clip to follow" });
   if (req.drive && !req.start) return no({ kind: "fit", reason: "Needs a picture of who moves: start from the shot's board" });
@@ -273,7 +285,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const unusable = (r: ModelRoute) => state(r).endpoints?.[r.endpoints[shape]!];
   const ready = routes
     .filter(({ r }) => state(r).state === "ready" && !unusable(r))
-    .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
+    .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count, req.quality), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
     .sort((a, b) => (a.usd ?? Infinity) - (b.usd ?? Infinity));
   const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
   if (affordable.length) {
@@ -366,6 +378,22 @@ export function castOf(prompt: string, cast: CastMember[] | undefined, also: str
   for (const m of prompt.matchAll(MENTION)) add(m[1]!, m[2]);
   for (const x of also) add(...(x.split("/") as [string, string?]));
   return out;
+}
+
+/**
+ * The real people among the cast in a request, by name: characters made from the person's own photos or clips, taken
+ * to be people unless what they were made from says otherwise: picked out as a thing, or a whole picture looked
+ * through for faces and people with none found (a pet). Made-up characters aren't.
+ */
+export function realPeople(uses: CastUse[], assets: Project["assets"]): string[] {
+  const person = (kind: string | undefined) => kind === "face" || kind === "person";
+  const looksLikeOne = (seen: NonNullable<CastMember["seen"]>[number]) => {
+    const found = assets.find((a) => a.id === seen.asset)?.subjects;
+    if (seen.subject) return person(found?.find((x) => x.id === seen.subject)?.kind) || !found?.some((x) => x.id === seen.subject);
+    return !found || found.some((x) => person(x.kind));
+  };
+  const real = (m: CastMember) => m.kind === "character" && !!m.seen?.some(looksLikeOne);
+  return [...new Set(uses.filter((u) => real(u.member)).map((u) => u.member.name))];
 }
 
 /** A cast member as the model reads it: its name, then what it looks like, and its own style unless the prompt names that style anyway. */

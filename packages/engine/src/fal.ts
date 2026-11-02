@@ -9,6 +9,8 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
+import type { Quality } from "@beatsheet/schema";
+import { sizeFor } from "./direct.ts";
 
 const QUEUE = process.env.BEATSHEET_FAL_QUEUE ?? "https://queue.fal.run";
 const REST = process.env.BEATSHEET_FAL_REST ?? "https://rest.fal.ai";
@@ -92,8 +94,18 @@ export async function falUpload(key: string, file: string): Promise<string> {
   return r.file_url;
 }
 
-/** A request in the terms every adapter understands; pictures are already URLs fal can fetch. */
-export type FalAsk = { prompt: string; seconds?: number; aspect?: string; seed?: number; start?: string; end?: string; refs?: string[] };
+/**
+ * A request in the terms every adapter understands; pictures, and the stretch of a clip a take follows (`video`), are
+ * already URLs fal can fetch. A model that makes roughs and finals both makes a final larger.
+ */
+export type FalAsk = { prompt: string; quality?: Quality; seconds?: number; aspect?: string; seed?: number; start?: string; end?: string; refs?: string[]; video?: string };
+
+/** The prompt with a line saying which reference picture is which, in the model's own names for them ("Image 1", "@Image1"). */
+const withRefs = (ask: FalAsk, name: (n: number) => string) =>
+  ask.refs?.length ? `${ask.prompt} ${ask.refs.length === 1 ? `${name(1)} is a reference` : `${name(1)} to ${name(ask.refs.length)} are references`} for who and what is in it.` : ask.prompt;
+
+/** Whole seconds, for models that only make those. */
+const whole = (seconds: number | undefined) => Math.ceil((seconds ?? 5) - 1e-6);
 
 /** Frames Wan makes for `seconds` at 16 a second: a whole number of fours plus one, between 17 and 161. */
 export const wanFrames = (seconds: number) => Math.min(161, Math.max(17, Math.ceil((seconds * 16 - 1) / 4) * 4 + 1));
@@ -144,10 +156,9 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
       // MiniMax H3 and fal's tunings of it: 768p natively (H3 Max refines to 1080p for finals), always with its own
       // sound. Base H3 counts whole seconds; the tunings take any length. References are "Image 1", "Image 2"… to it.
       const seconds = ask.seconds ?? 5;
-      const prompt = ask.refs?.length ? `${ask.prompt} ${ask.refs.length === 1 ? "Image 1 is a reference" : `Image 1 to Image ${ask.refs.length} are references`} for who and what is in it.` : ask.prompt;
       return {
-        prompt,
-        duration: shape === "minimax-h3" ? Math.ceil(seconds - 1e-6) : seconds,
+        prompt: withRefs(ask, (n) => `Image ${n}`),
+        duration: shape === "minimax-h3" ? whole(seconds) : seconds,
         resolution: shape === "minimax-h3-max" ? "1080P" : "768P",
         ...(ask.refs?.length ? { reference_image_urls: ask.refs } : {}),
         // Starting from a picture, the picture's shape decides.
@@ -156,13 +167,67 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
         ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
       };
     }
+    case "wan-3":
+      // Wan 3.0: roughs at 480p, finals at 1080p (it defaults to 1080p), whole seconds, with its own sound. Its prompt
+      // expansion is left on, as fal recommends.
+      return {
+        prompt: withRefs(ask, (n) => `Image ${n}`),
+        duration: whole(ask.seconds),
+        resolution: ask.quality === "final" ? "1080p" : "480p",
+        ...(ask.refs?.length ? { reference_image_urls: ask.refs } : {}),
+        ...(ask.start ? { start_image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
+        ...(ask.end ? { end_image_url: ask.end } : {}),
+        ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
+      };
+    case "seedance-2.5":
+      // Seedance 2.5: roughs at 480p, finals at 1080p, whole seconds as a string, with its own sound (the same price
+      // either way). References are @Image1, @Image2… to it.
+      return {
+        prompt: withRefs(ask, (n) => `@Image${n}`),
+        duration: String(whole(ask.seconds)),
+        resolution: ask.quality === "final" ? "1080p" : "480p",
+        ...(ask.refs?.length ? { image_urls: ask.refs } : {}),
+        ...(ask.start ? { image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
+        ...(ask.end ? { end_image_url: ask.end } : {}),
+      };
+    case "kling-4":
+      // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds. fal takes no seed, sound switch or negative prompt for it.
+      return {
+        prompt: ask.prompt,
+        duration: whole(ask.seconds),
+        resolution: ask.quality === "final" ? "1080p" : "720p",
+        ...(ask.start ? { start_image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
+        ...(ask.end ? { end_image_url: ask.end } : {}),
+      };
+    case "gemini-omni": {
+      // Gemini Omni Flash: roughs at 360p, finals at 1080p (upscaled from 720p), whole seconds, wide or tall only, even
+      // from a picture.
+      const [w, h] = (ask.aspect ?? "16:9").split(":").map(Number) as [number, number];
+      return {
+        prompt: ask.prompt,
+        duration: whole(ask.seconds),
+        resolution: ask.quality === "final" ? "1080p" : "360p",
+        aspect_ratio: h > w ? "9:16" : "16:9",
+        ...(ask.start ? { image_url: ask.start } : {}),
+        ...(ask.end ? { end_image_url: ask.end } : {}),
+      };
+    }
+    case "kling-motion":
+      // Kling's motion control: the people in the board move as the people in the clip do, framed as the clip is (up to
+      // 30 seconds that way), without the clip's own sound.
+      return { prompt: ask.prompt, image_url: ask.start, video_url: ask.video, character_orientation: "video", keep_original_sound: false };
+    case "gpt-image": {
+      // GPT Image on fal, at medium quality and the size the OpenAI route asks for.
+      const [width, height] = sizeFor(ask.aspect).split("x").map(Number);
+      return { prompt: ask.prompt, image_size: { width, height }, quality: "medium", output_format: "jpeg", ...(ask.refs?.length ? { image_urls: ask.refs } : {}) };
+    }
     default:
       throw new Error(`beatsheet has no way to ask fal for "${shape}" models yet`);
   }
 }
 
 /** Whether a family of models takes a seed, so one can be chosen and recorded for each take. */
-export const takesSeed = (shape: string) => ["nano-banana", "wan", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(shape);
+export const takesSeed = (shape: string) => ["nano-banana", "wan", "wan-3", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(shape);
 
 /** The file a finished request made: the first picture, or the video. */
 export function falOutput(result: Record<string, unknown>): { url: string; contentType?: string; seed?: number } | undefined {

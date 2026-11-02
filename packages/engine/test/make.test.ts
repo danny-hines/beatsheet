@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -109,7 +110,7 @@ beforeAll(async () => {
       }
       const result = url.match(/^\/queue\/([^/]+\/[^/]+)\/requests\/([^/]+)$/);
       if (result) {
-        const video = result[1]!.includes("kling") || result[1]!.includes("wan");
+        const video = !/banana|image/.test(result[1]!);
         return send(200, video ? { video: { url: `${base}/out/${result[2]}.mp4`, content_type: "video/mp4" } } : { images: [{ url: `${base}/out/${result[2]}.jpg`, content_type: "image/jpeg" }], seed: 7 });
       }
       if (req.method === "POST" && url.startsWith("/queue/")) {
@@ -190,25 +191,25 @@ const shot = (id: string) => store.loadProject(PROJECT).project.shots.find((s) =
 describe("making takes for a shot", () => {
   it("makes two boards for a placeholder, which becomes a generated shot showing the first", async () => {
     const { fit, jobs } = make.startMake(PROJECT, { op: "image", shot: "s2", count: 2 });
-    expect(fit).toMatchObject({ model: "nano-banana", route: "fal", aspect: "9:16", usd: 0.08 });
+    expect(fit).toMatchObject({ model: "nano-banana-2.1", route: "fal", aspect: "9:16", usd: 0.08 });
     expect(jobs).toHaveLength(2);
     await make.driveJobs(PROJECT);
 
-    expect(seen.submits.map((s) => s.endpoint)).toEqual(["fal-ai/nano-banana", "fal-ai/nano-banana"]);
+    expect(seen.submits.map((s) => s.endpoint)).toEqual(["google/nano-banana-2.1", "google/nano-banana-2.1"]);
     expect(seen.submits[0]!.input).toMatchObject({ prompt: "The cat strolls down the alley like it owns it", aspect_ratio: "9:16", num_images: 1 });
     expect(make.listJobs(PROJECT).map((j) => j.status)).toEqual(["done", "done"]);
     const s = shot("s2");
     expect(s.fidelity).toBe("board");
-    expect(s.content).toMatchObject({ kind: "generated", take: "s2-take", takes: ["s2-take", "s2-take-2"], model: "nano-banana", provider: "fal" });
+    expect(s.content).toMatchObject({ kind: "generated", take: "s2-take", takes: ["s2-take", "s2-take-2"], model: "nano-banana-2.1", provider: "fal" });
     const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
-    expect(take.provenance).toMatchObject({ source: "generated", provider: "fal", model: "fal-ai/nano-banana", seed: 7, op: "image", job: jobs[0]!.id, costUsd: 0.04 });
+    expect(take.provenance).toMatchObject({ source: "generated", provider: "fal", model: "google/nano-banana-2.1", seed: 7, op: "image", job: jobs[0]!.id, costUsd: 0.04 });
     expect(readFileSync(take.path, "utf8")).toBe("a picture");
   });
 
   it("animates a board: uploads it, asks for the next length over the shot's, and trims the take to the middle", async () => {
     make.startMake(PROJECT, { op: "image", shot: "s2" });
     await make.driveJobs(PROJECT);
-    const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "s2-take" });
+    const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "s2-take", model: "kling-2.5-turbo" });
     expect(fit).toMatchObject({ model: "kling-2.5-turbo", endpoint: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video", seconds: 5, usd: 0.35 });
     await make.driveJobs(PROJECT);
 
@@ -253,7 +254,7 @@ describe("making takes for a shot", () => {
 
   it("refuses what can't be made before sending anything", () => {
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s2", start: "nope" })).toThrow('no asset "nope"');
-    expect(() => make.startMake(PROJECT, { op: "video", prompt: "a long walk", seconds: 20 })).toThrow(/Makes up to 1[05]s; this shot is 20s/);
+    expect(() => make.startMake(PROJECT, { op: "video", prompt: "a long walk", seconds: 40 })).toThrow(/Makes up to (10|15|30)s; this shot is 40s/);
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s2", model: "nano-banana" })).toThrow("doesn't make video");
     expect(seen.submits).toHaveLength(0);
   });
@@ -296,12 +297,42 @@ describe("fal's inputs for each kind of model", () => {
     });
     expect(takesSeed("minimax-h3-max")).toBe(true);
   });
+
+  it("asks the models that make roughs and finals both for a rough's size or a final's", async () => {
+    const { falInput, takesSeed } = await import("../src/fal.ts");
+    // Wan 3.0: 480p and 1080p, whole seconds, its start frame by its own name.
+    expect(falInput("wan-3", { prompt: "x", quality: "rough", seconds: 5.4, start: "u", end: "v", seed: 3 })).toEqual({ prompt: "x", duration: 6, resolution: "480p", start_image_url: "u", end_image_url: "v", seed: 3 });
+    expect(falInput("wan-3", { prompt: "x", quality: "final", seconds: 5, aspect: "9:16" })).toEqual({ prompt: "x", duration: 5, resolution: "1080p", aspect_ratio: "9:16" });
+    expect(falInput("wan-3", { prompt: "x", seconds: 5, refs: ["a"] })).toMatchObject({ prompt: "x Image 1 is a reference for who and what is in it.", reference_image_urls: ["a"], resolution: "480p" });
+    expect(takesSeed("wan-3")).toBe(true);
+    // Seedance 2.5: seconds as a string, references as @Image1…, and no seed of its own to give.
+    expect(falInput("seedance-2.5", { prompt: "x", quality: "final", seconds: 4, start: "u" })).toEqual({ prompt: "x", duration: "4", resolution: "1080p", image_url: "u" });
+    expect(falInput("seedance-2.5", { prompt: "x", seconds: 6, refs: ["a", "b"], aspect: "16:9" })).toEqual({
+      prompt: "x @Image1 to @Image2 are references for who and what is in it.",
+      duration: "6",
+      resolution: "480p",
+      image_urls: ["a", "b"],
+      aspect_ratio: "16:9",
+    });
+    expect(takesSeed("seedance-2.5")).toBe(false);
+    // Kling 4.0: 720p and 1080p.
+    expect(falInput("kling-4", { prompt: "x", quality: "rough", seconds: 12, start: "u" })).toEqual({ prompt: "x", duration: 12, resolution: "720p", start_image_url: "u" });
+    // Gemini Omni Flash: wide or tall, even from a picture.
+    expect(falInput("gemini-omni", { prompt: "x", quality: "rough", seconds: 3.5, start: "u", aspect: "9:16" })).toEqual({ prompt: "x", duration: 4, resolution: "360p", aspect_ratio: "9:16", image_url: "u" });
+    expect(falInput("gemini-omni", { prompt: "x", quality: "final", seconds: 8, aspect: "4:3" })).toMatchObject({ resolution: "1080p", aspect_ratio: "16:9" });
+  });
+
+  it("gives Kling's motion control the board and the stretch of the clip, and GPT Image a size in the shot's shape", async () => {
+    const { falInput } = await import("../src/fal.ts");
+    expect(falInput("kling-motion", { prompt: "two knights duel", start: "u", video: "w" })).toEqual({ prompt: "two knights duel", image_url: "u", video_url: "w", character_orientation: "video", keep_original_sound: false });
+    expect(falInput("gpt-image", { prompt: "x", aspect: "9:16", refs: ["a"] })).toEqual({ prompt: "x", image_size: { width: 864, height: 1536 }, quality: "medium", output_format: "jpeg", image_urls: ["a"] });
+  });
 });
 
 describe("cast and sets", () => {
   it("makes a sheet for the cat from its photo, and the sheet becomes the cat's picture", async () => {
     const { fit } = make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
-    expect(fit).toMatchObject({ model: "nano-banana", endpoint: "fal-ai/nano-banana/edit", aspect: "16:9" });
+    expect(fit).toMatchObject({ model: "nano-banana-2.1", endpoint: "google/nano-banana-2.1/edit", aspect: "16:9" });
     await make.driveJobs(PROJECT);
 
     const sent = seen.submits[0]!.input;
@@ -324,7 +355,7 @@ describe("cast and sets", () => {
     await make.driveJobs(PROJECT);
 
     const sent = seen.submits[0]!;
-    expect(sent.endpoint).toBe("fal-ai/nano-banana/edit");
+    expect(sent.endpoint).toBe("google/nano-banana-2.1/edit");
     expect(sent.input.prompt).toBe(
       "the cat (orange tabby, white chest; a tiny black eye mask) strolls down the alley (narrow, wet brick) like it owns it. Reference pictures, in order: the cat. Keep each one's features, markings and colors as they are there; draw them in the style asked for. The picture is one single frame of the scene, not a sheet, a grid or panels.",
     );
@@ -392,12 +423,30 @@ describe("roughs, finals and whole passes", () => {
     await make.driveJobs(PROJECT);
     expect(shot("s2")).toMatchObject({ fidelity: "rough", content: { take: "s2-take-2" } });
 
-    const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", quality: "final", count: 1 });
+    const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", quality: "final", model: "kling-3", count: 1 });
     expect(fit).toMatchObject({ model: "kling-3", seconds: 5, usd: 0.56 });
     await make.driveJobs(PROJECT);
     expect(seen.submits.at(-1)!.input).toEqual({ prompt: "The cat strolls down the alley like it owns it", duration: "5", start_image_url: `${base}/out/uploaded-2.jpg`, generate_audio: false });
     // The board is still where the clips start from, after a rough took its place.
     expect(shot("s2")).toMatchObject({ fidelity: "final", content: { take: "s2-take-3", start: "s2-take" } });
+  });
+
+  it("copies the movement in a clip on fal: cuts the stretch to follow, and sends it with the board to Kling's motion control", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x480:r=25:d=6", "-pix_fmt", "yuv420p", join(dir, "fight.mp4")]);
+    store.updateFile(PROJECT, (d) => void d.assets.push({ id: "fight", kind: "video", path: join(dir, "fight.mp4"), width: 640, height: 480, duration: 6 }));
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 });
+    await make.driveJobs(PROJECT);
+    // Without the graphics card for SCAIL-2 or Wan 2.2 Animate, fal's is the one ready.
+    const { fit, jobs } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", drive: { asset: "fight", from: 1, to: 4 }, count: 1 });
+    expect(fit).toMatchObject({ model: "kling-motion", route: "fal", endpoint: "fal-ai/kling-video/v3/pro/motion-control", seconds: 4, usd: 0.672 });
+    await make.driveJobs(PROJECT);
+
+    expect(seen.submits.at(-1)!.input).toEqual({ prompt: "The cat strolls down the alley like it owns it", image_url: `${base}/out/uploaded-1.jpg`, video_url: `${base}/out/uploaded-2.jpg`, character_orientation: "video", keep_original_sound: false });
+    // The stretch, half a second wider either side, at 720p in the clip's own shape and 30 frames a second.
+    const cut = join(dir, ".cache", "drive", `${jobs[0]!.id}.mp4`);
+    expect(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v", "-count_frames", "-show_entries", "stream=width,height,nb_read_frames", "-of", "csv=p=0", cut], { encoding: "utf8" }).trim()).toBe("960,720,120");
+    expect(shot("s2")).toMatchObject({ fidelity: "rough", content: { take: "s2-take-2", in: 0.5 } });
   });
 
   it("says a shot has no board yet when asked to start from one", () => {
@@ -406,8 +455,8 @@ describe("roughs, finals and whole passes", () => {
 
   it("checks a whole pass against what may be spent before starting any of it", () => {
     const asks = ["s1", "s2"].map((shot) => ({ op: "image" as const, shot, count: 2 }));
-    expect(make.estimate(PROJECT, asks).rows.find((r) => r.model === "nano-banana")).toMatchObject({ usd: 0.16, made: 2, unfit: [] });
-    // With each shot's Auto pick (Nano Banana here, the first ready one).
+    expect(make.estimate(PROJECT, asks).rows.find((r) => r.model === "nano-banana-2.1")).toMatchObject({ usd: 0.16, made: 2, unfit: [] });
+    // With each shot's Auto pick (Nano Banana 2.1 here, the first ready one).
     expect(make.estimate(PROJECT, asks).auto).toEqual({ usd: 0.16, made: 2 });
     // A shot that has no board to start from is set aside, and the rest is still estimated.
     expect(make.estimate(PROJECT, ["s1", "s2"].map((shot) => ({ op: "video" as const, shot, start: "board" }))).problems).toEqual([
@@ -516,7 +565,7 @@ describe("stills from services that answer in one request", () => {
   it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and with the key when asked", async () => {
     plans.ready = ["chatgpt"];
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.03 }] });
+    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.03 }, { route: "fal", usd: 0.03 }] });
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(plans.asks).toEqual([{ route: "chatgpt", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);

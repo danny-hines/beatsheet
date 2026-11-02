@@ -22,14 +22,14 @@ Blind votes on [Artificial Analysis](https://artificialanalysis.ai/video/leaderb
 
 | Model | AA text-to-video | AA image-to-video | arena.ai image-to-video | Final, per 5 s | In beatsheet |
 |---|---|---|---|---|---|
-| Wan 3.0 | #1 (1175) | #9 (1111) | #3 | fal $1.00 (1080p) | no |
+| Wan 3.0 | #1 (1175) | #9 (1111) | #3 | fal $1.00 (1080p) | yes |
 | MiniMax H3 (768p) | #3 (1161) | #4 (1128) | #1 (1495) | fal $0.30 | yes |
-| Seedance 2.5 | #4 (1157) | #1 (1153) | #4 | fal $5.82, Runway $3.40 (1080p) | no |
+| Seedance 2.5 | #4 (1157) | #1 (1153) | #4 | fal $5.82, Runway $3.40 (1080p) | yes |
 | FLUX 3 Max | #5 (provisional) | #12 (1064) | — | fal $1.45 after 7 Nov | no |
 | HeyGen Video 1 | #6 (1156) | #6 (1120) | — | HeyGen API, about $0.20 | no |
 | H3 Max | #7 (1149) | #8 (1117) | Design Arena #1 | fal $0.80 (1080p) | yes |
-| Gemini Omni Flash 1.1 | #10 | #14 | #2 | fal $0.75 | no |
-| Kling 4.0 | not rated | not rated | Design Arena #2 | fal $1.18 (1080p) | no |
+| Gemini Omni Flash 1.1 | #10 | #14 | #2 | fal $0.75 | yes |
+| Kling 4.0 | not rated | not rated | Design Arena #2 | fal $1.18 (1080p) | yes |
 | Kling 3.0 Pro | #19 (1000, the anchor) | #17 | #19 | fal $0.56 silent | yes |
 | Veo 3.1 | #22 | #21 | #13–17 | fal $2.00 with sound | no |
 | Kling 2.5 Turbo | not rated | not rated | #27 | fal $0.35 | yes |
@@ -74,26 +74,26 @@ What's behind the picks:
 
 ## The catalog: what to change
 
-The research's recommendations. None of these are made yet; each needs its fal adapter checked against the model's page, and the tests below.
+The research's recommendations, and where each stands (2 November 2026). The fal models added send what fal's published schemas ask for, checked field by field; none has made a take for real yet.
 
-| Change | Model | Why |
-|---|---|---|
-| Replace | Nano Banana (2.5 Flash Image) → Nano Banana 2.1 | Google shuts the old one down on 15 March 2027; arena.ai #36 → #5 at about the same price; 14 references, 9:16 and 21:9 |
-| Upgrade | GPT Image → GPT Image 2.5 (Flare for boards, Sunburst for sheets, products and likeness) | #1–2 on all four image boards; 16 references; medium quality is 1.3¢ at 1024² |
-| Keep | Muse Image | 1¢, AA #8: the rough-board model |
-| Add | Wan 3.0 (480p rough, 1080p final, references) | First from text; real faces; 30 s; $0.25–1.00 per 5 s; set `enable_prompt_expansion` and `resolution` explicitly |
-| Add | Seedance 2.5 (draft, then complete by `draft_id`) | First from a still, for dialogue and bodies; made-up characters only; keep the take's `draft_id` (14 days on fal); Runway's API is a cheaper second route |
-| Add | Kling 4.0 | Orbits, up to 8 middle keyframes, timed 30 s takes |
-| Keep | H3, H3 Max, H3 Max Turbo on fal | The top cluster at the lowest prices |
-| Gate | MiniMax H3 on ComfyUI | Its license excludes the US, EU, UK and South Korea |
-| Add | LTX-2.5 on ComfyUI | The local model with sound whose license allows US use (free under $10M revenue); 5 s clips fit a 4090, 10 s run out of memory |
-| Add | H3 Max lip sync; sync-3 | A `narrate` line onto a board; dubbing existing footage |
-| Upgrade | Wan 2.2 Animate → Wan-Animate-2; add Kling v3 Motion Control on fal | A text-set camera angle; copying movement without the card, up to 30 s |
-| Demote | Kling 3 Pro | Mid-pack everywhere; keep for `@Element` references until Kling 4.0 takes them on fal |
-| Remove | Kling 2.5 Turbo, Wan 2.2 on fal | Ranked far below; H3 Max Turbo and Wan 3.0 480p cost the same or less, with sound |
-| Don't add | Veo 3.1, Runway Gen-4.5, Pika, Hailuo 2.3 | 100–300 points below the top; Sora's API closed on 24 September 2026 |
-
-Two structural changes matter more than any one model: **families with a rough and a final tier**, so a picked rough survives into the final, and **an eligibility check per route** (real person, territory, mature, length) ahead of the ranking. beatsheet already knows which cast members came from real photos.
+| Change | Model | Why | Done |
+|---|---|---|---|
+| Replace | Nano Banana (2.5 Flash Image) → Nano Banana 2.1 | Google shuts the old one down on 15 March 2027; arena.ai #36 → #5 at about the same price; 14 references, 9:16 and 21:9 | Added on fal and a Gemini key, ahead of the old one (Auto's still); the old one stays until March |
+| Upgrade | GPT Image → GPT Image 2.5 (Flare for boards, Sunburst for sheets, products and likeness) | #1–2 on all four image boards; 16 references; medium quality is 1.3¢ at 1024² | Already 2.5 Flare on an OpenAI key; now on fal too. Sunburst isn't offered |
+| Keep | Muse Image | 1¢, AA #8: the rough-board model | |
+| Add | Wan 3.0 (480p rough, 1080p final, references) | First from text; real faces; 30 s; $0.25–1.00 per 5 s | Added (fal's prompt expansion left on) |
+| Add | Seedance 2.5 (draft, then complete by `draft_id`) | First from a still, for dialogue and bodies; made-up characters only; Runway's API is a cheaper second route | Added on fal, 480p roughs and 1080p finals made separately; finishing a draft and Runway aren't wired |
+| Add | Kling 4.0 | Orbits, up to 8 middle keyframes, timed 30 s takes | Added, without keyframes or `multi_prompt` |
+| Add | Gemini Omni Flash 1.1 | Sound and motion design from a prompt, 360p roughs at 15¢; never for real people | Added on fal (not on a Gemini key), without references |
+| Keep | H3, H3 Max, H3 Max Turbo on fal | The top cluster at the lowest prices | Now Auto: H3 Max Turbo for roughs, H3 Max for finals |
+| Gate | MiniMax H3 on ComfyUI | Its license excludes the US, EU, UK and South Korea | Kept in Auto at the person's choice; the menu note says so |
+| Add | LTX-2.5 on ComfyUI | The local model with sound whose license allows US use (free under $10M revenue); 5 s clips fit a 4090, 10 s run out of memory | Not yet: needs its workflow and about 25 GB of files |
+| Add | H3 Max lip sync; sync-3 | A `narrate` line onto a board; dubbing existing footage | Not yet: needs a request that carries a voice line |
+| Upgrade | Wan 2.2 Animate → Wan-Animate-2; add Kling v3 Motion Control on fal | A text-set camera angle; copying movement without the card, up to 30 s | Kling Motion Control added; Wan-Animate-2 not yet |
+| Demote | Kling 3 Pro | Mid-pack everywhere; keep for `@Element` references until Kling 4.0 takes them on fal | Moved below the new finals |
+| Remove | Kling 2.5 Turbo, Wan 2.2 on fal | Ranked far below; H3 Max Turbo and Wan 3.0 480p cost the same or less, with sound | Kept at the end of the list, for takes already made with them |
+| Don't add | Veo 3.1, Runway Gen-4.5, Pika, Hailuo 2.3 | 100–300 points below the top; Sora's API closed on 24 September 2026 | |
+Two structural changes matter more than any one model: **families with a rough and a final tier**, so a picked rough survives into the final, and **an eligibility check per route** (real person, territory, mature, length) ahead of the ranking. The real-person check is in: a character made from the person's own photos (unless they show it's a pet or a thing) rules out Seedance and Gemini Omni Flash (`refusesRealPeople`). Territory and mature aren't checked.
 
 Stills, by job: GPT Image 2.5 Sunburst for people, sheets, products and lettering; Nano Banana 2.1 for photographic boards, places and tall frames; Muse Image for cheap rough boards; Nano Banana Pro when a board has more than four recurring characters.
 

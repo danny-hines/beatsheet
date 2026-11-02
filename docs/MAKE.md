@@ -191,7 +191,7 @@ Because `seen` points at real media, the agent can use real footage where there 
 
 In a prompt a cast member is `@cat` (or `@cat/heist` for a variant), shown as a chip. Models take references differently: some take four images, some one, some none. When a model can't take the references, Auto goes through a start frame: an image model makes a still with the cast in it, and the video model animates that. Then any model that can animate a picture keeps the character.
 
-A still is given each cast member's main picture, then their next ones while the model has room, up to three each (`castPictures`): the characters first, then props, places and the style. Nano Banana takes four pictures, so two people get two each; GPT Image and Muse Image take ten. A variant's own pictures come before its entry's, so `@cat/heist` gets the masked cat and then the plain one. The prompt says whose they are ("Reference pictures, in order: 2 pictures of the cat, the alley"). Clips get no cast pictures: they start from a board, which already has the cast in it, and the cast is described in words. MiniMax H3 is the one video model that takes references without a board, and only when a request names them (`refs`).
+A still is given each cast member's main picture, then their next ones while the model has room, up to three each (`castPictures`): the characters first, then props, places and the style. The first Nano Banana takes four pictures, so two people get two each; GPT Image and Muse Image take ten, Nano Banana 2.1 fourteen. A variant's own pictures come before its entry's, so `@cat/heist` gets the masked cat and then the plain one. The prompt says whose they are ("Reference pictures, in order: 2 pictures of the cat, the alley"). Clips get no cast pictures: they start from a board, which already has the cast in it, and the cast is described in words. MiniMax H3, Wan 3.0 and Seedance 2.5 take references without a board, and only when a request names them (`refs`).
 
 ### Style
 
@@ -293,7 +293,7 @@ type Why =
   | { kind: "failing"; detail: string };                   // key refused, service down
 ```
 
-Fit is checked first, because connecting a service won't help a model that can't make the shot. Each reason has a button when there's something to do: Add a key opens Settings → Media services, Install opens the install card, Split splits the shot.
+Fit is checked first, because connecting a service won't help a model that can't make the shot. A model whose service won't draw real people (`refusesRealPeople`: Seedance 2.5, Gemini Omni Flash) doesn't fit a request with one in it: a character made from the person's own photos or clips (`realPeople` on the request, from `realPeople` in make.ts). Each reason has a button when there's something to do: Add a key opens Settings → Media services, Install opens the install card, Split splits the shot.
 
 The picker groups them:
 
@@ -303,7 +303,7 @@ The picker groups them:
 
 ### Auto, and choosing
 
-Auto is the default: the first ready model in a ranking for each operation, which you reorder in Settings → What it can do. Picking a model overrides Auto for that request. A project can pin a model for an operation, since mixing models across shots changes how they look, and the agent keeps to the pin. Every take records its model, so "Try this in Veo" on a take is one click.
+Auto is the default: the first ready model in a ranking for each operation, which you reorder in Settings → What it can do. Without one, it's the catalog's order, set from the research in [MODELS.md](MODELS.md): Nano Banana 2.1 for stills, H3 Max Turbo for roughs, H3 Max for finals. A model with no tier (Wan 3.0, Kling 4.0, Seedance 2.5, Gemini Omni Flash) makes both, its roughs smaller and cheaper (`finalPerSecond` on a route is a final's price), so it's in both lists where the catalog puts it. Copying movement with no graphics card for SCAIL-2 goes to Kling Motion Control on fal, which is sent the board and the stretch of the clip cut at about 720p. Picking a model overrides Auto for that request. A project can pin a model for an operation, since mixing models across shots changes how they look, and the agent keeps to the pin. Every take records its model, so "Try this in Veo" on a take is one click.
 
 ## Running models yourself
 
@@ -462,6 +462,10 @@ What's built but thin, or set aside for later, as it turns up. Each comes off th
 - **Dragging from the board** onto the timeline needs both on screen; in Make mode the timeline isn't. Use in (on a card) or the Library does it.
 - **A clip from cast pictures with no board** isn't chained for you (make a still with them, then animate it). The film recipe always boards first.
 - **Kling 3's own character references** (its `elements`) aren't used; the board carries the cast instead.
+- **The models added on 2026-11-02** (Wan 3.0, Seedance 2.5, Kling 4.0, Gemini Omni Flash, Kling Motion Control, Nano Banana 2.1, GPT Image on fal) send what fal's published schemas ask for, checked field by field, but haven't made a take for real yet.
+- **A final isn't its rough made larger** yet: Seedance 2.5's 480p draft can be finished at 1080p by its `draft_id`, and Wan 3.0's final could reuse the rough's seed, but each final is made afresh.
+- **Lip sync** (H3 Max's on a board, sync-3 on footage) needs a request that carries a voice line (`lipsync`), so it isn't wired. Nor are LTX-2.5 and Wan-Animate-2 on your own card.
+- **Real people** are every character made from the person's own photos or clips, unless what it was made from says otherwise (picked out as a thing, or a photo looked through for faces with none found). So a pet from a photo nobody looked through counts as a person, and isn't offered Seedance or Gemini Omni Flash.
 - **A pass in the studio** uses each model's cheapest place; picking a plan or a key for the whole pass is the agent's (`via`).
 - **Find in my photos** hasn't been run with a real agent on a real library: the hand-off, the card and keeping are tested, the agent's grouping isn't.
 - **A rename the person undoes** leaves jobs still being made pointing at the new id; the take comes into the Library but not onto the member.
