@@ -395,25 +395,55 @@ export function castPrompt(prompt: string, uses: CastUse[], pictured: CastUse[] 
   const styles = rest.filter((u) => u.member.kind === "style");
   if (others.length) text = `${sentence(text)} With ${others.map((u) => described(u, uses)).join(", ")}.`;
   if (styles.length) text = `${sentence(text)} In the style of ${styles.map((u) => described(u, uses)).join(" and ")}.`;
-  if (pictured.length) text = `${sentence(text)} Reference pictures, in order: ${pictured.map((u) => u.member.name).join(", ")}. Keep each one's features, markings and colors as they are there; draw them in the style asked for.`;
+  if (pictured.length) {
+    // Several pictures of one are named once: "2 pictures of the cat, noir".
+    const runs: { u: CastUse; n: number }[] = [];
+    for (const u of pictured) {
+      const last = runs.at(-1);
+      if (last?.u.id === u.id) last.n++;
+      else runs.push({ u, n: 1 });
+    }
+    const whose = runs.map(({ u, n }) => (n === 1 ? u.member.name : `${n} pictures of ${u.member.name}`)).join(", ");
+    text = `${sentence(text)} Reference pictures, in order: ${whose}. Keep each one's features, markings and colors as they are there; draw them in the style asked for.`;
+  }
   return text;
 }
 
 /** Who gets a picture first when there are more than a model takes: the characters, then props, places and the style. */
 const PICTURE_ORDER: CastMember["kind"][] = ["character", "prop", "place", "style"];
 
+/** The most of one cast member's pictures a model is given: its main one, and the next two when there's room. */
+export const PICTURES_EACH = 3;
+
 /**
- * The cast that have a picture to give a model, with the picture: the variant's own if it has one, else the main
- * one. With `max`, only that many, characters first (the rest are still described in words).
+ * The pictures of a cast member a model may be given, best first: a variant's own, then the plain one's (the same
+ * face in other clothes), up to PICTURES_EACH.
+ */
+export function picturesGiven(use: Pick<CastUse, "member" | "variant">): string[] {
+  return [...new Set([...(use.variant?.images ?? []), ...(use.member.images ?? [])])].slice(0, PICTURES_EACH);
+}
+
+/**
+ * The pictures to give a model, as many as `max`, kept together by whom they show. The characters come first, each
+ * one's main picture and then each one's next while there's room; then the props, places and the style the same way.
+ * The cast left without one is still described in words.
  */
 export function castPictures(uses: CastUse[], max = Infinity): { use: CastUse; asset: string }[] {
-  return uses
-    .flatMap((use) => {
-      const asset = use.variant?.images?.[0] ?? use.member.images?.[0];
-      return asset ? [{ use, asset }] : [];
-    })
-    .sort((a, b) => PICTURE_ORDER.indexOf(a.use.member.kind) - PICTURE_ORDER.indexOf(b.use.member.kind))
-    .slice(0, max);
+  const each = uses
+    .map((use) => ({ use, assets: picturesGiven(use) }))
+    .filter((x) => x.assets.length)
+    .sort((a, b) => PICTURE_ORDER.indexOf(a.use.member.kind) - PICTURE_ORDER.indexOf(b.use.member.kind));
+  const given = each.map(() => 0);
+  let left = max;
+  for (const kind of PICTURE_ORDER)
+    for (let round = 0; round < PICTURES_EACH; round++)
+      each.forEach((x, i) => {
+        if (left > 0 && x.use.member.kind === kind && x.assets.length > round) {
+          given[i]!++;
+          left--;
+        }
+      });
+  return each.flatMap((x, i) => x.assets.slice(0, given[i]).map((asset) => ({ use: x.use, asset })));
 }
 
 /** An id prompts can name after an @. */

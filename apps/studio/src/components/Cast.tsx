@@ -3,12 +3,14 @@
  * at the top of the Library. Right-click a photo to make one from it or add it to one; select one to name it,
  * describe it and make its sheet (clean views that models are given to match).
  */
-import { renameCast, speakerLabel, type Asset, type CastMember } from "@beatsheet/schema";
-import { useState } from "react";
+import type { MakeJob } from "@beatsheet/engine";
+import { PICTURES_EACH, renameCast, speakerLabel, type Asset, type CastMember } from "@beatsheet/schema";
+import { useState, type HTMLAttributes } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { lineUp } from "../multicam";
 import { actions, getState, setState, useProject, useStore } from "../store";
-import { Failed, money, useChoices, useMake, WhyNot } from "./Takes";
+import { cost, Failed, fitLabel, fitOf, madeWith, modelLabel, money, useChoices, useMake, WhyNot } from "./Takes";
+import { Viewer } from "./Viewer";
 import { PopMenu, TextField } from "./ui";
 import { VoicePicker } from "./Voices";
 
@@ -259,9 +261,21 @@ export function CastView({ id }: { id: string }) {
   const m = p.cast?.find((x) => x.id === id);
   const [count, setCount] = useState(2);
   const [sheetOf, setSheetOf] = useState("");
+  // The models sheets are made with: Auto's pick, until others are ticked to compare their sheets side by side.
+  const [models, setModels] = useState<string[]>();
+  // A character's portrait (the face, in whatever a costume puts on it) rather than its sheet.
+  const [portraitAsked, setPortrait] = useState(false);
+  const portrait = portraitAsked && m?.kind === "character";
   const sheet = sheetOf || id;
   const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
-  const { choices, problem } = useChoices({ op: "image", sheet, count });
+  const goingFor = (target: string) => going.filter((j) => j.sheet === target);
+  const { choices, problem } = useChoices({ op: "image", sheet, count, portrait: portrait ? 1 : undefined });
+  const ready = choices?.ready ?? [];
+  const picked = (models ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => ready.some((f) => f.model === x));
+  const fits = picked.map((x) => fitOf(choices, x)!);
+  const price = fits.length > 1 && fits.some((f) => f.usd) ? money(fits.reduce((sum, f) => sum + (f.usd ?? 0), 0)) : fits[0] ? cost(fits[0]) : "";
+  const sheets = count * Math.max(1, picked.length);
+  const tick = (model: string, on: boolean) => setModels(ready.map((f) => f.model).filter((x) => (x === model ? on : picked.includes(x))));
   const [describing, setDescribing] = useState("");
   if (!m) return <p className="dim small">That cast member is gone.</p>;
   // A vision model writes what it looks like from its pictures; the words land in the field, to edit.
@@ -311,6 +325,12 @@ export function CastView({ id }: { id: string }) {
   };
   const photos = (m.seen ?? []).map((s) => p.assets.find((a) => a.id === s.asset)).filter((a): a is Asset => !!a);
   const fromPhotos = !m.images?.length && photos.some((a) => a.kind === "image");
+  // Their own photos, which a portrait is made from (as the engine's ownPhotos picks them).
+  const own = [...(m.images ?? []), ...(m.seen ?? []).map((s) => s.asset)]
+    .map((a) => p.assets.find((x) => x.id === a))
+    .some((a) => a?.kind === "image" && !a.cutout && ["import", "capture", "recorded", undefined].includes(a.provenance?.source));
+  const noun = portrait ? "portrait" : "sheet";
+  const target = sheetOf ? `@${sheetOf}` : label(m);
 
   return (
     <div className="inspector cast-view">
@@ -353,24 +373,16 @@ export function CastView({ id }: { id: string }) {
       <p className="dim small">
         {m.kind === "style"
           ? `Shots are drawn in it when the project's look (or a cast member) names it; prompts can name it as @${m.id}.`
-          : `Prompts name it as @${m.id}; it's described to the model and its first picture is given to match.`}
+          : `Prompts name it as @${m.id}; it's described to the model and given its pictures to match.`}
       </p>
 
       <h4>Pictures</h4>
-      {m.images?.length || going.length ? (
-        <div className="take-strip">
-          {(m.images ?? []).map((a, i) => (
-            <Picture key={a} projectId={projectId} id={a} main={i === 0} onMain={() => edit((x) => void (x.images = [a, ...x.images!.filter((y) => y !== a)]))} onRemove={() => edit((x) => void (x.images = x.images!.filter((y) => y !== a)))} />
-          ))}
-          {going.map((j) => (
-            <div key={j.id} className="take pending" style={{ aspectRatio: "16 / 9" }}>
-              {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
-            </div>
-          ))}
-        </div>
+      {m.images?.length || goingFor(id).length ? (
+        <Pictures projectId={projectId} ids={m.images ?? []} going={goingFor(id)} onChange={(images) => edit((x) => void (images.length ? (x.images = images) : delete x.images))} />
       ) : (
         <p className="dim small">{fromPhotos ? "None yet: make a sheet from its photos below." : "None yet: make a sheet from its description, or add photos of it from the Library (right-click → Add to)."}</p>
       )}
+      <PicturesHint count={m.images?.length ?? 0} />
       <div className="make-row">
         {!!m.variants?.length && (
           <select value={sheetOf} onChange={(e) => setSheetOf(e.target.value)} aria-label="Sheet for">
@@ -382,30 +394,60 @@ export function CastView({ id }: { id: string }) {
             ))}
           </select>
         )}
-        <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many">
+        {m.kind === "character" && (
+          <select value={portrait ? "portrait" : "sheet"} onChange={(e) => setPortrait(e.target.value === "portrait")} aria-label="A sheet or a portrait">
+            <option value="sheet">Sheet</option>
+            <option value="portrait">Portrait</option>
+          </select>
+        )}
+        <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label={picked.length > 1 ? "How many from each model" : "How many"}>
           {[1, 2, 3, 4].map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
           ))}
         </select>
-        <button className="primary" disabled={!choices?.auto || sending || (!m.about && !fromPhotos && !m.images?.length)} onClick={() => void make({ op: "image", sheet, count })}>
-          Make {count === 1 ? "a sheet" : `${count} sheets`}
-          {choices?.auto?.usd !== undefined ? ` · ${money(choices.auto.usd)}` : ""}
+        <button
+          className="primary"
+          disabled={!picked.length || sending || (!m.about && !fromPhotos && !m.images?.length)}
+          onClick={() => {
+            const ask = { op: "image" as const, sheet, count, ...(portrait ? { portrait: true } : {}) };
+            void make(models ? picked.map((model) => ({ ...ask, model })) : ask);
+          }}
+        >
+          Make {sheets === 1 ? `a ${noun}` : `${sheets} ${noun}s`}
+          {picked.length > 1 ? ` from ${picked.length} models` : ""}
+          {price ? ` · ${price}` : ""}
         </button>
       </div>
+      {m.kind === "character" && (
+        <p className="dim small">
+          {portrait
+            ? own
+              ? `Head and shoulders of ${target}, from ${label(m)}'s own photos: to settle what a costume does to the face (a fake beard, a hat, makeup) before the sheet. Keep the one that still looks like them, right after their photo, then make the sheet.`
+              : `Head and shoulders of ${target}, from its description: pick the face, then make the sheet from it.`
+            : `A sheet of ${target}: the face once, close up, then the body from the front (cropped at the neck) and the back, so models aren't given several faces to choose between.`}
+        </p>
+      )}
+      {ready.length > 1 && (
+        <div className="sheet-models small" title="Sheets from several models at once, to compare side by side and keep the best">
+          <span className="dim">Made with</span>
+          {ready.map((f) => (
+            <label key={f.model} className="check-row">
+              <input type="checkbox" checked={picked.includes(f.model)} onChange={(e) => tick(f.model, e.target.checked)} />
+              {fitLabel(f)}
+            </label>
+          ))}
+        </div>
+      )}
       <WhyNot choices={choices} />
       {(error || problem) && <p className="warn small">{error || problem}</p>}
-      {failed && !error && <Failed job={failed} what="A sheet" retry={(j) => void retry(j)} />}
+      {failed && !error && <Failed job={failed} what={failed.portrait ? "A portrait" : "A sheet"} retry={(j) => void retry(j)} />}
 
       {photos.length > 0 && (
         <>
           <h4>Seen in</h4>
-          <div className="take-strip">
-            {photos.map((a) => (
-              <Picture key={a.id} projectId={projectId} id={a.id} onRemove={() => edit((x) => void (x.seen = x.seen!.filter((s) => s.asset !== a.id)))} />
-            ))}
-          </div>
+          <Pictures projectId={projectId} ids={photos.map((a) => a.id)} unranked onChange={(ids) => edit((x) => void (x.seen = x.seen!.filter((s) => ids.includes(s.asset))))} />
         </>
       )}
 
@@ -432,15 +474,34 @@ export function CastView({ id }: { id: string }) {
       )}
 
       <h4>Variants</h4>
-      {m.variants?.map((v, i) => (
-        <div key={v.id} className="variant-row">
-          <IdField prefix={`${m.id}/`} value={v.id} onRename={reIdVariant(v.id)} />
-          <TextField value={v.about} placeholder="What's different: wearing a tiny black eye mask" onCommit={(t) => edit((x) => void (x.variants![i]!.about = t))} />
-          <button className="link danger small" onClick={() => edit((x) => void (x.variants = x.variants!.filter((y) => y.id !== v.id)))} title="Remove this variant">
-            ×
-          </button>
-        </div>
-      ))}
+      {m.variants?.map((v, i) => {
+        const target = `${id}/${v.id}`;
+        return (
+          <div key={v.id} className="variant">
+            <div className="variant-row">
+              <IdField prefix={`${m.id}/`} value={v.id} onRename={reIdVariant(v.id)} />
+              <span className="spacer" />
+              <button className="link danger small" onClick={() => edit((x) => void (x.variants = x.variants!.filter((y) => y.id !== v.id)))} title="Remove this variant">
+                ×
+              </button>
+            </div>
+            <TextField multiline value={v.about} placeholder="What's different: wearing a tiny black eye mask" onCommit={(t) => edit((x) => void (x.variants![i]!.about = t))} />
+            {v.images?.length || goingFor(target).length ? (
+              <>
+                <Pictures projectId={projectId} ids={v.images ?? []} going={goingFor(target)} onChange={(images) => edit((x) => void (images.length ? (x.variants![i]!.images = images) : delete x.variants![i]!.images))} />
+                <PicturesHint count={v.images?.length ?? 0} />
+              </>
+            ) : (
+              <p className="dim small">
+                No pictures of its own yet, so models get {label(m)}'s pictures with this description.{" "}
+                <button className="link small" onClick={() => setSheetOf(target)}>
+                  Make sheets of it
+                </button>
+              </p>
+            )}
+          </div>
+        );
+      })}
       <VariantAdd taken={(m.variants ?? []).map((v) => v.id)} onAdd={(vid, about) => edit((x) => void (x.variants = [...(x.variants ?? []), { id: vid, about }]))} />
 
       <div className="make-row cast-remove">
@@ -492,12 +553,147 @@ function VariantAdd({ taken, onAdd }: { taken: string[]; onAdd: (id: string, abo
   );
 }
 
-/** One of a cast member's pictures: the main one outlined; click another to make it the main one. */
-function Picture({ projectId, id, main, onMain, onRemove }: { projectId: string; id: string; main?: boolean; onMain?: () => void; onRemove: () => void }) {
+/** Where a picture being dragged in a strip came from: which strip, and where in it. */
+const PICTURE_DRAG = "application/x-beatsheet-picture";
+
+/**
+ * A strip of a cast member's (or a variant's) pictures, and its sheets on their way. Ranked, it's what models are
+ * given: the main one outlined, the ones past what they get dimmed, and dragging one changes the order. Each made one
+ * is marked with the model that made it, to compare sheets from several. Clicking one shows it large.
+ */
+function Pictures({ projectId, ids, going = [], unranked, onChange }: { projectId: string; ids: string[]; going?: MakeJob[]; unranked?: boolean; onChange: (ids: string[]) => void }) {
+  const p = useProject();
+  const [large, setLarge] = useState<number>();
+  const [dragged, setDragged] = useState<number>();
+  const [over, setOver] = useState<number>();
+  const strip = ids.join(",");
+  const assets = ids.map((a) => p.assets.find((x) => x.id === a));
+  const move = (from: number, to: number) => {
+    const next = ids.filter((_, i) => i !== from);
+    next.splice(to > from ? to - 1 : to, 0, ids[from]!);
+    onChange(next);
+  };
+  const caption = (i: number) => {
+    const by = madeWith(assets[i]);
+    const place = unranked ? "" : i === 0 ? "the main one" : i >= PICTURES_EACH ? "not given to models" : `given when there's room (${i + 1} of ${Math.min(ids.length, PICTURES_EACH)})`;
+    return [ids[i], by && `made with ${by}`, place].filter(Boolean).join(" · ");
+  };
   return (
-    <span className="cast-pic">
-      <button className={`take ${main ? "on" : ""}`} onClick={onMain} disabled={!onMain} title={main ? `${id}: the one models get` : onMain ? `${id}: make this the one models get` : id}>
-        <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} />
+    <>
+      <div className="take-strip" onDragLeave={() => setOver(undefined)}>
+        {ids.map((a, i) => (
+          <Picture
+            key={a}
+            projectId={projectId}
+            id={a}
+            main={!unranked && i === 0}
+            spare={!unranked && i >= PICTURES_EACH}
+            by={madeWith(assets[i])}
+            className={`${dragged === i ? "dragging" : ""} ${over === i && dragged !== undefined && dragged !== i && dragged !== i - 1 ? "drop-before" : ""}`}
+            onOpen={() => setLarge(i)}
+            onRemove={() => onChange(ids.filter((y) => y !== a))}
+            drag={
+              unranked
+                ? undefined
+                : {
+                    onDragStart: (e) => {
+                      e.dataTransfer.setData(PICTURE_DRAG, JSON.stringify({ strip, i }));
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragged(i);
+                    },
+                    onDragEnd: () => {
+                      setDragged(undefined);
+                      setOver(undefined);
+                    },
+                    onDragOver: (e) => {
+                      if (!e.dataTransfer.types.includes(PICTURE_DRAG)) return;
+                      e.preventDefault();
+                      setOver(i);
+                    },
+                    onDrop: (e) => {
+                      const from = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as { strip?: string; i?: number };
+                      setOver(undefined);
+                      if (from.strip !== strip || from.i === undefined || from.i === i) return;
+                      e.preventDefault();
+                      move(from.i, i);
+                    },
+                  }
+            }
+          />
+        ))}
+        {going.map((j) => (
+          <span key={j.id} className="cast-pic">
+            <div className="take pending" title={`A ${j.portrait ? "portrait" : "sheet"} from ${modelLabel(j.model)} on its way`}>
+              {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+              <br />
+              {modelLabel(j.model)}
+            </div>
+          </span>
+        ))}
+      </div>
+      {large !== undefined && (
+        <Viewer
+          projectId={projectId}
+          items={ids.map((a, i) => ({ id: a, video: assets[i]?.kind === "video", caption: caption(i) }))}
+          at={large}
+          onClose={() => setLarge(undefined)}
+          actions={(item, i) => (
+            <>
+              {!unranked && (
+                <button onClick={() => move(i, 0)} disabled={i === 0} title="Put it first: the one models get first">
+                  Make it the main one
+                </button>
+              )}
+              <button className="danger" onClick={() => onChange(ids.filter((y) => y !== item.id))} title={unranked ? "It isn't them" : "Take this picture out"}>
+                Take out
+              </button>
+            </>
+          )}
+        />
+      )}
+    </>
+  );
+}
+
+/** What models get of a strip of pictures, once there's more than one to choose between. */
+function PicturesHint({ count }: { count: number }) {
+  if (count < 2) return null;
+  return (
+    <p className="dim small">
+      Models get the outlined one, and up to {PICTURES_EACH - 1} more when there's room{count > PICTURES_EACH ? "; the dimmed ones are kept but not given" : ""}. Drag to change the order; click
+      one to see it large.
+    </p>
+  );
+}
+
+/** One picture in a strip: the main one outlined, a made one badged with its model. Clicking it shows it large. */
+function Picture({
+  projectId,
+  id,
+  main,
+  spare,
+  by,
+  className = "",
+  drag,
+  onOpen,
+  onRemove,
+}: {
+  projectId: string;
+  id: string;
+  main?: boolean;
+  spare?: boolean;
+  by?: string;
+  className?: string;
+  drag?: Pick<HTMLAttributes<HTMLSpanElement>, "onDragStart" | "onDragEnd" | "onDragOver" | "onDrop">;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  const title = `${id}${main ? ": the one models get first" : spare ? ": kept, not given to models" : ""}${by ? ` (made with ${by})` : ""}. Click to see it large${drag ? "; drag to change the order" : ""}`;
+  return (
+    <span className={`cast-pic ${spare ? "spare" : ""} ${className}`} draggable={!!drag} {...drag}>
+      <button className={`take ${main ? "on" : ""}`} onClick={onOpen} title={title}>
+        <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} draggable={false} />
+        {by && <span className="badge">{by}</span>}
       </button>
       <button className="cast-pic-remove" onClick={onRemove} title="Take this picture out" aria-label="Take this picture out">
         ×

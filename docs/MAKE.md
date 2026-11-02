@@ -152,11 +152,11 @@ Make a character makes the entry straight away, with no dialog in the way, and o
 1. **Finds the subject.** In a photo of you holding the cat, the subjects found in it show as boxes and you click the one you meant. With SAM set up, a prompt ("the cat") does it. A set takes the whole picture, or a box drawn on it.
 2. **Cuts it out.** Each reference becomes a cut-out of just the subject (`cut_out`), so a model isn't handed the sofa along with the cat. A set can have its people taken out instead, so it's an empty place.
 3. **Describes it.** A short, specific description written from the pictures: "orange tabby, white chest and paws, green eyes, a notch in the left ear". It goes into every prompt, so it's worth being exact, and you can edit it. It's a single call to a vision model (Gemini or OpenAI, with their key), or a note for the agent.
-4. **Offers a sheet.** A clean set of views on a plain background, made by an image model from the references: front, three-quarter, side and full length for a character; a few angles and the details that matter for a set. Video models keep a character best from a sheet like that. The button shows the cost ("Make a sheet · ~$0.15"). Use the photos as they are skips it, which is cheaper and sometimes more faithful for real people and places.
+4. **Offers a sheet.** A clean set of views on a plain background, made by an image model from the references. A character's has three panels: a close-up of the head and face, the body from the front cropped at the neck, and the back. The face shows once, so a model isn't given several to choose between (a tip from Seedance workflows, where the sheets go straight to the video model). A set gets a few angles and the details that matter. Video models keep a character best from a sheet like that. The button shows the cost ("Make a sheet · ~$0.15"). Still models draw faces differently, so the sheet can come from several at once to compare: tick the models under the button and each makes its own (`models` on `generate`, for the agent). Every made picture is marked with the model that made it. Click one to see it large and zoom in, drag the best to the front, and take out the rest. Use the photos as they are skips it, which is cheaper and sometimes more faithful for real people and places: for a real person, their own photos held the likeness better than any sheet did in the Galileo remake.
 
-From scratch is the same with no references: the description makes three candidate main images, you pick one, and the rest of the sheet is made from it, so the pick becomes the reference for everything after.
+From scratch is the same with no references: the description makes candidate portraits (Sheet or Portrait beside the button; `portrait: true`), you pick one as the main picture, and the sheet is made from it, so the pick becomes the reference for everything after.
 
-References and a description together ("my cat, as a noir detective") make a **variant**: the same character in another outfit or state (a tiny mask, soaked from the rain), or the same set at another time (the kitchen at night). A variant keeps its entry's references and adds to the description, so `@cat` and `@cat/heist` stay the same cat.
+References and a description together ("my cat, as a noir detective") make a **variant**: the same character in another outfit or state (a tiny mask, soaked from the rain), or the same set at another time (the kitchen at night). A variant keeps its entry's references and adds to the description, so `@cat` and `@cat/heist` stay the same cat. Its own pictures show under it in Inspect and go to the model first, then its entry's. When the costume changes the face (a fake beard, a hat, makeup), a portrait comes first: head and shoulders in the costume, made from the person's own photos only. Keep the one that still looks like them after their photo, then make the variant's sheet from the two. Galileo's showed why: its two costume pictures had different beards, and nothing had settled which was his.
 
 ### The entry
 
@@ -172,7 +172,7 @@ References and a description together ("my cat, as a noir detective") make a **v
       { "asset": "IMG_0419" },                               // the whole picture
       { "asset": "garden.mov", "subject": "object-2" }
     ],
-    "images": ["cat-front", "cat-side", "cat-full"],         // the sheet (or the cut-outs): what models get; the first is the main one
+    "images": ["cat-front", "cat-side", "cat-full"],         // the sheet (or the cut-outs): what models get, the main one first and up to two more
     "variants": [{ "id": "heist", "about": "Wearing a tiny black eye mask", "images": ["cat-heist"] }],
     "voice": "elevenlabs:…"                                  // characters only
   },
@@ -190,6 +190,8 @@ Because `seen` points at real media, the agent can use real footage where there 
 ### In prompts
 
 In a prompt a cast member is `@cat` (or `@cat/heist` for a variant), shown as a chip. Models take references differently: some take four images, some one, some none. When a model can't take the references, Auto goes through a start frame: an image model makes a still with the cast in it, and the video model animates that. Then any model that can animate a picture keeps the character.
+
+A still is given each cast member's main picture, then their next ones while the model has room, up to three each (`castPictures`): the characters first, then props, places and the style. Nano Banana takes four pictures, so two people get two each; GPT Image and Muse Image take ten. A variant's own pictures come before its entry's, so `@cat/heist` gets the masked cat and then the plain one. The prompt says whose they are ("Reference pictures, in order: 2 pictures of the cat, the alley"). Clips get no cast pictures: they start from a board, which already has the cast in it, and the cast is described in words. MiniMax H3 is the one video model that takes references without a board, and only when a request names them (`refs`).
 
 ### Style
 

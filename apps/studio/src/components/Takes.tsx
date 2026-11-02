@@ -6,18 +6,23 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { castOf, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { CATALOG, castOf, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { TextField } from "./ui";
+import { EnlargeIcon, Viewer } from "./Viewer";
 
 const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 export const money = (usd?: number) => (usd === undefined ? "" : `~$${usd.toFixed(2)}`);
+/** A catalog model by name, from its id or (as older takes recorded it) one of its endpoints. */
+export const modelLabel = (id: string) => (CATALOG.find((c) => c.id === id) ?? CATALOG.find((c) => c.routes.some((r) => Object.values(r.endpoints).includes(id))))?.label ?? id;
+/** The model a picture was made with, by name, when it was made. */
+export const madeWith = (a: Asset | undefined) => (a?.provenance?.source === "generated" && a.provenance.model ? modelLabel(a.provenance.model) : undefined);
 /** What it costs where it runs: a plan's allowance, or the person's own graphics card, rather than money. */
 export const cost = (f: { usd?: number; route?: string }) => (f.route === "comfy" ? "on your graphics card" : f.usd === 0 ? "on your plan" : money(f.usd));
 const wait = (s?: number) => (s === undefined ? "" : s < 90 ? `~${Math.max(10, Math.round(s / 10) * 10)}s` : `~${Math.round(s / 60)} min`);
 /** A model, where it runs when it runs in more than one place, what it costs and how long it takes; or why it can't. */
-const fitLabel = (f: Fit, where = false) => {
+export const fitLabel = (f: Fit, where = false) => {
   if (!f.ok) return `${f.label}: ${f.why.reason}`;
   const place = (where || !!f.also?.length) && f.where;
   // "ChatGPT plan" already says it's on the plan.
@@ -42,7 +47,8 @@ export function fitOf(choices: Choices | undefined, value: string): FitOk | unde
 
 /**
  * The project's jobs that `match` (a shot's, a sheet's), asked for again every couple of seconds while any is going;
- * finished takes arrive with the project. `make` starts more, and says why when it can't.
+ * finished takes arrive with the project. `make` starts more (several requests at once start all or none), and says
+ * why when it can't.
  */
 export function useMake(match: (j: MakeJob) => boolean, key: string) {
   const projectId = useStore((s) => s.projectId)!;
@@ -61,11 +67,12 @@ export function useMake(match: (j: MakeJob) => boolean, key: string) {
     const t = setInterval(() => void refresh(), 2000);
     return () => clearInterval(t);
   }, [going.length, refresh]);
-  const make = async (ask: MakeAsk) => {
+  const make = async (ask: MakeAsk | MakeAsk[]) => {
     setError("");
     setSending(true);
     try {
-      const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ask) });
+      const body = Array.isArray(ask) ? { asks: ask } : ask;
+      const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const j = (await res.json()) as { jobs?: MakeJob[]; error?: string };
       if (!res.ok || !j.jobs) throw new Error(j.error ?? `${res.status}`);
       setJobs((prev) => [...prev, ...j.jobs!]);
@@ -128,6 +135,8 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const p = useProject();
   const c = shot.content as Extract<Shot["content"], { kind: "placeholder" | "generated" }>;
   const takes = c.kind === "generated" ? (c.takes ?? []) : [];
+  const shown = takes.map((id) => p.assets.find((x) => x.id === id)).filter((a): a is Asset => !!a);
+  const [large, setLarge] = useState<number>();
   const showing = c.kind === "generated" && c.take ? p.assets.find((a) => a.id === c.take) : undefined;
   // The still a clip starts from: the one showing, or the one the clip showing was made from.
   const board = showing?.kind === "image" ? showing.id : c.kind === "generated" ? c.start : undefined;
@@ -177,10 +186,20 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
       <h4>Takes</h4>
       {takes.length + going.length > 0 ? (
         <div className="take-strip">
-          {takes.map((id) => {
-            const a = p.assets.find((x) => x.id === id);
-            return a ? <Take key={id} projectId={projectId} id={id} video={a.kind === "video"} duration={a.duration} final={a.provenance?.params?.quality === "final"} on={c.kind === "generated" && c.take === id} aspect={aspect} onPick={() => pick(id)} /> : null;
-          })}
+          {shown.map((a, i) => (
+            <Take
+              key={a.id}
+              projectId={projectId}
+              id={a.id}
+              video={a.kind === "video"}
+              duration={a.duration}
+              final={a.provenance?.params?.quality === "final"}
+              on={c.kind === "generated" && c.take === a.id}
+              aspect={aspect}
+              onPick={() => pick(a.id)}
+              onEnlarge={() => setLarge(i)}
+            />
+          ))}
           {going.map((j) => (
             <div key={j.id} className="take pending" style={{ aspectRatio: aspect }} title={j.op === "image" ? "A still on its way" : "A clip on its way"}>
               {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
@@ -189,6 +208,21 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
         </div>
       ) : (
         <p className="dim small">No takes yet. Make a few stills to settle the shot, then a clip from the one you like.</p>
+      )}
+      {large !== undefined && (
+        <Viewer
+          projectId={projectId}
+          items={shown.map((a) => ({ id: a.id, video: a.kind === "video", caption: [a.id, madeWith(a) && `made with ${madeWith(a)}`].filter(Boolean).join(" · ") }))}
+          at={large}
+          onClose={() => setLarge(undefined)}
+          actions={(item) =>
+            c.kind === "generated" && c.take === item.id ? (
+              <span className="dim small">The one the shot shows</span>
+            ) : (
+              <button onClick={() => pick(item.id)}>Show this one</button>
+            )
+          }
+        />
       )}
       <label>
         Prompt
@@ -362,13 +396,38 @@ function Seconds({ value, placeholder, label, onCommit }: { value?: number; plac
   return <input className="seconds" type="number" min={0} step={0.1} value={text} placeholder={placeholder} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && commit()} aria-label={label} />;
 }
 
-/** One take: its poster, playing on hover when it's a clip. */
-function Take({ projectId, id, video, duration, final, on, aspect, onPick }: { projectId: string; id: string; video: boolean; duration?: number; final: boolean; on: boolean; aspect: string; onPick: () => void }) {
+/** One take: its poster, playing on hover when it's a clip, and a button to see it large. */
+function Take({
+  projectId,
+  id,
+  video,
+  duration,
+  final,
+  on,
+  aspect,
+  onPick,
+  onEnlarge,
+}: {
+  projectId: string;
+  id: string;
+  video: boolean;
+  duration?: number;
+  final: boolean;
+  on: boolean;
+  aspect: string;
+  onPick: () => void;
+  onEnlarge: () => void;
+}) {
   const [hover, setHover] = useState(false);
   return (
-    <button className={`take ${on ? "on" : ""}`} style={{ aspectRatio: aspect }} onClick={onPick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} title={on ? `${id}: the one the shot shows` : `${id}: show this one`}>
-      {video && hover ? <video src={proxyUrl(projectId, id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} />}
-      {video && <span className="badge">{final ? "Final" : "▶"} {duration ? `${duration.toFixed(1)}s` : ""}</span>}
-    </button>
+    <span className="take-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <button className={`take ${on ? "on" : ""}`} style={{ aspectRatio: aspect }} onClick={onPick} title={on ? `${id}: the one the shot shows` : `${id}: show this one`}>
+        {video && hover ? <video src={proxyUrl(projectId, id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} />}
+        {video && <span className="badge">{final ? "Final" : "▶"} {duration ? `${duration.toFixed(1)}s` : ""}</span>}
+      </button>
+      <button className="enlarge" onClick={onEnlarge} title="See it large, to zoom in" aria-label="See it large">
+        <EnlargeIcon />
+      </button>
+    </span>
   );
 }

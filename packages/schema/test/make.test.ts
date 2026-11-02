@@ -4,6 +4,7 @@ import {
   CATALOG,
   castOf,
   castPictures,
+  picturesGiven,
   castPrompt,
   checkCut,
   checkReferences,
@@ -294,11 +295,12 @@ describe("cast and sets in prompts", () => {
 
   it("names each one in words the model reads, described the first time, and says which picture is whom", () => {
     const uses = castOf("@cat/heist slinks down @alley, and @cat/heist looks back", cast, ["noir"]);
+    // The variant's own picture, then the plain cat's: the same cat without the mask.
     const pictured = castPictures(uses);
-    expect(pictured.map((p) => p.asset)).toEqual(["cat-heist", "noir-ref"]);
+    expect(pictured.map((p) => p.asset)).toEqual(["cat-heist", "cat-sheet", "noir-ref"]);
     expect(castPrompt("@cat/heist slinks down @alley, and @cat/heist looks back", uses, pictured.map((p) => p.use))).toBe(
       "the cat (orange tabby, white chest, a notch in the left ear; wearing a tiny black eye mask) slinks down the alley (narrow, wet brick, steam from a grate), and the cat looks back." +
-        " In the style of noir (black and white, hard shadows). Reference pictures, in order: the cat, noir. Keep each one's features, markings and colors as they are there; draw them in the style asked for.",
+        " In the style of noir (black and white, hard shadows). Reference pictures, in order: 2 pictures of the cat, noir. Keep each one's features, markings and colors as they are there; draw them in the style asked for.",
     );
     // Someone not in the cast is left as written.
     expect(castPrompt("@dog barks", castOf("@dog barks", cast))).toBe("@dog barks");
@@ -457,6 +459,22 @@ describe("more cast than a model takes pictures of", () => {
     expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic", "mug-pic", "kitchen-pic"]);
     // Everyone is still described; only the pictured are named as references.
     expect(castPrompt(prompt, uses, pictured.map((p) => p.use))).toMatch(/in kitchen \(kitchen look\), a mug \(mug look\) on the table\. Reference pictures, in order: mom, dad, kid, cat\./);
+  });
+
+  it("gives each character's main picture, then their next ones while there's room, three each at most, before places", () => {
+    const cast: CastMember[] = [
+      { id: "set", name: "the forest", kind: "place", images: ["forest-1", "forest-2"] },
+      { id: "will", name: "Will", kind: "character", images: ["will-1", "will-2", "will-3", "will-4"], variants: [{ id: "old", about: "a cotton-wool beard", images: ["will-1", "will-costume"] }] },
+      { id: "bell", name: "Bell", kind: "character", images: ["bell-1", "bell-2"] },
+    ];
+    const uses = castOf("@will/old faces @bell in @set", cast);
+    // A variant's own pictures come first, then the plain one's, with none twice.
+    expect(picturesGiven(uses[0]!)).toEqual(["will-1", "will-costume", "will-2"]);
+    expect(castPictures(uses, 4).map((p) => p.asset)).toEqual(["will-1", "will-costume", "bell-1", "bell-2"]);
+    expect(castPictures(uses, 6).map((p) => p.asset)).toEqual(["will-1", "will-costume", "will-2", "bell-1", "bell-2", "forest-1"]);
+    expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["will-1", "will-costume", "will-2", "bell-1", "bell-2", "forest-1", "forest-2"]);
+    const pictured = castPictures(uses, 6).map((p) => p.use);
+    expect(castPrompt("@will/old faces @bell in @set", uses, pictured)).toMatch(/Reference pictures, in order: 3 pictures of Will, 2 pictures of Bell, the forest\./);
   });
 });
 

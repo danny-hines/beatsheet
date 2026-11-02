@@ -306,8 +306,10 @@ describe("cast and sets", () => {
 
     const sent = seen.submits[0]!.input;
     expect(sent.image_urls).toEqual([`${base}/out/uploaded-1.jpg`]);
-    // A photograph, said in so many words: "reference sheet" alone comes back drawn.
-    expect(String(sent.prompt)).toMatch(/^A photographic reference sheet of the cat \(orange tabby, white chest\): front, three-quarter/);
+    // A photograph, said in so many words: "reference sheet" alone comes back drawn. The face shows once.
+    expect(String(sent.prompt)).toMatch(
+      /^A photographic reference sheet of the cat \(orange tabby, white chest\) in three panels side by side on a plain light gray background: a close-up of the head and face, with anything worn on them; a full-length front view cropped at the neck, so the face shows only once; and a full-length back view\./,
+    );
     expect(String(sent.prompt)).toMatch(/photographed rather than drawn, nothing else in the picture and no text or labels\. The reference photos show the cat: keep the cat's features, markings, colors and shape exactly\.$/);
     const cat = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!;
     expect(cat.images).toEqual(["cat-sheet"]);
@@ -347,7 +349,9 @@ describe("cast and sets", () => {
     store.updateFile(PROJECT, (d) => void (d.cast!.find((m) => m.id === "cat")!.style = "toon"));
     make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
     await make.driveJobs(PROJECT);
-    expect(String(seen.submits[1]!.input.prompt)).toMatch(/^A reference sheet of the cat \(orange tabby, white chest\): .*, nothing else in the picture and no text or labels, in the style of hand-drawn \(2D animation, clean ink lines\)\. The reference photos show the cat: keep/);
+    expect(String(seen.submits[1]!.input.prompt)).toMatch(
+      /^A reference sheet of the cat \(orange tabby, white chest\) in three panels .*\. Nothing else in the picture and no text or labels, in the style of hand-drawn \(2D animation, clean ink lines\)\. The reference photos show the cat: keep/,
+    );
     make.startMake(PROJECT, { op: "image", shot: "s2", prompt: "@cat strolls down @alley", count: 1 });
     await make.driveJobs(PROJECT);
     expect(String(seen.submits[2]!.input.prompt)).toMatch(
@@ -357,6 +361,26 @@ describe("cast and sets", () => {
 
   it("refuses a sheet for someone who isn't in the cast", () => {
     expect(() => make.startMake(PROJECT, { op: "image", sheet: "dog" })).toThrow('No cast member "dog"');
+  });
+
+  it("makes a character's portrait in a variant from their own photos only, never a picture made of them", async () => {
+    make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    await make.driveJobs(PROJECT);
+    seen.submits = [];
+    // The cat has a sheet now; its portrait is still made from the photo alone, in the shape of a portrait.
+    const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat/heist", portrait: true, count: 1 });
+    expect(fit).toMatchObject({ aspect: "4:5" });
+    expect(jobs[0]).toMatchObject({ sheet: "cat/heist", portrait: true, request: { refs: ["cat-photo"] } });
+    await make.driveJobs(PROJECT);
+    const prompt = String(seen.submits[0]!.input.prompt);
+    expect(prompt).toMatch(/^A photographic head-and-shoulders portrait of the cat \(orange tabby, white chest; a tiny black eye mask\) facing the camera, with anything worn on the head or face/);
+    expect(prompt).toMatch(/The reference photos show the cat: keep .* exactly\. In this portrait: a tiny black eye mask\.$/);
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.images).toEqual(["cat-heist-portrait"]);
+    expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-heist-portrait")).toMatchObject({ tags: ["portrait"] });
+  });
+
+  it("makes portraits only of characters", () => {
+    expect(() => make.startMake(PROJECT, { op: "image", sheet: "alley", portrait: true })).toThrow("A portrait is of a character; @alley is a place");
   });
 });
 
@@ -514,7 +538,7 @@ describe("stills from services that answer in one request", () => {
     store.updateFile(PROJECT, (d) => void renameCast(d, "cat", "marmalade"));
     expect(make.renameInJobs(PROJECT, "cat", "marmalade")).toBe(1);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ sheet: "marmalade", request: { cast: ["marmalade"] } });
-    expect(make.listJobs(PROJECT)[0]!.request.prompt).toMatch(/^A photographic reference sheet of @marmalade:/);
+    expect(make.listJobs(PROJECT)[0]!.request.prompt).toMatch(/^A photographic reference sheet of @marmalade in three panels/);
     await make.driveJobs(PROJECT);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", sheet: "marmalade", asset: "marmalade-sheet" });
     expect(store.loadFile(PROJECT).doc.cast!.find((m) => m.id === "marmalade")!.images).toEqual(["marmalade-sheet"]);

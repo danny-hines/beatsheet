@@ -22,6 +22,8 @@ export const projectFileUrl = (projectId: string, path: string) => `/media/${pro
 export const stripUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/strip`;
 /** The clip itself, as its small preview copy (the original when there is none). */
 export const proxyUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/proxy`;
+/** A picture at screen size (up to 1920 on its long side), upright. */
+export const imageUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/image`;
 export function shotAsset(shot: Shot): string | undefined {
   const c = shot.content;
   return c.kind === "clip" ? c.asset : c.kind === "generated" ? c.take : undefined;

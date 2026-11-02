@@ -1,13 +1,13 @@
 import { formatTime, slugify, speakerLabel, TRANSCRIBERS, whoSpeaks, type Asset, type Moment, type Rect } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
 import { mark, putSource, sourceClock } from "../editing";
-import { hideBroken, posterUrl, proxyUrl, RANGE_DRAG, runJob, stripUrl, OS, pathParts } from "../lib";
+import { hideBroken, imageUrl, posterUrl, proxyUrl, RANGE_DRAG, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
 import { CleanSound, RestoreClip, useCleanSound } from "./Restore";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { PopMenu, Stars, TextField } from "./ui";
+import { EnlargeIcon, Viewer } from "./Viewer";
 
-const imageUrl = (projectId: string, assetId: string) => `/media/${projectId}/asset/${assetId}/image`;
 const boxStyle = (r: Rect) => ({ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` });
 
 const usesAsset = (s: { content: { kind: string; asset?: string; takes?: string[]; take?: string } }, id: string) =>
@@ -40,6 +40,7 @@ export function AssetView({ a }: { a: Asset }) {
   const [following, setFollowing] = useState<number | null>(null);
   const [followError, setFollowError] = useState("");
   const [hover, setHover] = useState<string | null>(null);
+  const [large, setLarge] = useState(false);
   // Heard as recorded, or through its cleaned sound.
   const [hear, setHear] = useState<"own" | "clean">("clean");
   useCleanSound(video, a.cleaned ? `/media/${projectId}/asset/${a.id}/sound` : undefined, hear === "clean");
@@ -116,9 +117,9 @@ export function AssetView({ a }: { a: Asset }) {
           <div className={`clip-frame ${a.cutout ? "checker" : ""}`} style={{ aspectRatio: Math.max(aspect, 1), background: a.cutout ? undefined : a.color ?? "#111" }}>
             <div
               ref={media}
-              className={`clip-media ${boxing ? "boxing" : ""}`}
+              className={`clip-media ${boxing ? "boxing" : ""} ${isVideo ? "" : "still"}`}
               style={{ aspectRatio: aspect }}
-              onClick={() => !boxing && isVideo && toggle()}
+              onClick={() => !boxing && (isVideo ? toggle() : setLarge(true))}
               onPointerDown={(e) => {
                 if (!boxing) return;
                 (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -156,7 +157,21 @@ export function AssetView({ a }: { a: Asset }) {
               {(drawing?.r ?? drawn) && <div className="subject-box drawing" style={boxStyle((drawing?.r ?? drawn)!)} />}
               {isVideo && !playing && !boxing && <span className="clip-play">▶</span>}
             </div>
+            {!boxing && (
+              <button
+                className="enlarge"
+                onClick={() => {
+                  video.current?.pause();
+                  setLarge(true);
+                }}
+                title="See it large, to zoom in"
+                aria-label="See it large"
+              >
+                <EnlargeIcon />
+              </button>
+            )}
           </div>
+          {large && <Viewer projectId={projectId} items={[{ id: a.id, video: isVideo, caption: a.label ?? a.id }]} at={0} onClose={() => setLarge(false)} />}
           {isVideo && (
             <>
               <Scrubber a={a} t={t} duration={duration} moments={moments} onSeek={seek} projectId={projectId} source={source} />

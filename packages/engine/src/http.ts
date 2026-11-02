@@ -603,6 +603,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           cut: q.get("cut") ?? undefined,
           shot: q.get("shot") ?? undefined,
           sheet: q.get("sheet") ?? undefined,
+          ...(q.get("portrait") === "1" ? { portrait: true } : {}),
           start: q.get("start") ?? undefined,
           ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
           prompt: q.get("prompt") ?? undefined,

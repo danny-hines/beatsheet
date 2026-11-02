@@ -340,6 +340,20 @@ ul.plain li { padding: 2px 0; }
 .modal { width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line-2); border-radius: 12px; padding: 18px; gap: 8px; }
 pre.batch { flex: 1; overflow: auto; background: #0e0f12; border: 1px solid var(--line); border-radius: 8px; padding: 12px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; margin: 0; }
 .modal-actions { display: flex; gap: 8px; }
+
+/* A picture or clip, large (Viewer.tsx): fit to the window, zoomed and dragged, the bar of what to do with it below. */
+.viewer { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: rgba(8, 8, 10, 0.95); }
+.viewer-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; cursor: zoom-in; touch-action: none; }
+.viewer-stage.zoomed { cursor: grab; }
+.viewer-stage.dragging { cursor: grabbing; }
+.viewer-stage img, .viewer-stage video { position: absolute; inset: 16px; width: calc(100% - 32px); height: calc(100% - 32px); object-fit: contain; transform-origin: center; user-select: none; }
+.viewer-step { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 64px; padding: 0; font-size: 28px; line-height: 1; border: none; border-radius: 8px; background: rgba(0, 0, 0, 0.45); color: #fff; opacity: 0.6; }
+.viewer-step:hover { opacity: 1; }
+.viewer-step.prev { left: 12px; }
+.viewer-step.next { right: 12px; }
+.viewer-bar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--panel); border-top: 1px solid var(--line); }
+.viewer-caption { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-zoom { min-width: 48px; }
 .notice { display: flex; gap: 10px; align-items: center; justify-content: space-between; background: #172433; border-bottom: 1px solid #2c4560; color: #b9dcf0; padding: 7px 18px; font-size: 12px; }
 .frame.live { background: #000; cursor: default; }
 .frame-overlay { position: absolute; inset: 0; cursor: crosshair; }
@@ -665,7 +679,7 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 html.desktop .topbar { padding-left: 84px; -webkit-app-region: drag; }
 html.desktop .topbar button, html.desktop .topbar select, html.desktop .topbar .agent-panel, html.desktop .topbar a { -webkit-app-region: no-drag; }
 /* Anything you type in or pick from that opens inside the bar (the cut menu, its rename box, any dialog) isn't part of the handle. */
-html.desktop .topbar input, html.desktop .topbar textarea, html.desktop .topbar label, html.desktop .topbar .cut-panel, html.desktop .topbar .modal-back, html.desktop .modal-back { -webkit-app-region: no-drag; }
+html.desktop .topbar input, html.desktop .topbar textarea, html.desktop .topbar label, html.desktop .topbar .cut-panel, html.desktop .topbar .modal-back, html.desktop .modal-back, html.desktop .viewer { -webkit-app-region: no-drag; }
 html.desktop .home-bar { height: 38px; -webkit-app-region: drag; }
 /* In the Windows app the window keeps Windows' own title bar (and its menu), so nothing here makes room for it. */
 html.desktop.win .topbar { padding-left: 14px; -webkit-app-region: no-drag; }
@@ -678,6 +692,7 @@ html.desktop.win .home-bar, html.desktop.win .setup-screen-bar { height: auto; -
 .clip-frame { position: relative; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; max-height: 360px; }
 .clip-frame.checker { background: repeating-conic-gradient(#2a2d33 0 25%, #1e2026 0 50%) 0 0 / 16px 16px; }
 .clip-media { position: relative; height: 100%; max-width: 100%; cursor: pointer; }
+.clip-media.still { cursor: zoom-in; }
 .clip-media.boxing { cursor: crosshair; touch-action: none; }
 .clip-media video, .clip-media img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .subject-box { position: absolute; border: 1.5px solid rgba(92, 200, 232, 0.85); border-radius: 4px; pointer-events: none; transition: border-color 0.1s; }
@@ -969,8 +984,21 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .cast-pic .take:disabled { opacity: 1; }
 .cast-pic-remove { position: absolute; top: 3px; right: 3px; padding: 0 5px; font-size: 11px; line-height: 16px; border: none; border-radius: 8px; background: rgba(0, 0, 0, 0.65); color: #fff; opacity: 0; }
 .cast-pic:hover .cast-pic-remove, .cast-pic-remove:focus-visible { opacity: 1; }
+.cast-pic.spare img { opacity: 0.4; }
+.cast-pic .take { cursor: zoom-in; }
+.cast-pic.dragging { opacity: 0.4; }
+.cast-pic.drop-before .take { box-shadow: -3px 0 0 var(--accent); }
+.take-wrap { position: relative; flex: none; }
+.enlarge { position: absolute; top: 3px; left: 3px; display: grid; place-items: center; width: 20px; height: 18px; padding: 0; border: none; border-radius: 5px; background: rgba(0, 0, 0, 0.65); color: #fff; opacity: 0; }
+.take-wrap:hover .enlarge, .clip-frame:hover .enlarge, .enlarge:focus-visible { opacity: 1; }
+.clip-frame .enlarge { top: 6px; left: auto; right: 6px; z-index: 2; }
+.cast-pic .take.pending { height: 72px; aspect-ratio: 16 / 9; }
+.cast-view .make-row { flex-wrap: wrap; }
+.cast-view .make-row select:first-child { min-width: 10ch; }
+.sheet-models { display: flex; flex-direction: column; gap: 2px; }
+.variant { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; }
+.variant + .variant { padding-top: 8px; border-top: 1px solid var(--line); }
 .variant-row { display: flex; align-items: center; gap: 6px; }
-.variant-row > :nth-child(2) { flex: 1; min-width: 0; }
 .cast-id { display: flex; align-items: center; min-width: 0; }
 .cast-id input { font-family: var(--mono); font-size: 12px; width: 13ch; padding: 1px 3px; background: transparent; border-color: transparent; }
 .cast-id input:hover, .cast-id input:focus { border-color: var(--line); }

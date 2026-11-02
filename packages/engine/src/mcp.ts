@@ -580,7 +580,16 @@ const makeArgs = {
     .optional()
     .describe("A placeholder or generated shot to make it for: the shot's length, the cut's shape and the shot's description fill in what isn't given, and the takes land on the shot"),
   shots: z.array(z.string()).optional().describe("Several shots at once, the same request for each: a pass of boards, or clips from each one's board (start: \"board\")"),
-  sheet: z.string().optional().describe("A cast member (cat, or cat/heist for a variant) to make a reference sheet for: the stills join its pictures. Without a prompt, clean views of it"),
+  sheet: z
+    .string()
+    .optional()
+    .describe("A cast member (cat, or cat/heist for a variant) to make a reference sheet for: the stills join its pictures. Without a prompt, a character's sheet is a face close-up, the body front (cropped at the neck) and the back"),
+  portrait: z
+    .boolean()
+    .optional()
+    .describe(
+      "With sheet, for a character: a head-and-shoulders portrait instead, made from their own photos when they have some. Make it first when a costume changes the face (a fake beard, a hat, makeup), pick the one that still looks like them, put it after their photo in the pictures, then make the sheet",
+    ),
   prompt: z.string().optional().describe("What to make; default the shot's description. Name cast and sets with @id (@cat, @cat/heist): they're described to the model, and stills are given their pictures. For video, say what moves and how the camera does"),
   cast: z.array(z.string()).optional().describe("Cast and sets in it that the prompt doesn't name"),
   quality: z.enum(["rough", "final"]).optional().describe("For video: rough (default; fast and cheap, to judge the cut) or final (the best model, once the cut holds)"),
@@ -607,6 +616,7 @@ type MakeToolArgs = {
   shot?: string;
   shots?: string[];
   sheet?: string;
+  portrait?: boolean;
   prompt?: string;
   cast?: string[];
   quality?: "rough" | "final";
@@ -618,10 +628,14 @@ type MakeToolArgs = {
   aspect?: string;
   count?: number;
   model?: string;
+  models?: string[];
   via?: string;
 };
-/** One request per shot when there are several, else the one. */
-const asksFor = ({ shots, ...ask }: MakeToolArgs): MakeAsk[] => (shots?.length ? shots.map((shot) => ({ ...ask, shot })) : [ask]);
+/** One request per shot when there are several, else the one; and each of those once per model when there are several. */
+const asksFor = ({ shots, models, ...ask }: MakeToolArgs): MakeAsk[] => {
+  const each = shots?.length ? shots.map((shot) => ({ ...ask, shot })) : [ask];
+  return models?.length ? each.flatMap((a) => models.map((model) => ({ ...a, model }))) : each;
+};
 const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
 const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
 /** What it costs where it runs: nothing extra on a plan, nothing at all on the person's own graphics card. */
@@ -676,13 +690,17 @@ server.registerTool(
       ...makeArgs,
       count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),
       model: z.string().optional().describe("A model id from list_models; default Auto, the first ready one of the quality asked for"),
+      models: z
+        .array(z.string())
+        .optional()
+        .describe("Several model ids from list_models instead of model: the same request made with each, count takes apiece, to compare (a cast member's sheets from two or three still models) and keep the best"),
       via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one place (a plan like "chatgpt" or a key like "openai"); default the cheapest ready one'),
     },
   },
   async ({ project: id, ...args }) => {
     const spendable = turnBudget() - spentThisTurn(id);
     const { plans, usd: total } = startMakeAll(id, asksFor({ ...args, count: args.count ?? 2 }), { spendable });
-    const what = (p: (typeof plans)[number]) => (p.ask.shot ? `shot ${p.ask.shot}` : p.ask.sheet ? `a sheet for @${p.ask.sheet}` : args.op === "image" ? "a still" : "a clip");
+    const what = (p: (typeof plans)[number]) => (p.ask.shot ? `shot ${p.ask.shot}` : p.ask.sheet ? `a ${p.ask.portrait ? "portrait" : "sheet"} for @${p.ask.sheet}` : args.op === "image" ? "a still" : "a clip");
     const lines = plans.map(
       (p) =>
         `- ${p.jobs.length} take${p.jobs.length === 1 ? "" : "s"} of ${what(p)} with ${p.fit.label}: ${[p.fit.seconds && `${p.fit.seconds}s`, p.fit.aspect, costAt(p.fit)].filter(Boolean).join(", ")}. Jobs ${p.jobs.map((j) => j.id).join(", ")}.`,

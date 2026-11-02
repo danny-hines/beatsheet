@@ -87,6 +87,8 @@ export type MakeJob = {
   shot?: string;
   /** The cast member (or variant) it's a sheet for. */
   sheet?: string;
+  /** A portrait of them rather than a sheet. */
+  portrait?: true;
   op: MakeOp;
   quality?: Quality;
   /** The catalog model, and where it runs: the service, its endpoint, and which adapter fills in the inputs. */
@@ -217,6 +219,11 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive">> & {
   shot?: string;
   /** A cast member (or variant: cat/heist) it's a sheet for: the stills join its pictures. */
   sheet?: string;
+  /**
+   * With `sheet`, for a character: a head-and-shoulders portrait instead, from their own photos when they have some.
+   * It settles how the face looks (in a variant's fake beard, hat or makeup) before the sheet is made from it.
+   */
+  portrait?: boolean;
   /** Cast and sets in it beyond the ones the prompt names. */
   cast?: string[];
   /** Asset id of the picture a clip starts from, or "board": the shot's chosen still. */
@@ -235,17 +242,38 @@ export type FullRequest = MakeRequest & { sent: string; cast: string[] };
 /**
  * The prompt a sheet is made from when none is given: clean views of one cast member, to give models later, in its
  * style (its own, else the look's). Without a style, a photograph, said in so many words: "reference sheet" alone
- * gets a drawing, and the boards made from a drawn sheet come out drawn too.
+ * gets a drawing, and the boards made from a drawn sheet come out drawn too. A character's sheet shows the face once:
+ * a close-up, then the body front (cropped at the neck) and back, so a model isn't given several faces to choose
+ * between. A portrait is the face alone, in whatever the character wears on it.
  */
-function sheetPrompt(member: CastMember, id: string, style: string | undefined): string {
+function sheetPrompt(member: CastMember, id: string, style: string | undefined, portrait = false): string {
   if (member.kind === "style") return `A single still that shows the look of @${id}.`;
   if (member.kind === "place")
     return style
       ? `A wide establishing view of @${id}, empty of people, nothing else in the picture and no text or labels, in the style of @${style}.`
       : `A wide establishing photograph of @${id} in even daylight, empty of people, nothing else in the picture and no text or labels.`;
+  if (member.kind === "prop")
+    return style
+      ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
+      : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+  if (portrait)
+    return style
+      ? `A head-and-shoulders portrait of @${id} facing the camera, with anything worn on the head or face, on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
+      : `A photographic head-and-shoulders portrait of @${id} facing the camera, with anything worn on the head or face, on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+  const panels =
+    "in three panels side by side on a plain light gray background: a close-up of the head and face, with anything worn on them; a full-length front view cropped at the neck, so the face shows only once; and a full-length back view";
   return style
-    ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
-    : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+    ? `A reference sheet of @${id} ${panels}. Nothing else in the picture and no text or labels, in the style of @${style}.`
+    : `A photographic reference sheet of @${id} ${panels}. Soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+}
+
+/** A character's or prop's own photos (brought in, recorded, or a still from their footage), not anything made of them. */
+function ownPhotos(project: Project, member: CastMember): string[] {
+  const ids = [...new Set([...(member.images ?? []), ...(member.seen ?? []).map((s) => s.asset)])];
+  return ids.filter((id) => {
+    const a = project.assets.find((x) => x.id === id);
+    return a?.kind === "image" && !a.cutout && ["import", "capture", "recorded", undefined].includes(a.provenance?.source);
+  });
 }
 
 /** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
@@ -257,10 +285,10 @@ function boardOf(project: Project, shot: Shot | undefined): string | undefined {
 
 /**
  * The request in full. A shot fills in its length (for video), the cut's shape and its description; a sheet, a
- * prompt for clean views of its cast member. Cast named with @ are described in what the model reads, and stills are
- * given their pictures (a sheet with no pictures yet, the photos it was made from, and its style's picture when there's
- * room): as many as `pictures`, which is what every still model takes until one is picked. A clip from a board doesn't
- * need them: they're in the board.
+ * prompt for clean views of its cast member, and a portrait one for its face. Cast named with @ are described in what
+ * the model reads, and stills are given their pictures (a sheet with no pictures yet, the photos it was made from; a
+ * portrait, the person's own photos; either, its style's picture when there's room): as many as `pictures`, which is
+ * what every still model takes until one is picked. A clip from a board doesn't need them: they're in the board.
  */
 export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestStillRefs(CATALOG)): FullRequest {
   const { project } = loadProject(projectId, ask.cut);
@@ -269,12 +297,14 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const [castId, variantId] = (ask.sheet ?? "").split("/");
   const member = ask.sheet ? project.cast?.find((m) => m.id === castId) : undefined;
   if (ask.sheet && (!member || (variantId && !member.variants?.some((v) => v.id === variantId)))) throw new Error(`No cast member "${ask.sheet}"`);
+  const portrait = !!member && !!ask.portrait;
+  if (portrait && member.kind !== "character") throw new Error(`A portrait is of a character; @${castId} is a ${member.kind}`);
   const needs = shot ? shotNeeds(project, shot.id) : undefined;
   const format = project.formats[0]!;
   // The style made shots are drawn in; a sheet takes its member's own when it has one, and names it in its prompt.
   const style = (id: string | undefined) => (id && project.cast?.some((m) => m.id === id && m.kind === "style") ? id : undefined);
   const lookStyle = style(project.look?.style);
-  const prompt = (ask.prompt ?? needs?.prompt ?? (member ? sheetPrompt(member, ask.sheet!, style(member.style) ?? lookStyle) : "")).trim();
+  const prompt = (ask.prompt ?? needs?.prompt ?? (member ? sheetPrompt(member, ask.sheet!, style(member.style) ?? lookStyle, portrait) : "")).trim();
   const shotCast = shot?.content.kind === "generated" ? (shot.content.cast ?? []) : [];
   const uses = castOf(prompt, project.cast, [...(ask.cast ?? []), ...shotCast, ...(!member && lookStyle ? [lookStyle] : [])]);
   const start = ask.start === "board" ? boardOf(project, shot) : ask.start;
@@ -284,7 +314,15 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   let refs = ask.refs?.length ? ask.refs : undefined;
   let sent = castPrompt(prompt, uses);
   if (!refs && ask.op === "image") {
-    const photos = member && !member.images?.length ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image") : [];
+    // A sheet with no pictures yet starts from the photos it was made from; a portrait, from the person's own photos
+    // only, never a made picture of them, so the face is theirs.
+    const photos = !member
+      ? []
+      : portrait
+        ? ownPhotos(project, member)
+        : !member.images?.length
+          ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image")
+          : [];
     if (photos.length) {
       // A style's picture goes last, when there's room for it after the photos.
       const styled = style(member!.style) ?? lookStyle;
@@ -310,9 +348,10 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     }
   }
   // A variant's sheet starts from the plain one, which models copy view for view; the difference has to be in all of them.
+  // A variant's portrait starts from photos in other clothes, so it says what's different too.
   const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
-  if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} In every view: ${variant.about}.`;
-  const sheetAspect = member &&(member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
+  if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${portrait ? "In this portrait" : "In every view"}: ${variant.about}.`;
+  const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   return {
     op: ask.op,
     prompt,
@@ -504,6 +543,7 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
         cut: p.ask.cut ?? cut,
         shot: p.ask.shot,
         sheet: p.ask.sheet,
+        ...(p.ask.sheet && p.ask.portrait ? { portrait: true as const } : {}),
         op: p.req.op,
         quality: p.req.op === "video" ? p.req.quality : undefined,
         model: p.fit.model,
@@ -953,9 +993,9 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
   const bars = job.op === "image" ? await unletterbox(file).catch(() => undefined) : undefined;
   const r = job.request;
   return addAsset(projectId, file, {
-    id: job.sheet ? `${job.sheet.replace("/", "-")}-sheet` : `${job.shot ?? job.op}-take`,
+    id: job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
     label: r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt,
-    tags: [job.sheet ? "sheet" : "take"],
+    tags: [job.sheet ? (job.portrait ? "portrait" : "sheet") : "take"],
     provenance: {
       source: "generated",
       provider: job.route,
