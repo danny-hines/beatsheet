@@ -180,8 +180,23 @@ describe("choosing between models", () => {
         // One that follows a clip takes its start picture with the clip, at the one endpoint.
         if (m.takes.drive) expect(r.endpoints.drive, `${m.id} follows a clip on ${r.via}`).toBeTruthy();
         else if (m.takes.start) expect(r.endpoints.start, `${m.id} starts from a picture on ${r.via}`).toBeTruthy();
-        if (m.takes.refs) expect(r.endpoints.refs, `${m.id} takes references on ${r.via}`).toBeTruthy();
+        if (r.takes?.refs ?? m.takes.refs) expect(r.endpoints.refs, `${m.id} takes references on ${r.via}`).toBeTruthy();
       }
+  });
+
+  it("sends an end frame only where the model takes one, and says where that is", () => {
+    const comfy: ServiceState = { label: "ComfyUI", state: "ready" };
+    const ends = { op: "video" as const, prompt: "x", start: "board", end: "last", seconds: 3 };
+    // Wan 2.2 takes one on fal, not on your own card, though the card is free.
+    expect(fitModel(CATALOG.find((m) => m.id === "wan-2.2")!, ends, { fal, comfy })).toMatchObject({ ok: true, route: "fal" });
+    expect(fitModel(CATALOG.find((m) => m.id === "wan-2.2")!, { ...ends, via: "comfy" }, { fal, comfy })).toMatchObject({
+      ok: false,
+      why: { kind: "fit", fix: "drop-end", reason: "Doesn't take an end frame on ComfyUI; it does on fal" },
+    });
+    // MiniMax H3 takes one on either, and its references only on fal.
+    const h3 = CATALOG.find((m) => m.id === "minimax-h3")!;
+    expect(fitModel(h3, ends, { fal, comfy })).toMatchObject({ ok: true, route: "comfy", endpoint: "minimax-h3-i2v", seconds: 5, usd: 0, also: [{ route: "fal", usd: 0.3 }] });
+    expect(fitModel(h3, { op: "video", prompt: "x", refs: ["a", "b"], seconds: 8 }, { fal, comfy })).toMatchObject({ ok: true, route: "fal", endpoint: "minimax/h3/reference-to-video", seconds: 9, usd: 0.54 });
   });
 });
 
@@ -244,10 +259,16 @@ describe("roughs and finals", () => {
     expect(chooseModels(CATALOG, { ...board, quality: "final" }, services).auto).toMatchObject({ model: "kling-3", seconds: 5, usd: 0.56 });
   });
 
-  it("falls back to a rough model when no final can make it, and says why the final can't", () => {
+  it("makes a final from a prompt alone with a final that takes one", () => {
     const c = chooseModels(CATALOG, { op: "video", prompt: "the cat leaves", seconds: 3.2, quality: "final" }, services);
-    expect(c.auto?.model).toBe("kling-2.5-turbo");
+    expect(c.auto).toMatchObject({ model: "minimax-h3-max", seconds: 5, usd: 0.8 });
     expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Nowhere runs Kling 3 Pro with only a prompt" } });
+  });
+
+  it("falls back to a rough model when no final can make it, and says why the final can't", () => {
+    const c = chooseModels(CATALOG, { op: "video", prompt: "@cat leaves", refs: ["cat"], seconds: 3.2, quality: "final" }, services);
+    expect(c.auto?.model).toBe("minimax-h3");
+    expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't take references; a start frame made from them would do" } });
   });
 });
 

@@ -138,13 +138,31 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
         ...(ask.end ? { end_image_url: ask.end } : {}),
         ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
       };
+    case "minimax-h3":
+    case "minimax-h3-max":
+    case "minimax-h3-max-turbo": {
+      // MiniMax H3 and fal's tunings of it: 768p natively (H3 Max refines to 1080p for finals), always with its own
+      // sound. Base H3 counts whole seconds; the tunings take any length. References are "Image 1", "Image 2"… to it.
+      const seconds = ask.seconds ?? 5;
+      const prompt = ask.refs?.length ? `${ask.prompt} ${ask.refs.length === 1 ? "Image 1 is a reference" : `Image 1 to Image ${ask.refs.length} are references`} for who and what is in it.` : ask.prompt;
+      return {
+        prompt,
+        duration: shape === "minimax-h3" ? Math.ceil(seconds - 1e-6) : seconds,
+        resolution: shape === "minimax-h3-max" ? "1080P" : "768P",
+        ...(ask.refs?.length ? { reference_image_urls: ask.refs } : {}),
+        // Starting from a picture, the picture's shape decides.
+        ...(ask.start ? { image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
+        ...(ask.end ? { end_image_url: ask.end } : {}),
+        ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
+      };
+    }
     default:
       throw new Error(`beatsheet has no way to ask fal for "${shape}" models yet`);
   }
 }
 
 /** Whether a family of models takes a seed, so one can be chosen and recorded for each take. */
-export const takesSeed = (shape: string) => shape === "nano-banana" || shape === "wan" || shape === "scail-2";
+export const takesSeed = (shape: string) => ["nano-banana", "wan", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo"].includes(shape);
 
 /** The file a finished request made: the first picture, or the video. */
 export function falOutput(result: Record<string, unknown>): { url: string; contentType?: string; seed?: number } | undefined {

@@ -336,6 +336,38 @@ describe("Wan 2.2 from a board on ComfyUI", () => {
   });
 });
 
+describe("MiniMax H3 from a board on ComfyUI", () => {
+  // Its own job and what was sent for it (a job a test before left queued may be driven alongside).
+  const made = async (ask: Parameters<Make["startMake"]>[1]) => {
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    await make.driveJobs(PROJECT);
+    const job = make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)!;
+    return { fit, job, p: seen.prompts.find((x) => x.prompt_id === job.comfy?.id)?.prompt ?? {}, uploads: seen.uploads.filter((u) => u.startsWith(job.id)) };
+  };
+
+  it("makes at least 5 seconds on its 17k+5 grid at 24 a second, and takes out the end frame it wasn't given", async () => {
+    const { fit, job, p, uploads } = await made({ op: "video", shot: "duel", start: "board", drive: null, model: "minimax-h3", via: "comfy", count: 1 });
+    // The 2-second shot comes out at the model's shortest, at no charge.
+    expect(fit).toMatchObject({ model: "minimax-h3", route: "comfy", endpoint: "minimax-h3-i2v", seconds: 5, usd: 0 });
+    expect(job).toMatchObject({ status: "done", comfy: { profile: "fast", frames: 124, fps: 24 } });
+    expect([p["3"]!.inputs.value, p["4"]!.inputs.value, p["5"]!.inputs.value, p["32"]!.inputs.fps]).toEqual([832, 480, 124, 24]);
+    expect(p["7"]).toBeUndefined();
+    expect(p["20"]!.inputs.last_frame).toBeUndefined();
+    expect(p["20"]!.inputs.first_frame).toEqual(["2", 0]);
+    expect(uploads).toEqual([`${job.id}_ref.png`]);
+  });
+
+  it("ends on the picture it's given", async () => {
+    const { job, p, uploads } = await made({ op: "video", shot: "duel", start: "board", end: "board", drive: null, model: "minimax-h3", via: "comfy", seconds: 6, count: 1 });
+    // 6 seconds with half a second either side, rounded up to the grid.
+    expect(job).toMatchObject({ status: "done", comfy: { frames: 175 } });
+    expect(p["7"]!.inputs.image).toBe(`beatsheet/${job.id}_end.png`);
+    expect(p["20"]!.inputs.last_frame).toEqual(["7", 0]);
+    expect(uploads).toEqual([`${job.id}_ref.png`, `${job.id}_end.png`]);
+    expect(comfy.framesFor(15, 24, 362, { step: 17, offset: 5 })).toBe(362);
+  });
+});
+
 describe("what each machine can run", () => {
   const drive = { op: "video" as const, shot: "duel", start: "board", drive: { asset: "fight", from: 2, to: 4 } };
   const board = { op: "video" as const, shot: "duel", start: "board", drive: null };

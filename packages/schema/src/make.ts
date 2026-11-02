@@ -26,6 +26,8 @@ export type ModelRoute = {
   price: { perImage?: number; perSecond?: number };
   /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
   lengths?: number[] | { min: number; max: number };
+  /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references. */
+  takes?: { end?: boolean; refs?: number };
   /** Roughly how long one take takes here, when that isn't the model's usual. */
   wait?: number;
 };
@@ -247,10 +249,18 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
 
   const shape = shapeOf(req);
   const state = (r: ModelRoute): ServiceState => services[r.via] ?? { label: r.via, state: "missing" };
-  const offered = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
-  if (!offered.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
-  if (!offered.length)
+  const there = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
+  if (!there.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
+  if (!there.length)
     return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : shape === "drive" ? "a clip to follow" : "only a prompt"}` });
+  // A route can take less than the model does elsewhere (no end frame on your own card).
+  const takesHere = (r: ModelRoute) => (!req.end || r.takes?.end !== false) && refs <= (r.takes?.refs ?? maxRefs);
+  const offered = there.filter(takesHere);
+  if (!offered.length) {
+    const elsewhere = [...new Set(model.routes.filter((r) => r.endpoints[shape] && takesHere(r)).map((r) => state(r).label))];
+    const what = req.end && there.every((r) => r.takes?.end === false) ? "an end frame" : "this many references";
+    return no({ kind: "fit", reason: `Doesn't take ${what} on ${list([...new Set(there.map((r) => state(r).label))])}${elsewhere.length ? `; it does on ${list(elsewhere)}` : ""}`, fix: what === "an end frame" ? "drop-end" : "drop-refs" });
+  }
   // A route can make less than the model does elsewhere (a workflow on your own card): its own length there, or why not.
   const timed = offered.map((r): { r: ModelRoute; seconds?: number } | { r: ModelRoute; why: Why } => {
     if (req.op !== "video" || !r.lengths) return { r, seconds };

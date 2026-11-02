@@ -253,7 +253,7 @@ describe("making takes for a shot", () => {
 
   it("refuses what can't be made before sending anything", () => {
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s2", start: "nope" })).toThrow('no asset "nope"');
-    expect(() => make.startMake(PROJECT, { op: "video", prompt: "a long walk", seconds: 12 })).toThrow("Makes up to 10s; this shot is 12s");
+    expect(() => make.startMake(PROJECT, { op: "video", prompt: "a long walk", seconds: 20 })).toThrow(/Makes up to 1[05]s; this shot is 20s/);
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s2", model: "nano-banana" })).toThrow("doesn't make video");
     expect(seen.submits).toHaveLength(0);
   });
@@ -280,6 +280,21 @@ describe("fal's inputs for each kind of model", () => {
     expect(falInput("wan", { prompt: "x", seconds: 4.2, start: "u" })).toMatchObject({ num_frames: 69, aspect_ratio: "auto", image_url: "u" });
     expect(falInput("kling", { prompt: "x", seconds: 10, aspect: "9:16" })).toEqual({ prompt: "x", duration: "10", aspect_ratio: "9:16" });
     expect(() => falInput("sora", { prompt: "x" })).toThrow('no way to ask fal for "sora"');
+  });
+
+  it("asks MiniMax H3 for whole seconds at 768p, H3 Max for 1080p, and names the references for it", async () => {
+    const { falInput, takesSeed } = await import("../src/fal.ts");
+    expect(falInput("minimax-h3", { prompt: "x", seconds: 5.4, start: "u", end: "v", seed: 3 })).toEqual({ prompt: "x", duration: 6, resolution: "768P", image_url: "u", end_image_url: "v", seed: 3 });
+    expect(falInput("minimax-h3-max", { prompt: "x", seconds: 5.4, aspect: "9:16" })).toEqual({ prompt: "x", duration: 5.4, resolution: "1080P", aspect_ratio: "9:16" });
+    expect(falInput("minimax-h3-max-turbo", { prompt: "x", seconds: 7 })).toMatchObject({ duration: 7, resolution: "768P" });
+    expect(falInput("minimax-h3", { prompt: "Two friends fence on a pier.", seconds: 5, aspect: "16:9", refs: ["a", "b"] })).toEqual({
+      prompt: "Two friends fence on a pier. Image 1 to Image 2 are references for who and what is in it.",
+      duration: 5,
+      resolution: "768P",
+      reference_image_urls: ["a", "b"],
+      aspect_ratio: "16:9",
+    });
+    expect(takesSeed("minimax-h3-max")).toBe(true);
   });
 });
 

@@ -1,0 +1,288 @@
+{
+  "1": {
+    "inputs": {
+      "value": "A person moves through the scene, static camera."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "STUDIO_PROMPT"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE"
+    }
+  },
+  "3": {
+    "inputs": {
+      "value": 1344
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_WIDTH"
+    }
+  },
+  "4": {
+    "inputs": {
+      "value": 768
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_HEIGHT"
+    }
+  },
+  "5": {
+    "inputs": {
+      "value": 124
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_FRAMES"
+    }
+  },
+  "6": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_SEED"
+    }
+  },
+  "7": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_END_IMAGE"
+    }
+  },
+  "10": {
+    "inputs": {
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "11": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "12": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Video VAE"
+    }
+  },
+  "13": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Audio VAE"
+    }
+  },
+  "20": {
+    "inputs": {
+      "clip": [
+        "11",
+        0
+      ],
+      "vae": [
+        "12",
+        0
+      ],
+      "prompt": [
+        "1",
+        0
+      ],
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "length": [
+        "5",
+        0
+      ],
+      "first_frame": [
+        "2",
+        0
+      ],
+      "last_frame": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "_meta": {
+      "title": "MiniMaxH3ImageToVideo"
+    }
+  },
+  "21": {
+    "inputs": {
+      "noise_seed": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "22": {
+    "inputs": {
+      "sampler_name": "res_multistep"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "23": {
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "24": {
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "conditioning": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "BasicGuider"
+    }
+  },
+  "25": {
+    "inputs": {
+      "noise": [
+        "21",
+        0
+      ],
+      "guider": [
+        "24",
+        0
+      ],
+      "sampler": [
+        "22",
+        0
+      ],
+      "sigmas": [
+        "23",
+        0
+      ],
+      "latent_image": [
+        "20",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "30": {
+    "inputs": {
+      "samples": [
+        "25",
+        0
+      ],
+      "vae": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "31": {
+    "inputs": {
+      "samples": [
+        "25",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAEDecodeAudio"
+    }
+  },
+  "32": {
+    "inputs": {
+      "images": [
+        "30",
+        0
+      ],
+      "audio": [
+        "31",
+        0
+      ],
+      "fps": 24
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "STUDIO_FPS"
+    }
+  },
+  "33": {
+    "inputs": {
+      "filename_prefix": "video/beatsheet",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "32",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT"
+    }
+  }
+}

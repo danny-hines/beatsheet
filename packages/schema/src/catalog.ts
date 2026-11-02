@@ -99,7 +99,7 @@ export const CATALOG: CatalogModel[] = [
       },
       // The 14B's two halves (fp8) and their 4-step LoRAs, from a board: 81 frames at 16 a second at most (comfy.ts).
       // A 3-second rough (832×480) took 38 seconds on an RTX 4090.
-      { via: "comfy", shape: "wan-i2v", endpoints: { start: "wan22-i2v" }, price: { perSecond: 0 }, lengths: { min: 1.1, max: 5 }, wait: 60 },
+      { via: "comfy", shape: "wan-i2v", endpoints: { start: "wan22-i2v" }, price: { perSecond: 0 }, lengths: { min: 1.1, max: 5 }, wait: 60, takes: { end: false } },
     ],
   },
   {
@@ -118,6 +118,54 @@ export const CATALOG: CatalogModel[] = [
     routes: [{ via: "comfy", shape: "wan-i2v", endpoints: { start: "wan22-ti2v-5b" }, price: { perSecond: 0 } }],
   },
   {
+    id: "minimax-h3-max-turbo",
+    label: "H3 Max Turbo",
+    by: "MiniMax, tuned by fal",
+    note: "The cheapest rough here: fal's quickest tuning of MiniMax H3, from a board or a prompt, 5 to 15 seconds, with its own sound.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true, end: true },
+    lengths: { min: 5, max: 15 },
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    wait: 60,
+    // fal.ai/models/minimax/h3-max-turbo: half of H3 Max's $0.08 a second at 768p (its standard rate from November 16, 2026).
+    routes: [
+      {
+        via: "fal",
+        shape: "minimax-h3-max-turbo",
+        endpoints: { text: "minimax/h3-max-turbo/text-to-video", start: "minimax/h3-max-turbo/image-to-video" },
+        price: { perSecond: 0.04 },
+      },
+    ],
+  },
+  {
+    id: "minimax-h3",
+    label: "MiniMax H3",
+    by: "MiniMax",
+    note: "Open weights: 5 to 15 seconds with its own sound, from a board, a prompt, or up to 9 reference pictures. On fal, or from a board on your own graphics card through ComfyUI.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true, end: true, refs: 9 },
+    lengths: { min: 5, max: 15 },
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    wait: 120,
+    routes: [
+      // fal.ai/models/minimax/h3: $0.06 a second at 768p (made natively; 2K and 4K are upscaled from it). The first 5
+      // reference pictures are free, $0.08 for each after.
+      {
+        via: "fal",
+        shape: "minimax-h3",
+        endpoints: { text: "minimax/h3/text-to-video", start: "minimax/h3/image-to-video", refs: "minimax/h3/reference-to-video" },
+        price: { perSecond: 0.06 },
+      },
+      // The open weights (pruned INT8, with the NVFP4 text encoder) from a board, and an end frame if there is one:
+      // 124 to 362 frames at 24 a second (comfy.ts).
+      { via: "comfy", shape: "minimax-h3", endpoints: { start: "minimax-h3-i2v" }, price: { perSecond: 0 }, takes: { refs: 0 }, wait: 900 },
+    ],
+  },
+  {
     id: "kling-3",
     label: "Kling 3 Pro",
     by: "Kuaishou",
@@ -130,6 +178,28 @@ export const CATALOG: CatalogModel[] = [
     wait: 180,
     // fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video: $0.112 a second with its own sound off. Only from a picture.
     routes: [{ via: "fal", shape: "kling-3", endpoints: { start: "fal-ai/kling-video/v3/pro/image-to-video" }, price: { perSecond: 0.112 } }],
+  },
+  {
+    id: "minimax-h3-max",
+    label: "H3 Max",
+    by: "MiniMax, tuned by fal",
+    note: "MiniMax H3 tuned by fal for following the prompt, the look and the sound, at 1080p: from a board or a prompt, 5 to 15 seconds, with its own sound.",
+    ops: ["video"],
+    tier: "final",
+    takes: { start: true, end: true },
+    lengths: { min: 5, max: 15 },
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    wait: 150,
+    // fal.ai/models/minimax/h3-max: $0.16 a second at 1080p (refined from its 768p), its standard rate from November 16, 2026.
+    routes: [
+      {
+        via: "fal",
+        shape: "minimax-h3-max",
+        endpoints: { text: "minimax/h3-max/text-to-video", start: "minimax/h3-max/image-to-video" },
+        price: { perSecond: 0.16 },
+      },
+    ],
   },
   {
     id: "scail-2",

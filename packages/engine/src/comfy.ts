@@ -1,8 +1,9 @@
 /**
  * ComfyUI, on this computer or another one on the network: workflows beatsheet runs on the person's own hardware
- * (SCAIL-2 and Wan 2.2 Animate, which copy the movement in a clip onto the people in a picture, and Wan 2.2 from a
- * picture alone). A workflow is ComfyUI's API export (File → Export (API)) with the nodes beatsheet fills titled
- * STUDIO_*: the picture, the clip to follow, the seed, the size, the length, the prompt and the output. The ones that
+ * (SCAIL-2 and Wan 2.2 Animate, which copy the movement in a clip onto the people in a picture, and Wan 2.2 and MiniMax
+ * H3 from a picture alone). A workflow is ComfyUI's API export (File → Export (API)) with the nodes beatsheet fills
+ * titled STUDIO_*: the picture (and one to end on), the clip to follow, the seed, the size, the length, the prompt and
+ * the output. A STUDIO_END_IMAGE left empty is taken out, with the inputs it fed. The ones that
  * ship are in packages/engine/comfy; the person's own exports, in the comfy folder beside beatsheet's settings, take
  * their place.
  *
@@ -57,8 +58,11 @@ type Workflow = {
   /** Following a clip: frames in the first chunk, and in each one after. */
   first?: number;
   extend?: number;
-  /** From a picture alone: the most frames it makes (a whole number of fours, plus one). */
+  /** From a picture alone: the most frames it makes, on its grid (default a whole number of fours, plus one). */
   maxFrames?: number;
+  grid?: { step: number; offset: number };
+  /** It makes its own sound, which the take keeps. */
+  sound?: boolean;
   /** What it runs on, the memory that takes on each, and why not on others. */
   needs: { devices: DeviceKind[]; memoryGb: Partial<Record<DeviceKind, number>>; why?: string };
 };
@@ -103,11 +107,24 @@ export const WORKFLOWS: Record<string, Workflow> = {
     maxFrames: 121,
     needs: { devices: ["cuda", "mps"], memoryGb: { cuda: 12, mps: 32 } },
   },
+  // ComfyUI's own nodes (comfy_extras/nodes_minimax_h3.py): 17k+5 frames at 24 a second, trained on 124 to 362.
+  "minimax-h3-i2v": {
+    label: "MiniMax H3",
+    drive: false,
+    area: { full: 768 * 1344, fast: 480 * 832 },
+    multiple: 32,
+    fps: 24,
+    maxFrames: 362,
+    grid: { step: 17, offset: 5 },
+    sound: true,
+    needs: { devices: ["cuda"], memoryGb: { cuda: 24 }, why: "its INT8 and FP4 weights don't run on Apple's chips or a processor" },
+  },
 };
 
 /** Marker title → { node class: the input beatsheet sets }. A marker may sit on several nodes; every one is set. */
 const MARKERS: Record<string, Record<string, string>> = {
   STUDIO_REF_IMAGE: { LoadImage: "image" },
+  STUDIO_END_IMAGE: { LoadImage: "image" },
   STUDIO_DRIVING_VIDEO: { LoadVideo: "file", VHS_LoadVideo: "video" },
   STUDIO_SEED: { PrimitiveInt: "value", KSampler: "seed", SamplerCustom: "noise_seed", RandomNoise: "noise_seed" },
   STUDIO_STEPS: { PrimitiveInt: "value", KSampler: "steps", BasicScheduler: "steps" },
@@ -150,6 +167,11 @@ export const MODEL_FILES: Record<string, Download> = {
   "wan2.1_14B_SCAIL_2_fp8_scaled.safetensors": { url: hf("Comfy-Org/SCAIL-2", "diffusion_models/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors"), bytes: 17694586857, sha256: "11513b4697ecf566de0cb74660c478f301fb6699a62b10369e91a6ed0fd6b083" },
   "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors": { url: hf("Comfy-Org/SCAIL-2", "loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors"), bytes: 1226936552, sha256: "b106522036f64e50f5f8ae3b808973515ff442cc2fac27b65d875eafb95b89e2" },
   "sam3.1_multiplex_fp16.safetensors": { url: hf("Comfy-Org/sam3.1", "checkpoints/sam3.1_multiplex_fp16.safetensors"), bytes: 1745546848, sha256: "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03" },
+  "minimax_h3_fl2va_pruned_int8_convrot.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors"), bytes: 20970379616, sha256: "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a" },
+  "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"), bytes: 15687142551, sha256: "35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6" },
+  "minimax_h3_video_vae_fp16.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "vae/minimax_h3_video_vae_fp16.safetensors"), bytes: 5207808496, sha256: "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522" },
+  "minimax_h3_audio_vae_fp32.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "vae/minimax_h3_audio_vae_fp32.safetensors"), bytes: 605254808, sha256: "8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48" },
+  "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": { url: hf("Comfy-Org/MiniMax-H3", "loras/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"), bytes: 1956193000, sha256: "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e" },
 };
 
 /** Nodes that aren't ComfyUI's own, and the pack that has them (ComfyUI Manager installs a pack by name). */
@@ -206,8 +228,14 @@ export function chunksFor(frames: number, first: number, extend: number): { chun
   return { chunks, capacity: first + extend * (chunks - 1) };
 }
 
-/** Frames a picture-alone workflow makes for `seconds`: a whole number of fours plus one, at least 5, at most `max`. */
-export const framesFor = (seconds: number, fps: number, max: number) => Math.min(max, Math.max(5, Math.round((seconds * fps - 1) / 4) * 4 + 1));
+/**
+ * Frames a picture-alone workflow makes for `seconds`: at least that many, on its grid (a whole number of `step`s plus
+ * `offset`: Wan's fours plus one by default), at most `max`.
+ */
+export function framesFor(seconds: number, fps: number, max: number, grid = { step: 4, offset: 1 }): number {
+  const need = Math.max(grid.offset + grid.step, Math.ceil(seconds * fps - 1e-6));
+  return Math.min(max, grid.offset + Math.ceil((need - grid.offset) / grid.step) * grid.step);
+}
 
 const isLink = (v: unknown) => Array.isArray(v) && v.length === 2 && typeof v[0] === "string";
 const baseOf = (marker: string) => (marker.startsWith("STUDIO_OUTPUT") ? "STUDIO_OUTPUT" : marker);
@@ -226,6 +254,17 @@ export function fill(workflow: ComfyPrompt, values: Record<string, unknown>): Co
       if (isLink(node.inputs[input])) throw new FalError(`The workflow's ${marker} (#${id}) is wired to another node; title the node it comes from instead`, true);
       node.inputs[input] = value;
     }
+  }
+  return prompt;
+}
+
+/** A copy of the workflow without the nodes titled `marker`, and without the inputs they fed (which have to be optional). */
+export function without(workflow: ComfyPrompt, marker: string): ComfyPrompt {
+  const gone = new Set(nodesTitled(workflow, marker));
+  const prompt: ComfyPrompt = {};
+  for (const [id, n] of Object.entries(workflow)) {
+    if (gone.has(id)) continue;
+    prompt[id] = { ...n, inputs: Object.fromEntries(Object.entries(n.inputs).filter(([, v]) => !(isLink(v) && gone.has((v as [string, number])[0])))) };
   }
   return prompt;
 }
@@ -695,9 +734,13 @@ export async function fitClip(src: string, dest: string, from: number, to: numbe
   await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", dest]);
 }
 
-/** The take back to the stretch's own length: padding and the last chunk's overshoot come off the end. */
-export async function trimTake(src: string, dest: string, fps: number, frames: number): Promise<void> {
+/**
+ * The take back to the stretch's own length: padding and the last chunk's overshoot come off the end. Its sound, from
+ * a workflow that makes some, is kept to the same length.
+ */
+export async function trimTake(src: string, dest: string, fps: number, frames: number, sound = false): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
-  await exec("ffmpeg", ["-v", "error", "-y", "-i", src, "-vf", `fps=${fps}`, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", `${dest}.tmp.mp4`]);
+  const audio = sound ? ["-c:a", "aac", "-b:a", "192k", "-t", (frames / fps).toFixed(3)] : ["-an"];
+  await exec("ffmpeg", ["-v", "error", "-y", "-i", src, "-vf", `fps=${fps}`, "-frames:v", String(frames), ...audio, "-c:v", "libx264", "-crf", "16", "-pix_fmt", "yuv420p", "-movflags", "+faststart", `${dest}.tmp.mp4`]);
   renameSync(`${dest}.tmp.mp4`, dest);
 }

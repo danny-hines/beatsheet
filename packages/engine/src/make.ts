@@ -61,6 +61,7 @@ import {
   OWN_WORKFLOWS,
   profileFor,
   trimTake,
+  without,
   workflowPath,
   WORKFLOWS,
   type ComfyPrompt,
@@ -812,11 +813,15 @@ async function stepComfy(projectId: string, job: MakeJob) {
     if (!spec) throw new FalError(`beatsheet doesn't know the ComfyUI workflow "${job.endpoint}"`, true);
     const profile = profileFor(job.endpoint, job.quality);
     if (!profile) throw new FalError(`There's no ${spec.label} workflow here: export one from ComfyUI (File → Export (API)) as ${job.endpoint}.full.api.json into ${OWN_WORKFLOWS}`, true);
-    const workflow = loadWorkflow(workflowPath(job.endpoint, profile)!);
+    const loaded = loadWorkflow(workflowPath(job.endpoint, profile)!);
     const { project, dir } = loadProject(projectId, job.cut);
     const r = job.request;
     const picture = project.assets.find((a) => a.id === r.start);
     if (!picture) throw new FalError("The picture this take was asked from isn't in the project any more", true);
+    const ends = nodesTitled(loaded, "STUDIO_END_IMAGE").length > 0;
+    if (r.end && !ends) throw new FalError(`The ${spec.label} workflow doesn't take an end frame`, true);
+    // Without an end frame, the node that would load one comes out.
+    const workflow = r.end ? loaded : without(loaded, "STUDIO_END_IMAGE");
     const size = fitSize(picture.width ?? 1280, picture.height ?? 720, spec.area[profile], spec.multiple);
     const work = join(dir, ".cache", "comfy", job.id);
     const ref = join(work, "ref.png");
@@ -845,8 +850,15 @@ async function stepComfy(projectId: string, job: MakeJob) {
       values.STUDIO_DRIVING_VIDEO = await comfyUpload(url, drive, `${job.id}_drive.mp4`);
       marker = outputMarker(workflow, chunks);
     } else {
-      frames = framesFor(r.seconds ?? 5, spec.fps, spec.maxFrames!);
+      frames = framesFor(r.seconds ?? 5, spec.fps, spec.maxFrames!, spec.grid);
       values.STUDIO_FRAMES = frames;
+      if (r.end) {
+        const end = project.assets.find((a) => a.id === r.end);
+        if (!end) throw new FalError("The picture this take was asked to end on isn't in the project any more", true);
+        const file = join(work, "end.png");
+        await fitPicture(assetPath(project, dir, end), file, size.width, size.height);
+        values.STUDIO_END_IMAGE = await comfyUpload(url, file, `${job.id}_end.png`);
+      }
     }
     values[marker] = `beatsheet/${job.id}`;
     const prompt = fill(workflow, values);
@@ -877,7 +889,7 @@ async function stepComfy(projectId: string, job: MakeJob) {
   const raw = join(projectDir(projectId), ".cache", "comfy", job.id, "raw.mp4");
   await comfyDownload(c.url, video, raw);
   const file = join(projectDir(projectId), "made", "takes", `${job.id}.mp4`);
-  await trimTake(raw, file, c.fps, c.frames);
+  await trimTake(raw, file, c.fps, c.frames, WORKFLOWS[job.endpoint]?.sound);
   job = updateJob(projectId, job, { file, position: undefined });
   await finish(projectId, job, { file });
 }
