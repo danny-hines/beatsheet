@@ -45,13 +45,16 @@ import {
   comfyJob,
   comfyMissing,
   comfySubmit,
+  comfyState,
   comfyUpload,
   comfyUrl,
   comfyVideo,
+  describeMissing,
   fill,
   fitClip,
   fitPicture,
   fitSize,
+  framesFor,
   loadWorkflow,
   nodesTitled,
   outputMarker,
@@ -193,12 +196,12 @@ function saveJob(projectId: string, job: MakeJob): MakeJob {
  * does a plan the person's agent CLI is signed in on.
  */
 export function serviceStates(): Record<string, ServiceState> {
-  const { services: saved, comfy } = readSettings();
+  const saved = readSettings().services;
   return {
     ...Object.fromEntries(SERVICES.map((s) => [s.id, saved[s.id] ? { label: s.label, state: "ready" } : { label: s.label, state: "missing" }])),
     ...planStates(),
-    // ComfyUI counts as ready once it's connected (in Settings → Making), as a key does; a failed check says why.
-    comfy: !comfy ? { label: "ComfyUI", state: "missing" } : comfy.ok === false ? { label: "ComfyUI", state: "failing", detail: comfy.detail ?? "It didn't answer last time" } : { label: "ComfyUI", state: "ready" },
+    // ComfyUI counts as ready once it's connected (in Settings → Making), as a key does, and says which workflows can't run there and why.
+    comfy: comfyState(),
   };
 }
 
@@ -791,11 +794,11 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
 }
 
 /**
- * A job on ComfyUI (comfy.ts). First the picture and the stretch of the clip are fitted to the size the workflow makes
- * (the picture's shape at about 704×1280), the clip padded out to whole chunks, both sent up and the workflow filled
- * in; the job is saved with its prompt id before the prompt is sent. After that each step asks where it is, and once
- * it's done the take is fetched, trimmed back to the stretch's length and brought in. A ComfyUI that restarted (and so
- * forgot its queue) is sent the saved prompt again.
+ * A job on ComfyUI (comfy.ts). First the picture (and, for a workflow that follows a clip, the stretch of it) is fitted
+ * to the size the workflow makes for this quality (the picture's shape, smaller for a rough), the clip padded out to
+ * whole chunks, sent up and the workflow filled in; the job is saved with its prompt id before the prompt is sent.
+ * After that each step asks where it is, and once it's done the take is fetched, trimmed to its length and brought in.
+ * A ComfyUI that restarted (and so forgot its queue) is sent the saved prompt again.
  */
 async function stepComfy(projectId: string, job: MakeJob) {
   // Canceled since this round of steps began: nothing more to do (cancelJobs stopped it in ComfyUI).
@@ -813,32 +816,42 @@ async function stepComfy(projectId: string, job: MakeJob) {
     const { project, dir } = loadProject(projectId, job.cut);
     const r = job.request;
     const picture = project.assets.find((a) => a.id === r.start);
-    const clip = r.drive && project.assets.find((a) => a.id === r.drive!.asset);
-    if (!picture || !clip) throw new FalError(`The ${picture ? "clip" : "picture"} this take was asked from isn't in the project any more`, true);
-    const win = driveWindow(r.drive!, r.seconds ?? r.drive!.to - r.drive!.from, clip.duration);
-    const frames = Math.max(1, Math.round((win.to - win.from) * spec.fps));
-    const { chunks, capacity } = chunksFor(frames, spec.first, spec.extend);
-    const most = chunksIn(workflow);
-    if (chunks > most) throw new FalError(`The ${spec.label} workflow makes up to ${((spec.first + spec.extend * (most - 1)) / spec.fps).toFixed(1)}s; this is ${(frames / spec.fps).toFixed(1)}s. Split the shot in two`, true);
-    const size = fitSize(picture.width ?? 1280, picture.height ?? 720, spec.area, spec.multiple);
+    if (!picture) throw new FalError("The picture this take was asked from isn't in the project any more", true);
+    const size = fitSize(picture.width ?? 1280, picture.height ?? 720, spec.area[profile], spec.multiple);
     const work = join(dir, ".cache", "comfy", job.id);
     const ref = join(work, "ref.png");
-    const drive = join(work, "drive.mp4");
     await fitPicture(assetPath(project, dir, picture), ref, size.width, size.height);
-    await fitClip(assetPath(project, dir, clip), drive, win.from, win.to, size.width, size.height, spec.fps, capacity);
-    const marker = outputMarker(workflow, chunks);
-    const prompt = fill(workflow, {
+    const values: Record<string, unknown> = {
       STUDIO_REF_IMAGE: await comfyUpload(url, ref, `${job.id}_ref.png`),
-      STUDIO_DRIVING_VIDEO: await comfyUpload(url, drive, `${job.id}_drive.mp4`),
       STUDIO_SEED: r.seed ?? randomInt(2 ** 31),
       STUDIO_WIDTH: size.width,
       STUDIO_HEIGHT: size.height,
       STUDIO_FPS: spec.fps,
       STUDIO_PROMPT: r.sent ?? r.prompt,
-      [marker]: `beatsheet/${job.id}`,
-    });
-    const missing = await comfyMissing(url, prompt);
-    if (missing.length) throw new FalError(`ComfyUI is missing what the ${spec.label} workflow needs: ${missing.join("; ")}`, true);
+    };
+    let frames: number;
+    let marker = "STUDIO_OUTPUT";
+    if (spec.drive) {
+      // The stretch of the clip, at the workflow's rate, held out to whole chunks.
+      const clip = r.drive && project.assets.find((a) => a.id === r.drive!.asset);
+      if (!clip) throw new FalError("The clip this take was asked to follow isn't in the project any more", true);
+      const win = driveWindow(r.drive!, r.seconds ?? r.drive!.to - r.drive!.from, clip.duration);
+      frames = Math.max(1, Math.round((win.to - win.from) * spec.fps));
+      const { chunks, capacity } = chunksFor(frames, spec.first!, spec.extend!);
+      const most = chunksIn(workflow);
+      if (chunks > most) throw new FalError(`The ${spec.label} workflow makes up to ${((spec.first! + spec.extend! * (most - 1)) / spec.fps).toFixed(1)}s; this is ${(frames / spec.fps).toFixed(1)}s. Split the shot in two`, true);
+      const drive = join(work, "drive.mp4");
+      await fitClip(assetPath(project, dir, clip), drive, win.from, win.to, size.width, size.height, spec.fps, capacity);
+      values.STUDIO_DRIVING_VIDEO = await comfyUpload(url, drive, `${job.id}_drive.mp4`);
+      marker = outputMarker(workflow, chunks);
+    } else {
+      frames = framesFor(r.seconds ?? 5, spec.fps, spec.maxFrames!);
+      values.STUDIO_FRAMES = frames;
+    }
+    values[marker] = `beatsheet/${job.id}`;
+    const prompt = fill(workflow, values);
+    const missing = describeMissing(await comfyMissing(url, prompt));
+    if (missing.length) throw new FalError(`ComfyUI is missing what the ${spec.label} workflow needs: ${missing.join("; ")}. Settings → Making can fetch the model files.`, true);
     job = updateJob(projectId, job, { status: "running", comfy: { id: randomUUID(), url, outputs: nodesTitled(prompt, marker), frames, fps: spec.fps, profile, prompt } });
     await comfySubmit(url, prompt, job.comfy!.id, job.comfy!.outputs);
     return;

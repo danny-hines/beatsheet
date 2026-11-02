@@ -50,8 +50,11 @@ export type Settings = {
   transcribe?: { ranking?: string[]; whisperModel?: "fast" | "good" | "best" };
   /** Cleaning sound and restoring picture: the order Auto tries fixers in for each job (ids in FIXERS). */
   restore?: { ranking?: Partial<Record<"clean" | "upscale" | "frames", string[]>> };
-  /** ComfyUI on this computer or the network, for the models that run on the person's own graphics card (comfy.ts), and what checking it said. */
-  comfy?: { url: string; addedAt: string; detail?: string; ok?: boolean };
+  /**
+   * ComfyUI on this computer or the network, for the models that run on the person's own graphics card (comfy.ts), and
+   * what checking it last said: what it runs on, and what each workflow ("scail2-animation.fast") would be missing there.
+   */
+  comfy?: { url: string; addedAt: string; detail?: string; ok?: boolean; device?: { type: string; name: string; memoryGb?: number }; workflows?: Record<string, string[]> };
 };
 
 export function readSettings(): Settings {

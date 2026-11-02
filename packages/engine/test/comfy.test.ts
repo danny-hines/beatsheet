@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,12 +11,42 @@ const root = mkdtempSync(join(tmpdir(), "beatsheet-comfy-"));
 process.env.BEATSHEET_PROJECTS = join(root, "projects");
 process.env.BEATSHEET_HOME = join(root, "home");
 process.env.BEATSHEET_MAKE_POLL_MS = "5";
+// This computer, as far as the engine can tell: the PC with the 4090, unless a test says it's another.
+const PC = JSON.stringify({ type: "cuda", name: "NVIDIA GeForce RTX 4090", memoryGb: 24 });
+process.env.BEATSHEET_MACHINE = PC;
 
-// ComfyUI is connected at the stand-in's address unless a test says it isn't; no keys.
-const settings = vi.hoisted(() => ({ comfy: undefined as undefined | { url: string; addedAt: string } }));
+// ComfyUI is connected at the stand-in's address unless a test says it isn't, with what its last check found; no keys.
+type Connected = { url: string; addedAt: string; ok?: boolean; detail?: string; device?: { type: string; name: string; memoryGb?: number }; workflows?: Record<string, string[]> };
+const settings = vi.hoisted(() => ({ comfy: undefined as undefined | Connected }));
 vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
-  return { ...real, getSecret: async () => undefined, readSettings: () => ({ services: {}, checks: {}, comfy: settings.comfy }) };
+  return {
+    ...real,
+    getSecret: async () => undefined,
+    readSettings: () => ({ services: {}, checks: {}, comfy: settings.comfy }),
+    updateSettings: (fn: (s: { services: object; checks: object; comfy?: Connected }) => void) => {
+      const s = { services: {}, checks: {}, comfy: settings.comfy };
+      fn(s);
+      settings.comfy = s.comfy;
+      return s;
+    },
+  };
+});
+// Fetching a model file writes a stand-in for it, and says what it fetched.
+const fetched = vi.hoisted(() => [] as string[]);
+vi.mock("../src/pyenv.ts", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/pyenv.ts")>();
+  const { mkdirSync, writeFileSync } = await import("node:fs");
+  const { dirname } = await import("node:path");
+  return {
+    ...real,
+    download: async (what: { url: string }, file: string, _signal: AbortSignal, onProgress: (f: number) => void) => {
+      fetched.push(what.url);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, "weights");
+      onProgress(1);
+    },
+  };
 });
 vi.mock("../src/plans.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/plans.ts")>();
@@ -54,16 +84,21 @@ type Seen = { uploads: string[]; prompts: { prompt: Record<string, { class_type:
 let seen: Seen;
 let missing: Set<string>;
 let forget = false;
+let elsewhere = false;
 let server: Server;
 let base = "";
 let made = "";
 const polls = new Map<string, number>();
 
+// Where the stand-in keeps its models, as a ComfyUI on this computer would say.
+const modelsDir = join(root, "ComfyUI", "models");
+
 beforeAll(async () => {
   comfy = await import("../src/comfy.ts");
-  // Every model file the workflow that ships names, so a test can take one away.
-  const shipped = comfy.loadWorkflow(comfy.workflowPath("scail2-animation", "fast")!);
-  const models = [...new Set(Object.values(shipped).flatMap((n) => (/Loader/.test(n.class_type) ? Object.values(n.inputs).filter((v): v is string => typeof v === "string" && v.endsWith(".safetensors")) : [])))];
+  // Every model file the shipped workflows name (so a test can take one away), and their folders here.
+  const folders = ["diffusion_models", "loras", "text_encoders", "clip_vision", "vae", "checkpoints"];
+  const models = () => Object.keys(comfy.MODEL_FILES).filter((m) => !missing.has(m) || folders.some((f) => existsSync(join(modelsDir, f, m))));
+  for (const f of folders) mkdirSync(join(modelsDir, f), { recursive: true });
   made = join(root, "made.mp4");
   ff("-f", "lavfi", "-i", "testsrc2=s=1280x704:r=30", "-frames:v", "160", "-pix_fmt", "yuv420p", made);
 
@@ -80,7 +115,10 @@ beforeAll(async () => {
       if (url === "/system_stats") return send(200, { system: { comfyui_version: "0.39.0" }, devices: [{ name: "cuda:0 NVIDIA GeForce RTX 4090 : cudaMallocAsync", type: "cuda", vram_total: 24 * 2 ** 30 }] });
       const info = url.match(/^\/object_info\/(.+)$/);
       if (info) return send(200, { [decodeURIComponent(info[1]!)]: {} });
-      if (url.startsWith("/models/")) return send(200, models.filter((m) => !missing.has(m)));
+      if (url.startsWith("/models/")) return send(200, models());
+      // Its folders: here, or (as a ComfyUI on another computer would say) somewhere that isn't on this one.
+      if (url === "/internal/folder_paths")
+        return send(200, Object.fromEntries(folders.map((f) => [f, elsewhere ? [`Z:/elsewhere/models/${f}`] : [join(modelsDir, f), join(root, "ComfyUI", "output", f)]])));
       if (url === "/upload/image" && req.method === "POST") {
         const name = /filename="([^"]+)"/.exec(body.toString("latin1"))![1]!;
         seen.uploads.push(name);
@@ -138,7 +176,10 @@ beforeEach(() => {
   seen = { uploads: [], prompts: [], cancels: [] };
   missing = new Set();
   forget = false;
+  elsewhere = false;
   polls.clear();
+  fetched.length = 0;
+  process.env.BEATSHEET_MACHINE = PC;
   settings.comfy = { url: base, addedAt: "2026-11-01" };
   const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
   rmSync(dir, { recursive: true, force: true });
@@ -267,13 +308,115 @@ describe("copying movement from a clip on ComfyUI", () => {
   });
 });
 
+describe("Wan 2.2 from a board on ComfyUI", () => {
+  it("makes a rough at the small size, a whole number of fours plus one frames at 16 a second, with no clip to follow", async () => {
+    const { fit } = make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", drive: null, model: "wan-2.2", via: "comfy", count: 1 });
+    // The 2-second shot with half a second either side: 3 seconds, at no charge.
+    expect(fit).toMatchObject({ model: "wan-2.2", route: "comfy", endpoint: "wan22-i2v", seconds: 3, usd: 0 });
+    await make.driveJobs(PROJECT);
+    const [job] = make.listJobs(PROJECT);
+    expect(job).toMatchObject({ status: "done", comfy: { profile: "fast", frames: 49, fps: 16 } });
+    expect(seen.uploads).toEqual([`${job!.id}_ref.png`]);
+    const p = seen.prompts[0]!.prompt;
+    expect(seen.prompts[0]!.partial_execution_targets).toEqual(["32"]);
+    expect([p["3"]!.inputs.value, p["4"]!.inputs.value, p["5"]!.inputs.value, p["31"]!.inputs.fps]).toEqual([848, 480, 49, 16]);
+    // The 4-step LoRAs make it quick.
+    expect(p["13"]!.inputs.lora_name).toBe("wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors");
+    expect(probe(job!.file!).frames).toBe(49);
+    expect(shot().content).toMatchObject({ take: "duel-take", model: "wan-2.2", provider: "comfy" });
+    expect((shot().content as { drive?: unknown }).drive).toBeUndefined();
+  });
+
+  it("keeps a final to 5 seconds on the card, and makes it at the full size with the full workflow", () => {
+    const { fit } = make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", drive: null, model: "wan-2.2", via: "comfy", quality: "final", seconds: 4.8, count: 1 });
+    expect(fit).toMatchObject({ seconds: 5 });
+    expect(comfy.profileFor("wan22-i2v", "final")).toBe("full");
+    expect(comfy.framesFor(5, 16, 81)).toBe(81);
+    expect(() => make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", drive: null, model: "wan-2.2", via: "comfy", seconds: 7 })).toThrow(/Makes up to 5s; this shot is 7s/);
+  });
+});
+
+describe("what each machine can run", () => {
+  const drive = { op: "video" as const, shot: "duel", start: "board", drive: { asset: "fight", from: 2, to: 4 } };
+  const board = { op: "video" as const, shot: "duel", start: "board", drive: null };
+  const reason = (choices: ReturnType<typeof make.makeChoices>["choices"], model: string) => {
+    const f = [...choices.setup, ...choices.unfit].find((x) => x.model === model);
+    return f && !f.ok ? f.why : undefined;
+  };
+
+  it("on a laptop with no graphics card it could use, says so and points at a ComfyUI on another computer", () => {
+    process.env.BEATSHEET_MACHINE = JSON.stringify({ type: "cpu", name: "Intel(R) UHD Graphics 620" });
+    settings.comfy = undefined;
+    const { choices } = make.makeChoices(PROJECT, drive);
+    expect(reason(choices, "scail-2")).toEqual({
+      kind: "connect",
+      services: ["comfy"],
+      reason:
+        "Runs on ComfyUI. Needs an NVIDIA graphics card (its fp8 weights don't run on Apple's chips or a processor), and this computer has only Intel(R) UHD Graphics 620, no graphics card ComfyUI can use: connect a ComfyUI on a computer that can, by its address (Settings → Making)",
+    });
+  });
+
+  it("connected to a Mac's own ComfyUI, offers the small Wan 2.2 and says the others need an NVIDIA card", () => {
+    settings.comfy = { url: "http://127.0.0.1:8188", addedAt: "2026-11-01", ok: true, device: { type: "mps", name: "Apple M3 Pro", memoryGb: 36 } };
+    const follow = make.makeChoices(PROJECT, drive).choices;
+    expect(follow.auto).toBeUndefined();
+    expect(reason(follow, "scail-2")).toEqual({ kind: "machine", service: "comfy", reason: "Needs an NVIDIA graphics card (its fp8 weights don't run on Apple's chips or a processor), and this computer has Apple M3 Pro" });
+    const fromBoard = make.makeChoices(PROJECT, board).choices;
+    expect(fromBoard.auto?.model).toBe("wan-2.2-5b");
+    // A Mac with too little memory for even that.
+    settings.comfy.device = { type: "mps", name: "Apple M2", memoryGb: 16 };
+    expect(reason(make.makeChoices(PROJECT, board).choices, "wan-2.2-5b")).toMatchObject({ kind: "machine", reason: "Needs about 32 GB of memory, and this computer's Apple M2 has 16 GB" });
+  });
+
+  it("from the Mac, runs everything on the PC's ComfyUI over the network", () => {
+    process.env.BEATSHEET_MACHINE = JSON.stringify({ type: "mps", name: "Apple M3 Pro", memoryGb: 36 });
+    settings.comfy = { url: "http://192.168.1.50:8188", addedAt: "2026-11-01", ok: true, device: { type: "cuda", name: "NVIDIA GeForce RTX 4090", memoryGb: 24 } };
+    expect(make.makeChoices(PROJECT, drive).choices.auto?.model).toBe("scail-2");
+    settings.comfy.device = { type: "cuda", name: "NVIDIA GeForce RTX 3060", memoryGb: 12 };
+    expect(reason(make.makeChoices(PROJECT, drive).choices, "scail-2")).toMatchObject({ kind: "machine", reason: "Needs about 16 GB of graphics memory, and the ComfyUI at 192.168.1.50's NVIDIA GeForce RTX 3060 has 12 GB" });
+  });
+
+  it("says what the connected ComfyUI is missing, and fetches the model files into its own folders when it's on this computer", async () => {
+    for (const f of ["wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"]) missing.add(f);
+    const connected = await comfy.connectComfy(base);
+    expect(connected.local).toBe(true);
+    const fast = connected.workflows.find((w) => w.name === "wan22-i2v" && w.profile === "fast")!;
+    expect(fast.problems).toEqual(["model diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors is missing (14 GB)", "model loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors is missing (1.2 GB)"]);
+    // Neither of Wan 2.2's workflows has all it needs, so it's something to install.
+    expect(reason(make.makeChoices(PROJECT, { ...board, model: undefined, via: "comfy" }).choices, "wan-2.2")).toMatchObject({ kind: "install", service: "comfy" });
+
+    expect(await comfy.installModels(["wan22-i2v"])).toMatchObject({ state: "installing", files: ["wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors", "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"] });
+    for (let i = 0; i < 100 && comfy.installStatus().state === "installing"; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(comfy.installStatus()).toMatchObject({ state: "done" });
+    expect(fetched).toEqual([comfy.MODEL_FILES["wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"]!.url, comfy.MODEL_FILES["wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"]!.url]);
+    expect(existsSync(join(modelsDir, "diffusion_models", "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"))).toBe(true);
+    // Checked again afterwards: it has all it needs now.
+    expect(settings.comfy!.workflows!["wan22-i2v.fast"]).toEqual([]);
+    rmSync(join(modelsDir, "diffusion_models", "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"));
+    rmSync(join(modelsDir, "loras", "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"));
+  });
+
+  it("won't put files in a ComfyUI on another computer", async () => {
+    elsewhere = true;
+    missing.add("wan2.2_vae.safetensors");
+    expect((await comfy.connectComfy(base)).local).toBe(false);
+    expect(await comfy.installModels()).toMatchObject({ state: "error", detail: expect.stringContaining("isn't on this computer") });
+    expect(fetched).toEqual([]);
+  });
+});
+
 describe("ComfyUI workflows", () => {
-  it("ships SCAIL-2's fast and full workflows, each beatsheet can fill, in up to three chunks", () => {
-    for (const profile of comfy.PROFILES) {
-      const w = comfy.loadWorkflow(comfy.workflowPath("scail2-animation", profile)!);
-      expect(comfy.checkWorkflow(w)).toEqual([]);
-      expect(comfy.chunksIn(w)).toBe(3);
+  it("ships each workflow fast and full, each one beatsheet can fill, naming only model files it knows where to get", () => {
+    for (const [name, spec] of Object.entries(comfy.WORKFLOWS)) {
+      for (const profile of comfy.PROFILES) {
+        const w = comfy.loadWorkflow(comfy.workflowPath(name, profile)!);
+        expect(comfy.checkWorkflow(w, spec.drive), `${name}.${profile}`).toEqual([]);
+        const files = Object.values(w).flatMap((n) => (/Loader/.test(n.class_type) ? Object.values(n.inputs).filter((v): v is string => typeof v === "string" && v.endsWith(".safetensors")) : []));
+        expect(files.filter((f) => !comfy.MODEL_FILES[f]), `${name}.${profile}`).toEqual([]);
+      }
     }
+    expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("scail2-animation", "fast")!))).toBe(3);
+    expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("wan-animate-move", "fast")!))).toBe(4);
     expect(comfy.chunksFor(90, 81, 76)).toEqual({ chunks: 2, capacity: 157 });
     expect(comfy.chunksFor(81, 81, 76)).toEqual({ chunks: 1, capacity: 81 });
     expect(comfy.fitSize(640, 480, 704 * 1280, 32)).toEqual({ width: 1088, height: 832 });
@@ -286,13 +429,11 @@ describe("ComfyUI workflows", () => {
     expect(comfy.checkWorkflow(w)).toEqual(expect.arrayContaining(["needs exactly one node titled STUDIO_REF_IMAGE", "needs a SaveVideo titled STUDIO_OUTPUT"]));
   });
 
-  it("connects only a server that runs on a graphics card, and keeps its address without the trailing slash", async () => {
-    const check = await comfy.checkComfy(base);
-    expect(check).toMatchObject({ ok: true, detail: "NVIDIA GeForce RTX 4090 · 24 GB · ComfyUI 0.39.0", gpu: "NVIDIA GeForce RTX 4090" });
-    expect(check.workflows.map((w) => [w.profile, w.problems])).toEqual([
-      ["full", []],
-      ["fast", []],
-    ]);
+  it("connects a server that answers, keeping what it runs on and that it has all each workflow needs", async () => {
+    const check = await comfy.connectComfy(`${base}/`);
+    expect(check).toMatchObject({ ok: true, detail: "NVIDIA GeForce RTX 4090 · 24 GB · ComfyUI 0.39.0", device: { type: "cuda", name: "NVIDIA GeForce RTX 4090", memoryGb: 24 } });
+    expect(check.workflows.filter((w) => w.problems.length || w.machine)).toEqual([]);
+    expect(settings.comfy).toMatchObject({ url: base, ok: true, device: { type: "cuda" }, workflows: { "scail2-animation.fast": [], "wan22-ti2v-5b.full": [] } });
     expect(await comfy.connectComfy("not an address")).toMatchObject({ ok: false, detail: expect.stringContaining("doesn't look like ComfyUI's address") });
   });
 });

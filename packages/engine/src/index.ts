@@ -17,4 +17,4 @@ export { KOKORO_VOICES, kokoroReady, kokoroStatus, type KokoroStatus } from "./k
 export type { MakeAsk, MakeJob } from "./make.ts";
 export type { ModelSize, WhisperStatus } from "./whispercpp.ts";
 export type { ToolId, ToolStatus } from "./fixtools.ts";
-export type { ComfyCheck } from "./comfy.ts";
+export type { ComfyCheck, InstallStatus } from "./comfy.ts";

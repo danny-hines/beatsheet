@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
 import { createHash } from "node:crypto";
 import { makeFrames, makePeaks } from "./media.ts";
-import { checkComfy, COMFY_DEFAULT, comfyUrl, connectComfy, disconnectComfy, OWN_WORKFLOWS, recheckComfy } from "./comfy.ts";
+import { cancelInstall, checkComfy, COMFY_DEFAULT, comfyUrl, connectComfy, disconnectComfy, installModels, installStatus, OWN_WORKFLOWS, recheckComfy } from "./comfy.ts";
 import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } from "./fixtools.ts";
 
 const TOOLS: ToolId[] = ["deepfilter", "realesrgan", "rife"];
@@ -482,7 +482,14 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // ComfyUI, for the models that run on the person's own graphics card: connecting it (checked first, like a key),
     // checking it again, and what each workflow here would need from it.
     if (id === "comfy") {
-      const view = (check: Awaited<ReturnType<typeof checkComfy>>) => ({ connected: readSettings().comfy, check, suggested: COMFY_DEFAULT, folder: OWN_WORKFLOWS });
+      const view = (check: Awaited<ReturnType<typeof checkComfy>>) => ({ connected: readSettings().comfy, check, suggested: COMFY_DEFAULT, folder: OWN_WORKFLOWS, install: installStatus() });
+      // Fetching the model files its workflows are missing into a ComfyUI on this computer, followed by asking again.
+      if (action === "install" && req.method === "POST") return json(res, 202, await installModels((body as { workflows?: string[] }).workflows));
+      if (action === "install" && req.method === "GET") return json(res, 200, installStatus());
+      if (action === "cancel" && req.method === "POST") {
+        cancelInstall();
+        return json(res, 200, installStatus());
+      }
       if (req.method === "GET") return json(res, 200, view(comfyUrl() ? await recheckComfy() : await checkComfy(undefined)));
       if (req.method === "POST") {
         const url = (body as { url?: string }).url;

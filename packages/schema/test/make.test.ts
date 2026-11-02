@@ -509,3 +509,48 @@ describe("copying movement from a clip", () => {
     expect(driveWindow({ ...drive, from: 0, to: 3 }, 4, 3)).toEqual({ from: 0, to: 3, lead: 0 });
   });
 });
+
+describe("models on your own hardware", () => {
+  // Like Wan 2.2: up to 10 seconds on fal, up to 5 on a ComfyUI workflow.
+  const both: CatalogModel = {
+    ...ranged,
+    id: "both",
+    label: "Both",
+    routes: [
+      { via: "fal", shape: "wan", endpoints: { start: "fal/both" }, price: { perSecond: 0.08 } },
+      { via: "comfy", shape: "wan-i2v", endpoints: { start: "both-workflow" }, price: { perSecond: 0 }, lengths: { min: 1.1, max: 5 }, wait: 300 },
+    ],
+  };
+  const comfy = (over: Partial<ServiceState> = {}): ServiceState => ({ label: "ComfyUI", state: "ready", ...over }) as ServiceState;
+  const ask = (seconds: number) => ({ op: "video" as const, prompt: "x", start: "board", seconds });
+
+  it("makes it on your card where it fits there, at no charge, and on the service where only that makes it long enough", () => {
+    expect(fitModel(both, ask(3), { fal, comfy: comfy() })).toMatchObject({ ok: true, route: "comfy", seconds: 4, usd: 0, wait: 300, also: [{ route: "fal", usd: 0.32 }] });
+    expect(fitModel(both, ask(7), { fal, comfy: comfy() })).toMatchObject({ ok: true, route: "fal", seconds: 8 });
+    expect(fitModel(both, ask(7), { comfy: comfy() })).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal"] } });
+    expect(fitModel({ ...both, routes: [both.routes[1]!] }, ask(7), { comfy: comfy() })).toMatchObject({ ok: false, why: { kind: "fit", fix: "split", reason: "Makes up to 5s; this shot is 7s" } });
+  });
+
+  it("says what a connected ComfyUI is missing, or that its machine can't run it, and points a laptop at another computer", () => {
+    const local = { ...both, routes: [both.routes[1]!] };
+    const missing = comfy({ endpoints: { "both-workflow": { kind: "install", reason: "ComfyUI is missing what Both needs: model loras/x.safetensors is missing" } } });
+    expect(fitModel(local, ask(3), { comfy: missing })).toMatchObject({ ok: false, why: { kind: "install", service: "comfy", reason: expect.stringContaining("missing") } });
+    const mac = comfy({ endpoints: { "both-workflow": { kind: "machine", reason: "Needs an NVIDIA graphics card, and this computer has Apple M3 Pro" } } });
+    expect(fitModel(local, ask(3), { comfy: mac })).toMatchObject({ ok: false, why: { kind: "machine", reason: "Needs an NVIDIA graphics card, and this computer has Apple M3 Pro" } });
+    // Not connected, on a laptop that couldn't run it either: still something to set up, by connecting another computer.
+    const laptop: ServiceState = { label: "ComfyUI", state: "missing", endpoints: { "both-workflow": { kind: "machine", reason: "Needs an NVIDIA graphics card, and this computer has only Intel UHD Graphics 620: connect a ComfyUI on a computer that can" } } };
+    expect(fitModel(local, ask(3), { comfy: laptop })).toMatchObject({ ok: false, why: { kind: "connect", reason: "Runs on ComfyUI. Needs an NVIDIA graphics card, and this computer has only Intel UHD Graphics 620: connect a ComfyUI on a computer that can" } });
+    // The service can still make it where the machine can't.
+    expect(fitModel(both, ask(3), { fal, comfy: mac })).toMatchObject({ ok: true, route: "fal" });
+  });
+
+  it("puts what a machine can't run with what can't make the shot, and what's missing with what the person can set up", () => {
+    const mac = comfy({ endpoints: { "scail2-animation": { kind: "machine", reason: "Needs an NVIDIA graphics card" }, "wan22-ti2v-5b": { kind: "install", reason: "ComfyUI is missing what Wan 2.2 5B needs" } } });
+    const drive = chooseModels(CATALOG, { op: "video", prompt: "x", start: "board", drive: { asset: "fight", from: 0, to: 2 }, seconds: 2 }, { comfy: mac });
+    expect(drive.unfit.find((f) => f.model === "scail-2")).toMatchObject({ why: { kind: "machine" } });
+    expect(drive.auto?.model).toBe("wan-2.2-animate");
+    const board = chooseModels(CATALOG, { op: "video", prompt: "x", start: "board", seconds: 3 }, { comfy: mac });
+    expect(board.setup.find((f) => f.model === "wan-2.2-5b")).toMatchObject({ why: { kind: "install" } });
+    expect(board.auto?.model).toBe("wan-2.2");
+  });
+});

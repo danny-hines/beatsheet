@@ -24,6 +24,10 @@ export type ModelRoute = {
   endpoints: Partial<Record<RequestShape, string>>;
   /** In US dollars, from the service's own page. Estimates, not quotes. */
   price: { perImage?: number; perSecond?: number };
+  /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
+  lengths?: number[] | { min: number; max: number };
+  /** Roughly how long one take takes here, when that isn't the model's usual. */
+  wait?: number;
 };
 
 export type CatalogModel = {
@@ -76,13 +80,26 @@ export type MakeRequest = {
   via?: string;
 };
 
-/** Whether a service can be used now. `label` is its name for people ("fal"). */
-export type ServiceState = { label: string } & ({ state: "ready"; balanceUsd?: number } | { state: "missing" } | { state: "failing"; detail: string });
+/**
+ * Whether a service can be used now. `label` is its name for people ("fal"). `endpoints` says why some of its endpoints
+ * can't be used even so: what one is missing (to install), or what the machine it runs on can't do. A service that
+ * isn't connected can say the second too, about this computer (ComfyUI on a laptop with no graphics card it could use).
+ */
+export type ServiceState = { label: string; endpoints?: Record<string, Unusable> } & (
+  | { state: "ready"; balanceUsd?: number }
+  | { state: "missing" }
+  | { state: "failing"; detail: string }
+);
+
+/** Why one endpoint of a service can't be used: something to install first, or a machine that can't run it. */
+export type Unusable = { kind: "install" | "machine"; reason: string };
 
 /** Why a model can't make this request, said so the studio and the agent can show it as it is. */
 export type Why =
   | { kind: "fit"; reason: string; fix?: "split" | "drop-refs" | "drop-end" | "via-start-frame" }
   | { kind: "connect"; reason: string; services: string[] }
+  | { kind: "install"; reason: string; service: string }
+  | { kind: "machine"; reason: string; service: string }
   | { kind: "funds"; reason: string; balanceUsd: number; needUsd: number }
   | { kind: "failing"; reason: string; service: string };
 
@@ -230,13 +247,23 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
 
   const shape = shapeOf(req);
   const state = (r: ModelRoute): ServiceState => services[r.via] ?? { label: r.via, state: "missing" };
-  const routes = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
-  if (!routes.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
-  if (!routes.length)
+  const offered = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
+  if (!offered.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
+  if (!offered.length)
     return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : shape === "drive" ? "a clip to follow" : "only a prompt"}` });
+  // A route can make less than the model does elsewhere (a workflow on your own card): its own length there, or why not.
+  const timed = offered.map((r): { r: ModelRoute; seconds?: number } | { r: ModelRoute; why: Why } => {
+    if (req.op !== "video" || !r.lengths) return { r, seconds };
+    const l = lengthFor({ ...model, lengths: r.lengths }, req.seconds);
+    return "why" in l ? { r, why: l.why } : { r, seconds: l.seconds };
+  });
+  const routes = timed.filter((x): x is { r: ModelRoute; seconds?: number } => !("why" in x));
+  if (!routes.length) return no((timed[0] as { why: Why }).why);
+
+  const unusable = (r: ModelRoute) => state(r).endpoints?.[r.endpoints[shape]!];
   const ready = routes
-    .filter((r) => state(r).state === "ready")
-    .map((r) => ({ r, usd: costOn(r, req.op, seconds, count), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
+    .filter(({ r }) => state(r).state === "ready" && !unusable(r))
+    .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
     .sort((a, b) => (a.usd ?? Infinity) - (b.usd ?? Infinity));
   const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
   if (affordable.length) {
@@ -250,26 +277,39 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
       where: best!.where,
       ...(also.length ? { also } : {}),
       endpoint: best!.r.endpoints[shape]!,
-      seconds,
+      seconds: best!.seconds,
       aspect,
       usd: best!.usd,
-      wait: model.wait,
+      wait: best!.r.wait ?? model.wait,
     };
   }
   if (ready.length) {
     const x = ready[0]!;
     return no({ kind: "funds", reason: `${state(x.r).label} has ${money(x.balance!)}; this is about ${money(x.usd!)}`, balanceUsd: x.balance!, needUsd: x.usd! });
   }
-  const failing = routes.find((r) => state(r).state === "failing");
+  const failing = routes.find(({ r }) => state(r).state === "failing");
   if (failing) {
-    const s = state(failing) as { label: string; detail: string };
-    return no({ kind: "failing", reason: `${s.label}: ${s.detail}`, service: failing.via });
+    const s = state(failing.r) as { label: string; detail: string };
+    return no({ kind: "failing", reason: `${s.label}: ${s.detail}`, service: failing.r.via });
   }
-  const labels = [...new Set(routes.map((r) => state(r).label))];
-  return no({ kind: "connect", reason: `Runs on ${list(labels)}`, services: [...new Set(routes.map((r) => r.via))] });
+  // Connected, but this endpoint can't be used there: something to install first, or a machine that can't run it.
+  const blocked = routes.filter(({ r }) => state(r).state === "ready" && unusable(r));
+  const install = blocked.find(({ r }) => unusable(r)!.kind === "install");
+  if (install) return no({ kind: "install", reason: unusable(install.r)!.reason, service: install.r.via });
+  const missing = routes.filter(({ r }) => state(r).state === "missing");
+  if (missing.length) {
+    // One that isn't connected may say why this computer couldn't run it either, so the person connects another.
+    const hints = [...new Set(missing.flatMap(({ r }) => unusable(r)?.reason ?? []))];
+    const labels = [...new Set(missing.map(({ r }) => state(r).label))];
+    return no({ kind: "connect", reason: [`Runs on ${list(labels)}`, ...hints].join(". "), services: [...new Set(missing.map(({ r }) => r.via))] });
+  }
+  return no({ kind: "machine", reason: unusable(blocked[0]!.r)!.reason, service: blocked[0]!.r.via });
 }
 
-/** The models that make `req.op`, sorted for a picker: ready to use, needing a key, and not fitting this request. */
+/**
+ * The models that make `req.op`, sorted for a picker: ready to use, needing something the person can set up (a key, a
+ * connection, an install), and the ones that can't make this request, or can't run on the machine there is.
+ */
 export type Choices = { auto?: FitOk; ready: FitOk[]; setup: Fit[]; unfit: Fit[] };
 
 /**
@@ -291,8 +331,8 @@ export function chooseModels(catalog: CatalogModel[], req: MakeRequest, services
   return {
     auto: ready[0],
     ready,
-    setup: fits.filter((f) => !f.ok && f.why.kind !== "fit"),
-    unfit: fits.filter((f) => !f.ok && f.why.kind === "fit"),
+    setup: fits.filter((f) => !f.ok && f.why.kind !== "fit" && f.why.kind !== "machine"),
+    unfit: fits.filter((f) => !f.ok && (f.why.kind === "fit" || f.why.kind === "machine")),
   };
 }
 

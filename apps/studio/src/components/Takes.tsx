@@ -305,7 +305,7 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
             ],
       )}
       {!!choices?.setup.length && (
-        <optgroup label="Needs a key or an install">
+        <optgroup label="Needs a key, a connection or an install">
           {choices.setup.map((f) => (
             <option key={f.model} disabled>
               {fitLabel(f)}
@@ -329,8 +329,10 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
 /** When nothing can make it: why not, for each model, and where to add a key (or connect ComfyUI). */
 export function WhyNot({ choices }: { choices?: Choices }) {
   if (!choices || choices.ready.length) return null;
-  const comfy = choices.setup.some((f) => !f.ok && f.why.kind === "connect" && f.why.services.includes("comfy"));
-  const keys = choices.setup.some((f) => !f.ok && !(f.why.kind === "connect" && f.why.services.includes("comfy")));
+  // ComfyUI to connect, or model files to fetch into it, are in Settings → Making; keys are in Media services.
+  const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
+  const comfy = choices.setup.some(onComfy);
+  const keys = choices.setup.some((f) => !onComfy(f));
   return (
     <p className="dim small">
       {[...choices.unfit, ...choices.setup].map((f) => (!f.ok ? `${f.label}: ${f.why.reason}` : "")).join(". ")}.{" "}
@@ -341,7 +343,7 @@ export function WhyNot({ choices }: { choices?: Choices }) {
       )}{" "}
       {comfy && (
         <button className="link small" onClick={() => actions.setSettingsOpen(true, "make")}>
-          Connect ComfyUI
+          ComfyUI settings
         </button>
       )}
     </p>

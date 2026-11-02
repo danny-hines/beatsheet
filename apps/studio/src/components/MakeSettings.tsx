@@ -3,7 +3,7 @@
  * takes alike), what the agent may spend in a turn before it asks, the order Auto tries models in, the plans that
  * make stills without a key, and ComfyUI for the models that run on the person's own graphics card.
  */
-import type { ComfyCheck } from "@beatsheet/engine";
+import type { ComfyCheck, InstallStatus } from "@beatsheet/engine";
 import { CATALOG, type MakeOp, type ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 
@@ -92,11 +92,18 @@ export function MakeSection() {
   );
 }
 
-type Comfy = { connected?: { url: string; addedAt: string; detail?: string; ok?: boolean }; check: ComfyCheck; suggested: string; folder: string };
+type Comfy = { connected?: { url: string; addedAt: string; detail?: string; ok?: boolean }; check: ComfyCheck; suggested: string; folder: string; install: InstallStatus };
+
+const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e10 ? 1 : 0)} GB`;
+
+/** What this computer has for making video itself, in words: its card or chip and memory, or that it has neither. */
+const machineWords = (d: ComfyCheck["here"]) =>
+  d.type === "cuda" ? `${d.name}${d.memoryGb ? `, ${d.memoryGb} GB` : ""}` : d.type === "mps" ? `${d.name}${d.memoryGb ? `, ${d.memoryGb} GB of memory` : ""}` : `${d.name ? `${d.name}: ` : ""}no graphics card ComfyUI can use`;
 
 /**
- * ComfyUI, for the models that run on the person's own graphics card: its address, checked before it's kept, and each
- * workflow beatsheet has with what the server would be missing to run it.
+ * ComfyUI, for the models that run on the person's own hardware: its address, checked before it's kept; what this
+ * computer has, and so whether ComfyUI here could run them or another computer's should; each model's workflows with
+ * what stops them running there; and fetching the model files a ComfyUI on this computer is missing.
  */
 function ComfySection() {
   const [c, setC] = useState<Comfy>();
@@ -113,12 +120,34 @@ function ComfySection() {
         }),
     [],
   );
+  const installing = c?.install.state === "installing";
+  // While files come in, follow along; when they're in, check the server again.
+  useEffect(() => {
+    if (!installing) return;
+    const t = setInterval(
+      () =>
+        void fetch("/api/settings/comfy/install")
+          .then((r) => r.json() as Promise<InstallStatus>)
+          .then((install) => {
+            if (install.state === "installing") setC((x) => x && { ...x, install });
+            else void fetch("/api/settings/comfy").then((r) => r.json() as Promise<Comfy>).then((x) => setC({ ...x, install }));
+          }),
+      1000,
+    );
+    return () => clearInterval(t);
+  }, [installing]);
   if (!c) return null;
-  const call = async (method: string, body?: Record<string, unknown>) => {
+  const call = async (method: string, body?: Record<string, unknown>, path = "") => {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/settings/comfy", { method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      const res = await fetch(`/api/settings/comfy${path}`, { method, headers: { "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+      if (path) {
+        const install = (await res.json()) as InstallStatus;
+        setC({ ...c, install });
+        if (install.state === "error") setError(install.detail);
+        return;
+      }
       const next = (await res.json()) as Comfy;
       setC(next);
       if (body && !next.check.ok) setError(next.check.detail);
@@ -129,11 +158,29 @@ function ComfySection() {
     }
   };
   const on = !!c.connected;
+  // Each model once, with its workflows (fast and full): ready when one has all it needs.
+  const models = [...new Set(c.check.workflows.map((w) => w.name))].map((name) => {
+    const ws = c.check.workflows.filter((w) => w.name === name);
+    const best = [...ws].sort((a, b) => a.problems.length - b.problems.length)[0]!;
+    return { name, label: best.label, own: ws.some((w) => w.own), machine: best.machine, problems: best.problems, ready: ws.some((w) => !w.machine && !w.problems.length) };
+  });
+  // The model files this ComfyUI is missing that beatsheet can fetch, each once, and how much that is.
+  const toFetch = new Map(c.check.workflows.filter((w) => !w.machine).flatMap((w) => (w.fetch ?? []).map((f) => [f.name, f.bytes] as const)));
+  const fetchBytes = [...toFetch.values()].reduce((a, b) => a + b, 0);
+  const nothingHere = !on && c.check.here.type === "cpu";
   return (
     <section>
-      <h4>Your graphics card</h4>
+      <h4>Your own hardware</h4>
       <p className="dim small">
-        SCAIL-2 copies the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board. It runs in ComfyUI on your own graphics card, at no charge.
+        SCAIL-2 and Wan 2.2 Animate copy the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board, and Wan 2.2 makes clips from a board, all in ComfyUI on your own hardware at no charge.
+      </p>
+      <p className="small">
+        This computer: {machineWords(c.check.here)}.{" "}
+        {nothingHere ? (
+          <span className="dim">ComfyUI here couldn't run these. Connect the ComfyUI on a computer that has a graphics card, by its address.</span>
+        ) : c.check.here.type === "mps" ? (
+          <span className="dim">ComfyUI here could run the small Wan 2.2; the rest need an NVIDIA card, so connect the ComfyUI on a PC that has one for those.</span>
+        ) : null}
       </p>
       <div className="make-row">
         <span>ComfyUI at</span>
@@ -165,24 +212,45 @@ function ComfySection() {
         </p>
       )}
       {error && <p className="warn small">{error}</p>}
-      {!!c.check.workflows.length && (
+      {!!models.length && (
         <ul className="make-plans">
-          {c.check.workflows.map((w) => (
-            <li key={`${w.name}.${w.profile}`}>
+          {models.map((m) => (
+            <li key={m.name}>
               <span>
-                {w.label}{" "}
-                <span className="dim small">
-                  · {w.profile === "full" ? "full, for finals" : "fast, for roughs"}
-                  {w.own ? " · your own export" : ""}
-                </span>
+                {m.label}
+                {m.own && <span className="dim small"> · your own workflow</span>}
               </span>
-              <span className={`small ${w.problems.length ? "warn" : on && c.check.ok ? "" : "dim"}`}>{w.problems.length ? w.problems.join("; ") : on && c.check.ok ? "Ready" : "Connect to check"}</span>
+              <span className={`small ${m.ready ? "" : m.machine || !on ? "dim" : "warn"}`}>{m.ready ? (on && c.check.ok ? "Ready" : "") : (m.machine ?? (on ? m.problems.join("; ") : "Connect to check"))}</span>
             </li>
           ))}
         </ul>
       )}
+      {on && c.install.state === "installing" ? (
+        <div className="sam-install">
+          <div className="small">
+            Fetching {c.install.file} ({c.install.files.indexOf(c.install.file) + 1} of {c.install.files.length})…
+          </div>
+          <div className="progress thin">
+            <div style={{ width: `${Math.round(c.install.progress * 100)}%` }} />
+          </div>
+          <button onClick={() => void call("POST", undefined, "/cancel")}>Stop</button>
+        </div>
+      ) : (
+        on &&
+        toFetch.size > 0 && (
+          <div className="make-row">
+            {c.check.local ? (
+              <button className="primary" disabled={busy} onClick={() => void call("POST", {}, "/install")} title={[...toFetch.keys()].join("\n")}>
+                Get the {toFetch.size} missing model file{toFetch.size === 1 ? "" : "s"} · {gb(fetchBytes)}
+              </button>
+            ) : (
+              <span className="dim small">That ComfyUI is on another computer: fetch its missing model files there ({gb(fetchBytes)}).</span>
+            )}
+          </div>
+        )
+      )}
       <p className="dim small">
-        Your own exports from ComfyUI (File → Export (API)) go in {c.folder}, named like scail2-animation.full.api.json, and take the place of the ones beatsheet comes with.
+        ComfyUI on another computer works too: start it with --listen and put its address here (http://192.168.1.50:8188). It has no sign-in of its own, so keep it to your home network. Your own exports from ComfyUI (File → Export (API)) go in {c.folder}, named like scail2-animation.full.api.json, and take the place of the ones beatsheet comes with.
       </p>
     </section>
   );

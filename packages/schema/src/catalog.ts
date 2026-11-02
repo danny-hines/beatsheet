@@ -82,22 +82,40 @@ export const CATALOG: CatalogModel[] = [
     id: "wan-2.2",
     label: "Wan 2.2",
     by: "Alibaba",
-    note: "Open weights, cheaper; any length up to 10 seconds.",
+    note: "Open weights, cheaper; any length up to 10 seconds on fal, or up to 5 from a board on your own graphics card through ComfyUI.",
     ops: ["video"],
     tier: "rough",
     takes: { start: true, end: true },
     lengths: { min: 1.1, max: 10 },
     aspects: ["16:9", "9:16", "1:1"],
     wait: 150,
-    // fal.ai/models/fal-ai/wan/v2.2-a14b: $0.08 a second at 720p, counted at 16 frames a second.
     routes: [
+      // fal.ai/models/fal-ai/wan/v2.2-a14b: $0.08 a second at 720p, counted at 16 frames a second.
       {
         via: "fal",
         shape: "wan",
         endpoints: { text: "fal-ai/wan/v2.2-a14b/text-to-video", start: "fal-ai/wan/v2.2-a14b/image-to-video" },
         price: { perSecond: 0.08 },
       },
+      // The 14B's two halves (fp8) and their 4-step LoRAs, from a board: 81 frames at 16 a second at most (comfy.ts).
+      // A 3-second rough (832×480) took 38 seconds on an RTX 4090.
+      { via: "comfy", shape: "wan-i2v", endpoints: { start: "wan22-i2v" }, price: { perSecond: 0 }, lengths: { min: 1.1, max: 5 }, wait: 60 },
     ],
+  },
+  {
+    id: "wan-2.2-5b",
+    label: "Wan 2.2 5B",
+    by: "Alibaba",
+    note: "The small Wan 2.2, from a board: runs on a Mac's own chip or a smaller graphics card, through ComfyUI. Softer and slower for its size than the 14B.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true },
+    // 121 frames at 24 a second at most.
+    lengths: { min: 1, max: 5 },
+    aspects: ["any"],
+    // A 3-second rough (1248×704, 12 steps) took a minute on an RTX 4090; on a Mac's chip, many times that (not measured).
+    wait: 120,
+    routes: [{ via: "comfy", shape: "wan-i2v", endpoints: { start: "wan22-ti2v-5b" }, price: { perSecond: 0 } }],
   },
   {
     id: "kling-3",
@@ -130,5 +148,20 @@ export const CATALOG: CatalogModel[] = [
     wait: 800,
     // huggingface.co/zai-org/SCAIL-2 (MIT). The endpoint is the workflow's name in the ComfyUI folder (comfy.ts).
     routes: [{ via: "comfy", shape: "scail-2", endpoints: { drive: "scail2-animation" }, price: { perSecond: 0 } }],
+  },
+  {
+    id: "wan-2.2-animate",
+    label: "Wan 2.2 Animate",
+    by: "Alibaba",
+    note: "Copies one person's movement and face from a clip onto the person in a board: good for a solo move or a close-up, and anyone else in the board stays put. Not for two people moving together. On your own graphics card, through ComfyUI.",
+    ops: ["video"],
+    takes: { start: true, drive: true },
+    // 77 frames at 30 a second, then 72 more for each of three extensions: 293 frames, 9.8 seconds.
+    lengths: { min: 1, max: 9.7 },
+    aspects: ["any"],
+    // A 3-second rough (two chunks, the fast workflow at 832×480) took 4 minutes on an RTX 4090.
+    wait: 300,
+    // huggingface.co/Wan-AI/Wan2.2-Animate-14B, in move mode (the person's movement, the board's look).
+    routes: [{ via: "comfy", shape: "wan-animate", endpoints: { drive: "wan-animate-move" }, price: { perSecond: 0 } }],
   },
 ];

@@ -1,21 +1,31 @@
 /**
- * ComfyUI, on this computer or another one on the network: workflows beatsheet runs on the person's own graphics card
- * (SCAIL-2, which copies the movement in a clip onto the people in a picture). A workflow is ComfyUI's API export
- * (File → Export (API)) with the nodes beatsheet fills titled STUDIO_*: the picture, the clip to follow, the seed, the
- * size, the prompt and the output. The ones that ship are in packages/engine/comfy; the person's own exports, in the
- * comfy folder beside beatsheet's settings, take their place.
+ * ComfyUI, on this computer or another one on the network: workflows beatsheet runs on the person's own hardware
+ * (SCAIL-2 and Wan 2.2 Animate, which copy the movement in a clip onto the people in a picture, and Wan 2.2 from a
+ * picture alone). A workflow is ComfyUI's API export (File → Export (API)) with the nodes beatsheet fills titled
+ * STUDIO_*: the picture, the clip to follow, the seed, the size, the length, the prompt and the output. The ones that
+ * ship are in packages/engine/comfy; the person's own exports, in the comfy folder beside beatsheet's settings, take
+ * their place.
+ *
+ * Each workflow says what it needs to run: an NVIDIA card for fp8 weights, or Apple silicon too for the small Wan, and
+ * about how much memory. The ComfyUI that's connected is checked against that (from what it says it runs on) and for
+ * the nodes and model files its workflows name, which beatsheet can fetch into a ComfyUI on this computer. With none
+ * connected, this computer is checked instead, so a laptop that couldn't run any of it says so and points at another.
  *
  * beatsheet makes the prompt id itself and saves it on the job before sending, so a restarted engine follows the same
  * render rather than queueing another, and a restarted ComfyUI (which forgets its queue) is sent the saved prompt
- * again. Written against ComfyUI 0.39's own API: /prompt, /api/jobs, /history, /queue, /view and /upload/image.
+ * again. Written against ComfyUI 0.39's own API: /prompt, /api/jobs, /history, /queue, /view, /upload/image,
+ * /system_stats, /object_info, /models and /internal/folder_paths.
  */
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { cpus, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import type { Quality } from "@beatsheet/schema";
+import type { Quality, ServiceState, Unusable } from "@beatsheet/schema";
 import { FalError } from "./fal.ts";
 import { REPO } from "./paths.ts";
+import { download, type Download } from "./pyenv.ts";
+import { gpu } from "./sam-cuda.ts";
 import { SETTINGS_DIR, readSettings, updateSettings } from "./settings.ts";
 
 const exec = promisify(execFile);
@@ -27,17 +37,73 @@ export const COMFY_DEFAULT = "http://127.0.0.1:8188";
 const BUILT_IN = join(REPO, "packages", "engine", "comfy");
 export const OWN_WORKFLOWS = join(SETTINGS_DIR, "comfy");
 
-/**
- * Each workflow beatsheet knows, by the catalog endpoint that names it: the size it makes (about this many pixels, both
- * sides a multiple of `multiple`), and how its frames go, `first` in the first chunk and `extend` more in each after.
- */
-export const WORKFLOWS: Record<string, { label: string; area: number; multiple: number; first: number; extend: number; fps: number }> = {
-  "scail2-animation": { label: "SCAIL-2", area: 704 * 1280, multiple: 32, first: 81, extend: 76, fps: 30 },
-};
-
 /** full: no distill LoRA and more steps, for finals; fast: a few steps, for roughs. */
 export const PROFILES = ["full", "fast"] as const;
 export type Profile = (typeof PROFILES)[number];
+
+/** What runs a workflow, by ComfyUI's own name for the device: "cuda" (NVIDIA, or AMD on Linux), "mps" (Apple silicon). */
+export type DeviceKind = "cuda" | "mps";
+/** A machine's graphics: the kind ComfyUI calls it ("cpu" when there's none it can use), its name, and its memory. */
+export type Device = { type: string; name: string; memoryGb?: number };
+
+type Workflow = {
+  label: string;
+  /** It follows a clip: the picture and the clip go in, the clip in chunks. Else it's made from a picture alone. */
+  drive: boolean;
+  /** About this many pixels for each profile (roughs smaller, so they're quicker), both sides a multiple of `multiple`. */
+  area: Record<Profile, number>;
+  multiple: number;
+  fps: number;
+  /** Following a clip: frames in the first chunk, and in each one after. */
+  first?: number;
+  extend?: number;
+  /** From a picture alone: the most frames it makes (a whole number of fours, plus one). */
+  maxFrames?: number;
+  /** What it runs on, the memory that takes on each, and why not on others. */
+  needs: { devices: DeviceKind[]; memoryGb: Partial<Record<DeviceKind, number>>; why?: string };
+};
+
+/** Each workflow beatsheet knows, by the catalog endpoint that names it. */
+export const WORKFLOWS: Record<string, Workflow> = {
+  "scail2-animation": {
+    label: "SCAIL-2",
+    drive: true,
+    area: { full: 704 * 1280, fast: 704 * 1280 },
+    multiple: 32,
+    fps: 30,
+    first: 81,
+    extend: 76,
+    needs: { devices: ["cuda"], memoryGb: { cuda: 16 }, why: "its fp8 weights don't run on Apple's chips or a processor" },
+  },
+  "wan-animate-move": {
+    label: "Wan 2.2 Animate",
+    drive: true,
+    area: { full: 720 * 1280, fast: 480 * 832 },
+    multiple: 16,
+    fps: 30,
+    first: 77,
+    extend: 72,
+    needs: { devices: ["cuda"], memoryGb: { cuda: 16 }, why: "its fp8 weights don't run on Apple's chips or a processor" },
+  },
+  "wan22-i2v": {
+    label: "Wan 2.2",
+    drive: false,
+    area: { full: 704 * 1280, fast: 480 * 832 },
+    multiple: 16,
+    fps: 16,
+    maxFrames: 81,
+    needs: { devices: ["cuda"], memoryGb: { cuda: 16 }, why: "its fp8 weights don't run on Apple's chips or a processor" },
+  },
+  "wan22-ti2v-5b": {
+    label: "Wan 2.2 5B",
+    drive: false,
+    area: { full: 704 * 1280, fast: 704 * 1280 },
+    multiple: 32,
+    fps: 24,
+    maxFrames: 121,
+    needs: { devices: ["cuda", "mps"], memoryGb: { cuda: 12, mps: 32 } },
+  },
+};
 
 /** Marker title → { node class: the input beatsheet sets }. A marker may sit on several nodes; every one is set. */
 const MARKERS: Record<string, Record<string, string>> = {
@@ -49,6 +115,7 @@ const MARKERS: Record<string, Record<string, string>> = {
   STUDIO_PROMPT: { PrimitiveStringMultiline: "value", PrimitiveString: "value", CLIPTextEncode: "text" },
   STUDIO_WIDTH: { PrimitiveInt: "value" },
   STUDIO_HEIGHT: { PrimitiveInt: "value" },
+  STUDIO_FRAMES: { PrimitiveInt: "value" },
   STUDIO_FPS: { PrimitiveFloat: "value", PrimitiveInt: "value", CreateVideo: "fps" },
   STUDIO_OUTPUT: { SaveVideo: "filename_prefix", VHS_VideoCombine: "filename_prefix" },
 };
@@ -64,6 +131,30 @@ const LOADER_FOLDERS: Record<string, string> = {
   "CheckpointLoaderSimple.ckpt_name": "checkpoints",
 };
 
+const hf = (repo: string, path: string) => `https://huggingface.co/${repo}/resolve/main/${path}`;
+/** Where each model file the shipped workflows name comes from, its size and its SHA-256 (from Hugging Face's own listing). */
+export const MODEL_FILES: Record<string, Download> = {
+  "umt5_xxl_fp8_e4m3fn_scaled.safetensors": { url: hf("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"), bytes: 6735906897, sha256: "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68" },
+  "clip_vision_h.safetensors": { url: hf("Comfy-Org/Wan_2.1_ComfyUI_repackaged", "split_files/clip_vision/clip_vision_h.safetensors"), bytes: 1264219396, sha256: "64a7ef761bfccbadbaa3da77366aac4185a6c58fa5de5f589b42a65bcc21f161" },
+  "wan_2.1_vae.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan_2.1_vae.safetensors"), bytes: 253815318, sha256: "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b" },
+  "wan2.2_vae.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/vae/wan2.2_vae.safetensors"), bytes: 1409400960, sha256: "e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156" },
+  "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"), bytes: 14294742832, sha256: "6122e79d55e0f235698d11d657f3b196c5273c830da00b2b013c5a048d5e6a42" },
+  "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"), bytes: 14294742832, sha256: "5471a457b6ac404202a5fbe6c11595a3d5641fc766b00f38763f72303fffc21e" },
+  "wan2.2_ti2v_5B_fp16.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors"), bytes: 9999658848, sha256: "456f901338bd9eadbded3828b819109a9b68e8a525ca5cf8d0049a69fcfeca1e" },
+  "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"), bytes: 1226977424, sha256: "d176c808d6fc461999b68e321efcb7501b20b8c3797523ed0df14f7d1deff11e" },
+  "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors": { url: hf("Comfy-Org/Wan_2.2_ComfyUI_Repackaged", "split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"), bytes: 1226977424, sha256: "024f21de095bc8fad9809ded3e9e49a2e170dcf27075da8145ba7d60d8aab7f9" },
+  "Wan2_1_VAE_bf16.safetensors": { url: hf("Kijai/WanVideo_comfy", "Wan2_1_VAE_bf16.safetensors"), bytes: 253806278, sha256: "1ab9a32cc2c740f6e39d80d367ce5dcc28db8c71b79b28670546b8973e9d75f9" },
+  "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors": { url: hf("Kijai/WanVideo_comfy", "Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"), bytes: 738005744, sha256: "85c4a61c30e0497aa44b91d93a893b624708461a56fe5485183b28fa07e2dfb3" },
+  "WanAnimate_relight_lora_fp16.safetensors": { url: hf("Kijai/WanVideo_comfy", "LoRAs/Wan22_relight/WanAnimate_relight_lora_fp16.safetensors"), bytes: 1436672440, sha256: "fc646c74c73f4b251f5fd9bc440ef21b03b27305f499966c68b2b3aa31498561" },
+  "Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors": { url: hf("Kijai/WanVideo_comfy_fp8_scaled", "Wan22Animate/Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors"), bytes: 17317143060, sha256: "b1cd5a67e968e5bb38fcf84dab58f2fb551e0889fd463acb2a657259a70bbbf6" },
+  "wan2.1_14B_SCAIL_2_fp8_scaled.safetensors": { url: hf("Comfy-Org/SCAIL-2", "diffusion_models/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors"), bytes: 17694586857, sha256: "11513b4697ecf566de0cb74660c478f301fb6699a62b10369e91a6ed0fd6b083" },
+  "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors": { url: hf("Comfy-Org/SCAIL-2", "loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors"), bytes: 1226936552, sha256: "b106522036f64e50f5f8ae3b808973515ff442cc2fac27b65d875eafb95b89e2" },
+  "sam3.1_multiplex_fp16.safetensors": { url: hf("Comfy-Org/sam3.1", "checkpoints/sam3.1_multiplex_fp16.safetensors"), bytes: 1745546848, sha256: "9ba99c92703c2e8b4f47de2d34a539bb8e18923049e238b780d70dbe6368eb03" },
+};
+
+/** Nodes that aren't ComfyUI's own, and the pack that has them (ComfyUI Manager installs a pack by name). */
+const NODE_PACKS: Record<string, string> = { DWPreprocessor: "comfyui_controlnet_aux" };
+
 export type ComfyNode = { class_type: string; inputs: Record<string, unknown>; _meta?: { title?: string } };
 export type ComfyPrompt = Record<string, ComfyNode>;
 
@@ -78,10 +169,15 @@ export function workflowPath(name: string, profile: Profile): string | undefined
   return undefined;
 }
 
-/** The profile a take of this quality is made with: fast for roughs and full for finals, else whichever there is. */
+/**
+ * The profile a take of this quality is made with: fast for roughs and full for finals, else whichever there is, and
+ * one the connected ComfyUI has everything for ahead of one it doesn't.
+ */
 export function profileFor(name: string, quality: Quality | undefined): Profile | undefined {
   const order: Profile[] = quality === "final" ? ["full", "fast"] : ["fast", "full"];
-  return order.find((p) => workflowPath(name, p));
+  const there = order.filter((p) => workflowPath(name, p));
+  const problems = readSettings().comfy?.workflows;
+  return there.find((p) => !problems?.[`${name}.${p}`]?.length) ?? there[0];
 }
 
 export function loadWorkflow(file: string): ComfyPrompt {
@@ -110,6 +206,9 @@ export function chunksFor(frames: number, first: number, extend: number): { chun
   return { chunks, capacity: first + extend * (chunks - 1) };
 }
 
+/** Frames a picture-alone workflow makes for `seconds`: a whole number of fours plus one, at least 5, at most `max`. */
+export const framesFor = (seconds: number, fps: number, max: number) => Math.min(max, Math.max(5, Math.round((seconds * fps - 1) / 4) * 4 + 1));
+
 const isLink = (v: unknown) => Array.isArray(v) && v.length === 2 && typeof v[0] === "string";
 const baseOf = (marker: string) => (marker.startsWith("STUDIO_OUTPUT") ? "STUDIO_OUTPUT" : marker);
 
@@ -131,10 +230,11 @@ export function fill(workflow: ComfyPrompt, values: Record<string, unknown>): Co
   return prompt;
 }
 
-/** What's wrong with an exported workflow for beatsheet, if anything. */
-export function checkWorkflow(prompt: ComfyPrompt): string[] {
+/** What's wrong with an exported workflow for beatsheet, if anything: one that follows a clip needs a clip to load. */
+export function checkWorkflow(prompt: ComfyPrompt, drive = true): string[] {
   const problems: string[] = [];
-  for (const marker of ["STUDIO_REF_IMAGE", "STUDIO_DRIVING_VIDEO"]) if (nodesTitled(prompt, marker).length !== 1) problems.push(`needs exactly one node titled ${marker}`);
+  for (const marker of drive ? ["STUDIO_REF_IMAGE", "STUDIO_DRIVING_VIDEO"] : ["STUDIO_REF_IMAGE", "STUDIO_FRAMES"])
+    if (nodesTitled(prompt, marker).length !== 1) problems.push(`needs exactly one node titled ${marker}`);
   if (!Object.values(prompt).some((n) => n._meta?.title?.startsWith("STUDIO_OUTPUT"))) problems.push("needs a SaveVideo titled STUDIO_OUTPUT");
   for (const [id, n] of Object.entries(prompt)) {
     const title = n._meta?.title ?? "";
@@ -146,23 +246,140 @@ export function checkWorkflow(prompt: ComfyPrompt): string[] {
   return problems;
 }
 
+/** What a server is missing for a workflow: node types (with the pack that has them) and model files (with their folder). */
+export type Missing = { nodes: string[]; files: { folder: string; name: string }[] };
+
 /** Node types and model files the server doesn't have. `hasNode` and `files` answer from it; undefined is "couldn't tell". */
-export async function missingOn(prompt: ComfyPrompt, hasNode: (cls: string) => Promise<boolean | undefined>, files: (folder: string) => Promise<Set<string> | undefined>): Promise<string[]> {
-  const problems: string[] = [];
-  for (const cls of [...new Set(Object.values(prompt).map((n) => n.class_type))].sort()) if ((await hasNode(cls)) === false) problems.push(`node type ${cls} isn't installed`);
-  const seen = new Set<string>();
+export async function missingOn(prompt: ComfyPrompt, hasNode: (cls: string) => Promise<boolean | undefined>, files: (folder: string) => Promise<Set<string> | undefined>): Promise<Missing> {
+  const out: Missing = { nodes: [], files: [] };
+  for (const cls of [...new Set(Object.values(prompt).map((n) => n.class_type))].sort()) if ((await hasNode(cls)) === false) out.nodes.push(cls);
   for (const n of Object.values(prompt)) {
     for (const [name, value] of Object.entries(n.inputs)) {
       const folder = LOADER_FOLDERS[`${n.class_type}.${name}`];
-      if (!folder || typeof value !== "string" || seen.has(`${folder}/${value}`)) continue;
-      seen.add(`${folder}/${value}`);
+      if (!folder || typeof value !== "string" || out.files.some((f) => f.folder === folder && f.name === value)) continue;
       const have = await files(folder);
       // Windows lists a model in a subfolder with a backslash; compare them the same way.
-      if (have && !have.has(value.replaceAll("\\", "/"))) problems.push(`model ${folder}/${value} is missing`);
+      if (have && !have.has(value.replaceAll("\\", "/"))) out.files.push({ folder, name: value });
     }
   }
-  return problems;
+  return out;
 }
+
+const gb = (bytes: number) => `${(bytes / 1e9).toFixed(bytes < 1e10 ? 1 : 0)} GB`;
+
+/** What's missing, in words: each node with its pack, and each file with its size where beatsheet knows where to get it. */
+export function describeMissing(m: Missing): string[] {
+  return [
+    ...m.nodes.map((cls) => `node type ${cls} isn't installed${NODE_PACKS[cls] ? ` (it comes with ${NODE_PACKS[cls]}; ComfyUI Manager installs it)` : ""}`),
+    ...m.files.map((f) => `model ${f.folder}/${f.name} is missing${MODEL_FILES[f.name] ? ` (${gb(MODEL_FILES[f.name]!.bytes)})` : ""}`),
+  ];
+}
+
+// ---- Machines.
+
+const DEVICE_WORDS: Record<string, string> = { cuda: "an NVIDIA graphics card", mps: "a Mac with Apple silicon" };
+
+/**
+ * Why a workflow can't run on a device, if it can't: the wrong kind of chip, or too little memory. `where` names the
+ * machine for people: "this computer", "the ComfyUI at 192.168.1.50".
+ */
+export function machineProblem(needs: Workflow["needs"], device: Device, where: string): string | undefined {
+  const kind = device.type as DeviceKind;
+  if (!needs.devices.includes(kind)) {
+    const has = device.type === "cpu" ? `only ${device.name ? `${device.name}, ` : ""}no graphics card ComfyUI can use` : device.name;
+    return `Needs ${needs.devices.map((d) => DEVICE_WORDS[d] ?? d).join(" or ")}${needs.why ? ` (${needs.why})` : ""}, and ${where} has ${has}`;
+  }
+  const min = needs.memoryGb[kind];
+  if (min && device.memoryGb !== undefined && device.memoryGb < min - 0.5)
+    return `Needs about ${min} GB of ${kind === "mps" ? "memory" : "graphics memory"}, and ${where}'s ${device.name} has ${Math.round(device.memoryGb)} GB`;
+  return undefined;
+}
+
+let here: Device | undefined;
+/**
+ * This computer's graphics, asked once: an NVIDIA card (nvidia-smi), Apple silicon (its chip and memory), or neither
+ * (then the graphics there are, by name, so a reason can say what this laptop has). BEATSHEET_MACHINE (JSON) stands in
+ * for it in tests.
+ */
+export function thisDevice(): Device {
+  if (process.env.BEATSHEET_MACHINE) return JSON.parse(process.env.BEATSHEET_MACHINE) as Device;
+  if (here) return here;
+  if (process.platform === "darwin")
+    return (here = process.arch === "arm64" ? { type: "mps", name: cpus()[0]?.model ?? "Apple silicon", memoryGb: Math.round(totalmem() / 2 ** 30) } : { type: "cpu", name: "an Intel Mac" });
+  const nvidia = process.platform === "win32" ? gpu().gpu : linuxNvidia();
+  if (nvidia) return (here = { type: "cuda", name: nvidia.name, memoryGb: Math.round(nvidia.memoryMb / 1024) });
+  return (here = { type: "cpu", name: graphicsName() ?? "" });
+}
+
+function linuxNvidia(): { name: string; memoryMb: number } | undefined {
+  try {
+    const [name, mem] = execFileSync("nvidia-smi", ["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"], { timeout: 8000 }).toString().split(/\r?\n/)[0]!.split(",").map((x) => x.trim());
+    return name ? { name, memoryMb: Number(mem) } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The graphics a Windows PC without an NVIDIA card has (Intel UHD Graphics 620), for saying what it is. */
+function graphicsName(): string | undefined {
+  if (process.platform !== "win32") return undefined;
+  try {
+    const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(Get-CimInstance Win32_VideoController).Name"], { timeout: 10_000, windowsHide: true }).toString();
+    return out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)[0];
+  } catch {
+    return undefined;
+  }
+}
+
+// ---- What can run where, for the fit check.
+
+/**
+ * ComfyUI as the fit check sees it: ready once it's connected (as a key is), failing when the last check failed, and
+ * for each workflow that can't be used there, why: what it's missing (to install) or what its machine can't do. With
+ * none connected, the workflows this computer couldn't run either say so, so the person connects one that can.
+ */
+export function comfyState(): ServiceState {
+  const c = readSettings().comfy;
+  const endpoints: Record<string, Unusable> = {};
+  for (const [name, spec] of Object.entries(WORKFLOWS)) {
+    const u = c ? unusableOn(name, spec, c) : unusableHere(spec);
+    if (u) endpoints[name] = u;
+  }
+  const label = "ComfyUI";
+  if (!c) return { label, state: "missing", endpoints };
+  if (c.ok === false) return { label, state: "failing", detail: c.detail ?? "It didn't answer last time", endpoints };
+  return { label, state: "ready", endpoints };
+}
+
+type Connected = NonNullable<ReturnType<typeof readSettings>["comfy"]>;
+
+function unusableOn(name: string, spec: Workflow, c: Connected): Unusable | undefined {
+  if (c.device) {
+    const machine = machineProblem(spec.needs, c.device, whereIs(c.url));
+    if (machine) return { kind: "machine", reason: machine };
+  }
+  const profiles = PROFILES.filter((p) => workflowPath(name, p));
+  if (!profiles.length) return { kind: "install", reason: `There's no ${spec.label} workflow here: export one from ComfyUI (File → Export (API)) as ${name}.full.api.json into ${OWN_WORKFLOWS}` };
+  const problems = profiles.map((p) => c.workflows?.[`${name}.${p}`] ?? []);
+  if (problems.some((x) => !x.length)) return undefined;
+  const fewest = problems.sort((a, b) => a.length - b.length)[0]!;
+  return { kind: "install", reason: `ComfyUI is missing what ${spec.label} needs: ${fewest.join("; ")} (Settings → Making)` };
+}
+
+function unusableHere(spec: Workflow): Unusable | undefined {
+  const problem = machineProblem(spec.needs, thisDevice(), "this computer");
+  return problem ? { kind: "machine", reason: `${problem}: connect a ComfyUI on a computer that can, by its address (Settings → Making)` } : undefined;
+}
+
+/** The machine a ComfyUI runs on, for people: "this computer", or "the ComfyUI at 192.168.1.50". */
+const whereIs = (url: string) => {
+  try {
+    const h = new URL(url).hostname;
+    return h === "127.0.0.1" || h === "localhost" || h === "[::1]" ? "this computer" : `the ComfyUI at ${h}`;
+  } catch {
+    return `the ComfyUI at ${url}`;
+  }
+};
 
 // ---- The server.
 
@@ -183,22 +400,24 @@ async function json<T>(base: string, path: string, init?: RequestInit & { timeou
   return (await res.json()) as T;
 }
 
-export type ComfyHealth = { ok: boolean; detail: string; gpu?: string; vramGb?: number; version?: string };
+export type ComfyHealth = { ok: boolean; detail: string; device?: Device; version?: string };
 
-/** What it runs on: a graphics card (and which), or only the processor, which SCAIL-2 can't use. */
+/** What it runs on (and so what it can run), and whether it answers at all. */
 export async function comfyHealth(base: string): Promise<ComfyHealth> {
-  const j = await json<{ system?: { comfyui_version?: string }; devices?: { name?: string; type?: string; vram_total?: number }[] }>(base, "/system_stats", { timeout: 5000 });
+  const j = await json<{ system?: { comfyui_version?: string; ram_total?: number }; devices?: { name?: string; type?: string; vram_total?: number }[] }>(base, "/system_stats", { timeout: 5000 });
   const dev = j.devices?.[0];
-  const gpu = (dev?.name ?? "").replace(/^cuda:\d+\s*/, "").split(" : ")[0]!.trim();
-  const vramGb = dev?.vram_total ? Math.round((dev.vram_total / 2 ** 30) * 10) / 10 : undefined;
+  const type = dev?.type ?? "cpu";
+  const name = (dev?.name ?? "").replace(/^\w+:\d+\s*/, "").split(" : ")[0]!.trim() || (type === "mps" ? "Apple silicon" : type);
+  // On a Mac the graphics share the computer's memory, which is what ComfyUI says for it.
+  const bytes = type === "mps" ? (j.system?.ram_total ?? dev?.vram_total) : dev?.vram_total;
+  const device: Device = { type, name, ...(bytes ? { memoryGb: Math.round((bytes / 2 ** 30) * 10) / 10 } : {}) };
   const version = j.system?.comfyui_version;
-  const parts = [gpu, vramGb && `${vramGb} GB`, version && `ComfyUI ${version}`].filter(Boolean).join(" · ");
-  if (dev?.type !== "cuda") return { ok: false, detail: `ComfyUI is running on the processor, not a graphics card${parts ? ` (${parts})` : ""}`, gpu, vramGb, version };
-  return { ok: true, detail: parts, gpu, vramGb, version };
+  const detail = [device.name, device.memoryGb && `${Math.round(device.memoryGb)} GB`, version && `ComfyUI ${version}`].filter(Boolean).join(" · ");
+  return { ok: true, detail, device, version };
 }
 
 /** What the server is missing for a filled workflow, checked before sending so a missing model reads as that. */
-export async function comfyMissing(base: string, prompt: ComfyPrompt): Promise<string[]> {
+export async function comfyMissing(base: string, prompt: ComfyPrompt): Promise<Missing> {
   const listed = new Map<string, Promise<Set<string> | undefined>>();
   return missingOn(
     prompt,
@@ -294,47 +513,159 @@ export async function comfyDownload(base: string, file: SavedFile, dest: string)
 
 // ---- Checking the server against the workflows, for Settings.
 
-export type ComfyCheck = ComfyHealth & { workflows: { name: string; label: string; profile: Profile; own: boolean; problems: string[] }[] };
+export type ComfyCheck = ComfyHealth & {
+  /** Each workflow there is, with what stops it running there, and the missing model files beatsheet could fetch (and their size). */
+  workflows: { name: string; label: string; profile: Profile; own: boolean; problems: string[]; machine?: string; missing?: Missing; fetch?: { name: string; bytes: number }[] }[];
+  /** This computer's graphics, and whether model files can be fetched into the connected ComfyUI from here. */
+  here: Device;
+  local: boolean;
+};
 
-/** The workflows there are here, each with what the server would be missing to run it (when it can be asked). */
+/** The workflows there are here, each with what would stop it running on the server (when it can be asked). */
 export async function checkComfy(base: string | undefined): Promise<ComfyCheck> {
-  const health = base ? await comfyHealth(base).catch((err: unknown) => ({ ok: false, detail: err instanceof Error ? err.message : String(err) })) : { ok: false, detail: "Not connected" };
+  const health: ComfyHealth = base ? await comfyHealth(base).catch((err: unknown) => ({ ok: false, detail: err instanceof Error ? err.message : String(err) })) : { ok: false, detail: "Not connected" };
   const workflows: ComfyCheck["workflows"] = [];
   for (const [name, spec] of Object.entries(WORKFLOWS)) {
     for (const profile of PROFILES) {
       const file = workflowPath(name, profile);
       if (!file) continue;
+      const device = health.device ?? (base ? undefined : thisDevice());
+      const machine = device ? machineProblem(spec.needs, device, health.device ? whereIs(base!) : "this computer") : undefined;
       let problems: string[];
+      let missing: Missing | undefined;
       try {
         const w = loadWorkflow(file);
-        problems = checkWorkflow(w);
-        if (!problems.length && base && health.ok) problems = await comfyMissing(base, w);
+        problems = checkWorkflow(w, spec.drive);
+        if (!problems.length && base && health.ok && !machine) {
+          missing = await comfyMissing(base, w);
+          problems = describeMissing(missing);
+        }
       } catch (err) {
         problems = [err instanceof Error ? err.message : String(err)];
       }
-      workflows.push({ name, label: spec.label, profile, own: file.startsWith(OWN_WORKFLOWS), problems });
+      const fetch = (missing?.files ?? []).flatMap((f) => (MODEL_FILES[f.name] ? [{ name: f.name, bytes: MODEL_FILES[f.name]!.bytes }] : []));
+      workflows.push({ name, label: spec.label, profile, own: file.startsWith(OWN_WORKFLOWS), problems, ...(machine ? { machine } : {}), ...(missing ? { missing } : {}), ...(fetch.length ? { fetch } : {}) });
     }
   }
-  return { ...health, workflows };
+  return { ...health, workflows, here: thisDevice(), local: base ? (await foldersHere(base)) !== undefined : false };
 }
 
-/** Checks a server and, only if it answers from a graphics card, keeps its address. */
+/** Keeps what a check found, so the fit check can say what can run there without asking the server each time. */
+function remember(base: string, check: ComfyCheck, connecting: boolean) {
+  updateSettings((s) => {
+    if (!connecting && !s.comfy) return;
+    s.comfy = {
+      url: base,
+      addedAt: s.comfy?.addedAt ?? new Date().toISOString(),
+      detail: check.detail,
+      ok: check.ok,
+      ...(check.device ? { device: check.device } : s.comfy?.device ? { device: s.comfy.device } : {}),
+      workflows: Object.fromEntries(check.workflows.map((w) => [`${w.name}.${w.profile}`, w.problems])),
+    };
+  });
+}
+
+/** Checks a server and, only if it answers, keeps its address and what it can run. */
 export async function connectComfy(url: string): Promise<ComfyCheck> {
   const base = url.trim().replace(/\/+$/, "");
-  if (!/^https?:\/\/[^\s/]+$/.test(base)) return { ok: false, detail: `That doesn't look like ComfyUI's address (${COMFY_DEFAULT})`, workflows: [] };
+  if (!/^https?:\/\/[^\s/]+$/.test(base)) return { ok: false, detail: `That doesn't look like ComfyUI's address (${COMFY_DEFAULT})`, workflows: [], here: thisDevice(), local: false };
   const check = await checkComfy(base);
-  if (check.ok) updateSettings((s) => void (s.comfy = { url: base, addedAt: new Date().toISOString(), detail: check.detail, ok: true }));
+  if (check.ok) remember(base, check, true);
   return check;
 }
 
 /** Checks the connected server again, and keeps what it said. */
 export async function recheckComfy(): Promise<ComfyCheck> {
-  const check = await checkComfy(comfyUrl());
-  updateSettings((s) => s.comfy && Object.assign(s.comfy, { detail: check.detail, ok: check.ok }));
+  const base = comfyUrl();
+  const check = await checkComfy(base);
+  if (base) remember(base, check, false);
   return check;
 }
 
 export const disconnectComfy = () => updateSettings((s) => void delete s.comfy);
+
+// ---- Fetching what a workflow is missing into a ComfyUI on this computer.
+
+/**
+ * Where a ComfyUI keeps each kind of model, when that's on this computer (its own answer, checked against the disk), so
+ * beatsheet can put files there. Undefined for one on another machine.
+ */
+async function foldersHere(base: string): Promise<Record<string, string> | undefined> {
+  try {
+    const res = await call(base, "/internal/folder_paths", { timeout: 5000 });
+    if (!res.ok) return undefined;
+    const paths = (await res.json()) as Record<string, string | string[] | [string[], unknown]>;
+    const out: Record<string, string> = {};
+    for (const [folder, v] of Object.entries(paths)) {
+      const list = (Array.isArray(v) ? (Array.isArray(v[0]) ? v[0] : v) : [v]) as string[];
+      // models/<folder> where there is one (diffusion_models also answers to models/unet), else the first.
+      const pick = list.find((p) => typeof p === "string" && p.replaceAll("\\", "/").endsWith(`models/${folder}`)) ?? list.find((p) => typeof p === "string" && !/[\\/]output[\\/]/.test(p));
+      if (pick && existsSync(pick)) out[folder] = pick;
+    }
+    return Object.keys(out).length ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export type InstallStatus =
+  | { state: "idle" }
+  | { state: "installing"; files: string[]; file: string; done: number; bytes: number; progress: number }
+  | { state: "done"; files: string[] }
+  | { state: "error"; detail: string };
+
+let install: InstallStatus = { state: "idle" };
+let stop: AbortController | undefined;
+export const installStatus = () => install;
+export const cancelInstall = () => stop?.abort();
+
+/**
+ * Fetches the model files the connected ComfyUI is missing for these workflows (all of them by default) into its own
+ * folders, when it's on this computer: each checked against its SHA-256, resuming where a stopped one left off. Node
+ * packs aren't fetched (they need ComfyUI restarted, which ComfyUI Manager does). Returns at once; installStatus says
+ * how it's going.
+ */
+export async function installModels(names = Object.keys(WORKFLOWS)): Promise<InstallStatus> {
+  if (install.state === "installing") return install;
+  const base = comfyUrl();
+  if (!base) return (install = { state: "error", detail: "Connect ComfyUI first" });
+  const folders = await foldersHere(base);
+  if (!folders) return (install = { state: "error", detail: "That ComfyUI isn't on this computer, so beatsheet can't put files in its folders. Fetch them on that computer." });
+  const check = await checkComfy(base);
+  const want = new Map<string, { folder: string; name: string }>();
+  for (const w of check.workflows) if (names.includes(w.name) && !w.machine) for (const f of w.missing?.files ?? []) want.set(f.name, f);
+  const unknown = [...want.values()].filter((f) => !MODEL_FILES[f.name]);
+  if (unknown.length) return (install = { state: "error", detail: `beatsheet doesn't know where to get ${unknown.map((f) => f.name).join(", ")}` });
+  const noFolder = [...want.values()].filter((f) => !folders[f.folder]);
+  if (noFolder.length) return (install = { state: "error", detail: `ComfyUI didn't say where its ${[...new Set(noFolder.map((f) => f.folder))].join(", ")} folder is` });
+  const files = [...want.values()];
+  if (!files.length) return (install = { state: "done", files: [] });
+  const total = files.reduce((n, f) => n + MODEL_FILES[f.name]!.bytes, 0);
+  stop = new AbortController();
+  const signal = stop.signal;
+  install = { state: "installing", files: files.map((f) => f.name), file: files[0]!.name, done: 0, bytes: total, progress: 0 };
+  void (async () => {
+    let done = 0;
+    try {
+      for (const f of files) {
+        const what = MODEL_FILES[f.name]!;
+        install = { state: "installing", files: files.map((x) => x.name), file: f.name, done, bytes: total, progress: done / total };
+        await download(what, join(folders[f.folder]!, f.name), signal, (p) => {
+          if (install.state === "installing") install = { ...install, progress: (done + p * what.bytes) / total };
+        });
+        done += what.bytes;
+      }
+      // Done once the server's been asked again, so what's shown (and what the fit check knows) says so too.
+      await recheckComfy();
+      install = { state: "done", files: files.map((f) => f.name) };
+    } catch (err) {
+      install = { state: "error", detail: signal.aborted ? "Stopped. Start it again to carry on from where it was." : err instanceof Error ? err.message : String(err) };
+    } finally {
+      stop = undefined;
+    }
+  })();
+  return install;
+}
 
 // ---- Fitting what goes in, and trimming what comes out.
 

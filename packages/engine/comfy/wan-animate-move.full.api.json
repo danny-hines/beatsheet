@@ -1,0 +1,995 @@
+{
+  "1": {
+    "inputs": {
+      "text": "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "2": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "3": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "4": {
+    "inputs": {
+      "clip_name": "clip_vision_h.safetensors"
+    },
+    "class_type": "CLIPVisionLoader",
+    "_meta": {
+      "title": "Load CLIP Vision"
+    }
+  },
+  "9": {
+    "inputs": {
+      "crop": "none",
+      "clip_vision": [
+        "4",
+        0
+      ],
+      "image": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "CLIPVisionEncode",
+    "_meta": {
+      "title": "CLIP Vision Encode"
+    }
+  },
+  "10": {
+    "inputs": {
+      "image": "video_wan2_2_14B_animate_reference_image.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE"
+    }
+  },
+  "19": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "232:15",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_1"
+    }
+  },
+  "20": {
+    "inputs": {
+      "unet_name": "Wan2_2-Animate-14B_fp8_scaled_e4m3fn_KJ_v2.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "21": {
+    "inputs": {
+      "text": "The character is dancing in the room",
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "STUDIO_PROMPT"
+    }
+  },
+  "23": {
+    "inputs": {
+      "video": [
+        "145",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "60": {
+    "inputs": {
+      "shift": 5,
+      "model": [
+        "20",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingSD3",
+    "_meta": {
+      "title": "ModelSamplingSD3"
+    }
+  },
+  "100": {
+    "inputs": {
+      "detect_hand": "disable",
+      "detect_body": "disable",
+      "detect_face": "enable",
+      "resolution": [
+        "158",
+        0
+      ],
+      "bbox_detector": "yolox_l.onnx",
+      "pose_estimator": "dw-ll_ucoco_384_bs5.torchscript.pt",
+      "scale_stick_for_xinsr_cn": "disable",
+      "image": [
+        "212",
+        0
+      ]
+    },
+    "class_type": "DWPreprocessor",
+    "_meta": {
+      "title": "DWPose Estimator"
+    }
+  },
+  "101": {
+    "inputs": {
+      "detect_hand": "enable",
+      "detect_body": "enable",
+      "detect_face": "disable",
+      "resolution": [
+        "158",
+        0
+      ],
+      "bbox_detector": "yolox_l.onnx",
+      "pose_estimator": "dw-ll_ucoco_384_bs5.torchscript.pt",
+      "scale_stick_for_xinsr_cn": "disable",
+      "image": [
+        "212",
+        0
+      ]
+    },
+    "class_type": "DWPreprocessor",
+    "_meta": {
+      "title": "DWPose Estimator"
+    }
+  },
+  "145": {
+    "inputs": {
+      "file": "video_wan2_2_14B_animate_original_video.mp4"
+    },
+    "class_type": "LoadVideo",
+    "_meta": {
+      "title": "STUDIO_DRIVING_VIDEO"
+    }
+  },
+  "158": {
+    "inputs": {
+      "image_gen_width": [
+        "159",
+        0
+      ],
+      "image_gen_height": [
+        "160",
+        0
+      ],
+      "resize_mode": "Just Resize",
+      "original_image": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "PixelPerfectResolution",
+    "_meta": {
+      "title": "Pixel Perfect Resolution"
+    }
+  },
+  "159": {
+    "inputs": {
+      "value": 720
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_WIDTH"
+    }
+  },
+  "160": {
+    "inputs": {
+      "value": 1280
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_HEIGHT"
+    }
+  },
+  "212": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": [
+        "159",
+        0
+      ],
+      "height": [
+        "160",
+        0
+      ],
+      "crop": "center",
+      "image": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "Upscale Image"
+    }
+  },
+  "232:15": {
+    "inputs": {
+      "fps": [
+        "23",
+        2
+      ],
+      "bit_depth": 8,
+      "images": [
+        "232:230",
+        0
+      ],
+      "audio": [
+        "23",
+        1
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "232:57": {
+    "inputs": {
+      "trim_amount": [
+        "232:62",
+        3
+      ],
+      "samples": [
+        "232:63",
+        0
+      ]
+    },
+    "class_type": "TrimVideoLatent",
+    "_meta": {
+      "title": "Trim Video Latent"
+    }
+  },
+  "232:58": {
+    "inputs": {
+      "samples": [
+        "232:57",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "232:62": {
+    "inputs": {
+      "width": [
+        "159",
+        0
+      ],
+      "height": [
+        "160",
+        0
+      ],
+      "length": 77,
+      "batch_size": 1,
+      "continue_motion_max_frames": 5,
+      "video_frame_offset": 0,
+      "positive": [
+        "21",
+        0
+      ],
+      "negative": [
+        "1",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "clip_vision_output": [
+        "9",
+        0
+      ],
+      "reference_image": [
+        "10",
+        0
+      ],
+      "face_video": [
+        "100",
+        0
+      ],
+      "pose_video": [
+        "101",
+        0
+      ]
+    },
+    "class_type": "WanAnimateToVideo",
+    "_meta": {
+      "title": "WanAnimateToVideo"
+    }
+  },
+  "232:63": {
+    "inputs": {
+      "seed": [
+        "286",
+        0
+      ],
+      "steps": [
+        "287",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "60",
+        0
+      ],
+      "positive": [
+        "232:62",
+        0
+      ],
+      "negative": [
+        "232:62",
+        1
+      ],
+      "latent_image": [
+        "232:62",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "232:230": {
+    "inputs": {
+      "batch_index": [
+        "232:62",
+        4
+      ],
+      "length": 4096,
+      "image": [
+        "232:58",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Get Image from Batch"
+    }
+  },
+  "242:85": {
+    "inputs": {
+      "batch_index": [
+        "242:90",
+        4
+      ],
+      "length": 4096,
+      "image": [
+        "242:87",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Get Image from Batch"
+    }
+  },
+  "242:86": {
+    "inputs": {
+      "image1": [
+        "232:58",
+        0
+      ],
+      "image2": [
+        "242:85",
+        0
+      ]
+    },
+    "class_type": "ImageBatch",
+    "_meta": {
+      "title": "Batch Images (DEPRECATED)"
+    }
+  },
+  "242:87": {
+    "inputs": {
+      "samples": [
+        "242:92",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "242:88": {
+    "inputs": {
+      "fps": [
+        "23",
+        2
+      ],
+      "bit_depth": 8,
+      "images": [
+        "242:86",
+        0
+      ],
+      "audio": [
+        "23",
+        1
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "242:90": {
+    "inputs": {
+      "width": [
+        "159",
+        0
+      ],
+      "height": [
+        "160",
+        0
+      ],
+      "length": 77,
+      "batch_size": 1,
+      "continue_motion_max_frames": 5,
+      "video_frame_offset": [
+        "232:62",
+        5
+      ],
+      "positive": [
+        "21",
+        0
+      ],
+      "negative": [
+        "1",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "clip_vision_output": [
+        "9",
+        0
+      ],
+      "reference_image": [
+        "10",
+        0
+      ],
+      "face_video": [
+        "100",
+        0
+      ],
+      "pose_video": [
+        "101",
+        0
+      ],
+      "continue_motion": [
+        "232:58",
+        0
+      ]
+    },
+    "class_type": "WanAnimateToVideo",
+    "_meta": {
+      "title": "WanAnimateToVideo"
+    }
+  },
+  "242:91": {
+    "inputs": {
+      "seed": [
+        "286",
+        0
+      ],
+      "steps": [
+        "287",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "60",
+        0
+      ],
+      "positive": [
+        "242:90",
+        0
+      ],
+      "negative": [
+        "242:90",
+        1
+      ],
+      "latent_image": [
+        "242:90",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "242:92": {
+    "inputs": {
+      "trim_amount": [
+        "242:90",
+        3
+      ],
+      "samples": [
+        "242:91",
+        0
+      ]
+    },
+    "class_type": "TrimVideoLatent",
+    "_meta": {
+      "title": "Trim Video Latent"
+    }
+  },
+  "243": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "242:88",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_2"
+    }
+  },
+  "277": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "278:88",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_3"
+    }
+  },
+  "278:85": {
+    "inputs": {
+      "batch_index": [
+        "278:90",
+        4
+      ],
+      "length": 4096,
+      "image": [
+        "278:87",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Get Image from Batch"
+    }
+  },
+  "278:86": {
+    "inputs": {
+      "image1": [
+        "242:86",
+        0
+      ],
+      "image2": [
+        "278:85",
+        0
+      ]
+    },
+    "class_type": "ImageBatch",
+    "_meta": {
+      "title": "Batch Images (DEPRECATED)"
+    }
+  },
+  "278:87": {
+    "inputs": {
+      "samples": [
+        "278:92",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "278:88": {
+    "inputs": {
+      "fps": [
+        "23",
+        2
+      ],
+      "bit_depth": 8,
+      "images": [
+        "278:86",
+        0
+      ],
+      "audio": [
+        "23",
+        1
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "278:90": {
+    "inputs": {
+      "width": [
+        "159",
+        0
+      ],
+      "height": [
+        "160",
+        0
+      ],
+      "length": 77,
+      "batch_size": 1,
+      "continue_motion_max_frames": 5,
+      "video_frame_offset": [
+        "242:90",
+        5
+      ],
+      "positive": [
+        "21",
+        0
+      ],
+      "negative": [
+        "1",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "clip_vision_output": [
+        "9",
+        0
+      ],
+      "reference_image": [
+        "10",
+        0
+      ],
+      "face_video": [
+        "100",
+        0
+      ],
+      "pose_video": [
+        "101",
+        0
+      ],
+      "continue_motion": [
+        "242:86",
+        0
+      ]
+    },
+    "class_type": "WanAnimateToVideo",
+    "_meta": {
+      "title": "WanAnimateToVideo"
+    }
+  },
+  "278:91": {
+    "inputs": {
+      "seed": [
+        "286",
+        0
+      ],
+      "steps": [
+        "287",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "60",
+        0
+      ],
+      "positive": [
+        "278:90",
+        0
+      ],
+      "negative": [
+        "278:90",
+        1
+      ],
+      "latent_image": [
+        "278:90",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "278:92": {
+    "inputs": {
+      "trim_amount": [
+        "278:90",
+        3
+      ],
+      "samples": [
+        "278:91",
+        0
+      ]
+    },
+    "class_type": "TrimVideoLatent",
+    "_meta": {
+      "title": "Trim Video Latent"
+    }
+  },
+  "284:85": {
+    "inputs": {
+      "batch_index": [
+        "284:90",
+        4
+      ],
+      "length": 4096,
+      "image": [
+        "284:87",
+        0
+      ]
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Get Image from Batch"
+    }
+  },
+  "284:86": {
+    "inputs": {
+      "image1": [
+        "278:86",
+        0
+      ],
+      "image2": [
+        "284:85",
+        0
+      ]
+    },
+    "class_type": "ImageBatch",
+    "_meta": {
+      "title": "Batch Images (DEPRECATED)"
+    }
+  },
+  "284:87": {
+    "inputs": {
+      "samples": [
+        "284:92",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "284:88": {
+    "inputs": {
+      "fps": [
+        "23",
+        2
+      ],
+      "bit_depth": 8,
+      "images": [
+        "284:86",
+        0
+      ],
+      "audio": [
+        "23",
+        1
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "284:90": {
+    "inputs": {
+      "width": [
+        "159",
+        0
+      ],
+      "height": [
+        "160",
+        0
+      ],
+      "length": 77,
+      "batch_size": 1,
+      "continue_motion_max_frames": 5,
+      "video_frame_offset": [
+        "278:90",
+        5
+      ],
+      "positive": [
+        "21",
+        0
+      ],
+      "negative": [
+        "1",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "clip_vision_output": [
+        "9",
+        0
+      ],
+      "reference_image": [
+        "10",
+        0
+      ],
+      "face_video": [
+        "100",
+        0
+      ],
+      "pose_video": [
+        "101",
+        0
+      ],
+      "continue_motion": [
+        "278:86",
+        0
+      ]
+    },
+    "class_type": "WanAnimateToVideo",
+    "_meta": {
+      "title": "WanAnimateToVideo"
+    }
+  },
+  "284:91": {
+    "inputs": {
+      "seed": [
+        "286",
+        0
+      ],
+      "steps": [
+        "287",
+        0
+      ],
+      "cfg": 1,
+      "sampler_name": "uni_pc",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "60",
+        0
+      ],
+      "positive": [
+        "284:90",
+        0
+      ],
+      "negative": [
+        "284:90",
+        1
+      ],
+      "latent_image": [
+        "284:90",
+        2
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "284:92": {
+    "inputs": {
+      "trim_amount": [
+        "284:90",
+        3
+      ],
+      "samples": [
+        "284:91",
+        0
+      ]
+    },
+    "class_type": "TrimVideoLatent",
+    "_meta": {
+      "title": "Trim Video Latent"
+    }
+  },
+  "285": {
+    "inputs": {
+      "filename_prefix": "video/ComfyUI",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "284:88",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_4"
+    }
+  },
+  "286": {
+    "inputs": {
+      "value": 1106558644923357
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_SEED"
+    }
+  },
+  "287": {
+    "inputs": {
+      "value": 20
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_STEPS"
+    }
+  }
+}
