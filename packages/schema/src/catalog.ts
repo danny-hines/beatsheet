@@ -16,7 +16,8 @@ export const CATALOG: CatalogModel[] = [
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 15,
     // fal.ai/models/fal-ai/nano-banana: $0.0398 an image. On the Gemini API it's gemini-2.5-flash-image: 1,290 tokens
-    // out at $30 a million, about $0.039.
+    // out at $30 a million, about $0.039. Google shuts gemini-2.5-flash-image down on March 15, 2027; Nano Banana 2.1
+    // takes its place (docs/MODELS.md).
     routes: [
       { via: "fal", shape: "nano-banana", endpoints: { text: "fal-ai/nano-banana", refs: "fal-ai/nano-banana/edit" }, price: { perImage: 0.0398 } },
       { via: "gemini", shape: "gemini-image", endpoints: { text: "gemini-2.5-flash-image", refs: "gemini-2.5-flash-image" }, price: { perImage: 0.039 } },
@@ -143,7 +144,7 @@ export const CATALOG: CatalogModel[] = [
     id: "minimax-h3",
     label: "MiniMax H3",
     by: "MiniMax",
-    note: "Open weights: 5 to 15 seconds with its own sound, from a board, a prompt, or up to 9 reference pictures. On fal, or from a board on your own graphics card through ComfyUI.",
+    note: "Open weights: 5 to 15 seconds with its own sound, from a board, a prompt, or up to 9 reference pictures. On fal, or from a board on your own graphics card through ComfyUI, where its license leaves out the US, EU, UK and South Korea.",
     ops: ["video"],
     tier: "rough",
     takes: { start: true, end: true, refs: 9 },
@@ -161,7 +162,8 @@ export const CATALOG: CatalogModel[] = [
         price: { perSecond: 0.06 },
       },
       // The open weights (pruned INT8, with the NVFP4 text encoder) from a board, and an end frame if there is one:
-      // 124 to 362 frames at 24 a second (comfy.ts).
+      // 124 to 362 frames at 24 a second (comfy.ts). The MiniMax H3 Community License grants rights only outside the
+      // EU, UK, South Korea and US; Comfy sells the commercial license for output made locally (docs/MODELS.md).
       { via: "comfy", shape: "minimax-h3", endpoints: { start: "minimax-h3-i2v" }, price: { perSecond: 0 }, takes: { refs: 0 }, wait: 900 },
     ],
   },
@@ -169,7 +171,7 @@ export const CATALOG: CatalogModel[] = [
     id: "kling-3",
     label: "Kling 3 Pro",
     by: "Kuaishou",
-    note: "For finals: the best motion here, from a board, 3 to 15 seconds.",
+    note: "For finals from a board, 3 to 15 seconds, without its own sound. Blind votes now put H3 Max ahead of it.",
     ops: ["video"],
     tier: "final",
     takes: { start: true, end: true },

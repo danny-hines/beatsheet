@@ -56,6 +56,8 @@ The board already says what's in the frame, so say what changes:
 
 Don't cut to another scene or bring in new people mid-clip; that's another shot.
 
+Each model has its own way with a prompt (what to describe from the board, how it takes sound and dialogue, how to name reference pictures): read its section in [models.md](models.md) before writing for it. Which model suits which kind of shot, and why, is in `docs/MODELS.md`.
+
 **Carrying a clip on.** A clip that ends mid-action continues in the next shot from its last frame: `still_from_clip` on it, then `generate` (op `video`) with `start` set to that still, and a prompt for what happens next. The cut between them lands on the same frame, so it reads as one continuous move.
 
 ## Copying movement from a clip
