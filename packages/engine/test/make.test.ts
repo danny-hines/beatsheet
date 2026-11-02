@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renameCast, SCHEMA_VERSION, STAGE_IDS, type Asset, type ProjectFile } from "@beatsheet/schema";
 
@@ -343,7 +344,7 @@ describe("cast and sets", () => {
     );
     expect(String(sent.prompt)).toMatch(/photographed rather than drawn, nothing else in the picture and no text or labels\. The reference photos show the cat: keep the cat's features, markings, colors and shape exactly\.$/);
     const cat = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!;
-    expect(cat.images).toEqual(["cat-sheet"]);
+    expect(cat.sheet).toBe("cat-sheet");
     expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-sheet")).toMatchObject({ tags: ["sheet"], provenance: { cast: ["cat"] } });
   });
 
@@ -394,34 +395,69 @@ describe("cast and sets", () => {
     expect(() => make.startMake(PROJECT, { op: "image", sheet: "dog" })).toThrow('No cast member "dog"');
   });
 
-  it("makes a character's portrait in a variant from their own photos only, never a picture made of them", async () => {
-    make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
-    await make.driveJobs(PROJECT);
-    seen.submits = [];
-    // The cat has a sheet now; its portrait is still made from the photo alone, in the shape of a portrait.
-    const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat/heist", portrait: true, count: 1 });
+  it("makes a character's portrait from their own photos, and a look's from the plain one's chosen face", async () => {
+    // The plain look's: from the cat's photo, in the shape of a portrait, and it becomes the chosen one. The photo is
+    // tagged "portrait" for its shape, and is still read as a photo.
+    store.updateFile(PROJECT, (d) => void (d.assets.find((a) => a.id === "cat-photo")!.tags = ["portrait"]));
+    const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", portrait: true, count: 1 });
     expect(fit).toMatchObject({ aspect: "4:5" });
-    expect(jobs[0]).toMatchObject({ sheet: "cat/heist", portrait: true, request: { refs: ["cat-photo"] } });
+    expect(jobs[0]).toMatchObject({ sheet: "cat", portrait: true, request: { refs: ["cat-photo"] } });
     await make.driveJobs(PROJECT);
     const prompt = String(seen.submits[0]!.input.prompt);
-    expect(prompt).toMatch(/^A photographic head-and-shoulders portrait of the cat \(orange tabby, white chest; a tiny black eye mask\) facing the camera, with anything worn on the head or face/);
-    expect(prompt).toMatch(/The reference photos show the cat: keep .* exactly\. In this portrait: a tiny black eye mask\.$/);
-    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.images).toEqual(["cat-heist-portrait"]);
-    expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-heist-portrait")).toMatchObject({ tags: ["portrait"] });
+    expect(prompt).toMatch(/^A photographic head-and-shoulders portrait of the cat \(orange tabby, white chest\) facing the camera, with anything worn on the head or face/);
+    expect(prompt).toMatch(/The reference photos show the cat: keep the cat's features, markings, colors and shape exactly\.$/);
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.portrait).toBe("cat-portrait");
+    expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-portrait")).toMatchObject({ tags: ["portrait"] });
+
+    // A look's starts from that settled face, and says what's different.
+    const look = make.startMake(PROJECT, { op: "image", sheet: "cat/heist", portrait: true, count: 1 });
+    expect(look.jobs[0]!.request.refs).toEqual(["cat-portrait"]);
+    expect(look.jobs[0]!.request.sent).toMatch(/The first reference picture is the cat's chosen portrait: keep the cat's face, hair and features exactly\. In this portrait: a tiny black eye mask\.$/);
+    await make.driveJobs(PROJECT);
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.portrait).toBe("cat-heist-portrait");
+  });
+
+  it("makes a character's sheet from its chosen portrait and its wardrobe, and says which picture is which", () => {
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push({ id: "cat-portrait", kind: "image", path: d.assets[0]!.path, tags: ["portrait"] }, { id: "cape", kind: "image", path: d.assets[0]!.path });
+      Object.assign(d.cast!.find((m) => m.id === "cat")!, { portrait: "cat-portrait", wardrobe: ["cape"], wears: "a red velvet cape" });
+    });
+    const { jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    expect(jobs[0]!.request.refs).toEqual(["cat-portrait", "cape"]);
+    expect(jobs[0]!.request.sent).toMatch(/^A photographic reference sheet of the cat \(orange tabby, white chest; a red velvet cape\) in three panels/);
+    expect(jobs[0]!.request.sent).toMatch(
+      /The first reference picture is the cat's chosen portrait: keep the cat's face, hair and features exactly\. The next reference picture shows the clothes to dress the cat in: copy the garments, colors, patterns and fit exactly, and take nothing else from it, not a face and not a place\.$/,
+    );
+  });
+
+  it("cuts the clothes out of a photo below the face, into a look's wardrobe", async () => {
+    const { wardrobeFrom } = await import("../src/castfrom.ts");
+    const { projectDir } = await import("../src/paths.ts");
+    const file = join(projectDir(PROJECT), "william.jpg");
+    writeFileSync(file, await sharp({ create: { width: 200, height: 300, channels: 3, background: "#806040" } }).jpeg().toBuffer());
+    store.updateFile(PROJECT, (d) =>
+      void d.assets.push({ id: "william", kind: "image", path: file, subjects: [{ id: "face-1", kind: "face", label: "face", samples: [[0, 0.4, 0.1, 0.2, 0.2]] }] }),
+    );
+    expect(await wardrobeFrom(PROJECT, { asset: "william", look: "cat/heist" })).toEqual({ asset: "cat-heist-wardrobe", cropped: true });
+    const made = store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-heist-wardrobe")!;
+    expect(made).toMatchObject({ tags: ["wardrobe"], provenance: { source: "capture", refs: ["william"] } });
+    // From just below the face (10% down, 20% tall, and a little room) to the bottom.
+    expect(await sharp(made.path).metadata()).toMatchObject({ width: 200, height: 204 });
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.wardrobe).toEqual(["cat-heist-wardrobe"]);
   });
 
   it("makes portraits only of characters", () => {
     expect(() => make.startMake(PROJECT, { op: "image", sheet: "alley", portrait: true })).toThrow("A portrait is of a character; @alley is a place");
   });
 
-  it("keeps the next sheet beside the picture it has, for the person to pick, rather than giving it to models", async () => {
+  it("makes the first sheet the chosen one and puts the next beside it, to choose between", async () => {
     make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
     await make.driveJobs(PROJECT);
     make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
     await make.driveJobs(PROJECT);
     const cat = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!;
-    expect(cat.images).toEqual(["cat-sheet"]);
-    expect(cat.kept).toEqual(["cat-sheet-2"]);
+    expect(cat.sheet).toBe("cat-sheet");
+    expect(cat.sheets).toEqual(["cat-sheet-2"]);
   });
 });
 
@@ -509,7 +545,7 @@ describe("a variant's sheet", () => {
     make.startMake(PROJECT, { op: "image", sheet: "cat/heist", count: 1 });
     await make.driveJobs(PROJECT);
     expect(String(seen.submits[1]!.input.prompt)).toMatch(/ In every view: a tiny black eye mask\.$/);
-    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.images).toEqual(["cat-heist-sheet"]);
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.variants![0]!.sheet).toBe("cat-heist-sheet");
   });
 });
 
@@ -600,7 +636,7 @@ describe("stills from services that answer in one request", () => {
     expect(make.listJobs(PROJECT)[0]!.request.prompt).toMatch(/^A photographic reference sheet of @marmalade in three panels/);
     await make.driveJobs(PROJECT);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", sheet: "marmalade", asset: "marmalade-sheet" });
-    expect(store.loadFile(PROJECT).doc.cast!.find((m) => m.id === "marmalade")!.images).toEqual(["marmalade-sheet"]);
+    expect(store.loadFile(PROJECT).doc.cast!.find((m) => m.id === "marmalade")!.sheet).toBe("marmalade-sheet");
   });
 
   it("gives a model that takes more pictures more of the cast's, once it's picked", async () => {
@@ -658,7 +694,7 @@ describe("stills from services that answer in one request", () => {
     const sent = JSON.parse(seen.direct[0]!.body) as Record<string, unknown>;
     expect(sent).toMatchObject({ model: "muse-image-1.0", size: "1536x864", response_format: "b64_json", images: [{ image_url: `data:image/jpeg;base64,${Buffer.from("the cat").toString("base64")}` }] });
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", usd: 0.01 });
-    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.images).toEqual(["cat-sheet"]);
+    expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.sheet).toBe("cat-sheet");
 
     make.startMake(PROJECT, { op: "image", shot: "s2", prompt: "@cat strolls down @alley", model: "gpt-image" });
     await make.driveJobs(PROJECT);

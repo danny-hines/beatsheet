@@ -42,11 +42,12 @@ import {
   STAGE_IDS,
   Look,
   type Asset,
+  type CastLook,
   type Fit,
   type Project,
   type SubjectTrack,
 } from "@beatsheet/schema";
-import { castFromSubject } from "./castfrom.ts";
+import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
 import { PLAN_ROUTES } from "./plans.ts";
 import { presenceFromEnv, removePresence, writePresence, type Presence } from "./agents.ts";
 import { addAsset, addSong, importMedia } from "./ingest.ts";
@@ -583,12 +584,12 @@ const makeArgs = {
   sheet: z
     .string()
     .optional()
-    .describe("A cast member (cat, or cat/heist for a variant) to make a reference sheet for: the stills join its pictures. Without a prompt, a character's sheet is a face close-up, the body front (cropped at the neck) and the back"),
+    .describe("A cast member (cat, or cat/heist for a look) to make a reference sheet for. A character's sheet is a face close-up, the body front (cropped at the neck) and the back, made from the look's chosen portrait and its wardrobe; it becomes the chosen sheet when there's none, else joins the other sheets to choose between (set /cast/…/sheet to choose). Anything else's stills join its pictures"),
   portrait: z
     .boolean()
     .optional()
     .describe(
-      "With sheet, for a character: a head-and-shoulders portrait instead, made from their own photos when they have some. Make it first when a costume changes the face (a fake beard, a hat, makeup), pick the one that still looks like them, put it after their photo in the pictures, then make the sheet",
+      "With sheet, for a character: a head-and-shoulders portrait instead, made from the look's face photos (their own photos by default; a look's, the plain one's chosen portrait) and its wardrobe. It becomes the chosen portrait when there's none, else joins the other portraits: show them to the person (a choose hand-off), set /cast/…/portrait to the one they pick, then make the sheet",
     ),
   prompt: z.string().optional().describe("What to make; default the shot's description. Name cast and sets with @id (@cat, @cat/heist): they're described to the model, and stills are given their pictures. For video, say what moves and how the camera does"),
   cast: z.array(z.string()).optional().describe("Cast and sets in it that the prompt doesn't name"),
@@ -1069,6 +1070,25 @@ server.registerTool(
 );
 
 server.registerTool(
+  "wardrobe_from_photo",
+  {
+    description:
+      "Use what a character wears in one of their photos for a look: the photo cut below their face (and to them, when they were found as a person), saved as a picture of its own and added to the look's wardrobe, so its portraits and sheets dress them exactly so without a second face to copy. Faces are looked for first if the photo never was; with none found, the whole photo is used and you're told.",
+    inputSchema: {
+      project: projectArg,
+      look: z.string().describe('The character, or one of its looks: "galileo", "galileo/bloodied"'),
+      asset: z.string().describe("A photo of them wearing it"),
+    },
+  },
+  async ({ project: id, look, asset }) => {
+    const r = await wardrobeFrom(id, { asset, look });
+    return text(
+      `${r.asset} is in @${look}'s wardrobe: ${r.cropped ? `the clothes from ${asset}, below the face` : `all of ${asset} (no face was found to cut below, so the face in it may compete: crop it, or describe the clothes in words)`}. Make the look's portraits and sheet with generate (sheet: "${look}", portrait: true for a portrait).`,
+    );
+  },
+);
+
+server.registerTool(
   "transcribe",
   {
     description:
@@ -1509,12 +1529,19 @@ function overview(id: string, cut?: string, format?: string): string {
     for (const r of p.brief.references) lines.push(`- ${r.kind} ${r.label ? `"${r.label}" ` : ""}${r.value}${r.note ? ` — ${r.note}` : ""}`);
   }
   if (p.cast?.length) {
-    lines.push("Cast & sets (name them in prompts with @id; models are given a look's pictures in order, up to three, and never its kept ones):");
-    const kept = (k?: string[]) => (k?.length ? `; kept ${k.join(", ")}` : "");
-    for (const m of p.cast)
+    lines.push(
+      "Cast & sets (name them in prompts with @id). A character's look is settled in steps: face photos, wardrobe, a chosen portrait, then a chosen sheet made from it; models are given the chosen sheet, else the chosen portrait. Anything else is given its pictures in order, never its kept ones:",
+    );
+    const list = (label: string, k?: string[]) => (k?.length ? `; ${label} ${k.join(", ")}` : "");
+    const steps = (l: CastLook) =>
+      `${l.portrait ? `portrait ${l.portrait}` : "no portrait chosen"}${list("other portraits", l.portraits)}; ${l.sheet ? `sheet ${l.sheet}` : "no sheet chosen"}${list("other sheets", l.sheets)}${list("face from", l.faces)}${list("wardrobe", l.wardrobe)}${list("pictures from before", l.images)}`;
+    const pics = (l: CastLook) => `${l.images?.length ? `pictures ${l.images.join(", ")}` : "no pictures yet"}${list("kept", l.kept)}`;
+    for (const m of p.cast) {
+      const look = (l: CastLook) => (m.kind === "character" ? steps(l) : pics(l));
       lines.push(
-        `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"} · ${m.images?.length ? `pictures ${m.images.join(", ")}` : "no pictures yet"}${kept(m.kept)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${v.images?.length ? `pictures ${v.images.join(", ")}` : "the plain one's pictures"}${kept(v.kept)})`).join(", ")}` : ""}`,
+        `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"}${m.wears ? ` · wears: ${m.wears}` : ""} · ${look(m)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${look(v)})`).join(", ")}` : ""}`,
       );
+    }
   }
   if (p.cast?.length || p.look?.style) lines.push(`Made shots are drawn ${p.look?.style ? `in the style @${p.look.style} (/look/style)` : "as photographs (no /look/style set)"}`);
   const specLine = (c: { spec: typeof p.spec }) =>

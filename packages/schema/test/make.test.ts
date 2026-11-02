@@ -493,6 +493,28 @@ describe("cast and sets in prompts", () => {
     expect(mergeLook(f, "cat/heist")).toBe(false);
   });
 
+  it("merges a look's steps into the plain one: its chosen portrait and sheet, with the plain one's beside them", () => {
+    const f = withCut({ schema: SCHEMA_VERSION, cuts: [], ...make() } as never, {
+      ...make({
+        cast: [
+          {
+            id: "will",
+            name: "Will",
+            kind: "character",
+            about: "ginger hair",
+            wears: "a doublet",
+            portrait: "p1",
+            portraits: ["p0"],
+            sheet: "s1",
+            variants: [{ id: "old", about: "a fake beard", portrait: "p2", sheets: ["s2"], wardrobe: ["w1"] }],
+          },
+        ],
+      }),
+    });
+    expect(mergeLook(f, "will/old")).toBe(true);
+    expect(f.cast![0]).toMatchObject({ about: "ginger hair", wears: "a doublet; a fake beard", portrait: "p2", portraits: ["p1", "p0"], sheet: "s1", sheets: ["s2"], wardrobe: ["w1"] });
+  });
+
   it("keeps the proposals the person picked: new ones seen in their pictures, and more pictures for one already there", () => {
     const f: ProjectFile = withCut({ schema: SCHEMA_VERSION, cuts: [], ...make() } as never, {
       ...make({
@@ -535,6 +557,28 @@ describe("cast and sets in prompts", () => {
 });
 
 describe("more cast than a model takes pictures of", () => {
+  it("gives a character with a chosen sheet only that, else its chosen portrait, and a look its own or the plain one's", () => {
+    const will: CastMember = {
+      id: "will",
+      name: "Will",
+      kind: "character",
+      about: "ginger hair",
+      wears: "a dark doublet",
+      portrait: "will-portrait",
+      sheet: "will-sheet",
+      images: ["will-photo"],
+      variants: [
+        { id: "bloodied", about: "stage blood on his face" },
+        { id: "wet", about: "soaked", portrait: "wet-portrait" },
+      ],
+    };
+    expect(picturesGiven(castOf("@will", [will])[0]!)).toEqual(["will-sheet"]);
+    expect(picturesGiven(castOf("@will/bloodied", [will])[0]!)).toEqual(["will-sheet"]);
+    expect(picturesGiven(castOf("@will/wet", [will])[0]!)).toEqual(["wet-portrait"]);
+    // What they wear is read with who they are, then what's different in the look.
+    expect(castPrompt("@will/bloodied runs", castOf("@will/bloodied runs", [will]))).toBe("Will (ginger hair; a dark doublet; stage blood on his face) runs");
+  });
+
   it("gives the characters' pictures first, up to the most a still takes, and the rest only in words", () => {
     const pic = (id: string, kind: CastMember["kind"]): CastMember => ({ id, name: id, kind, about: `${id} look`, images: [`${id}-pic`] });
     const cast = [pic("kitchen", "place"), pic("mom", "character"), pic("dad", "character"), pic("kid", "character"), pic("cat", "character"), pic("mug", "prop")];

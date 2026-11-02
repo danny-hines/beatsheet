@@ -14,6 +14,7 @@ import {
   castOf,
   castPictures,
   castRenaming,
+  lookAssets,
   lookMerging,
   castPrompt,
   fewestStillRefs,
@@ -280,6 +281,43 @@ function ownPhotos(project: Project, member: CastMember): string[] {
 
 /** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
 function boardOf(project: Project, shot: Shot | undefined): string | undefined {
+/**
+ * What a character's portrait or sheet is made from, in order, and the words that say which picture is which. The
+ * face comes first: for a portrait, the look's face photos (by default the person's own photos, or for a variant the
+ * plain look's chosen picture, so a face already settled stays settled); for a sheet, the look's chosen portrait (or
+ * the plain one's). Then the pictures of what it wears, and the style's picture when there's room.
+ */
+function lookRefs(project: Project, member: CastMember, variantId: string | undefined, portrait: boolean, pictures: number, styled: string | undefined): { refs: string[]; words: string } {
+  const variant = variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
+  const look = variant ?? member;
+  const asset = (id: string | undefined) => (id ? project.assets.find((a) => a.id === id && a.kind === "image") : undefined);
+  const settled = variant ? [member.portrait, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
+  const chosen = portrait ? undefined : [look.portrait, settled].find(asset);
+  const faces = (chosen ? [chosen] : (look.faces ?? (portrait && settled ? [settled] : ownPhotos(project, member)))).filter(asset);
+  const wardrobe = ((variant?.wardrobe?.length ? variant.wardrobe : member.wardrobe) ?? []).filter(asset);
+  const stylePic = styled ? project.cast?.find((m) => m.id === styled)?.images?.[0] : undefined;
+  const w = wardrobe.slice(0, Math.max(0, pictures - 1));
+  const f = faces.slice(0, Math.max(1, pictures - w.length - (stylePic ? 1 : 0)));
+  const withStyle = !!stylePic && f.length + w.length < pictures;
+  const who = member.name;
+  const words: string[] = [];
+  // Named by its role, not its tags: a photo brought in can be tagged "portrait" for its shape.
+  const made = !f[0] ? undefined : [look.portrait, member.portrait].includes(f[0]) ? "portrait" : [look.sheet, member.sheet].includes(f[0]) ? "sheet" : undefined;
+  if (made) words.push(`The first reference picture is ${who}'s chosen ${made}: keep ${who}'s face, hair and features exactly.`);
+  else if (f.length)
+    words.push(
+      w.length
+        ? `The first ${f.length === 1 ? "reference picture shows" : `${f.length} reference pictures show`} ${who}: keep ${who}'s features, markings, colors and shape exactly.`
+        : `The reference photos show ${who}: keep ${who}'s features, markings, colors and shape exactly.`,
+    );
+  if (w.length)
+    words.push(
+      `The ${f.length ? "next" : "first"} ${w.length === 1 ? "reference picture shows" : `${w.length} show`} the clothes to dress ${who} in: copy the garments, colors, patterns and fit exactly, and take nothing else from ${w.length === 1 ? "it" : "them"}, not a face and not a place.`,
+    );
+  if (withStyle) words.push("The last reference picture shows the style to draw it in, not who or what it is.");
+  return { refs: [...f, ...w, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
+}
+
   const c = shot?.content;
   if (c?.kind !== "generated") return undefined;
   return project.assets.find((a) => a.id === c.take)?.kind === "image" ? c.take : c.start;
@@ -288,9 +326,10 @@ function boardOf(project: Project, shot: Shot | undefined): string | undefined {
 /**
  * The request in full. A shot fills in its length (for video), the cut's shape and its description; a sheet, a
  * prompt for clean views of its cast member, and a portrait one for its face. Cast named with @ are described in what
- * the model reads, and stills are given their pictures (a sheet with no pictures yet, the photos it was made from; a
- * portrait, the person's own photos; either, its style's picture when there's room): as many as `pictures`, which is
- * what every still model takes until one is picked. A clip from a board doesn't need them: they're in the board.
+ * the model reads, and stills are given their pictures (a character's portrait and sheet, its look's face and wardrobe,
+ * as lookRefs says; anything else's sheet with no pictures yet, the photos it was made from; either, its style's
+ * picture when there's room): as many as `pictures`, which is what every still model takes until one is picked. A clip
+ * from a board doesn't need them: they're in the board.
  */
 export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestStillRefs(CATALOG)): FullRequest {
   const { project } = loadProject(projectId, ask.cut);
@@ -315,16 +354,17 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
 
   let refs = ask.refs?.length ? ask.refs : undefined;
   let sent = castPrompt(prompt, uses);
-  if (!refs && ask.op === "image") {
-    // A sheet with no pictures yet starts from the photos it was made from; a portrait, from the person's own photos
-    // only, never a made picture of them, so the face is theirs.
-    const photos = !member
-      ? []
-      : portrait
-        ? ownPhotos(project, member)
-        : !member.images?.length
-          ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image")
-          : [];
+  if (!refs && ask.op === "image" && member?.kind === "character") {
+    // A character's portrait and sheet come from its look's steps: the face, then the wardrobe.
+    const made = lookRefs(project, member, variantId, portrait, pictures, style(member.style) ?? lookStyle);
+    if (made.refs.length) {
+      refs = made.refs;
+      sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${made.words}`;
+    }
+  } else if (!refs && ask.op === "image") {
+    // A sheet with no pictures yet starts from the photos it was made from.
+    const photos =
+      member && !member.images?.length ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image") : [];
     if (photos.length) {
       // A style's picture goes last, when there's room for it after the photos.
       const styled = style(member!.style) ?? lookStyle;
@@ -1058,11 +1098,12 @@ type Generated = Extract<ShotContent, { kind: "generated" }>;
 const qualityOf = (a: Asset | undefined) => a?.provenance?.params?.quality as Quality | undefined;
 
 /**
- * Puts what a job made where it was asked for. A sheet or portrait becomes its cast member's (or look's) picture when
- * it has none yet, so it works straight away; once it has one, the next are kept beside it, for the person to judge
- * and pick, not given to models. A take joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a
- * still) and the first final over a rough, trimmed to the middle of the little extra it was made with. The shot's
- * fidelity moves up to match.
+ * Puts what a job made where it was asked for. A character's portrait or sheet becomes its look's chosen one when it
+ * has none yet, so it works straight away, and after that joins the others made for that step, for the person to
+ * choose between. Anything else's sheet becomes its picture when it has none, and is kept beside it after that. A take
+ * joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a still) and the
+ * first final over a rough, trimmed to the middle of the little extra it was made with. The shot's fidelity moves up
+ * to match.
  */
 function attach(projectId: string, job: MakeJob, asset: Asset) {
   if (job.sheet) {
@@ -1070,8 +1111,12 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
     updateFile(projectId, (d) => {
       const m = d.cast?.find((x) => x.id === id);
       const target = variant ? m?.variants?.find((v) => v.id === variant) : m;
-      if (!target || target.images?.includes(asset.id) || target.kept?.includes(asset.id)) return;
-      if (target.images?.length) target.kept = [...(target.kept ?? []), asset.id];
+      if (!m || !target || lookAssets(target).includes(asset.id)) return;
+      if (m.kind === "character") {
+        const [one, many] = job.portrait ? (["portrait", "portraits"] as const) : (["sheet", "sheets"] as const);
+        if (target[one]) target[many] = [...(target[many] ?? []), asset.id];
+        else target[one] = asset.id;
+      } else if (target.images?.length) target.kept = [...(target.kept ?? []), asset.id];
       else target.images = [asset.id];
     });
   }

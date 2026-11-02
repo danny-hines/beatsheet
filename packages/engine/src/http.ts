@@ -27,7 +27,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
-import { castFromSubject } from "./castfrom.ts";
+import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
 import { cancelJobs, driveJobs, estimate, listJobs, makeChoices, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
@@ -830,6 +830,16 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     }
   }
   // A cast member's description, written from its pictures by a vision model; the studio puts it in the field to edit.
+  // What a cast member wears in one of their photos, cut below the face, into one of its looks' wardrobe.
+  if (section === "projects" && id && action === "cast" && parts[3] && parts[4] === "wardrobe" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; look?: string };
+    if (!body.asset) return json(res, 400, { error: "From which photo?" });
+    try {
+      return json(res, 200, await wardrobeFrom(id, { asset: body.asset, look: body.look ? `${parts[3]}/${body.look}` : parts[3] }));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
   if (section === "projects" && id && action === "cast" && parts[3] && parts[4] === "describe" && req.method === "POST") {
     try {
       return json(res, 200, { about: await describeCast(id, parts[3]) });

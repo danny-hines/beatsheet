@@ -783,6 +783,26 @@ export const Turn = z.object({
 export type Turn = z.infer<typeof Turn>;
 
 /**
+ * How a character's look is settled, step by step: the photos its face is taken from, what it wears (pictures, beside
+ * the words), then a portrait chosen from those made, then a sheet made from that portrait and chosen the same way.
+ * Models are given the chosen sheet, else the chosen portrait.
+ */
+const LookSteps = {
+  faces: z
+    .array(z.string())
+    .optional()
+    .describe("Photos the face is taken from, for its portraits. Default: the person's own photos, or for a variant the plain look's chosen portrait"),
+  wardrobe: z
+    .array(z.string())
+    .optional()
+    .describe("Pictures of what it wears in this look: a costume photo, or the clothes cropped from a photo of them (below the face); a variant without its own uses the plain one's"),
+  portrait: z.string().optional().describe("The chosen portrait: head and shoulders, made from the face photos and the wardrobe"),
+  portraits: z.array(z.string()).optional().describe("The other portraits made for this look, to choose between"),
+  sheet: z.string().optional().describe("The chosen sheet, made from the chosen portrait and the wardrobe: what models are given"),
+  sheets: z.array(z.string()).optional().describe("The other sheets made for this look"),
+};
+
+/**
  * A character, place, prop or style that made shots keep the same from shot to shot: who or what it is, in words that
  * go into every prompt that names it (@cat), and pictures that models are given to match. Shared by every cut.
  */
@@ -790,7 +810,12 @@ export const CastMember = z.object({
   id: z.string().describe("What prompts call it: @cat"),
   name: z.string(),
   kind: z.enum(["character", "place", "prop", "style"]),
-  about: z.string().optional().describe("A short, specific description: orange tabby, white chest and paws, green eyes, a notch in the left ear"),
+  about: z
+    .string()
+    .optional()
+    .describe("A short, specific description: orange tabby, white chest and paws, green eyes, a notch in the left ear. For a character, who they are (face, hair, build), the same in every look"),
+  wears: z.string().optional().describe("For a character: what it wears in its plain look (a costume, a fake beard, a hat); a variant adds what's different"),
+  ...LookSteps,
   seen: z
     .array(z.object({ asset: z.string(), subject: z.string().optional().describe("Which of the asset's subjects it is; default the whole picture") }))
     .optional()
@@ -802,8 +827,8 @@ export const CastMember = z.object({
   images: z
     .array(z.string())
     .optional()
-    .describe("Asset ids of the pictures models are given, in order, up to three (its portrait, its sheet); the first is the main one"),
-  kept: z.array(z.string()).optional().describe("Pictures made of it (or picked for it) that models aren't given: portraits and sheets waiting to be judged"),
+    .describe("Asset ids of the pictures models are given, in order, up to three; the first is the main one. A character that has a chosen sheet or portrait is given that instead"),
+  kept: z.array(z.string()).optional().describe("Pictures made of it (or picked for it) that models aren't given"),
   variants: z
     .array(
       z.object({
@@ -811,6 +836,7 @@ export const CastMember = z.object({
         about: z.string().describe("What's different: wearing a tiny black eye mask"),
         images: z.array(z.string()).optional().describe("The pictures models are given for this look, in order; with none, the plain one's"),
         kept: z.array(z.string()).optional(),
+        ...LookSteps,
       }),
     )
     .optional()

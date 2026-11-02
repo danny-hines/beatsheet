@@ -5,14 +5,14 @@
  * head and shoulders, and added beside the clip. Sheets and descriptions are made from those stills.
  */
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
 import { slugify, type Asset, type CastMember } from "@beatsheet/schema";
 import { addAsset } from "./ingest.ts";
-import { assetPath, projectDir } from "./paths.ts";
+import { assetPath, cachePaths, projectDir } from "./paths.ts";
 import { loadProject, updateFile } from "./store.ts";
 
 const run = promisify(execFile);
@@ -60,6 +60,69 @@ export async function stillOfSubject(file: string, video: boolean, sample: numbe
   const crop = { left, top, width: Math.max(1, Math.min(W - left, Math.round(bw))), height: Math.max(1, Math.min(H - top, Math.round(bh))) };
   writeFileSync(out, await sharp(frame).extract(crop).jpeg({ quality: 92 }).toBuffer());
   return { at };
+}
+
+/**
+ * What someone wears in one of their photos, as a picture of its own: the photo cut below their face (and to them,
+ * when they were found as a person), so a portrait or sheet is given the clothes without a second face to copy. It
+ * joins the look's wardrobe ("galileo", or "galileo/old" for a variant). A photo no face is found in is used whole,
+ * and `cropped` says so. Faces are looked for first when the photo never was.
+ */
+export async function wardrobeFrom(projectId: string, ask: { asset: string; look: string }): Promise<{ asset: string; cropped: boolean }> {
+  const [memberId, variantId] = ask.look.split("/") as [string, string?];
+  const read = () => {
+    const { project, dir } = loadProject(projectId);
+    const m = project.cast?.find((x) => x.id === memberId);
+    if (!m || (variantId && !m.variants?.some((v) => v.id === variantId))) throw new Error(`No cast member "${ask.look}"`);
+    const a = project.assets.find((x) => x.id === ask.asset);
+    if (a?.kind !== "image") throw new Error(`"${ask.asset}" isn't a photo in the project`);
+    return { project, dir, m, a };
+  };
+  let { project, dir, m, a } = read();
+  if (!a.subjects?.length) {
+    const { findSubjects } = await import("./subjects.ts");
+    await findSubjects(projectId, a.id).catch(() => {});
+    ({ project, dir, m, a } = read());
+  }
+  // Their face: the one they were found as, else the largest found.
+  const area = (s: { samples: number[][] }) => s.samples[0]![3]! * s.samples[0]![4]!;
+  const named = m.seen?.find((s) => s.asset === a.id && s.subject)?.subject;
+  const faces = (a.subjects ?? []).filter((s) => s.kind === "face" && s.samples.length);
+  const face = faces.find((s) => s.id === named) ?? [...faces].sort((p, q) => area(q) - area(p))[0];
+  const cached = cachePaths(dir, a.id).image;
+  // Read into memory first: on Windows sharp keeps a file it opened locked.
+  const frame = await sharp(readFileSync(existsSync(cached) ? cached : assetPath(project, dir, a))).rotate().toBuffer();
+  const { width: W = 0, height: H = 0 } = await sharp(frame).metadata();
+  let box = { left: 0, top: 0, width: W, height: H };
+  if (face) {
+    const [, fx, fy, fw, fh] = face.samples[0] as [number, number, number, number, number];
+    // The person whose face it is, to cut the sides to; else the photo's width.
+    const person = (a.subjects ?? []).find((s) => s.kind === "person" && s.samples[0] && s.samples[0][1]! <= fx + fw / 2 && fx + fw / 2 <= s.samples[0][1]! + s.samples[0][3]!);
+    const p = person?.samples[0];
+    const [px, py, pw, ph] = p ? [p[1]!, p[2]!, p[3]!, p[4]!] : [0, 0, 1, 1];
+    const top = Math.round(Math.min(1, fy + fh * 1.1) * H);
+    const bottom = Math.round(Math.min(1, py + ph) * H);
+    const left = Math.round(Math.max(0, px - pw * 0.05) * W);
+    const right = Math.round(Math.min(1, px + pw * 1.05) * W);
+    if (bottom - top > H * 0.15 && right - left > W * 0.1) box = { left, top, width: right - left, height: bottom - top };
+  }
+  const cropped = box.height < H;
+  const folder = join(projectDir(projectId), "made", "wardrobe");
+  mkdirSync(folder, { recursive: true });
+  const out = join(folder, `${a.id}-${slugify(ask.look)}.jpg`);
+  writeFileSync(out, await sharp(frame).extract(box).jpeg({ quality: 92 }).toBuffer());
+  const made = await addAsset(projectId, out, {
+    id: `${slugify(ask.look)}-wardrobe`,
+    label: `What ${m.name || m.id} wears in ${a.label ?? a.id}`,
+    tags: ["wardrobe"],
+    provenance: { source: "capture", refs: [a.id], params: { crop: box, below: face?.id }, createdAt: new Date().toISOString() },
+  });
+  updateFile(projectId, (d) => {
+    const member = d.cast?.find((x) => x.id === memberId);
+    const target = variantId ? member?.variants?.find((v) => v.id === variantId) : member;
+    if (target && !target.wardrobe?.includes(made.id)) target.wardrobe = [...(target.wardrobe ?? []), made.id];
+  });
+  return { asset: made.id, cropped };
 }
 
 /**

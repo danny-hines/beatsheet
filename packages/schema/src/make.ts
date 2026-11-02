@@ -399,7 +399,7 @@ export function realPeople(uses: CastUse[], assets: Project["assets"]): string[]
 /** A cast member as the model reads it: its name, then what it looks like, and its own style unless the prompt names that style anyway. */
 const described = (u: CastUse, uses: CastUse[]) => {
   const own = u.style && !uses.some((x) => x.id === u.style!.id) ? `in the style of ${u.style.name}${u.style.about ? `: ${u.style.about}` : ""}` : "";
-  const about = [u.member.about, u.variant?.about, own].filter(Boolean).join("; ");
+  const about = [u.member.about, u.member.wears, u.variant?.about, own].filter(Boolean).join("; ");
   return about ? `${u.member.name} (${about})` : u.member.name;
 };
 
@@ -443,14 +443,33 @@ const PICTURE_ORDER: CastMember["kind"][] = ["character", "prop", "place", "styl
 /** The most of one cast member's pictures a model is given: its main one, and the next two when there's room. */
 export const PICTURES_EACH = 3;
 
+/** One look of a cast member, as stored: the plain one is the member itself, the others its variants. */
+export type CastLook = Pick<CastMember, "images" | "kept" | "faces" | "wardrobe" | "portrait" | "portraits" | "sheet" | "sheets">;
+
+/** Every asset a look holds, whatever it's for. */
+export const lookAssets = (l: CastLook): string[] => [
+  ...(l.images ?? []),
+  ...(l.kept ?? []),
+  ...(l.faces ?? []),
+  ...(l.wardrobe ?? []),
+  ...(l.portrait ? [l.portrait] : []),
+  ...(l.portraits ?? []),
+  ...(l.sheet ? [l.sheet] : []),
+  ...(l.sheets ?? []),
+];
+
+/** What a look gives models: its chosen sheet, else its chosen portrait, else the pictures it had before there were steps. */
+export const lookGiven = (l: CastLook): string[] => (l.sheet ? [l.sheet] : l.portrait ? [l.portrait] : (l.images ?? []));
+
 /**
  * The pictures of a cast member a model may be given, in order, up to PICTURES_EACH: a variant's own, or the plain
  * one's when it has none yet. Never the two mixed: the plain one's pictures show other clothes, other hair, no costume
- * beard, and a look holds only if every picture of it agrees.
+ * beard, and a look holds only if every picture of it agrees. A character with a chosen sheet gives only that: one
+ * picture, one face.
  */
 export function picturesGiven(use: Pick<CastUse, "member" | "variant">): string[] {
-  const own = use.variant?.images ?? [];
-  return (own.length ? own : (use.member.images ?? [])).slice(0, PICTURES_EACH);
+  const own = use.variant ? lookGiven(use.variant) : [];
+  return (own.length ? own : lookGiven(use.member)).slice(0, PICTURES_EACH);
 }
 
 /**
@@ -585,8 +604,23 @@ export function mergeLook(file: ProjectFile, look: string): boolean {
   const member = file.cast?.find((m) => m.id === id);
   const v = vid ? member?.variants?.find((x) => x.id === vid) : undefined;
   if (!member || !v) return false;
-  const about = [member.about, v.about].filter(Boolean).join("; ");
-  if (about) member.about = about;
+  // What's different joins what a character wears, or what anything else is.
+  const text0 = (a?: string) => [a, v.about].filter(Boolean).join("; ");
+  if (member.kind === "character" && (member.wears || !member.about)) member.wears = text0(member.wears);
+  else if (text0(member.about)) member.about = text0(member.about);
+  // The look's steps take over where it has them; the plain one's chosen portrait and sheet join the others.
+  for (const [one, many] of [
+    ["portrait", "portraits"],
+    ["sheet", "sheets"],
+  ] as const) {
+    const chosen = v[one] ?? member[one];
+    const rest = [...new Set([...(v[many] ?? []), ...(member[one] ? [member[one]!] : []), ...(member[many] ?? [])])].filter((a) => a !== chosen);
+    if (chosen) member[one] = chosen;
+    if (rest.length) member[many] = rest;
+    else delete member[many];
+  }
+  if (v.faces) member.faces = v.faces;
+  if (v.wardrobe?.length) member.wardrobe = v.wardrobe;
   // What models were given for the look: its own pictures, or the plain one's when it had none.
   const given = v.images?.length ? v.images : (member.images ?? []);
   const kept = [...new Set([...(v.kept ?? []), ...(v.images?.length ? (member.images ?? []) : []), ...(member.kept ?? [])])].filter((a) => !given.includes(a));
