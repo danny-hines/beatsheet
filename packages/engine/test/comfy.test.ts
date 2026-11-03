@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION, STAGE_IDS, type Asset, type ProjectFile } from "@beatsheet/schema";
 
@@ -103,7 +103,7 @@ const modelsDir = join(root, "ComfyUI", "models");
 beforeAll(async () => {
   comfy = await import("../src/comfy.ts");
   // Every model file the shipped workflows name (so a test can take one away), and their folders here.
-  const folders = ["diffusion_models", "loras", "text_encoders", "clip_vision", "vae", "checkpoints"];
+  const folders = ["diffusion_models", "loras", "text_encoders", "clip_vision", "vae", "checkpoints", "model_patches", "audio_encoders"];
   const models = () => Object.keys(comfy.MODEL_FILES).filter((m) => !missing.has(m) || folders.some((f) => existsSync(join(modelsDir, f, m))));
   for (const f of folders) mkdirSync(join(modelsDir, f), { recursive: true });
   made = join(root, "made.mp4");
@@ -381,6 +381,76 @@ describe("MiniMax H3 from a board on ComfyUI", () => {
   });
 });
 
+describe("InfiniteTalk on ComfyUI", () => {
+  // The Inquisitor's line, voiced: a second and a half of tone, heard from 0.3s while the 2-second duel plays.
+  const voice = (file = true) => {
+    const vo = join(process.env.BEATSHEET_PROJECTS!, PROJECT, "vo", "main", "taunt.wav");
+    mkdirSync(dirname(vo), { recursive: true });
+    ff("-f", "lavfi", "-i", "sine=frequency=220:duration=1.5", vo);
+    store.updateProject(PROJECT, (p) => void (p.voice = { leadIn: 0.3, defaultGap: 0.5, tail: 1, lines: [{ id: "taunt", text: "You call that a sword?", ...(file ? { file: vo } : {}), duration: 1.5, words: [] }] }));
+  };
+  // The sound's loudest sample between two seconds of it, and how long it is.
+  const levels = (file: string) => {
+    const raw = execFileSync("ffmpeg", ["-v", "error", "-i", file, "-f", "s16le", "-ac", "1", "-ar", "8000", "-"]);
+    const s = Array.from(new Int16Array(raw.buffer, raw.byteOffset, raw.length / 2));
+    return { seconds: s.length / 8000, peak: (from: number, to: number) => Math.max(0, ...s.slice(Math.round(from * 8000), Math.round(to * 8000)).map(Math.abs)) };
+  };
+
+  it("makes the board say the line heard while the shot plays, the sound held out to a whole chunk, and brings the take in silent", async () => {
+    voice();
+    const { fit, jobs } = make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", speech: {}, count: 1 });
+    // The shot with half a second after it (none before the cut's start), at no charge: the one model ready that lip-syncs.
+    expect(fit).toMatchObject({ model: "infinitetalk", route: "comfy", endpoint: "infinitetalk", seconds: 3, usd: 0 });
+    await make.driveJobs(PROJECT);
+    const job = make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)!;
+    expect(job).toMatchObject({ status: "done", request: { speech: { lines: ["taunt"], from: 0, to: 2 } }, comfy: { profile: "fast", frames: 75, fps: 25 } });
+
+    // 75 frames fit the first chunk, so only its output runs; the board at about 480×832's pixels in its own shape.
+    const sent = seen.prompts.find((x) => x.prompt_id === job.comfy!.id)!;
+    expect(sent.partial_execution_targets).toEqual(["39"]);
+    const p = sent.prompt;
+    expect(p["2"]!.inputs.image).toBe(`beatsheet/${job.id}_ref.png`);
+    expect(p["6"]!.inputs.audio).toBe(`beatsheet/${job.id}_speech.wav`);
+    expect([p["3"]!.inputs.value, p["4"]!.inputs.value, p["5"]!.inputs.value]).toEqual([848, 480, job.request.seed]);
+    expect(seen.uploads.filter((u) => u.startsWith(job.id))).toEqual([`${job.id}_ref.png`, `${job.id}_speech.wav`]);
+
+    // What it said: silence, the line from 0.3s to 1.8s, then silence out to the chunk's 81 frames.
+    const sound = levels(join(process.env.BEATSHEET_PROJECTS!, PROJECT, ".cache", "comfy", job.id, "speech.wav"));
+    expect(sound.seconds).toBeCloseTo(3.24, 2);
+    expect(sound.peak(0, 0.25)).toBe(0);
+    expect(sound.peak(0.4, 1.7)).toBeGreaterThan(1000);
+    expect(sound.peak(1.9, 3.2)).toBe(0);
+
+    // The take, trimmed to its 3 seconds and silent: the line plays from the cut's voice.
+    expect(probe(job.file!)).toEqual({ width: 1280, height: 704, frames: 75 });
+    expect(execFileSync("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", job.file!], { encoding: "utf8" }).trim()).toBe("");
+    expect(shot().content).toMatchObject({ kind: "generated", take: "duel-take", start: "board", speech: { lines: ["taunt"] }, model: "infinitetalk", provider: "comfy" });
+    expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "duel-take")!.provenance).toMatchObject({ refs: ["board"], params: { speech: { lines: ["taunt"] }, workflow: "infinitetalk.fast" } });
+  });
+
+  it("says the line again on the shot's next take unless asked not to, and says why when there's nothing to say", async () => {
+    voice();
+    make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", speech: {}, count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "duel", start: "board" }).req.speech).toEqual({ lines: ["taunt"], from: 0, to: 2 });
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "duel", start: "board", speech: null }).req.speech).toBeUndefined();
+    // Without a picture to make talk, InfiniteTalk says what it needs; a line that isn't voiced yet has to be first.
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "duel", speech: {} }).choices.unfit.find((f) => f.model === "infinitetalk")).toMatchObject({ why: { reason: "Needs a picture of who speaks: start from the shot's board" } });
+    voice(false);
+    expect(() => make.makeChoices(PROJECT, { op: "video", shot: "duel", start: "board", speech: {} })).toThrow('"taunt" isn\'t voiced yet: narrate it first');
+    store.updateProject(PROJECT, (p) => void delete p.voice);
+    expect(() => make.makeChoices(PROJECT, { op: "video", shot: "duel", start: "board", speech: {} })).toThrow('No voice line is heard while shot "duel" plays');
+  });
+
+  it("isn't offered by a ComfyUI checked before it came, until it's checked again", () => {
+    voice();
+    settings.comfy = { url: base, addedAt: "2026-11-01", ok: true, workflows: { "scail2-animation.fast": [], "scail2-animation.full": [] } };
+    const { choices } = make.makeChoices(PROJECT, { op: "video", shot: "duel", start: "board", speech: {} });
+    expect(choices.auto).toBeUndefined();
+    expect(choices.setup.find((f) => f.model === "infinitetalk")).toMatchObject({ why: { kind: "install", service: "comfy", reason: expect.stringContaining("hasn't been checked for InfiniteTalk yet") } });
+  });
+});
+
 describe("FLUX 3 Image Klein's stills on ComfyUI", () => {
   const made = async (ask: Parameters<Make["startMake"]>[1]) => {
     const { fit, jobs } = make.startMake(PROJECT, ask);
@@ -532,7 +602,7 @@ describe("what each machine can run", () => {
 describe("ComfyUI workflows", () => {
   it("ships each clip's workflow fast and full and each still's full, each one beatsheet can fill, naming only model files it knows where to get", () => {
     for (const [name, spec] of Object.entries(comfy.WORKFLOWS)) {
-      for (const profile of spec.still ? (["full"] as const) : comfy.PROFILES) {
+      for (const profile of spec.profiles ?? (spec.still ? (["full"] as const) : comfy.PROFILES)) {
         const w = comfy.loadWorkflow(comfy.workflowPath(name, profile)!);
         expect(comfy.checkWorkflow(w, spec), `${name}.${profile}`).toEqual([]);
         const files = Object.values(w).flatMap((n) => (/Loader/.test(n.class_type) ? Object.values(n.inputs).filter((v): v is string => typeof v === "string" && v.endsWith(".safetensors")) : []));
@@ -541,6 +611,7 @@ describe("ComfyUI workflows", () => {
     }
     expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("scail2-animation", "fast")!))).toBe(3);
     expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("wan-animate-move", "fast")!))).toBe(4);
+    expect(comfy.chunksIn(comfy.loadWorkflow(comfy.workflowPath("infinitetalk", "fast")!))).toBe(5);
     expect(comfy.refsIn(comfy.loadWorkflow(comfy.workflowPath("flux3-klein", "full")!))).toBe(10);
     // A still has no rough: it's made with the full workflow either way.
     expect(comfy.profileFor("flux3-klein", undefined)).toBe("full");

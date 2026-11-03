@@ -80,7 +80,17 @@ export async function falCancel(key: string, req: FalRequest): Promise<void> {
   await call(key, req.cancel, { method: "PUT" }).catch(() => undefined);
 }
 
-const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4", ".mov": "video/quicktime" };
+const TYPES: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".mp4": "video/mp4",
+  ".mov": "video/quicktime",
+  ".wav": "audio/wav",
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+};
 
 /** Puts a file in fal's storage and gives its URL, for inputs like a start frame. */
 export async function falUpload(key: string, file: string): Promise<string> {
@@ -95,10 +105,11 @@ export async function falUpload(key: string, file: string): Promise<string> {
 }
 
 /**
- * A request in the terms every adapter understands; pictures, and the stretch of a clip a take follows (`video`), are
- * already URLs fal can fetch. A model that makes roughs and finals both makes a final larger.
+ * A request in the terms every adapter understands; pictures, the stretch of a clip a take follows or changes the
+ * mouths in (`video`), and what it says (`audio`) are already URLs fal can fetch. A model that makes roughs and finals
+ * both makes a final larger.
  */
-export type FalAsk = { prompt: string; quality?: Quality; seconds?: number; aspect?: string; seed?: number; start?: string; end?: string; refs?: string[]; video?: string };
+export type FalAsk = { prompt: string; quality?: Quality; seconds?: number; aspect?: string; seed?: number; start?: string; end?: string; refs?: string[]; video?: string; audio?: string };
 
 /** The prompt with a line saying which reference picture is which, in the model's own names for them ("Image 1", "@Image1"). */
 const withRefs = (ask: FalAsk, name: (n: number) => string) =>
@@ -216,6 +227,46 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
       // Kling's motion control: the people in the board move as the people in the clip do, framed as the clip is (up to
       // 30 seconds that way), without the clip's own sound.
       return { prompt: ask.prompt, image_url: ask.start, video_url: ask.video, character_orientation: "video", keep_original_sound: false };
+    // ---- Lip sync: what's said (`audio`) is as long as the take, and so is the clip whose mouths change (`video`).
+    case "h3-max-lipsync":
+      // MiniMax H3 Max's lip sync from a board: as long as what it says, at 480p for a rough and 1080p for a final.
+      return { image_url: ask.start, audio_url: ask.audio, resolution: ask.quality === "final" ? "1080P" : "480P", ...(ask.seed !== undefined ? { seed: ask.seed } : {}) };
+    case "sync":
+      // sync.so: the mouths in a clip changed (sync-3, Lipsync 2 Pro), or sync-3 making a board talk. The two are the
+      // same length, so the shorter isn't cut short.
+      return ask.video ? { video_url: ask.video, audio_url: ask.audio, sync_mode: "cut_off" } : { image_url: ask.start, audio_url: ask.audio };
+    case "kling-lipsync":
+      return { video_url: ask.video, audio_url: ask.audio };
+    case "latentsync":
+      return { video_url: ask.video, audio_url: ask.audio, ...(ask.seed !== undefined ? { seed: ask.seed } : {}) };
+    case "longcat-avatar":
+      // LongCat makes about 5.8 seconds and then 5 for each segment after, up to 10, however long the sound; 480p for a
+      // rough and 720p for a final.
+      return {
+        image_url: ask.start,
+        audio_url: ask.audio,
+        prompt: ask.prompt,
+        num_segments: Math.min(10, Math.max(1, 1 + Math.ceil(((ask.seconds ?? 5.8) - 5.8) / 5 - 1e-6))),
+        resolution: ask.quality === "final" ? "720p" : "480p",
+        ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
+      };
+    case "kling-avatar":
+    case "omnihuman":
+      // A board made to talk, with the prompt for how they move and look as they do.
+      return { image_url: ask.start, audio_url: ask.audio, prompt: ask.prompt };
+    case "veed-fabric":
+      return { image_url: ask.start, audio_url: ask.audio, resolution: ask.quality === "final" ? "720p" : "480p" };
+    case "infinitalk":
+      // InfiniteTalk on fal makes as many frames as it's asked, at 25 a second (a whole number of fours plus one), not as
+      // many as the sound lasts.
+      return {
+        image_url: ask.start,
+        audio_url: ask.audio,
+        prompt: ask.prompt,
+        num_frames: Math.min(721, Math.max(41, Math.ceil(((ask.seconds ?? 5) * 25 - 1) / 4) * 4 + 1)),
+        resolution: "480p",
+        ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
+      };
     case "gpt-image": {
       // GPT Image on fal, at medium quality and the size the OpenAI route asks for.
       const [width, height] = sizeFor(ask.aspect).split("x").map(Number);
@@ -227,7 +278,8 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
 }
 
 /** Whether a family of models takes a seed, so one can be chosen and recorded for each take. */
-export const takesSeed = (shape: string) => ["nano-banana", "wan", "wan-3", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo", "flux3-klein"].includes(shape);
+export const takesSeed = (shape: string) =>
+  ["nano-banana", "wan", "wan-3", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo", "flux3-klein", "infinitetalk", "infinitalk", "h3-max-lipsync", "latentsync", "longcat-avatar"].includes(shape);
 
 /** The file a finished request made: the first picture, or the video. */
 export function falOutput(result: Record<string, unknown>): { url: string; contentType?: string; seed?: number } | undefined {

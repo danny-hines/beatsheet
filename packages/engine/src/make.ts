@@ -24,8 +24,10 @@ import {
   fitModel,
   HANDLE,
   realPeople,
+  resolveTimeline,
   shapeOf,
   shotNeeds,
+  speechWindow,
   type Asset,
   type CastMember,
   type Choices,
@@ -38,6 +40,8 @@ import {
   type ServiceState,
   type Shot,
   type ShotContent,
+  type Speech,
+  type Stretch,
 } from "@beatsheet/schema";
 import {
   chunksFor,
@@ -52,6 +56,7 @@ import {
   comfyUpload,
   comfySaved,
   comfyUrl,
+  cutClip,
   describeMissing,
   fill,
   fitClip,
@@ -59,12 +64,14 @@ import {
   fitReference,
   fitSize,
   framesFor,
+  laySound,
   loadWorkflow,
   nodesTitled,
   outputMarker,
   OWN_WORKFLOWS,
   profileFor,
   refsIn,
+  silence,
   trimTake,
   without,
   workflowPath,
@@ -76,7 +83,7 @@ import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
-import { assetPath, cachePaths, projectDir } from "./paths.ts";
+import { assetPath, cachePaths, cleanPath, mediaPath, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { SERVICES } from "./services.ts";
 import { ledgerSince } from "./spend.ts";
@@ -114,6 +121,9 @@ export type MakeJob = {
     refs?: string[];
     /** The stretch of a clip a take that copies movement follows (the take is made a little wider where the clip has room: driveWindow). */
     drive?: Drive;
+    /** What a take that lip-syncs says, and the clip whose mouths it changes, when it changes one (both widened together: speechWindow). */
+    speech?: Speech;
+    clip?: Stretch;
     seconds?: number;
     aspect?: string;
     seed?: number;
@@ -217,7 +227,7 @@ export function serviceStates(): Record<string, ServiceState> {
 const LOCAL_ROUTES = ["comfy"];
 
 /** Something to make, as the agent's tools and the studio ask for it. */
-export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive">> & {
+export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive" | "speech" | "clip">> & {
   op: MakeOp;
   cut?: string;
   /** A placeholder or generated shot it's for: its length, the cut's shape and its description fill in what's missing, and the takes land on it. */
@@ -238,6 +248,18 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive">> & {
    * length later). Without it, a generated shot's clips follow what its takes followed before; null for none.
    */
   drive?: { asset: string; from?: number; to?: number } | null;
+  /**
+   * For a clip that lip-syncs: what it says. The cut's voice lines heard while the shot plays (`lines`, or by default
+   * the ones said by the cast in it, else all of them), or a stretch of a file's sound (`asset`, from a second of it,
+   * default 0, to another, default the shot's length later). Without it, a generated shot whose takes said something
+   * says it again, and a clip to change (`clip`) says the shot's lines; null for none.
+   */
+  speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
+  /**
+   * For a clip that lip-syncs by changing the mouths in a clip rather than making the start picture talk: "take", the
+   * clip the shot shows (where the shot plays it), or a clip from a second of it to another.
+   */
+  clip?: "take" | { asset: string; from?: number; to?: number };
   model?: string;
 };
 
@@ -353,6 +375,12 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const start = ask.start === "board" ? boardOf(project, shot) : ask.start;
   if (ask.start === "board" && !start) throw new Error(`Shot "${ask.shot}" has no board yet: make stills for it first`);
   const drive = ask.op === "video" ? driveFor(project, ask.drive === undefined && shot?.content.kind === "generated" ? shot.content.drive : ask.drive, needs?.seconds) : undefined;
+  const clip = ask.op === "video" ? clipFor(project, shot, ask.clip, needs?.seconds) : undefined;
+  const said = ask.speech !== undefined ? ask.speech : shot?.content.kind === "generated" && shot.content.speech ? shot.content.speech : clip ? {} : undefined;
+  const speech =
+    ask.op === "video" && said
+      ? speechFor(project, shot, said, clip ? clip.to - clip.from : needs?.seconds, uses.filter((u) => u.member.kind === "character").map((u) => u.member.id))
+      : undefined;
 
   let refs = ask.refs?.length ? ask.refs : undefined;
   let sent = castPrompt(prompt, uses);
@@ -397,6 +425,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${portrait ? "In this portrait" : "In every view"}: ${variant.about}.`;
   const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   const people = realPeople(uses, project.assets);
+  const along = clip ?? drive ?? speech;
   return {
     op: ask.op,
     prompt,
@@ -405,12 +434,15 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     // Some services won't draw real people, so they're ruled out for a shot with one in it.
     ...(people.length ? { realPeople: people } : {}),
     quality: ask.quality ?? (ask.op === "video" ? "rough" : undefined),
-    start,
+    // A clip whose mouths are changed is the picture; it doesn't start from another.
+    start: clip ? undefined : start,
     end: ask.end,
     refs,
     ...(drive ? { drive } : {}),
-    // A take that follows a clip is as long as the stretch it follows.
-    seconds: drive ? Math.round((drive.to - drive.from) * 1000) / 1000 : (ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined)),
+    ...(speech ? { speech } : {}),
+    ...(clip ? { clip } : {}),
+    // A take that follows a clip is as long as the stretch it follows, and one that lip-syncs as what it says.
+    seconds: along ? Math.round((along.to - along.from) * 1000) / 1000 : (ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined)),
     aspect: ask.aspect ?? sheetAspect ?? aspectOf(format.width, format.height),
     count: ask.count,
     ...(ask.via ? { via: ask.via } : {}),
@@ -433,6 +465,75 @@ function driveFor(project: Project, ask: { asset: string; from?: number; to?: nu
   if (!(to - from >= 0.1)) throw new Error(`Nothing to follow in "${clip.id}" between ${from}s and ${to}s${from >= end ? ` (it's ${end}s long)` : ""}`);
   const r = (x: number) => Math.round(x * 1000) / 1000;
   return { asset: clip.id, from: r(from), to: r(to) };
+}
+
+const r3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/**
+ * The clip a take that lip-syncs changes the mouths in: the take the shot shows, where the shot plays it (from the
+ * second it starts in, for as long as the shot lasts), or a stretch of another clip.
+ */
+function clipFor(project: Project, shot: Shot | undefined, ask: MakeAsk["clip"], shotSeconds: number | undefined): Stretch | undefined {
+  if (!ask) return undefined;
+  if (ask === "take") {
+    const c = shot?.content;
+    if (!shot || c?.kind !== "generated") throw new Error(shot ? `Shot "${shot.id}" has no takes yet to change the mouths in` : 'Say which shot\'s take to change (clip "take" is the take a shot shows)');
+    const take = project.assets.find((a) => a.id === c.take);
+    if (take?.kind !== "video") throw new Error(`Shot "${shot.id}" shows a still, not a clip: make its still talk instead, or make a clip first`);
+    const from = c.in ?? 0;
+    const to = Math.min(take.duration ?? Infinity, shotSeconds !== undefined ? from + shotSeconds : (take.duration ?? Infinity));
+    if (!Number.isFinite(to) || !(to - from >= 0.1)) throw new Error(`Can't tell how much of "${take.id}" shot "${shot.id}" plays`);
+    return { asset: take.id, from: r3(from), to: r3(to) };
+  }
+  const a = project.assets.find((x) => x.id === ask.asset);
+  if (!a) throw new Error(`No clip "${ask.asset}" to change the mouths in`);
+  if (a.kind !== "video") throw new Error(`"${ask.asset}" is a ${a.kind}; mouths are changed in a clip (a still is made to talk from its board instead)`);
+  const end = a.duration ?? Infinity;
+  const from = Math.max(0, ask.from ?? 0);
+  const to = Math.min(end, ask.to ?? (shotSeconds !== undefined ? from + shotSeconds : end));
+  if (!Number.isFinite(to)) throw new Error(`Say where to stop in "${a.id}" (its length isn't known)`);
+  if (!(to - from >= 0.1)) throw new Error(`Nothing to change in "${a.id}" between ${from}s and ${to}s`);
+  return { asset: a.id, from: r3(from), to: r3(to) };
+}
+
+/**
+ * What a take that lip-syncs says, in full. From a file: a stretch of its sound, from a second of it (default its
+ * start) for as long as the take (`seconds`: the shot, or the clip whose mouths change). Else the cut's voice lines
+ * heard while the shot plays, between its start and end: the ones asked for, or the ones said by the characters in it
+ * (`cast`), or when none of them speaks, all of them. Without a shot, from the first line asked for to the end of the
+ * last. Says what's wrong with one that can't be said: no line heard then, or one not voiced yet.
+ */
+function speechFor(project: Project, shot: Shot | undefined, ask: NonNullable<MakeAsk["speech"]>, seconds: number | undefined, cast: string[]): Speech {
+  if (ask.asset) {
+    const a = project.assets.find((x) => x.id === ask.asset);
+    if (!a) throw new Error(`No file "${ask.asset}" to take what's said from`);
+    if (!["video", "audio", "voice"].includes(a.kind)) throw new Error(`"${ask.asset}" is a ${a.kind}; what's said comes from a recording or a clip's sound`);
+    const end = a.duration ?? Infinity;
+    const from = Math.max(0, ask.from ?? 0);
+    const to = Math.min(end, ask.to ?? (seconds !== undefined ? from + seconds : end));
+    if (!Number.isFinite(to)) throw new Error(`Say where to stop in "${a.id}" (its length isn't known)`);
+    if (!(to - from >= 0.1)) throw new Error(`Nothing to say in "${a.id}" between ${from}s and ${to}s`);
+    return { asset: a.id, from: r3(from), to: r3(to) };
+  }
+  const voiced = project.voice?.lines ?? [];
+  const unknown = (ask.lines ?? []).filter((id) => !voiced.some((l) => l.id === id));
+  if (unknown.length) throw new Error(`No line ${unknown.map((id) => `"${id}"`).join(", ")} in this cut's voice`);
+  const tl = resolveTimeline(project, project.formats[0]!.id);
+  const span = shot && tl.shots.find((s) => s.id === shot.id);
+  const asked = tl.lines.filter((l) => ask.lines?.includes(l.id));
+  let from: number, to: number;
+  if (span && Number.isFinite(span.start) && Number.isFinite(span.end)) [from, to] = [span.start, span.end];
+  else if (!shot && asked.length) [from, to] = [Math.min(...asked.map((l) => l.start)), Math.max(...asked.map((l) => l.end))];
+  else throw new Error(shot ? `Can't tell when shot "${shot.id}" plays, so not what's heard then` : "Say which lines it says, or the shot it's for (it says the lines heard while the shot plays)");
+  if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error("Can't tell when those lines are heard");
+  const heard = tl.lines.filter((l) => l.end > from + 1e-6 && l.start < to - 1e-6);
+  const theirs = heard.filter((l) => cast.includes(voiced.find((v) => v.id === l.id)?.speaker ?? ""));
+  const lines = ask.lines?.length ? heard.filter((l) => ask.lines!.includes(l.id)) : theirs.length ? theirs : heard;
+  if (!lines.length)
+    throw new Error(ask.lines?.length ? `${ask.lines.length === 1 ? "That line isn't" : "Those lines aren't"} heard while shot "${shot!.id}" plays` : `No voice line is heard while shot "${shot!.id}" plays: write its line and voice it first`);
+  const silent = lines.filter((l) => !voiced.find((v) => v.id === l.id)?.file);
+  if (silent.length) throw new Error(`${silent.map((l) => `"${l.id}"`).join(", ")} ${silent.length === 1 ? "isn't" : "aren't"} voiced yet: narrate it first`);
+  return { lines: lines.map((l) => l.id), from: r3(from), to: r3(to) };
 }
 
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
@@ -605,6 +706,8 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
           end: p.req.end,
           refs: p.req.refs,
           ...(p.req.drive ? { drive: p.req.drive } : {}),
+          ...(p.req.speech ? { speech: p.req.speech } : {}),
+          ...(p.req.clip ? { clip: p.req.clip } : {}),
           seconds: p.fit.seconds,
           aspect: p.fit.aspect,
           seed: takesSeed(p.shape) ? randomInt(2 ** 31) : undefined,
@@ -819,7 +922,8 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
       refs: r.refs && (await Promise.all(r.refs.map(uploadRef))),
-      video: r.drive && (await falUpload(key, await driveClip(project, dir, job))),
+      video: r.drive ? await falUpload(key, await driveClip(project, dir, job)) : r.clip && (await falUpload(key, await dubClip(project, dir, job))),
+      audio: r.speech && (await falUpload(key, await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.wav`)))),
     });
     const remote = await falSubmit(key, job.endpoint, input);
     updateJob(projectId, job, { status: "running", remote });
@@ -851,6 +955,68 @@ async function driveClip(project: Project, dir: string, job: MakeJob): Promise<s
   const even = (n: number) => Math.round((n * scale) / 2) * 2;
   const file = join(dir, ".cache", "drive", `${job.id}.mp4`);
   await fitClip(assetPath(project, dir, clip), file, win.from, win.to, even(clip.width ?? 1280), even(clip.height ?? 720), 30, Math.max(1, Math.round((win.to - win.from) * 30)));
+  return file;
+}
+
+/** A take that lip-syncs: the stretch it says (and of the clip it changes), widened to its length as speechWindow says. */
+function speechWindowOf(project: Project, job: MakeJob) {
+  const r = job.request;
+  const s = r.speech!;
+  const clip = r.clip && project.assets.find((a) => a.id === r.clip!.asset);
+  if (r.clip && !clip) throw new FalError("The clip this take was asked to change isn't in the project any more", true);
+  const sound = "asset" in s ? project.assets.find((a) => a.id === s.asset) : undefined;
+  if ("asset" in s && !sound) throw new FalError("The file this take was asked to say isn't in the project any more", true);
+  const along = r.clip ?? s;
+  return speechWindow(s, r.clip, r.seconds ?? along.to - along.from, clip ? clip.duration : sound?.duration);
+}
+
+/**
+ * The sound a take that lip-syncs says, as a file to send: its stretch of the cut's voice (each line it says where it's
+ * heard, silence around them) or of a file's sound (its cleaned voices, when they've been cleaned), widened to the
+ * take's length, and held out with silence to `seconds` when a workflow makes more (whole chunks).
+ */
+async function speechSound(project: Project, dir: string, job: MakeJob, dest: string, seconds?: number): Promise<string> {
+  const s = job.request.speech!;
+  const w = speechWindowOf(project, job);
+  let pieces: { file: string; from: number; at: number }[];
+  if ("asset" in s) {
+    const a = project.assets.find((x) => x.id === s.asset)!;
+    const clean = cleanPath(dir, a);
+    pieces = [{ file: clean && existsSync(clean) ? clean : assetPath(project, dir, a), from: Math.max(0, w.from), at: Math.max(0, -w.from) }];
+  } else {
+    const at = new Map(resolveTimeline(project, project.formats[0]!.id).lines.map((l) => [l.id, l.start]));
+    pieces = s.lines.flatMap((id) => {
+      const line = project.voice?.lines.find((l) => l.id === id);
+      const start = at.get(id);
+      if (!line?.file || start === undefined || !Number.isFinite(start)) throw new FalError(`The line "${id}" isn't voiced in this cut any more`, true);
+      const offset = start - w.from;
+      return offset < w.to - w.from ? [{ file: mediaPath(project, dir, line.file), from: Math.max(0, -offset), at: Math.max(0, offset) }] : [];
+    });
+  }
+  await laySound(pieces, Math.max(seconds ?? 0, w.to - w.from), dest);
+  return dest;
+}
+
+/** The sides a service takes a clip to dub at, when it's particular: Kling's lip sync, 720 to 1920 pixels. */
+const DUB_SIDES: Record<string, { min: number; max: number }> = { "kling-lipsync": { min: 720, max: 1920 } };
+
+/**
+ * The stretch of the clip a take that lip-syncs changes the mouths in, widened with what it says, as a file to send:
+ * without its sound, and at its own size unless the service takes only some (scaled into them, its shape kept).
+ */
+async function dubClip(project: Project, dir: string, job: MakeJob): Promise<string> {
+  const w = speechWindowOf(project, job);
+  const clip = project.assets.find((a) => a.id === job.request.clip!.asset)!;
+  const file = join(dir, ".cache", "dub", `${job.id}.mp4`);
+  const sides = DUB_SIDES[job.shape];
+  let size: { width: number; height: number } | undefined;
+  if (sides && clip.width && clip.height) {
+    const short = Math.min(clip.width, clip.height), long = Math.max(clip.width, clip.height);
+    const k = short < sides.min ? sides.min / short : long > sides.max ? sides.max / long : 1;
+    const even = (n: number) => Math.round((n * k) / 2) * 2;
+    if (k !== 1) size = { width: even(clip.width), height: even(clip.height) };
+  }
+  await cutClip(assetPath(project, dir, clip), file, w.clip!.from, w.clip!.to, size);
   return file;
 }
 
@@ -908,9 +1074,10 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
 }
 
 /**
- * A job on ComfyUI (comfy.ts). First the picture (and, for a workflow that follows a clip, the stretch of it) is fitted
- * to the size the workflow makes for this quality (the picture's shape, smaller for a rough), the clip padded out to
- * whole chunks, sent up and the workflow filled in; the job is saved with its prompt id before the prompt is sent. A
+ * A job on ComfyUI (comfy.ts). First the picture (and, for a workflow that follows a clip, the stretch of it; for one
+ * that makes it talk, what it says) is fitted to the size the workflow makes for this quality (the picture's shape,
+ * smaller for a rough), the clip or the sound padded out to whole chunks, sent up and the workflow filled in; the job
+ * is saved with its prompt id before the prompt is sent. A
  * still is made in the shape asked for, from its reference pictures (cut out, as for any model). After that each step
  * asks where it is, and once it's done the take is fetched, a clip trimmed to its length, and brought in. A ComfyUI
  * that restarted (and so forgot its queue) is sent the saved prompt again.
@@ -992,6 +1159,17 @@ async function stepComfy(projectId: string, job: MakeJob) {
       const drive = join(work, "drive.mp4");
       await fitClip(assetPath(project, dir, clip), drive, win.from, win.to, size.width, size.height, fps, capacity);
       values.STUDIO_DRIVING_VIDEO = await comfyUpload(url, drive, `${job.id}_drive.mp4`);
+      marker = outputMarker(workflow, chunks);
+    } else if (spec.speech) {
+      // What it says, held out with silence to whole chunks at the workflow's rate.
+      if (!r.speech) throw new FalError(`The ${spec.label} workflow makes a picture say something, and this take wasn't given anything to say`, true);
+      const w = speechWindowOf(project, job);
+      frames = Math.max(1, Math.round((w.to - w.from) * fps));
+      const { chunks, capacity } = chunksFor(frames, spec.first!, spec.extend!);
+      const most = chunksIn(workflow);
+      if (chunks > most) throw new FalError(`The ${spec.label} workflow makes up to ${((spec.first! + spec.extend! * (most - 1)) / fps).toFixed(1)}s; this is ${(frames / fps).toFixed(1)}s. Split the shot in two`, true);
+      const sound = await speechSound(project, dir, job, join(work, "speech.wav"), capacity / fps);
+      values.STUDIO_AUDIO = await comfyUpload(url, sound, `${job.id}_speech.wav`);
       marker = outputMarker(workflow, chunks);
     } else {
       frames = framesFor(r.seconds ?? 5, fps, spec.maxFrames!, spec.grid);
@@ -1099,6 +1277,10 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
   // A still that came back letterboxed would make a clip with the bars in it; a file that won't read is left as it is.
   const bars = job.op === "image" ? await unletterbox(file).catch(() => undefined) : undefined;
   const r = job.request;
+  // One that lip-syncs comes back saying its line, which the cut's voice plays already (ComfyUI's takes are trimmed
+  // silent); a file that won't read is left as it is.
+  if (r.speech && !("file" in out)) await silence(file).catch(() => undefined);
+  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined].filter((x): x is string => !!x);
   return addAsset(projectId, file, {
     id: job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
     label: r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt,
@@ -1110,7 +1292,7 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
       prompt: r.sent ?? r.prompt,
       ...(r.cast?.length ? { cast: r.cast } : {}),
       seed: out.seed ?? r.seed,
-      ...(r.start || r.end || r.refs?.length || r.drive ? { refs: [r.start, r.end, ...(r.refs ?? []), r.drive?.asset].filter((x): x is string => !!x) } : {}),
+      ...(from.length ? { refs: [...new Set(from)] } : {}),
       costUsd: job.usd,
       createdAt: new Date().toISOString(),
       op: job.op,
@@ -1120,6 +1302,8 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
         ...(r.aspect ? { aspect: r.aspect } : {}),
         ...(job.quality ? { quality: job.quality } : {}),
         ...(r.drive ? { drive: r.drive } : {}),
+        ...(r.speech ? { speech: r.speech } : {}),
+        ...(r.clip ? { clip: r.clip } : {}),
         ...(job.comfy ? { workflow: `${job.endpoint}.${job.comfy.profile}` } : {}),
         ...(bars ? { letterbox: `removed ${bars.top + bars.bottom}px of bars` } : {}),
       },
@@ -1167,26 +1351,33 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
       if (g.takes?.includes(asset.id)) return;
       g.takes = [...(g.takes ?? []), asset.id];
       const showing = g.take ? p.assets.find((a) => a.id === g.take) : undefined;
-      const better = asset.kind === "video" && (showing?.kind === "image" || (job.quality === "final" && qualityOf(showing) !== "final"));
+      const r = job.request;
+      // A take with its mouths changed is the clip it was made from, made better.
+      const dubbed = !!r.clip && r.clip.asset === showing?.id;
+      const better = asset.kind === "video" && (showing?.kind === "image" || dubbed || (job.quality === "final" && qualityOf(showing) !== "final"));
       if (!showing || better) {
-        const r = job.request;
-        // A take that follows a clip starts where the stretch asked for does; others have their spare evenly either side.
-        const clip = r.drive && p.assets.find((a) => a.id === r.drive!.asset);
-        const spare = r.drive
-          ? driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, clip ? clip.duration : undefined).lead
-          : asset.kind === "video" && asset.duration && r.shotSeconds
-            ? Math.min(HANDLE, Math.max(0, (asset.duration - r.shotSeconds) / 2))
-            : 0;
-        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, ...rest } = g;
+        // A take that follows a clip, or says what's heard, starts where the stretch asked for does; others have their spare evenly either side.
+        const durationOf = (id: string | undefined) => p.assets.find((a) => a.id === id)?.duration;
+        const spare = r.speech
+          ? speechWindow(r.speech, r.clip, r.seconds ?? (r.clip ?? r.speech).to - (r.clip ?? r.speech).from, durationOf(r.clip?.asset ?? ("asset" in r.speech ? r.speech.asset : undefined))).lead
+          : r.drive
+            ? driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, durationOf(r.drive.asset)).lead
+            : asset.kind === "video" && asset.duration && r.shotSeconds
+              ? Math.min(HANDLE, Math.max(0, (asset.duration - r.shotSeconds) / 2))
+              : 0;
+        // What it was made from: the clip's own board and movement, for one whose mouths were changed.
+        const made = dubbed ? g : r;
+        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, speech: _p, ...rest } = g;
         Object.assign(rest, {
           take: asset.id,
           prompt: r.prompt,
           provider: job.route,
           model: job.model,
-          ...(r.start ? { start: r.start } : {}),
-          ...(r.end ? { end: r.end } : {}),
-          ...(r.refs?.length ? { refs: r.refs } : {}),
-          ...(r.drive ? { drive: r.drive } : {}),
+          ...(made.start ? { start: made.start } : {}),
+          ...(made.end ? { end: made.end } : {}),
+          ...(made.refs?.length ? { refs: made.refs } : {}),
+          ...(made.drive ? { drive: made.drive } : {}),
+          ...(r.speech ? { speech: "lines" in r.speech ? { lines: r.speech.lines } : { asset: r.speech.asset, from: r.speech.from, to: r.speech.to } } : {}),
           ...(spare > 0 ? { in: Math.round(spare * 1000) / 1000 } : {}),
         });
         s.content = rest;
@@ -1204,6 +1395,8 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
 export function describeJob(j: MakeJob): string {
   const model = CATALOG.find((m) => m.id === j.model)?.label ?? j.model;
   const d = j.request.drive;
+  const s = j.request.speech;
+  const c = j.request.clip;
   const what = [
     j.shot ? `shot ${j.shot}` : j.sheet ? `sheet for @${j.sheet}` : j.op,
     model,
@@ -1211,6 +1404,8 @@ export function describeJob(j: MakeJob): string {
     j.request.seconds ? `${j.request.seconds}s` : "",
     j.request.aspect ?? "",
     d ? `following ${d.asset} ${d.from}–${d.to}s` : "",
+    s ? `saying ${"lines" in s ? `line${s.lines.length === 1 ? "" : "s"} ${s.lines.join(", ")}` : `${s.asset} ${s.from}–${s.to}s`}` : "",
+    c ? `with the mouths changed in ${c.asset} ${c.from}–${c.to}s` : "",
   ]
     .filter(Boolean)
     .join(" · ");

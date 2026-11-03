@@ -1,0 +1,1111 @@
+{
+  "1": {
+    "inputs": {
+      "value": "A person talks to the camera, static camera."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "STUDIO_PROMPT"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": "example.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "STUDIO_REF_IMAGE"
+    }
+  },
+  "3": {
+    "inputs": {
+      "value": 832
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_WIDTH"
+    }
+  },
+  "4": {
+    "inputs": {
+      "value": 480
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_HEIGHT"
+    }
+  },
+  "5": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "STUDIO_SEED"
+    }
+  },
+  "6": {
+    "inputs": {
+      "audio": "example.wav"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "STUDIO_AUDIO"
+    }
+  },
+  "10": {
+    "inputs": {
+      "unet_name": "Wan2_1-I2V-14B-480p_fp8_e4m3fn_scaled_KJ.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "UNETLoader"
+    }
+  },
+  "11": {
+    "inputs": {
+      "model": [
+        "10",
+        0
+      ],
+      "lora_name": "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+      "strength_model": 1
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "6-step LoRA"
+    }
+  },
+  "12": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "CLIPLoader"
+    }
+  },
+  "13": {
+    "inputs": {
+      "vae_name": "Wan2_1_VAE_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "VAELoader"
+    }
+  },
+  "14": {
+    "inputs": {
+      "name": "wan2.1_infiniteTalk_single_fp16.safetensors"
+    },
+    "class_type": "ModelPatchLoader",
+    "_meta": {
+      "title": "InfiniteTalk patch"
+    }
+  },
+  "15": {
+    "inputs": {
+      "audio_encoder_name": "wav2vec2-chinese-base_fp16.safetensors"
+    },
+    "class_type": "AudioEncoderLoader",
+    "_meta": {
+      "title": "AudioEncoderLoader"
+    }
+  },
+  "16": {
+    "inputs": {
+      "audio_encoder": [
+        "15",
+        0
+      ],
+      "audio": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "AudioEncoderEncode",
+    "_meta": {
+      "title": "AudioEncoderEncode"
+    }
+  },
+  "17": {
+    "inputs": {
+      "text": [
+        "1",
+        0
+      ],
+      "clip": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIPTextEncode"
+    }
+  },
+  "18": {
+    "inputs": {
+      "conditioning": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "ConditioningZeroOut"
+    }
+  },
+  "19": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "20": {
+    "inputs": {
+      "noise_seed": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "31": {
+    "inputs": {
+      "mode": "single_speaker",
+      "model": [
+        "11",
+        0
+      ],
+      "model_patch": [
+        "14",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "18",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "length": 81,
+      "start_image": [
+        "2",
+        0
+      ],
+      "audio_encoder_output_1": [
+        "16",
+        0
+      ],
+      "motion_frame_count": 9,
+      "audio_scale": 1
+    },
+    "class_type": "WanInfiniteTalkToVideo",
+    "_meta": {
+      "title": "InfiniteTalk, chunk 1"
+    }
+  },
+  "32": {
+    "inputs": {
+      "model": [
+        "31",
+        0
+      ],
+      "positive": [
+        "31",
+        1
+      ],
+      "negative": [
+        "31",
+        2
+      ],
+      "cfg": 1
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "33": {
+    "inputs": {
+      "model": [
+        "31",
+        0
+      ],
+      "scheduler": "normal",
+      "steps": 6,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "34": {
+    "inputs": {
+      "noise": [
+        "20",
+        0
+      ],
+      "guider": [
+        "32",
+        0
+      ],
+      "sampler": [
+        "19",
+        0
+      ],
+      "sigmas": [
+        "33",
+        0
+      ],
+      "latent_image": [
+        "31",
+        3
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "35": {
+    "inputs": {
+      "samples": [
+        "34",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "38": {
+    "inputs": {
+      "images": [
+        "35",
+        0
+      ],
+      "fps": 25
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "STUDIO_FPS"
+    }
+  },
+  "39": {
+    "inputs": {
+      "filename_prefix": "video/beatsheet",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_1"
+    }
+  },
+  "41": {
+    "inputs": {
+      "mode": "single_speaker",
+      "model": [
+        "11",
+        0
+      ],
+      "model_patch": [
+        "14",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "18",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "length": 81,
+      "start_image": [
+        "2",
+        0
+      ],
+      "audio_encoder_output_1": [
+        "16",
+        0
+      ],
+      "motion_frame_count": 9,
+      "audio_scale": 1,
+      "previous_frames": [
+        "35",
+        0
+      ]
+    },
+    "class_type": "WanInfiniteTalkToVideo",
+    "_meta": {
+      "title": "InfiniteTalk, chunk 2"
+    }
+  },
+  "42": {
+    "inputs": {
+      "model": [
+        "41",
+        0
+      ],
+      "positive": [
+        "41",
+        1
+      ],
+      "negative": [
+        "41",
+        2
+      ],
+      "cfg": 1
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "43": {
+    "inputs": {
+      "model": [
+        "41",
+        0
+      ],
+      "scheduler": "normal",
+      "steps": 6,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "44": {
+    "inputs": {
+      "noise": [
+        "20",
+        0
+      ],
+      "guider": [
+        "42",
+        0
+      ],
+      "sampler": [
+        "19",
+        0
+      ],
+      "sigmas": [
+        "43",
+        0
+      ],
+      "latent_image": [
+        "41",
+        3
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "45": {
+    "inputs": {
+      "samples": [
+        "44",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "46": {
+    "inputs": {
+      "image": [
+        "45",
+        0
+      ],
+      "batch_index": [
+        "41",
+        4
+      ],
+      "length": 4096
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Without the frames carried over"
+    }
+  },
+  "47": {
+    "inputs": {
+      "images.image0": [
+        "35",
+        0
+      ],
+      "images.image1": [
+        "46",
+        0
+      ]
+    },
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Chunks 1 to 2"
+    }
+  },
+  "48": {
+    "inputs": {
+      "images": [
+        "47",
+        0
+      ],
+      "fps": 25
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "STUDIO_FPS"
+    }
+  },
+  "49": {
+    "inputs": {
+      "filename_prefix": "video/beatsheet",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "48",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_2"
+    }
+  },
+  "51": {
+    "inputs": {
+      "mode": "single_speaker",
+      "model": [
+        "11",
+        0
+      ],
+      "model_patch": [
+        "14",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "18",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "length": 81,
+      "start_image": [
+        "2",
+        0
+      ],
+      "audio_encoder_output_1": [
+        "16",
+        0
+      ],
+      "motion_frame_count": 9,
+      "audio_scale": 1,
+      "previous_frames": [
+        "47",
+        0
+      ]
+    },
+    "class_type": "WanInfiniteTalkToVideo",
+    "_meta": {
+      "title": "InfiniteTalk, chunk 3"
+    }
+  },
+  "52": {
+    "inputs": {
+      "model": [
+        "51",
+        0
+      ],
+      "positive": [
+        "51",
+        1
+      ],
+      "negative": [
+        "51",
+        2
+      ],
+      "cfg": 1
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "53": {
+    "inputs": {
+      "model": [
+        "51",
+        0
+      ],
+      "scheduler": "normal",
+      "steps": 6,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "54": {
+    "inputs": {
+      "noise": [
+        "20",
+        0
+      ],
+      "guider": [
+        "52",
+        0
+      ],
+      "sampler": [
+        "19",
+        0
+      ],
+      "sigmas": [
+        "53",
+        0
+      ],
+      "latent_image": [
+        "51",
+        3
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "55": {
+    "inputs": {
+      "samples": [
+        "54",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "56": {
+    "inputs": {
+      "image": [
+        "55",
+        0
+      ],
+      "batch_index": [
+        "51",
+        4
+      ],
+      "length": 4096
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Without the frames carried over"
+    }
+  },
+  "57": {
+    "inputs": {
+      "images.image0": [
+        "47",
+        0
+      ],
+      "images.image1": [
+        "56",
+        0
+      ]
+    },
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Chunks 1 to 3"
+    }
+  },
+  "58": {
+    "inputs": {
+      "images": [
+        "57",
+        0
+      ],
+      "fps": 25
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "STUDIO_FPS"
+    }
+  },
+  "59": {
+    "inputs": {
+      "filename_prefix": "video/beatsheet",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_3"
+    }
+  },
+  "61": {
+    "inputs": {
+      "mode": "single_speaker",
+      "model": [
+        "11",
+        0
+      ],
+      "model_patch": [
+        "14",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "18",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "length": 81,
+      "start_image": [
+        "2",
+        0
+      ],
+      "audio_encoder_output_1": [
+        "16",
+        0
+      ],
+      "motion_frame_count": 9,
+      "audio_scale": 1,
+      "previous_frames": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "WanInfiniteTalkToVideo",
+    "_meta": {
+      "title": "InfiniteTalk, chunk 4"
+    }
+  },
+  "62": {
+    "inputs": {
+      "model": [
+        "61",
+        0
+      ],
+      "positive": [
+        "61",
+        1
+      ],
+      "negative": [
+        "61",
+        2
+      ],
+      "cfg": 1
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "63": {
+    "inputs": {
+      "model": [
+        "61",
+        0
+      ],
+      "scheduler": "normal",
+      "steps": 6,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "64": {
+    "inputs": {
+      "noise": [
+        "20",
+        0
+      ],
+      "guider": [
+        "62",
+        0
+      ],
+      "sampler": [
+        "19",
+        0
+      ],
+      "sigmas": [
+        "63",
+        0
+      ],
+      "latent_image": [
+        "61",
+        3
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "65": {
+    "inputs": {
+      "samples": [
+        "64",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "66": {
+    "inputs": {
+      "image": [
+        "65",
+        0
+      ],
+      "batch_index": [
+        "61",
+        4
+      ],
+      "length": 4096
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Without the frames carried over"
+    }
+  },
+  "67": {
+    "inputs": {
+      "images.image0": [
+        "57",
+        0
+      ],
+      "images.image1": [
+        "66",
+        0
+      ]
+    },
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Chunks 1 to 4"
+    }
+  },
+  "68": {
+    "inputs": {
+      "images": [
+        "67",
+        0
+      ],
+      "fps": 25
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "STUDIO_FPS"
+    }
+  },
+  "69": {
+    "inputs": {
+      "filename_prefix": "video/beatsheet",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "68",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_4"
+    }
+  },
+  "71": {
+    "inputs": {
+      "mode": "single_speaker",
+      "model": [
+        "11",
+        0
+      ],
+      "model_patch": [
+        "14",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "18",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ],
+      "width": [
+        "3",
+        0
+      ],
+      "height": [
+        "4",
+        0
+      ],
+      "length": 81,
+      "start_image": [
+        "2",
+        0
+      ],
+      "audio_encoder_output_1": [
+        "16",
+        0
+      ],
+      "motion_frame_count": 9,
+      "audio_scale": 1,
+      "previous_frames": [
+        "67",
+        0
+      ]
+    },
+    "class_type": "WanInfiniteTalkToVideo",
+    "_meta": {
+      "title": "InfiniteTalk, chunk 5"
+    }
+  },
+  "72": {
+    "inputs": {
+      "model": [
+        "71",
+        0
+      ],
+      "positive": [
+        "71",
+        1
+      ],
+      "negative": [
+        "71",
+        2
+      ],
+      "cfg": 1
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "73": {
+    "inputs": {
+      "model": [
+        "71",
+        0
+      ],
+      "scheduler": "normal",
+      "steps": 6,
+      "denoise": 1
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "74": {
+    "inputs": {
+      "noise": [
+        "20",
+        0
+      ],
+      "guider": [
+        "72",
+        0
+      ],
+      "sampler": [
+        "19",
+        0
+      ],
+      "sigmas": [
+        "73",
+        0
+      ],
+      "latent_image": [
+        "71",
+        3
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "75": {
+    "inputs": {
+      "samples": [
+        "74",
+        0
+      ],
+      "vae": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAEDecode"
+    }
+  },
+  "76": {
+    "inputs": {
+      "image": [
+        "75",
+        0
+      ],
+      "batch_index": [
+        "71",
+        4
+      ],
+      "length": 4096
+    },
+    "class_type": "ImageFromBatch",
+    "_meta": {
+      "title": "Without the frames carried over"
+    }
+  },
+  "77": {
+    "inputs": {
+      "images.image0": [
+        "67",
+        0
+      ],
+      "images.image1": [
+        "76",
+        0
+      ]
+    },
+    "class_type": "BatchImagesNode",
+    "_meta": {
+      "title": "Chunks 1 to 5"
+    }
+  },
+  "78": {
+    "inputs": {
+      "images": [
+        "77",
+        0
+      ],
+      "fps": 25
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "STUDIO_FPS"
+    }
+  },
+  "79": {
+    "inputs": {
+      "filename_prefix": "video/beatsheet",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "78",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "STUDIO_OUTPUT_5"
+    }
+  }
+}

@@ -4,9 +4,9 @@
  * against this shot and the services set up, and the ones that can't make it say why rather than being hidden. The
  * button says what a batch will cost.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { CATALOG, castOf, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { CATALOG, castOf, commercialWords, resolveTimeline, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { TextField } from "./ui";
@@ -21,12 +21,15 @@ export const madeWith = (a: Asset | undefined) => (a?.provenance?.source === "ge
 /** What it costs where it runs: a plan's allowance, or the person's own graphics card, rather than money. */
 export const cost = (f: { usd?: number; route?: string }) => (f.route === "comfy" ? "on your graphics card" : f.usd === 0 ? "on your plan" : money(f.usd));
 const wait = (s?: number) => (s === undefined ? "" : s < 90 ? `~${Math.max(10, Math.round(s / 10) * 10)}s` : `~${Math.round(s / 60)} min`);
-/** A model, where it runs when it runs in more than one place, what it costs and how long it takes; or why it can't. */
+/**
+ * A model, where it runs when it runs in more than one place, what it costs and how long it takes, and when what it
+ * makes there isn't free to use commercially, that; or why it can't.
+ */
 export const fitLabel = (f: Fit, where = false) => {
   if (!f.ok) return `${f.label}: ${f.why.reason}`;
   const place = (where || !!f.also?.length) && f.where;
   // "ChatGPT plan" already says it's on the plan.
-  return [f.label, place, !(place && f.usd === 0) && cost(f), wait(f.wait)].filter(Boolean).join(" · ");
+  return [f.label, place, !(place && f.usd === 0) && cost(f), wait(f.wait), f.commercial && commercialWords(f.commercial)].filter(Boolean).join(" · ");
 };
 
 /** A model picked in ModelSelect, and where it runs when there's a choice: "gpt-image@chatgpt". */
@@ -36,7 +39,7 @@ export const pickOf = (value: string): { model?: string; via?: string } => {
   return { model, ...(via ? { via } : {}) };
 };
 /** A ready model in each place it can run: itself (the cheapest), then the others. */
-const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, also: undefined }))];
+const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, commercial: o.commercial, also: undefined }))];
 /** The fit for a pick (Auto when there's none), or nothing when that model can't make this now. */
 export function fitOf(choices: Choices | undefined, value: string): FitOk | undefined {
   if (!choices || !value) return choices?.auto;
@@ -151,19 +154,34 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   // A clip can copy the movement in a stretch of another (SCAIL-2): the one the shot's takes followed, until changed.
   const clips = p.assets.filter((a) => a.kind === "video" && !a.cutout && !a.version && a.provenance?.source !== "generated");
   const [follow, setFollow] = useState<{ asset: string; from: number; to?: number } | undefined>(c.kind === "generated" ? c.drive : undefined);
-  const start = op === "video" && fromBoard ? board : undefined;
+  // Who the prompt names: the cast it'll be given, and any @name that isn't in the cast.
+  const named = castOf(prompt, p.cast, c.kind === "generated" ? c.cast : undefined).filter((u) => u.member.kind !== "style");
+  // A clip can say the lines heard while the shot plays (lip-sync): the ones its characters say, else all of them. The
+  // chosen still is made to talk, or the mouths in the clip showing are changed.
+  const heard = useMemo(() => {
+    const voiced = p.voice?.lines ?? [];
+    if (!voiced.length) return [];
+    const tl = resolveTimeline(p, p.formats[0]!.id);
+    const r = tl.shots.find((s) => s.id === shot.id);
+    const all = r ? tl.lines.filter((l) => l.end > r.start + 1e-6 && l.start < r.end - 1e-6) : [];
+    const theirs = all.filter((l) => named.some((u) => u.member.kind === "character" && u.member.id === voiced.find((v) => v.id === l.id)?.speaker));
+    return (theirs.length ? theirs : all).map((l) => ({ ...l, voiced: !!voiced.find((v) => v.id === l.id)?.file }));
+  }, [p, shot.id, named.map((u) => u.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [say, setSay] = useState(c.kind === "generated" && !!c.speech);
+  const [dub, setDub] = useState(showing?.kind === "video");
+  const speaking = op === "video" && say && heard.length > 0;
+  const changing = speaking && dub && showing?.kind === "video";
+  const start = op === "video" && fromBoard && !changing ? board : undefined;
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
-  const drive = op === "video" ? (follow ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
+  const drive = op === "video" ? (follow && !speaking ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
+  const lipsync = op === "video" ? (speaking ? { speech: "lines", ...(changing ? { clip: "take" } : {}) } : { speech: "none" }) : {};
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
-  const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined, ...drive });
+  const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined, ...drive, ...lipsync });
   const chosen = fitOf(choices, model);
   // A model picked for stills can't make video, and the other way round.
   useEffect(() => {
     if (model && choices && !fitOf(choices, model)) setModel("");
   }, [choices, model]);
-
-  // Who the prompt names: the cast it'll be given, and any @name that isn't in the cast.
-  const named = castOf(prompt, p.cast, c.kind === "generated" ? c.cast : undefined).filter((u) => u.member.kind !== "style");
   const style = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
   const unknown = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
 
@@ -261,16 +279,52 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
         </select>
         <ModelSelect choices={choices} model={model} setModel={setModel} />
       </div>
-      {op === "video" && board && (
+      {op === "video" && board && !changing && (
         <label className="check-row small">
           <input type="checkbox" checked={fromBoard} onChange={(e) => setFromBoard(e.target.checked)} />
           Start from the chosen still
         </label>
       )}
-      {op === "video" && clips.length > 0 && (
+      {op === "video" && heard.length > 0 && (
+        <>
+          <label className="check-row small" title="Lip-sync: whoever's in it says the lines heard while the shot plays, in step with the cut's voice">
+            <input
+              type="checkbox"
+              checked={say}
+              onChange={(e) => {
+                setSay(e.target.checked);
+                if (e.target.checked) setFollow(undefined);
+              }}
+            />
+            Say the lines heard here
+          </label>
+          {say && (
+            <>
+              <p className="dim small">
+                {heard.map((l) => `“${l.text}”`).join(" ")}
+                {heard.some((l) => !l.voiced) && <span className="warn"> Not voiced yet: narrate {heard.filter((l) => !l.voiced).length === 1 ? "it" : "them"} first.</span>}
+              </p>
+              {showing?.kind === "video" && (
+                <select value={dub ? "clip" : "still"} onChange={(e) => setDub(e.target.value === "clip")} aria-label="What says them" title="Change the mouths in the clip the shot shows, keeping how it moves; or make a new clip of the chosen still talking">
+                  <option value="clip">Change the mouths in the clip showing</option>
+                  <option value="still">Make the chosen still talk</option>
+                </select>
+              )}
+            </>
+          )}
+        </>
+      )}
+      {op === "video" && clips.length > 0 && !speaking && (
         <>
           <label className="check-row small" title="The people in the still move as the people in a stretch of a clip do: someone acting the shot out, or the original footage">
-            <input type="checkbox" checked={!!follow} onChange={(e) => setFollow(e.target.checked ? { asset: clips[0]!.id, from: 0 } : undefined)} />
+            <input
+              type="checkbox"
+              checked={!!follow}
+              onChange={(e) => {
+                setFollow(e.target.checked ? { asset: clips[0]!.id, from: 0 } : undefined);
+                if (e.target.checked) setSay(false);
+              }}
+            />
             Copy the movement in a clip
           </label>
           {follow && (
@@ -290,7 +344,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
           )}
         </>
       )}
-      <WhyNot choices={choices} />
+      <WhyNot choices={choices} only={speaking ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.speech : follow ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive : undefined} />
       <div className="make-row">
         <button
           className="primary"
@@ -302,7 +356,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
               shot: shot.id,
               prompt,
               count,
-              ...(op === "video" ? { quality, drive: follow ?? null } : {}),
+              ...(op === "video" ? { quality, drive: speaking ? null : (follow ?? null), speech: speaking ? {} : null, ...(changing ? { clip: "take" as const } : {}) } : {}),
               ...pickOf(model),
               ...(start ? { start } : {}),
               ...(length ? { seconds: length } : {}),
@@ -328,12 +382,12 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
       {choices?.ready.flatMap((f) =>
         f.also?.length
           ? placesOf(f).map((x) => (
-              <option key={`${x.model}@${x.route}`} value={`${x.model}@${x.route}`}>
+              <option key={`${x.model}@${x.route}`} value={`${x.model}@${x.route}`} title={x.commercial?.why}>
                 {fitLabel(x, true)}
               </option>
             ))
           : [
-              <option key={f.model} value={f.model}>
+              <option key={f.model} value={f.model} title={f.commercial?.why}>
                 {fitLabel(f)}
               </option>,
             ],
@@ -360,9 +414,13 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
   );
 }
 
-/** When nothing can make it: why not, for each model, and where to add a key (or connect ComfyUI). */
-export function WhyNot({ choices }: { choices?: Choices }) {
-  if (!choices || choices.ready.length) return null;
+/**
+ * When nothing can make it: why not, for each model (or only the ones that do this kind of thing, `only`: the ones that
+ * lip-sync, for a take that says its line), and where to add a key (or connect ComfyUI).
+ */
+export function WhyNot({ choices: all, only }: { choices?: Choices; only?: (model: string) => boolean }) {
+  if (!all || all.ready.length) return null;
+  const choices = only ? { ...all, setup: all.setup.filter((f) => only(f.model)), unfit: all.unfit.filter((f) => only(f.model)) } : all;
   // ComfyUI to connect, or model files to fetch into it, are in Settings → Making; keys are in Media services.
   const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
   const comfy = choices.setup.some(onComfy);

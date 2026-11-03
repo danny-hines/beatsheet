@@ -1,7 +1,9 @@
 /**
  * The models beatsheet can ask for pictures and video, best first. A short list, curated by hand, not everything a
  * service offers: each entry says what the model takes and makes, and where it runs at what price. Prices are from
- * each service's own model page and only estimates; check them again when adding or changing an entry.
+ * each service's own model page and only estimates; check them again when adding or changing an entry. A route whose
+ * takes aren't simply free to use commercially says so (`commercial`): fal marks every model here for commercial use,
+ * so it's the models run on your own card, under their own licenses, that mostly do.
  */
 import type { CatalogModel } from "./make.ts";
 
@@ -89,7 +91,15 @@ export const CATALOG: CatalogModel[] = [
     // huggingface.co/black-forest-labs/flux-3-image-klein: 5.6B, distilled to 16 steps, up to 10 references. The FLUX
     // Kommunity License lets people and companies under $5M a year use what it makes commercially. The endpoint is the
     // workflow's name in the ComfyUI folder (comfy.ts).
-    routes: [{ via: "comfy", shape: "flux3-klein", endpoints: { text: "flux3-klein", refs: "flux3-klein" }, price: { perImage: 0 } }],
+    routes: [
+      {
+        via: "comfy",
+        shape: "flux3-klein",
+        endpoints: { text: "flux3-klein", refs: "flux3-klein" },
+        price: { perImage: 0 },
+        commercial: { use: "limited", why: "The FLUX Kommunity License allows commercial use of what it makes for people and companies making under $5M a year" },
+      },
+    ],
   },
   {
     id: "minimax-h3-max-turbo",
@@ -183,7 +193,15 @@ export const CATALOG: CatalogModel[] = [
       // The open weights (pruned INT8, with the NVFP4 text encoder) from a board, and an end frame if there is one:
       // 124 to 362 frames at 24 a second (comfy.ts). The MiniMax H3 Community License grants rights only outside the
       // EU, UK, South Korea and US; Comfy sells the commercial license for output made locally (docs/MODELS.md).
-      { via: "comfy", shape: "minimax-h3", endpoints: { start: "minimax-h3-i2v" }, price: { perSecond: 0 }, takes: { refs: 0 }, wait: 900 },
+      {
+        via: "comfy",
+        shape: "minimax-h3",
+        endpoints: { start: "minimax-h3-i2v" },
+        price: { perSecond: 0 },
+        takes: { refs: 0 },
+        wait: 900,
+        commercial: { use: "no", why: "The MiniMax H3 Community License grants nothing in the US, EU, UK or South Korea, and commercial use of what it makes needs a license bought through Comfy (fal's H3 has no such limit)" },
+      },
     ],
   },
   {
@@ -375,5 +393,167 @@ export const CATALOG: CatalogModel[] = [
     wait: 300,
     // fal.ai/models/fal-ai/kling-video/v3/pro/motion-control: $0.168 a second, framed as the clip is.
     routes: [{ via: "fal", shape: "kling-motion", endpoints: { drive: "fal-ai/kling-video/v3/pro/motion-control" }, price: { perSecond: 0.168 } }],
+  },
+
+  // ---- Lip sync: a board made to say a line ("talk"), or the mouths in a clip changed to say it ("dub"). What's said
+  // is the cut's voice where the shot plays (make.ts), so the take lines up with the line; it comes in silent. Research
+  // in research_notes/Lip sync/notes.md: no blind comparison exists yet, so the order follows price and the vendors'
+  // consensus (sync-3 first for dubbing).
+  {
+    id: "minimax-h3-max-lipsync",
+    label: "H3 Max Lip Sync",
+    by: "MiniMax, tuned by fal",
+    note: "Makes a board say a line: the cheapest that does, and the longest (5 seconds to 15 minutes); 480p roughs, 1080p finals. Takes real people.",
+    ops: ["video"],
+    // No tier: roughs smaller, as for H3 Max itself.
+    takes: { start: true, speech: true },
+    lengths: { min: 5, max: 900 },
+    aspects: ["any"],
+    wait: 120,
+    // fal.ai/models/minimax/h3-max/lip-sync/image-to-video: $0.05 a second at 480p, $0.16 at 1080p, as long as what it
+    // says; past 15 seconds it's 1.2 times that, which the estimate leaves out.
+    routes: [{ via: "fal", shape: "h3-max-lipsync", endpoints: { talk: "minimax/h3-max/lip-sync/image-to-video" }, price: { perSecond: 0.05, finalPerSecond: 0.16 } }],
+  },
+  {
+    id: "sync-3",
+    label: "sync-3",
+    by: "sync.",
+    note: "Changes the mouths in a clip to say a line, keeping everything else: the vendors' pick for dubbing, whole shot at once, close-ups, profiles and hands in front of the mouth. Also makes a board talk.",
+    ops: ["video"],
+    tier: "final",
+    takes: { start: true, clip: true, speech: true },
+    // fal states no limits; sync.so's own refuses more than 4096×2160.
+    lengths: { min: 1, max: 300 },
+    aspects: ["any"],
+    wait: 120,
+    // fal.ai/models/fal-ai/sync-lipsync/v3 and its /image-to-video: $8 a minute, about $0.133 a second.
+    routes: [{ via: "fal", shape: "sync", endpoints: { dub: "fal-ai/sync-lipsync/v3", talk: "fal-ai/sync-lipsync/v3/image-to-video" }, price: { perSecond: 0.1333 } }],
+  },
+  {
+    id: "lipsync-2-pro",
+    label: "Lipsync 2 Pro",
+    by: "sync.",
+    note: "sync.'s earlier dubbing model, for easy shots (a face toward the camera, nothing in front of the mouth) at about two thirds of sync-3's price.",
+    ops: ["video"],
+    tier: "final",
+    takes: { clip: true, speech: true },
+    lengths: { min: 1, max: 300 },
+    aspects: ["any"],
+    wait: 120,
+    // fal.ai/models/fal-ai/sync-lipsync/v2/pro: $5 a minute, about $0.083 a second.
+    routes: [{ via: "fal", shape: "sync", endpoints: { dub: "fal-ai/sync-lipsync/v2/pro" }, price: { perSecond: 0.0833 } }],
+  },
+  {
+    id: "kling-lipsync",
+    label: "Kling Lip Sync",
+    by: "Kuaishou",
+    note: "Changes the mouths in a clip for next to nothing, to judge the cut: 2 to 10 seconds of clip (sent at 720p or more).",
+    ops: ["video"],
+    tier: "rough",
+    takes: { clip: true, speech: true },
+    lengths: { min: 2, max: 10 },
+    aspects: ["any"],
+    wait: 120,
+    // fal.ai/models/fal-ai/kling-video/lipsync/audio-to-video: $0.014 a second of clip, rounded up to 5 seconds. The
+    // clip has to be 720 to 1920 pixels a side (make.ts sends it so).
+    routes: [{ via: "fal", shape: "kling-lipsync", endpoints: { dub: "fal-ai/kling-video/lipsync/audio-to-video" }, price: { perSecond: 0.014, minimum: 0.07 } }],
+  },
+  {
+    id: "latentsync",
+    label: "LatentSync 1.6",
+    by: "ByteDance",
+    note: "Changes the mouths in a clip by repainting only the mouth and pasting it back, so the rest keeps its size and sharpness: the open model for real footage (first on mouth accuracy in one 2026 study, last overall in another). Best on faces toward the camera.",
+    ops: ["video"],
+    takes: { clip: true, speech: true },
+    lengths: { min: 1, max: 300 },
+    aspects: ["any"],
+    wait: 120,
+    // fal.ai/models/fal-ai/latentsync: $0.20 a take up to 40 seconds, then $0.005 a second, which fal sells for
+    // commercial use. Run anywhere else, its InsightFace face detector is for non-commercial research only.
+    routes: [{ via: "fal", shape: "latentsync", endpoints: { dub: "fal-ai/latentsync" }, price: { perSecond: 0.005, minimum: 0.2 } }],
+  },
+  {
+    id: "kling-avatar-2-pro",
+    label: "Kling Avatar 2 Pro",
+    by: "Kuaishou",
+    note: "Makes a board talk, people, animals or cartoons; more accurate mouths than OmniHuman in one vendor's test, less steady.",
+    ops: ["video"],
+    tier: "final",
+    takes: { start: true, speech: true },
+    // fal states no maximum; a minute keeps it to what's been seen to work.
+    lengths: { min: 2, max: 60 },
+    aspects: ["any"],
+    wait: 180,
+    // fal.ai/models/fal-ai/kling-video/ai-avatar/v2/pro: $0.115 a second, as long as what it says.
+    routes: [{ via: "fal", shape: "kling-avatar", endpoints: { talk: "fal-ai/kling-video/ai-avatar/v2/pro" }, price: { perSecond: 0.115 } }],
+  },
+  {
+    id: "omnihuman-2",
+    label: "OmniHuman 2",
+    by: "ByteDance",
+    note: "Makes a board talk with the whole body acting to the voice; 4 seconds to 5 minutes. Its size isn't published.",
+    ops: ["video"],
+    takes: { start: true, speech: true },
+    lengths: { min: 4, max: 300 },
+    aspects: ["any"],
+    wait: 180,
+    // fal.ai/models/bytedance/omnihuman/v2: $0.105 a second; what it says as WAV or MP3 up to 15 MB.
+    routes: [{ via: "fal", shape: "omnihuman", endpoints: { talk: "bytedance/omnihuman/v2" }, price: { perSecond: 0.105 } }],
+  },
+  {
+    id: "longcat-avatar",
+    label: "LongCat Avatar",
+    by: "Meituan",
+    note: "Makes a board talk, the whole body acting to the voice, in steps of about 5 seconds up to 50; 480p roughs, 720p finals. Its makers' own study put version 1.5 ahead of Kling Avatar 2.0 and OmniHuman 1.5; fal doesn't say which version it runs.",
+    ops: ["video"],
+    takes: { start: true, speech: true },
+    // Its length is set in segments, not by the sound: about 5.8 seconds for the first and 5 for each after, up to 10.
+    lengths: Array.from({ length: 10 }, (_, i) => Math.round((5.8 + 5 * i) * 10) / 10),
+    aspects: ["any"],
+    wait: 300,
+    // fal.ai/models/fal-ai/longcat-single-avatar/image-audio-to-video: $0.15 a second at 480p, $0.30 at 720p. fal
+    // doesn't say whether it's LongCat-Video-Avatar 1.0 or 1.5.
+    routes: [
+      {
+        via: "fal",
+        shape: "longcat-avatar",
+        endpoints: { talk: "fal-ai/longcat-single-avatar/image-audio-to-video" },
+        price: { perSecond: 0.15, finalPerSecond: 0.3 },
+        commercial: { use: "unclear", why: "fal sells it for commercial use, but LongCat-Video-Avatar's own page says what it makes is for academic use only" },
+      },
+    ],
+  },
+  {
+    id: "veed-fabric",
+    label: "VEED Fabric 1.0",
+    by: "VEED",
+    note: "Makes a board talk: 480p roughs, 720p finals. First in VEED's own test (which left sync-3 out).",
+    ops: ["video"],
+    takes: { start: true, speech: true },
+    // fal states no limits; a minute keeps it to what's been seen to work.
+    lengths: { min: 1, max: 60 },
+    aspects: ["any"],
+    wait: 120,
+    // fal.ai/models/veed/fabric-1.0: $0.08 a second at 480p, $0.15 at 720p. Its /fast route costs more.
+    routes: [{ via: "fal", shape: "veed-fabric", endpoints: { talk: "veed/fabric-1.0" }, price: { perSecond: 0.08, finalPerSecond: 0.15 } }],
+  },
+  {
+    id: "infinitetalk",
+    label: "InfiniteTalk",
+    by: "MeiGen",
+    note: "Makes a board say a line, with the head and body moving to it: open (Apache 2.0), on Wan 2.1 at 480p. On your own graphics card through ComfyUI, or on fal.",
+    ops: ["video"],
+    takes: { start: true, speech: true },
+    lengths: { min: 1, max: 28.8 },
+    aspects: ["any"],
+    wait: 300,
+    routes: [
+      // github.com/MeiGen-AI/InfiniteTalk, through ComfyUI's own WanInfiniteTalkToVideo node; the endpoint is the
+      // workflow's name in the ComfyUI folder (comfy.ts). 81 frames at 25 a second, then 72 more for each of four
+      // chunks after: 369 frames, 14.76 seconds. Not run here yet; about a minute a chunk on an RTX 4090 is a guess.
+      { via: "comfy", shape: "infinitetalk", endpoints: { talk: "infinitetalk" }, price: { perSecond: 0 }, lengths: { min: 1, max: 14.7 } },
+      // fal.ai/models/fal-ai/infinitalk (spelled so): $0.20 a second at 480p, 41 to 721 frames at 25 a second.
+      { via: "fal", shape: "infinitalk", endpoints: { talk: "fal-ai/infinitalk" }, price: { perSecond: 0.2 }, lengths: { min: 1.7, max: 28.8 }, wait: 180 },
+    ],
   },
 ];

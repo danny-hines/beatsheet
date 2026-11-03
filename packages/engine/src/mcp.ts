@@ -16,6 +16,7 @@ import {
   branchCut,
   buildBatch,
   CATALOG,
+  commercialWords,
   cutOf,
   cutToSpeakers,
   cutWords,
@@ -43,6 +44,7 @@ import {
   Look,
   type Asset,
   type CastLook,
+  type Commercial,
   type Fit,
   type Project,
   type SubjectTrack,
@@ -608,6 +610,22 @@ const makeArgs = {
     .describe(
       'For video: copy the movement in a stretch of a clip onto the people in the start picture (SCAIL-2, on the person\'s own graphics card): a fight, a dance, a stunt acted out by anyone. Start from a board that has the same people, framed and placed as in the clip. A generated shot whose takes followed a clip follows it again unless this is null. The prompt should be long and detailed: who, what they wear, where, the action, "static camera"',
     ),
+  speech: z
+    .object({
+      lines: z.array(z.string()).optional().describe("Voice line ids it says, as they're heard while the shot plays; default the lines said by the characters in the shot, else every line heard then"),
+      asset: z.string().optional().describe("Or a file whose sound it says (a recording, the original footage); its cleaned voices when it has them"),
+      from: z.number().min(0).optional().describe("With asset: the second of the file to start at; default 0"),
+      to: z.number().optional().describe("With asset: the second to stop at; default the shot's length after from"),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      "For video: lip-sync. The start picture (the shot's board) is made to say this, or with clip, the mouths in a clip are changed to. Lines must be voiced first (narrate); the take is as long as the shot plus a little either side, lined up with the line, and comes in silent (the line plays from the cut's voice). {} says the shot's lines. A generated shot whose takes said something says it again unless this is null",
+    ),
+  clip: z
+    .union([z.literal("take"), z.object({ asset: z.string(), from: z.number().min(0).optional(), to: z.number().optional() })])
+    .optional()
+    .describe('For lip-sync: change the mouths in a clip instead of making a still talk. "take" is the clip the shot shows, where the shot plays it (a rough with the wrong mouths, a take that copied movement); the new take replaces it'),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
 };
@@ -625,6 +643,8 @@ type MakeToolArgs = {
   end?: string;
   refs?: string[];
   drive?: { asset: string; from?: number; to?: number } | null;
+  speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
+  clip?: "take" | { asset: string; from?: number; to?: number };
   seconds?: number;
   aspect?: string;
   count?: number;
@@ -641,18 +661,20 @@ const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
 const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
 /** What it costs where it runs: nothing extra on a plan, nothing at all on the person's own graphics card. */
 const costAt = (x: { route: string; usd?: number }) => (PLAN_ROUTES.includes(x.route) ? "no charge, from the plan's allowance" : x.route === "comfy" ? "no charge, on the person's own graphics card" : usd(x.usd));
+/** When what a route makes isn't free to use commercially: "Not for commercial use: …". */
+const commercialLine = (c: Commercial | undefined) => (c ? ` ${commercialWords(c).replace(/^./, (x) => x.toUpperCase())}: ${c.why}.` : "");
 const fitLine = (f: Fit) => {
   const note = CATALOG.find((m) => m.id === f.model)?.note;
   if (!f.ok) return `- ${f.label} (${f.model}): ${f.why.reason}`;
-  const also = f.also?.length ? ` Also on ${f.also.map((x) => `${x.where} (via "${x.route}", ${costAt(x)})`).join(" and ")}.` : "";
-  return `- ${f.label} (${f.model}) on ${f.where} (via "${f.route}"): ${[f.seconds && `${f.seconds}s`, f.aspect, costAt(f), minutes(f.wait)].filter(Boolean).join(", ")}.${also} ${note ?? ""}`.trimEnd();
+  const also = f.also?.length ? ` Also on ${f.also.map((x) => `${x.where} (via "${x.route}", ${costAt(x)}${x.commercial ? `, ${commercialWords(x.commercial)}` : ""})`).join(" and ")}.` : "";
+  return `- ${f.label} (${f.model}) on ${f.where} (via "${f.route}"): ${[f.seconds && `${f.seconds}s`, f.aspect, costAt(f), minutes(f.wait)].filter(Boolean).join(", ")}.${commercialLine(f.commercial)}${also} ${note ?? ""}`.trimEnd();
 };
 
 server.registerTool(
   "list_models",
   {
     description:
-      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against the person's services: the ones ready to use with what each would cost and how long it takes, the ones that need a key the person hasn't added, and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one unless you name another.",
+      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against the person's services: the ones ready to use with what each would cost and how long it takes (and when what it makes there isn't free to use commercially, under its license), the ones that need a key the person hasn't added, and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one unless you name another.",
     inputSchema: { ...makeArgs, count: z.number().int().min(1).max(4).optional().describe("How many takes, for the estimate (default 1)") },
   },
   async ({ project: id, ...args }) => {
@@ -673,7 +695,7 @@ server.registerTool(
     }
     const { req, choices } = makeChoices(id, asks[0]!);
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
     ];
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
     if (choices.setup.length) out.push("Needs something the person has to set up (a key in Settings → Media services; ComfyUI in Settings → Making):", ...choices.setup.map(fitLine));
@@ -686,7 +708,7 @@ server.registerTool(
   "generate",
   {
     description:
-      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). A clip can also copy the movement in a stretch of a clip (drive) onto the people in its board: a fight or a dance acted out by anyone. Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
+      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). A clip can also copy the movement in a stretch of a clip (drive) onto the people in its board: a fight or a dance acted out by anyone. And it can lip-sync (speech): the board made to say the shot's voiced lines, or with clip \"take\", the mouths in the clip the shot shows changed to say them. Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
     inputSchema: {
       ...makeArgs,
       count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),

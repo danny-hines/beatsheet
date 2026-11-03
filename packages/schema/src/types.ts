@@ -576,6 +576,15 @@ export const ShotContent = z.discriminatedUnion("kind", [
       })
       .optional()
       .describe("For video takes that copy movement: the people in the start picture move as the people in this stretch of a clip do (SCAIL-2)"),
+    speech: z
+      .object({
+        lines: z.array(z.string()).optional().describe("Voice lines of the cut it says, as they're heard while the shot plays; default every line heard then"),
+        asset: z.string().optional().describe("Or a file whose sound it says: a recording, or the original footage"),
+        from: z.number().min(0).optional().describe("With asset: the second of the file it starts at"),
+        to: z.number().optional().describe("With asset: the second it ends at; default the shot's length after `from`"),
+      })
+      .optional()
+      .describe("For video takes that lip-sync: the start picture is made to say this, or the mouths in the clip the shot showed are changed to. The take comes in silent; the line plays from the cut's voice"),
     in: z.number().optional().describe("Seconds into the take: takes are made a little longer than the shot, so it can be retimed"),
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id, as for a clip: where the take sits in a format of another shape"),
     effects: z.array(ClipEffect).optional().describe("As for a clip, following a subject found on the take"),

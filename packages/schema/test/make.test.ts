@@ -9,6 +9,7 @@ import {
   checkCut,
   checkReferences,
   chooseModels,
+  commercialWords,
   cutView,
   driveWindow,
   fitModel,
@@ -25,6 +26,7 @@ import {
   resolveTimeline,
   SCHEMA_VERSION,
   shotNeeds,
+  speechWindow,
   STAGE_IDS,
   withCut,
   type CastMember,
@@ -181,9 +183,11 @@ describe("choosing between models", () => {
     expect(chooseModels(CATALOG, { op: "video", prompt: "a cat leaves", start: "board", seconds: 3.2 }, services).auto).toMatchObject({ model: "minimax-h3-max-turbo", seconds: 5 });
     for (const m of CATALOG)
       for (const r of m.routes) {
-        expect(r.endpoints.text ?? r.endpoints.start ?? r.endpoints.refs ?? r.endpoints.drive, `${m.id} on ${r.via}`).toBeTruthy();
-        // One that follows a clip takes its start picture with the clip, at the one endpoint.
+        expect(r.endpoints.text ?? r.endpoints.start ?? r.endpoints.refs ?? r.endpoints.drive ?? r.endpoints.talk ?? r.endpoints.dub, `${m.id} on ${r.via}`).toBeTruthy();
+        // One that follows a clip takes its start picture with the clip, at the one endpoint; one that lip-syncs takes
+        // its picture (or its clip) with what's said.
         if (m.takes.drive) expect(r.endpoints.drive, `${m.id} follows a clip on ${r.via}`).toBeTruthy();
+        else if (m.takes.speech) expect(r.endpoints.talk ?? r.endpoints.dub, `${m.id} lip-syncs on ${r.via}`).toBeTruthy();
         else if (m.takes.start) expect(r.endpoints.start, `${m.id} starts from a picture on ${r.via}`).toBeTruthy();
         if (r.takes?.refs ?? m.takes.refs) expect(r.endpoints.refs, `${m.id} takes references on ${r.via}`).toBeTruthy();
       }
@@ -687,6 +691,85 @@ describe("copying movement from a clip", () => {
     expect(driveWindow({ ...drive, from: 17, to: 20 }, 4, 20)).toEqual({ from: 16, to: 20, lead: 1 });
     // A clip with no room either side is followed as it is.
     expect(driveWindow({ ...drive, from: 0, to: 3 }, 4, 3)).toEqual({ from: 0, to: 3, lead: 0 });
+  });
+});
+
+describe("lip sync", () => {
+  // A model that makes a picture talk, at least 5 seconds of it, and one that changes the mouths in a clip.
+  const talk: CatalogModel = {
+    id: "talk",
+    label: "Talk",
+    by: "test",
+    note: "",
+    ops: ["video"],
+    takes: { start: true, speech: true },
+    lengths: { min: 5, max: 60 },
+    aspects: ["any"],
+    routes: [{ via: "fal", shape: "talk", endpoints: { talk: "fal/talk" }, price: { perSecond: 0.08 } }],
+  };
+  const dub: CatalogModel = { ...talk, id: "dub", label: "Dub", takes: { clip: true, speech: true }, lengths: { min: 1, max: 30 }, routes: [{ via: "fal", shape: "dub", endpoints: { dub: "fal/dub" }, price: { perSecond: 0.1 } }] };
+  const speech = { lines: ["l1"], from: 2, to: 5 };
+  const clip = { asset: "take1", from: 0.5, to: 3.5 };
+
+  it("makes a picture say what it's given, made as long as the model's shortest when the shot is shorter", () => {
+    expect(fitModel(talk, { op: "video", prompt: "x", start: "board", speech, seconds: 3 }, { fal })).toMatchObject({ ok: true, endpoint: "fal/talk", seconds: 5, usd: 0.4 });
+    expect(fitModel(talk, { op: "video", prompt: "x", speech, seconds: 3 }, { fal })).toMatchObject({ ok: false, why: { reason: "Needs a picture of who speaks: start from the shot's board" } });
+    expect(fitModel(talk, { op: "video", prompt: "x", start: "board", seconds: 3 }, { fal })).toMatchObject({ ok: false, why: { reason: expect.stringContaining("Lip-syncs") } });
+    expect(fitModel(talk, { op: "video", prompt: "x", clip, speech, seconds: 3 }, { fal })).toMatchObject({ ok: false, why: { reason: expect.stringContaining("doesn't change the mouths in a clip") } });
+  });
+
+  it("changes the mouths in a clip, and models that don't lip-sync say so", () => {
+    expect(fitModel(dub, { op: "video", prompt: "x", clip, speech, seconds: 3 }, { fal })).toMatchObject({ ok: true, endpoint: "fal/dub", seconds: 4 });
+    expect(fitModel(dub, { op: "video", prompt: "x", start: "board", speech, seconds: 3 }, { fal })).toMatchObject({ ok: false, why: { reason: expect.stringContaining("Changes the mouths in a clip") } });
+    expect(fitModel(fixed, { op: "video", prompt: "x", start: "board", speech, seconds: 3 }, { fal })).toMatchObject({ ok: false, why: { reason: "Doesn't lip-sync to a voice" } });
+    expect(chooseModels([fixed, talk, dub], { op: "video", prompt: "x", clip, speech, seconds: 3 }, { fal }).auto?.model).toBe("dub");
+  });
+
+  it("picks from the catalog: H3 Max Lip Sync to make a board talk, Kling's for a rough redo of the mouths and sync-3 for a final", () => {
+    const talking = { op: "video" as const, prompt: "x", start: "board", speech, seconds: 3 };
+    expect(chooseModels(CATALOG, talking, { fal }).auto).toMatchObject({ model: "minimax-h3-max-lipsync", seconds: 5, usd: 0.25 });
+    expect(chooseModels(CATALOG, { ...talking, quality: "final" }, { fal }).auto).toMatchObject({ model: "minimax-h3-max-lipsync", usd: 0.8 });
+    const redo = { op: "video" as const, prompt: "x", clip, speech, seconds: 3 };
+    expect(chooseModels(CATALOG, { ...redo, quality: "rough" }, { fal }).auto?.model).toBe("kling-lipsync");
+    expect(chooseModels(CATALOG, { ...redo, quality: "final" }, { fal }).auto?.model).toBe("sync-3");
+    // Longer than Kling's 10 seconds, a rough goes to LatentSync, $0.20 a take.
+    expect(chooseModels(CATALOG, { ...redo, seconds: 12, quality: "rough" }, { fal }).auto).toMatchObject({ model: "latentsync", usd: 0.2 });
+    // Without fal, InfiniteTalk on your own card; past its workflow's 14.7 seconds, only on fal.
+    const comfy: ServiceState = { label: "ComfyUI", state: "ready" };
+    expect(chooseModels(CATALOG, talking, { comfy }).auto).toMatchObject({ model: "infinitetalk", route: "comfy", usd: 0 });
+    expect(fitModel(CATALOG.find((m) => m.id === "infinitetalk")!, { ...talking, seconds: 20 }, { fal, comfy })).toMatchObject({ ok: true, route: "fal", seconds: 21, usd: 4.2 });
+  });
+
+  it("bills a short take as the service does, and LongCat in its own lengths", () => {
+    const redo = { op: "video" as const, prompt: "x", clip, speech, seconds: 3, quality: "rough" as const };
+    // Kling's 4 seconds cost what 5 do; LatentSync's are $0.20 a take up to 40 seconds.
+    expect(fitModel(CATALOG.find((m) => m.id === "kling-lipsync")!, redo, { fal })).toMatchObject({ ok: true, seconds: 4, usd: 0.07 });
+    expect(fitModel(CATALOG.find((m) => m.id === "latentsync")!, { ...redo, count: 2 }, { fal })).toMatchObject({ ok: true, seconds: 4, usd: 0.4 });
+    const longcat = CATALOG.find((m) => m.id === "longcat-avatar")!;
+    expect(fitModel(longcat, { op: "video", prompt: "x", start: "board", speech, seconds: 3 }, { fal })).toMatchObject({ ok: true, seconds: 5.8, usd: 0.87 });
+    expect(fitModel(longcat, { op: "video", prompt: "x", start: "board", speech, seconds: 7, quality: "final" }, { fal })).toMatchObject({ ok: true, seconds: 10.8, usd: 3.24 });
+  });
+
+  it("says where what a model makes isn't free to use commercially, place by place", () => {
+    const comfy: ServiceState = { label: "ComfyUI", state: "ready" };
+    const h3 = CATALOG.find((m) => m.id === "minimax-h3")!;
+    const board = { op: "video" as const, prompt: "x", start: "board", seconds: 5 };
+    // On your card, its license leaves out the US; on fal, nothing does.
+    const local = fitModel(h3, board, { fal, comfy });
+    expect(local).toMatchObject({ ok: true, route: "comfy", commercial: { use: "no", why: expect.stringContaining("US") }, also: [{ route: "fal" }] });
+    expect(local.ok && local.also![0]!.commercial).toBeUndefined();
+    expect(fitModel(h3, { ...board, via: "fal" }, { fal, comfy })).not.toHaveProperty("commercial");
+    expect(fitModel(CATALOG.find((m) => m.id === "flux3-klein")!, { op: "image", prompt: "x" }, { comfy })).toMatchObject({ commercial: { use: "limited" } });
+    expect(fitModel(CATALOG.find((m) => m.id === "longcat-avatar")!, { op: "video", prompt: "x", start: "board", speech, seconds: 3 }, { fal })).toMatchObject({ commercial: { use: "unclear" } });
+    expect(commercialWords({ use: "no", why: "" })).toBe("not for commercial use");
+  });
+
+  it("widens what's said to the take's length, and keeps it in step with the clip whose mouths change", () => {
+    // The cut's voice is silent past either end, so it widens evenly, or all after at the cut's start.
+    expect(speechWindow(speech, undefined, 5)).toEqual({ from: 1, to: 6, lead: 1 });
+    expect(speechWindow({ lines: ["l1"], from: 0, to: 3 }, undefined, 4)).toEqual({ from: 0, to: 4, lead: 0 });
+    // The take showing began half a second before the shot: the sound moves with the clip, which has only so much room.
+    expect(speechWindow(speech, clip, 4, 4)).toEqual({ from: 1.5, to: 5.5, lead: 0.5, clip: { from: 0, to: 4 } });
   });
 });
 

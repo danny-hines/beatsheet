@@ -42,7 +42,7 @@ Rough is a cheap take to judge motion and the cut; final is the shot that stays.
 
 | Kind | Rough | Final | Also | Confidence |
 |---|---|---|---|---|
-| dialogue | H3 Max Turbo, $0.20 | Seedance 2.5 (made-up speakers), $5.82 | H3 Max, or its lip sync on a `narrate` line (real people), $0.80 | medium |
+| dialogue | H3 Max Turbo, $0.20 | Seedance 2.5 (made-up speakers), $5.82 | H3 Max, or a `narrate` line lip-synced (real people): H3 Max Lip Sync on the board $0.80, or sync-3 on a take $0.67 (see Lip sync) | medium |
 | action | Wan 3.0 480p, $0.25 | Seedance 2.5, $5.82 | Kling 4.0, $1.18 | high for Seedance |
 | contact (a hug, a punch landing) | Seedance 2.5 draft, $1.10 | Copy a filmed performance (SCAIL-2 on the card, Kling Motion Control on fal $0.84) | Seedance 2.5 | low |
 | crowd | Wan 3.0 480p | Seedance 2.5 | Wan 3.0 1080p, $1.00 | low |
@@ -86,9 +86,9 @@ The research's recommendations, and where each stands (2 November 2026). The fal
 | Add | Kling 4.0 | Orbits, up to 8 middle keyframes, timed 30 s takes | Added, without keyframes or `multi_prompt` |
 | Add | Gemini Omni Flash 1.1 | Sound and motion design from a prompt, 360p roughs at 15¢; never for real people | Added on fal (not on a Gemini key), without references |
 | Keep | H3, H3 Max, H3 Max Turbo on fal | The top cluster at the lowest prices | Now Auto: H3 Max Turbo for roughs, H3 Max for finals |
-| Gate | MiniMax H3 on ComfyUI | Its license excludes the US, EU, UK and South Korea | Kept in Auto at the person's choice; the menu note says so |
+| Gate | MiniMax H3 on ComfyUI | Its license excludes the US, EU, UK and South Korea | Kept in Auto at the person's choice; the menu labels it "not for commercial use" |
 | Add | LTX-2.5 on ComfyUI | The local model with sound whose license allows US use (free under $10M revenue); 5 s clips fit a 4090, 10 s run out of memory | Not yet: needs its workflow and about 25 GB of files |
-| Add | H3 Max lip sync; sync-3 | A `narrate` line onto a board; dubbing existing footage | Not yet: needs a request that carries a voice line |
+| Add | H3 Max lip sync; sync-3 | A `narrate` line onto a board; dubbing existing footage | Added with the rest of lip sync (below): a request now carries what's said (`speech`) |
 | Upgrade | Wan 2.2 Animate → Wan-Animate-2; add Kling v3 Motion Control on fal | A text-set camera angle; copying movement without the card, up to 30 s | Kling Motion Control added; Wan-Animate-2 not yet |
 | Demote | Kling 3 Pro | Mid-pack everywhere; keep for `@Element` references until Kling 4.0 takes them on fal | Moved below the new finals |
 | Remove | Kling 2.5 Turbo, Wan 2.2 on fal | Ranked far below; H3 Max Turbo and Wan 3.0 480p cost the same or less, with sound | Kept at the end of the list, for takes already made with them |
@@ -97,9 +97,50 @@ Two structural changes matter more than any one model: **families with a rough a
 
 Stills, by job: GPT Image 2.5 Sunburst for people, sheets, products and lettering; Nano Banana 2.1 for photographic boards, places and tall frames; Muse Image for cheap rough boards; Nano Banana Pro when a board has more than four recurring characters.
 
+## Lip sync
+
+Two jobs: **talk** (a board made to say a line, as a new clip) and **dub** (the mouths in a clip changed to say it, everything else kept). What's said is the cut's voiced line where the shot plays, so the take lines up with it. Research of 2 November 2026 in `research_notes/Lip sync/notes.md`. No independent blind comparison of lip sync exists yet: every study is a vendor's or a model's own authors', so the order is price and the vendors' consensus, to be changed by what the person keeps.
+
+| Job | Rough (Auto) | Final (Auto) | Also in beatsheet | Confidence |
+|---|---|---|---|---|
+| talk | H3 Max Lip Sync 480p, $0.05/s (5 s at least) | H3 Max Lip Sync 1080p, $0.16/s | sync-3 ($0.133/s), Kling Avatar 2 Pro ($0.115/s), OmniHuman 2 ($0.105/s), VEED Fabric 1.0 ($0.08–0.15/s), LongCat Avatar ($0.15–0.30/s, in steps of 5 s; commercial use unclear), InfiniteTalk (on the card $0, on fal $0.20/s) | low |
+| dub | Kling Lip Sync, $0.014/s (2–10 s, 720p or more, 5 s at least billed); past 10 s, LatentSync, $0.20 a take up to 40 s | sync-3, $0.133/s | Lipsync 2 Pro ($0.083/s) | medium for sync-3 |
+
+- **sync-3** is the vendors' pick for dubbing: the whole shot at once, natively up to 4K, close-ups, profiles, hands or a mic in front of the mouth. It alone can pick one face among several (by a point, boxes or a face picture), which beatsheet doesn't use yet.
+- **H3 Max Lip Sync** is the cheapest way to make a board talk and the longest (5 s to 15 min, 1.2× past 15 s). Its eyes stay as the board has them: a board with closed eyes keeps them closed.
+- **Kling Avatar** had more accurate mouths and **OmniHuman 1.5** steadier motion in one vendor's test (PiAPI); another vendor saw OmniHuman 1.5 drift after about 10 s. OmniHuman 2's output size isn't published.
+- **InfiniteTalk** (Apache 2.0) is the one open model on ComfyUI's own nodes, so it runs on the 4090 with no custom pack: Wan 2.1 at 480p, 25 fps, carried on in chunks. The one 4090 report is an anecdote (about 70 s at 480p, 4 steps, length not given).
+
+Not added, and why:
+
+| Model | Why not yet |
+|---|---|
+| LatentSync 1.6 on your own card | Added on fal (it repaints only the mouth, so the clip keeps its sharpness). On the card it needs a custom ComfyUI pack (`GuardSkill/ComfyUI-LatentSyncEnhanced`, node `LatentSyncEnhanced`) that imports InsightFace without listing it, which ComfyUI's Python 3.13 on Windows has no ready-built wheel for; and its face detector would make it "not for commercial use" there |
+| H3 Max lip sync, video to video ($0.10–0.20/s) | Redraws the whole frame at 480p or 768p and makes it 24 fps; sync-3 keeps the clip as it is |
+| HeyGen Lipsync (speed $0.05/s, precision $0.10/s), VEED Lipsync 2 ($0.07/s) | New on fal, no evidence yet; worth a place in the list once there is |
+| LTX-2.3 from a picture and sound (ComfyUI's own template) | 720p where InfiniteTalk is 480p, but about 41 GB of files and mixed reports on its mouths |
+| Wan 2.2 S2V, HuMo | On ComfyUI's own nodes, but S2V needs 20 steps (its 4-step LoRA ruins it) and HuMo makes about 3.9 s with no way to carry on |
+| MuseTalk 1.5 | The only one a Mac or the laptop could run (256×256 face, the lowest quality); no ComfyUI pack loads 1.5 |
+| LongCat-Avatar on your own card, Hunyuan-Avatar | Custom packs (LongCat on fal is added); Hunyuan-Avatar isn't on fal and is very slow |
+| Wav2Lip, JoyGen | Superseded, and lower quality than what's here (both are non-commercial too) |
+| TBDub, X-Dub (2026 research) | Best measured dubbing in their authors' own studies, but Linux Python with no ComfyUI pack: a worker of their own, as SAM has |
+
+Two people talking in one shot: MultiTalk on fal and InfiniteTalk's two-speaker mode take a voice each, but which voice goes to which face isn't documented on fal, so beatsheet says one person's lines per take for now.
+
 ## Licenses and refusals
 
-- **MiniMax H3's open weights.** The [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) grants rights "solely within the Applicable Territory": worldwide excluding the EU, the UK, South Korea and the US. A commercial product using it must show "MiniMax H3"; above $20M a year needs MiniMax's written permission. [Comfy's H3 tutorial](https://docs.comfy.org/tutorials/video/minimax/minimax-h3) says commercial use of output made locally needs a MiniMax license bought through Comfy. H3 on fal is MiniMax's model served as a paid API; fal's own terms for it haven't been read yet.
+**Commercial use.** Models aren't left out for their licenses: beatsheet is for whatever the person makes, and making for fun or to learn is fine under all of them. Instead each route says when what it makes there isn't simply free to use commercially (`commercial` on a catalog route), and the model menu, Settings' ranking and `list_models` show it: "not for commercial use", "commercial use limited" or "commercial use unclear", with why. Auto doesn't skip them. fal marks every model in the catalog for commercial use (its page data, `licenseType: "commercial"`, read on 3 November 2026), as do the Gemini, OpenAI and Meta APIs and the plans, so the labels fall on what runs on your own card under its own license, and on one fal model whose makers say otherwise:
+
+| Route | Commercial use | Why |
+|---|---|---|
+| MiniMax H3 on ComfyUI | no | Its license grants nothing in the US, EU, UK or South Korea, and output made locally needs a license bought through Comfy |
+| FLUX 3 Image Klein on ComfyUI | limited | FLUX Kommunity License: yes for people and companies making under $5M a year |
+| LongCat Avatar on fal | unclear | fal sells it for commercial use; LongCat-Video-Avatar's own page says what it makes is for academic use only |
+| SCAIL-2, Wan 2.2 (14B, 5B, Animate), InfiniteTalk on ComfyUI | yes | MIT and Apache 2.0 |
+
+A model added later that runs somewhere under a restricting license gets its label with it (LatentSync on your own card would be "no": its InsightFace face detector is for non-commercial research).
+
+- **MiniMax H3's open weights.** The [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) grants rights "solely within the Applicable Territory": worldwide excluding the EU, the UK, South Korea and the US. A commercial product using it must show "MiniMax H3"; above $20M a year needs MiniMax's written permission. [Comfy's H3 tutorial](https://docs.comfy.org/tutorials/video/minimax/minimax-h3) says commercial use of output made locally needs a MiniMax license bought through Comfy. H3 on fal is MiniMax's model served as a paid API, which fal marks for commercial use.
 - **Seedance:** refuses photos of real people; made-up people are sometimes refused too.
 - **Gemini Omni Flash:** blocks real people's likenesses, even someone's own footage.
 - **GPT Image:** edits of real people need their consent; strictest on wardrobe.

@@ -594,6 +594,11 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // The clip a take copies movement from: drive (an asset id, or "none" for none), from and to.
     const follow = q.get("drive");
     const at = (k: string) => (q.get(k) === null || q.get(k) === "" ? undefined : Number(q.get(k)));
+    // What a take lip-syncs to: speech "lines" (the ones heard while the shot plays, or `lines`), a file's id (from
+    // speechFrom to speechTo), or "none"; and clip "take" to change the mouths in the clip the shot shows.
+    const says = q.get("speech");
+    const lines = q.get("lines")?.split(",").filter(Boolean);
+    const speech = says === "none" ? { speech: null } : says === "lines" ? { speech: lines?.length ? { lines } : {} } : says ? { speech: { asset: says, from: at("speechFrom"), to: at("speechTo") } } : {};
     try {
       return json(
         res,
@@ -606,6 +611,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(q.get("portrait") === "1" ? { portrait: true } : {}),
           start: q.get("start") ?? undefined,
           ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
+          ...speech,
+          ...(q.get("clip") === "take" ? { clip: "take" as const } : {}),
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,
           count: Number(q.get("count")) || undefined,

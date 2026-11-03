@@ -7,12 +7,18 @@ import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
 import type { CastMember, CastProposal, Project, ProjectFile } from "./types.ts";
 
-/** What can be asked for. More join as they're wired up: extend, edit-video, swap, lipsync, restore, isolate. */
+/**
+ * What can be asked for. Lip sync is video with speech (MakeRequest.speech). More join as they're wired up: extend,
+ * edit-video, swap, restore, isolate.
+ */
 export const MAKE_OPS = ["image", "video"] as const;
 export type MakeOp = (typeof MAKE_OPS)[number];
 
-/** The shape of a request a service has its own endpoint for: a clip that copies movement from another is "drive". */
-export type RequestShape = "text" | "start" | "refs" | "drive";
+/**
+ * The shape of a request a service has its own endpoint for: a clip that copies movement from another is "drive"; a
+ * picture made to say something (lip-synced to its sound) is "talk", and a clip whose mouths are changed to say it "dub".
+ */
+export type RequestShape = "text" | "start" | "refs" | "drive" | "talk" | "dub";
 
 /** One place a model runs, and what it costs there. */
 export type ModelRoute = {
@@ -25,8 +31,11 @@ export type ModelRoute = {
   /**
    * In US dollars, from the service's own page. Estimates, not quotes. `finalPerSecond`: for a model that makes both,
    * a final's price, when finals are made larger than roughs (Wan 3.0's roughs at 480p, its finals at 1080p).
+   * `minimum`: the least one take costs, for a service that bills a short take as a longer one.
    */
-  price: { perImage?: number; perSecond?: number; finalPerSecond?: number };
+  price: { perImage?: number; perSecond?: number; finalPerSecond?: number; minimum?: number };
+  /** Whether what it makes here may be used commercially, when that isn't simply yes (see Commercial). */
+  commercial?: Commercial;
   /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
   lengths?: number[] | { min: number; max: number };
   /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references. */
@@ -34,6 +43,17 @@ export type ModelRoute = {
   /** Roughly how long one take takes here, when that isn't the model's usual. */
   wait?: number;
 };
+
+/**
+ * What a model's license lets the person do with what it makes on a route, when that isn't simply yes (a service that
+ * sells it for commercial use, or an open license like Apache 2.0 or MIT): "no", not for commercial use (the model's
+ * license, or a part it runs on, like a face detector); "limited", only within limits (revenue, where you are); or
+ * "unclear", when what the service says and what the model's makers say disagree. `why` says which and how.
+ */
+export type Commercial = { use: "no" | "limited" | "unclear"; why: string };
+
+/** A route's commercial use for people, in a few words: "not for commercial use". */
+export const commercialWords = (c: Commercial) => (c.use === "no" ? "not for commercial use" : c.use === "limited" ? "commercial use limited" : "commercial use unclear");
 
 export type CatalogModel = {
   id: string;
@@ -47,9 +67,10 @@ export type CatalogModel = {
   tier?: Quality;
   /**
    * What it can be given besides a prompt: a picture to start from, one to end on, and how many references. `drive`:
-   * it copies the movement of the people in a clip onto the people in the start picture, and needs both.
+   * it copies the movement of the people in a clip onto the people in the start picture, and needs both. `speech`: it
+   * lip-syncs to a voice, making the start picture talk or, with `clip`, changing the mouths in a clip.
    */
-  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean };
+  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean; speech?: boolean; clip?: boolean };
   /** For video: the lengths it makes, as a list or a range, in seconds. */
   lengths?: number[] | { min: number; max: number };
   /** The aspects it makes ("16:9"), or "any". When it starts from a picture, the picture's shape decides instead. */
@@ -77,6 +98,10 @@ export type MakeRequest = {
   refs?: string[];
   /** For video that copies movement: the stretch of a clip to follow. */
   drive?: Drive;
+  /** For video that lip-syncs: what it says. The start picture is made to say it, or the mouths in `clip` are. */
+  speech?: Speech;
+  /** For video that changes the mouths in a clip to say `speech`: the stretch of the clip. */
+  clip?: Stretch;
   /** The real people in it, by name: characters made from the person's own photos or clips (realPeople). */
   realPeople?: string[];
   /** How long it has to play, in seconds (the shot's length, or the stretch it follows). */
@@ -120,7 +145,7 @@ export type FitOk = {
   /** Where it runs, for people: "fal", "ChatGPT plan". */
   where: string;
   /** The other places it could run now, cheapest first. */
-  also?: { route: string; where: string; usd?: number }[];
+  also?: { route: string; where: string; usd?: number; commercial?: Commercial }[];
   /** The service's endpoint for this shape of request. */
   endpoint: string;
   /** The length to ask for: the shot's plus a little either side when the model allows it. */
@@ -131,27 +156,50 @@ export type FitOk = {
   usd?: number;
   /** Roughly how long, in seconds. */
   wait?: number;
+  /** When what it makes there isn't simply free to use commercially: why. */
+  commercial?: Commercial;
 };
 export type Fit = FitOk | { ok: false; model: string; label: string; why: Why };
 
 /** Takes are made this much longer at each end, when the model allows, so the shot can be retimed without another. */
 export const HANDLE = 0.5;
 
-/** A stretch of a clip whose movement a take copies, in seconds of the clip. */
-export type Drive = { asset: string; from: number; to: number };
+/** A stretch of a file, in seconds of the file. */
+export type Stretch = { asset: string; from: number; to: number };
+/** A stretch of a clip whose movement a take copies. */
+export type Drive = Stretch;
 
 /**
- * The stretch of the clip a take that copies movement follows: the one asked for, widened to the take's length where
- * the clip has room (evenly either side, else on the side that has it), and how far into it the asked-for stretch
- * starts (where the shot starts in the take).
+ * What a take says, as sound: the cut's voice lines as they're heard between two seconds of the cut (in its first
+ * format; anything else heard then is left out), or a stretch of a file's own sound.
  */
-export function driveWindow(drive: Drive, seconds: number, duration = Infinity): { from: number; to: number; lead: number } {
+export type Speech = { lines: string[]; from: number; to: number } | Stretch;
+
+/**
+ * The stretch a take follows (the clip whose movement it copies, the sound it says): the one asked for, widened to the
+ * take's length where there's room (evenly either side, else on the side that has it), and how far into it the
+ * asked-for stretch starts (where the shot starts in the take).
+ */
+export function driveWindow(drive: Pick<Stretch, "from" | "to">, seconds: number, duration = Infinity): { from: number; to: number; lead: number } {
   const want = drive.to - drive.from;
   const extra = Math.max(0, seconds - want);
   const before = Math.min(drive.from, Math.max(extra / 2, extra - Math.max(0, duration - drive.to)));
   const r = (x: number) => Math.round(x * 1000) / 1000;
   const from = drive.from - before;
   return { from: r(from), to: r(Math.min(duration, from + Math.max(seconds, want))), lead: r(before) };
+}
+
+/**
+ * The sound a take that lip-syncs says, widened to the take's length as driveWindow does, and for one that changes the
+ * mouths in a clip, the clip's stretch too: the clip has the say (`duration` is its length, else the sound file's), and
+ * the sound moves with it. The cut's voice is silent past either end, so the sound can always be widened.
+ */
+export function speechWindow(speech: Speech, clip: Stretch | undefined, seconds: number, duration = Infinity): { from: number; to: number; lead: number; clip?: { from: number; to: number } } {
+  if (!clip) return driveWindow(speech, seconds, duration);
+  const w = driveWindow(clip, seconds, duration);
+  const r = (x: number) => Math.round(x * 1000) / 1000;
+  const from = r(speech.from - w.lead);
+  return { from, to: r(from + w.to - w.from), lead: w.lead, clip: { from: w.from, to: w.to } };
 }
 
 /** The aspects models are asked for, widest first. */
@@ -182,7 +230,8 @@ const money = (usd: number) => `$${usd < 1 ? usd.toFixed(2) : usd.toFixed(2).rep
 const list = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}`);
 
 /** Which of a service's endpoints a request needs. */
-export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive">): RequestShape => (req.drive ? "drive" : req.refs?.length ? "refs" : req.start ? "start" : "text");
+export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip">): RequestShape =>
+  req.speech ? (req.clip ? "dub" : "talk") : req.drive ? "drive" : req.refs?.length ? "refs" : req.start ? "start" : "text";
 
 /** The length to ask for, or why it can't be made. */
 function lengthFor(model: CatalogModel, wanted: number | undefined): { seconds: number } | { why: Why } {
@@ -213,10 +262,13 @@ function aspectFor(model: CatalogModel, wanted: string | undefined): { aspect?: 
   return { why: { kind: "fit", reason: `Makes ${list(model.aspects)}, not ${wanted}` } };
 }
 
-/** What a request would cost on a route: per image, or per second of video (a final's own rate when it has one), times the takes. */
+/**
+ * What a request would cost on a route: per image, or per second of video (a final's own rate when it has one), at
+ * least the route's least a take costs, times the takes.
+ */
 function costOn(route: ModelRoute, op: MakeOp, seconds: number | undefined, count: number, quality?: Quality): number | undefined {
   const perSecond = (quality === "final" ? route.price.finalPerSecond : undefined) ?? route.price.perSecond;
-  const each = op === "image" ? route.price.perImage : perSecond !== undefined && seconds !== undefined ? perSecond * seconds : undefined;
+  const each = op === "image" ? route.price.perImage : perSecond !== undefined && seconds !== undefined ? Math.max(route.price.minimum ?? 0, perSecond * seconds) : undefined;
   return each === undefined ? undefined : Math.round(each * count * 1000) / 1000;
 }
 
@@ -236,6 +288,13 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (req.drive && !model.takes.drive) return no({ kind: "fit", reason: "Doesn't copy movement from a clip" });
   if (model.takes.drive && !req.drive) return no({ kind: "fit", reason: "Copies the movement in a clip: say which stretch of which clip to follow" });
   if (req.drive && !req.start) return no({ kind: "fit", reason: "Needs a picture of who moves: start from the shot's board" });
+  if (req.speech && !model.takes.speech) return no({ kind: "fit", reason: "Doesn't lip-sync to a voice" });
+  if (model.takes.speech && !req.speech) return no({ kind: "fit", reason: "Lip-syncs: say what it says (the shot's lines, or a stretch of sound)" });
+  if (req.clip && !req.speech) return no({ kind: "fit", reason: "A clip to change the mouths in needs something for them to say" });
+  if (req.clip && !model.takes.clip) return no({ kind: "fit", reason: "Makes a picture talk; it doesn't change the mouths in a clip" });
+  if (req.speech && !req.clip && !model.takes.start) return no({ kind: "fit", reason: "Changes the mouths in a clip: say which clip (the take the shot shows)" });
+  if (req.speech && !req.clip && !req.start) return no({ kind: "fit", reason: "Needs a picture of who speaks: start from the shot's board" });
+  if (req.clip && req.start) return no({ kind: "fit", reason: "Changes the mouths in a clip, so it doesn't start from a picture as well" });
   if (req.start && !model.takes.start) return no({ kind: "fit", reason: "Doesn't start from a picture" });
   if (req.end && !req.start) return no({ kind: "fit", reason: "An end frame needs a start frame too", fix: "drop-end" });
   if (req.end && !model.takes.end) return no({ kind: "fit", reason: "Doesn't take an end frame", fix: "drop-end" });
@@ -263,8 +322,15 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const state = (r: ModelRoute): ServiceState => services[r.via] ?? { label: r.via, state: "missing" };
   const there = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
   if (!there.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
-  if (!there.length)
-    return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${shape === "refs" ? "references" : shape === "start" ? "a start frame" : shape === "drive" ? "a clip to follow" : "only a prompt"}` });
+  const given: Record<RequestShape, string> = {
+    text: "only a prompt",
+    start: "a start frame",
+    refs: "references",
+    drive: "a clip to follow",
+    talk: "a picture to make talk",
+    dub: "a clip to change the mouths in",
+  };
+  if (!there.length) return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${given[shape]}` });
   // A route can take less than the model does elsewhere (no end frame on your own card).
   const takesHere = (r: ModelRoute) => (!req.end || r.takes?.end !== false) && refs <= (r.takes?.refs ?? maxRefs);
   const offered = there.filter(takesHere);
@@ -290,7 +356,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
   if (affordable.length) {
     const [best, ...rest] = affordable.map((x) => ({ ...x, where: state(x.r).label }));
-    const also = rest.map((x) => ({ route: x.r.via, where: x.where, usd: x.usd }));
+    const also = rest.map((x) => ({ route: x.r.via, where: x.where, usd: x.usd, ...(x.r.commercial ? { commercial: x.r.commercial } : {}) }));
     return {
       ok: true,
       model: model.id,
@@ -303,6 +369,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
       aspect,
       usd: best!.usd,
       wait: best!.r.wait ?? model.wait,
+      ...(best!.r.commercial ? { commercial: best!.r.commercial } : {}),
     };
   }
   if (ready.length) {

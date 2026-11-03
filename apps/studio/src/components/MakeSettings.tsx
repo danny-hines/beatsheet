@@ -4,7 +4,7 @@
  * make stills without a key, and ComfyUI for the models that run on the person's own graphics card.
  */
 import type { ComfyCheck, InstallStatus } from "@beatsheet/engine";
-import { CATALOG, type MakeOp, type ServiceState } from "@beatsheet/schema";
+import { CATALOG, commercialWords, type MakeOp, type ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
 
@@ -175,7 +175,7 @@ function ComfySection() {
     <section>
       <h4>Your own hardware</h4>
       <p className="dim small">
-        SCAIL-2 and Wan 2.2 Animate copy the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board, Wan 2.2 makes clips from a board, and FLUX 3 Image Klein makes stills and boards, all in ComfyUI on your own hardware at no charge.
+        SCAIL-2 and Wan 2.2 Animate copy the movement in a clip (a fight, a dance, a stunt someone acts out) onto the people in a shot's board, Wan 2.2 makes clips from a board, InfiniteTalk makes a board say the cut's line, and FLUX 3 Image Klein makes stills and boards, all in ComfyUI on your own hardware at no charge.
       </p>
       <p className="small">
         This computer: {machineWords(c.check.here)}.{" "}
@@ -307,6 +307,15 @@ function Ranking({ op, label, order, onChange }: { op: MakeOp; label: string; or
             <span>
               {m.label}
               {m.tier && <span className="dim small"> · {m.tier === "final" ? "finals" : "roughs"}</span>}
+              {m.routes
+                .filter((r) => r.commercial)
+                .map((r) => (
+                  <span key={r.via} className="dim small" title={r.commercial!.why}>
+                    {" "}
+                    · {commercialWords(r.commercial!)}
+                    {m.routes.length > 1 ? (r.via === "comfy" ? " on your own card" : ` on ${r.via}`) : ""}
+                  </span>
+                ))}
             </span>
             <span className="dim small">{m.note}</span>
             <span className="make-ranking-move">

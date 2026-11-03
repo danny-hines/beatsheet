@@ -1,9 +1,10 @@
 /**
  * ComfyUI, on this computer or another one on the network: workflows beatsheet runs on the person's own hardware
  * (SCAIL-2 and Wan 2.2 Animate, which copy the movement in a clip onto the people in a picture, Wan 2.2 and MiniMax
- * H3 from a picture alone, and FLUX 3 Image Klein's stills). A workflow is ComfyUI's API export (File → Export (API))
- * with the nodes beatsheet fills titled STUDIO_*: the picture (and one to end on), a still's reference pictures
- * (STUDIO_REF_IMAGE_1, _2…), the clip to follow, the seed, the size, the length, the prompt and the output. A
+ * H3 from a picture alone, InfiniteTalk, which makes a picture say a line, and FLUX 3 Image Klein's stills). A workflow
+ * is ComfyUI's API export (File → Export (API)) with the nodes beatsheet fills titled STUDIO_*: the picture (and one to
+ * end on), a still's reference pictures (STUDIO_REF_IMAGE_1, _2…), the clip to follow, the sound to say, the seed, the
+ * size, the length, the prompt and the output. A
  * STUDIO_END_IMAGE left empty is taken out, with the inputs it fed, and so are the reference pictures a still isn't
  * given. The ones that ship are in packages/engine/comfy; the person's own exports, in the comfy folder beside
  * beatsheet's settings, take their place.
@@ -59,12 +60,14 @@ type Workflow = {
   still?: true;
   /** It follows a clip: the picture and the clip go in, the clip in chunks. Else it's made from a picture alone. */
   drive: boolean;
+  /** It makes the picture say something: the picture and the sound go in, the sound in chunks (`first`, `extend`). */
+  speech?: true;
   /** About this many pixels for each profile (roughs smaller, so they're quicker), both sides a multiple of `multiple`. */
   area: Record<Profile, number>;
   multiple: number;
   /** A clip's frame rate. */
   fps?: number;
-  /** Following a clip: frames in the first chunk, and in each one after. */
+  /** Following a clip or saying a sound: frames in the first chunk, and in each one after. */
   first?: number;
   extend?: number;
   /** From a picture alone: the most frames it makes, on its grid (default a whole number of fours, plus one). */
@@ -72,6 +75,8 @@ type Workflow = {
   grid?: { step: number; offset: number };
   /** It makes its own sound, which the take keeps. */
   sound?: boolean;
+  /** The profiles it ships in, when not both (a still ships full, as it is no rough). */
+  profiles?: Profile[];
   /** What it runs on, the memory that takes on each, and why not on others. */
   needs: { devices: DeviceKind[]; memoryGb: Partial<Record<DeviceKind, number>>; why?: string };
 };
@@ -138,6 +143,22 @@ export const WORKFLOWS: Record<string, Workflow> = {
     multiple: 16,
     needs: { devices: ["cuda"], memoryGb: { cuda: 12 }, why: "its INT8 weights don't run on Apple's chips or a processor" },
   },
+  // ComfyUI's own nodes (WanInfiniteTalkToVideo, from its InfiniteTalk template): Wan 2.1's 480p image-to-video with
+  // InfiniteTalk's patch and a 6-step LoRA, 81 frames at 25 a second, then 72 more for each chunk after, each one
+  // carrying on from the last 9 frames of what came before (which it makes again, so they come off before joining).
+  infinitetalk: {
+    label: "InfiniteTalk",
+    speech: true,
+    drive: false,
+    area: { full: 480 * 832, fast: 480 * 832 },
+    multiple: 16,
+    fps: 25,
+    first: 81,
+    extend: 72,
+    // The 480p model with its distill LoRA is how ComfyUI ships it; there's no slower one to make finals with.
+    profiles: ["fast"],
+    needs: { devices: ["cuda"], memoryGb: { cuda: 16 }, why: "its fp8 weights don't run on Apple's chips or a processor" },
+  },
 };
 
 /** Marker title → { node class: the input beatsheet sets }. A marker may sit on several nodes; every one is set. */
@@ -145,6 +166,7 @@ const MARKERS: Record<string, Record<string, string>> = {
   STUDIO_REF_IMAGE: { LoadImage: "image" },
   STUDIO_END_IMAGE: { LoadImage: "image" },
   STUDIO_DRIVING_VIDEO: { LoadVideo: "file", VHS_LoadVideo: "video" },
+  STUDIO_AUDIO: { LoadAudio: "audio" },
   STUDIO_SEED: { PrimitiveInt: "value", KSampler: "seed", SamplerCustom: "noise_seed", RandomNoise: "noise_seed" },
   STUDIO_STEPS: { PrimitiveInt: "value", KSampler: "steps", BasicScheduler: "steps" },
   STUDIO_CFG: { PrimitiveFloat: "value", KSampler: "cfg", SamplerCustom: "cfg" },
@@ -165,6 +187,8 @@ const LOADER_FOLDERS: Record<string, string> = {
   "CLIPVisionLoader.clip_name": "clip_vision",
   "VAELoader.vae_name": "vae",
   "CheckpointLoaderSimple.ckpt_name": "checkpoints",
+  "ModelPatchLoader.name": "model_patches",
+  "AudioEncoderLoader.audio_encoder_name": "audio_encoders",
 };
 
 const hf = (repo: string, path: string) => `https://huggingface.co/${repo}/resolve/main/${path}`;
@@ -199,6 +223,10 @@ export const MODEL_FILES: Record<string, Download & { gated?: string }> = {
   "flux3-image-klein-int8-convrot.safetensors": { url: hf("black-forest-labs/flux-3-image-klein-comfy", "diffusion_models/flux3-image-klein-int8-convrot.safetensors"), bytes: 5827874779, sha256: "847d8933548afd93df4af2cac2498e70891bf28d9dae06d695f536992e168fe2", gated: "black-forest-labs/flux-3-image-klein-comfy" },
   "qwen3vl_4b_int8_convrot.safetensors": { url: hf("black-forest-labs/flux-3-image-klein-comfy", "text_encoders/qwen3vl_4b_int8_convrot.safetensors"), bytes: 4858559240, sha256: "32de113cbf8282b02cbff0794b637b9d6676da09314a1db5a30bcea9bf4ee01c", gated: "black-forest-labs/flux-3-image-klein-comfy" },
   "flux2-vae.safetensors": { url: hf("Comfy-Org/Flux-2-Klein-4B", "split_files/vae/flux2-vae.safetensors"), bytes: 336211292, sha256: "868fe7b343cc8f3a19dbcfcafbc3d5f888802be3f89bd81b65b3621a066ce8f3" },
+  // InfiniteTalk (Apache 2.0) on Wan 2.1's 480p image-to-video, as ComfyUI's own template has them; its single-speaker patch.
+  "Wan2_1-I2V-14B-480p_fp8_e4m3fn_scaled_KJ.safetensors": { url: hf("Kijai/WanVideo_comfy_fp8_scaled", "I2V/Wan2_1-I2V-14B-480p_fp8_e4m3fn_scaled_KJ.safetensors"), bytes: 16643349018, sha256: "2ff922282cd84589702e6e8c26e083d1160bfc2b217dd44e1ae2688441dc495d" },
+  "wan2.1_infiniteTalk_single_fp16.safetensors": { url: hf("Comfy-Org/Wan-2.1", "split_files/model_patches/wan2.1_infiniteTalk_single_fp16.safetensors"), bytes: 5125258232, sha256: "bf212c5c647eaf1c019b2158d2edf4a360d97e38b746c4bac994fee485e09fc3" },
+  "wav2vec2-chinese-base_fp16.safetensors": { url: hf("Kijai/wav2vec2_safetensors", "wav2vec2-chinese-base_fp16.safetensors"), bytes: 190115368, sha256: "000813e441020f18cff844c969d2d5d4adc2a5ce46b2db1f23950b05d88805b4" },
 };
 
 /** Nodes that aren't ComfyUI's own, and the pack that has them (ComfyUI Manager installs a pack by name). */
@@ -306,12 +334,18 @@ export function without(workflow: ComfyPrompt, marker: string): ComfyPrompt {
 }
 
 /**
- * What's wrong with an exported workflow for beatsheet, if anything: one that follows a clip needs a clip to load, and
- * a still needs its prompt and its size.
+ * What's wrong with an exported workflow for beatsheet, if anything: one that follows a clip needs a clip to load, one
+ * that says something a sound to load, and a still needs its prompt and its size.
  */
-export function checkWorkflow(prompt: ComfyPrompt, spec: Pick<Workflow, "drive" | "still"> = { drive: true }): string[] {
+export function checkWorkflow(prompt: ComfyPrompt, spec: Pick<Workflow, "drive" | "still" | "speech"> = { drive: true }): string[] {
   const problems: string[] = [];
-  const markers = spec.still ? ["STUDIO_PROMPT", "STUDIO_WIDTH", "STUDIO_HEIGHT"] : spec.drive ? ["STUDIO_REF_IMAGE", "STUDIO_DRIVING_VIDEO"] : ["STUDIO_REF_IMAGE", "STUDIO_FRAMES"];
+  const markers = spec.still
+    ? ["STUDIO_PROMPT", "STUDIO_WIDTH", "STUDIO_HEIGHT"]
+    : spec.drive
+      ? ["STUDIO_REF_IMAGE", "STUDIO_DRIVING_VIDEO"]
+      : spec.speech
+        ? ["STUDIO_REF_IMAGE", "STUDIO_AUDIO"]
+        : ["STUDIO_REF_IMAGE", "STUDIO_FRAMES"];
   for (const marker of markers) if (nodesTitled(prompt, marker).length !== 1) problems.push(`needs exactly one node titled ${marker}`);
   if (!Object.values(prompt).some((n) => n._meta?.title?.startsWith("STUDIO_OUTPUT"))) problems.push(`needs a ${spec.still ? "SaveImage" : "SaveVideo"} titled STUDIO_OUTPUT`);
   for (const [id, n] of Object.entries(prompt)) {
@@ -441,7 +475,11 @@ function unusableOn(name: string, spec: Workflow, c: Connected): Unusable | unde
   }
   const profiles = PROFILES.filter((p) => workflowPath(name, p));
   if (!profiles.length) return { kind: "install", reason: `There's no ${spec.label} workflow here: export one from ComfyUI (File → Export (API)) as ${name}.full.api.json into ${OWN_WORKFLOWS}` };
-  const problems = profiles.map((p) => c.workflows?.[`${name}.${p}`] ?? []);
+  const checked = profiles.map((p) => c.workflows?.[`${name}.${p}`]);
+  // Checked before this workflow came with beatsheet: what it needs there isn't known until it's checked again.
+  if (c.workflows && checked.every((x) => x === undefined))
+    return { kind: "install", reason: `ComfyUI hasn't been checked for ${spec.label} yet: Settings → Making checks it, and fetches the model files it's missing` };
+  const problems = checked.map((x) => x ?? []);
   if (problems.some((x) => !x.length)) return undefined;
   const fewest = problems.sort((a, b) => a.length - b.length)[0]!;
   return { kind: "install", reason: `ComfyUI is missing what ${spec.label} needs: ${fewest.join("; ")} (Settings → Making)` };
@@ -816,6 +854,33 @@ export async function fitClip(src: string, dest: string, from: number, to: numbe
   const vf = `${cover(w, h)},fps=${fps},tpad=stop_mode=clone:stop=${frames}`;
   // The stretch is cut from what's read (-t before -i), so the padding after it isn't cut off too.
   await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-vf", vf, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", dest]);
+}
+
+/** A stretch of a clip at its own frame rate, and its own size unless given one, without its sound. */
+export async function cutClip(src: string, dest: string, from: number, to: number, size?: { width: number; height: number }): Promise<void> {
+  mkdirSync(dirname(dest), { recursive: true });
+  const scale = size ? ["-vf", `scale=${size.width}:${size.height}:flags=lanczos`] : [];
+  await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, ...scale, "-an", "-c:v", "libx264", "-crf", "14", "-pix_fmt", "yuv420p", "-movflags", "+faststart", dest]);
+}
+
+/**
+ * Sound laid on `seconds` of silence, as mono WAV: each piece a file's sound from a second of it (`from`), starting
+ * `at` seconds in and running until the next thing it meets is the end.
+ */
+export async function laySound(pieces: { file: string; from: number; at: number }[], seconds: number, dest: string): Promise<void> {
+  mkdirSync(dirname(dest), { recursive: true });
+  const chains = pieces.map(
+    (p, i) => `[${i + 1}:a]aformat=sample_rates=44100:channel_layouts=mono,atrim=start=${p.from.toFixed(3)},asetpts=PTS-STARTPTS,adelay=${Math.round(p.at * 1000)}:all=1[s${i}]`,
+  );
+  const mix = `[0:a]${pieces.map((_, i) => `[s${i}]`).join("")}amix=inputs=${pieces.length + 1}:duration=first:normalize=0[out]`;
+  const inputs = pieces.flatMap((p) => ["-i", p.file]);
+  await exec("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-t", seconds.toFixed(3), "-i", "anullsrc=r=44100:cl=mono", ...inputs, "-filter_complex", [...chains, mix].join(";"), "-map", "[out]", "-c:a", "pcm_s16le", dest]);
+}
+
+/** A take without its sound: one that lip-syncs comes back saying the line, which the cut's voice already plays. */
+export async function silence(file: string): Promise<void> {
+  await exec("ffmpeg", ["-v", "error", "-y", "-i", file, "-map", "0:v", "-c", "copy", "-movflags", "+faststart", `${file}.tmp.mp4`]);
+  renameSync(`${file}.tmp.mp4`, file);
 }
 
 /**

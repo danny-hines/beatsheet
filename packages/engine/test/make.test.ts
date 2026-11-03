@@ -71,8 +71,11 @@ let refuse: string | undefined;
 let server: Server;
 let base = "";
 const polls = new Map<string, number>();
+// The clip a service sends back: 6 seconds, 9:16, with its own sound (as a lip-synced one comes back saying its line).
+const clipMade = join(root, "made.mp4");
 
 beforeAll(async () => {
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=540x960:r=25:d=6", "-f", "lavfi", "-i", "sine=frequency=330:duration=6", "-pix_fmt", "yuv420p", "-shortest", clipMade]);
   server = createServer((req, res) => {
     const url = req.url ?? "";
     let body = "";
@@ -102,7 +105,7 @@ beforeAll(async () => {
         return send(200, { upload_url: `${base}/upload/${seen.uploads}`, file_url: `${base}/out/uploaded-${seen.uploads}.jpg` });
       }
       if (url.startsWith("/upload/")) return send(200, {});
-      if (url.startsWith("/out/")) return send(200, Buffer.from(url.endsWith(".mp4") ? "a video" : "a picture"), url.endsWith(".mp4") ? "video/mp4" : "image/jpeg");
+      if (url.startsWith("/out/")) return send(200, url.endsWith(".mp4") ? readFileSync(clipMade) : Buffer.from("a picture"), url.endsWith(".mp4") ? "video/mp4" : "image/jpeg");
       const status = url.match(/^\/queue\/([^/]+\/[^/]+)\/requests\/([^/]+)\/status/);
       if (status) {
         const n = (polls.get(status[2]!) ?? 0) + 1;
@@ -323,6 +326,24 @@ describe("fal's inputs for each kind of model", () => {
     expect(falInput("gemini-omni", { prompt: "x", quality: "final", seconds: 8, aspect: "4:3" })).toMatchObject({ resolution: "1080p", aspect_ratio: "16:9" });
   });
 
+  it("gives each lip sync model the board (or the clip) and what's said, in its own words", async () => {
+    const { falInput } = await import("../src/fal.ts");
+    const ask = { prompt: "The cat boasts, looking into the camera", start: `${base}/out/board.jpg`, audio: `${base}/out/said.wav`, seconds: 5, seed: 3 };
+    const both = { image_url: ask.start, audio_url: ask.audio };
+    expect(falInput("sync", ask)).toEqual(both);
+    expect(falInput("sync", { ...ask, start: undefined, video: `${base}/out/take.mp4` })).toEqual({ video_url: `${base}/out/take.mp4`, audio_url: ask.audio, sync_mode: "cut_off" });
+    expect(falInput("kling-avatar", ask)).toEqual({ ...both, prompt: ask.prompt });
+    expect(falInput("omnihuman", ask)).toEqual({ ...both, prompt: ask.prompt });
+    expect(falInput("veed-fabric", { ...ask, quality: "final" })).toEqual({ ...both, resolution: "720p" });
+    expect(falInput("h3-max-lipsync", { ...ask, quality: "final" })).toEqual({ ...both, resolution: "1080P", seed: 3 });
+    // InfiniteTalk on fal makes the frames it's asked for, not as many as the sound lasts: 5 seconds at 25 a second, on its fours plus one.
+    expect(falInput("infinitalk", ask)).toEqual({ ...both, prompt: ask.prompt, num_frames: 125, resolution: "480p", seed: 3 });
+    // LongCat makes segments: 5.8 seconds is one, 10.8 two.
+    expect(falInput("longcat-avatar", { ...ask, seconds: 5.8 })).toEqual({ ...both, prompt: ask.prompt, num_segments: 1, resolution: "480p", seed: 3 });
+    expect(falInput("longcat-avatar", { ...ask, seconds: 10.8, quality: "final" })).toMatchObject({ num_segments: 2, resolution: "720p" });
+    expect(falInput("latentsync", { ...ask, start: undefined, video: `${base}/out/take.mp4` })).toEqual({ video_url: `${base}/out/take.mp4`, audio_url: ask.audio, seed: 3 });
+  });
+
   it("gives Kling's motion control the board and the stretch of the clip, and GPT Image a size in the shot's shape", async () => {
     const { falInput } = await import("../src/fal.ts");
     expect(falInput("kling-motion", { prompt: "two knights duel", start: "u", video: "w" })).toEqual({ prompt: "two knights duel", image_url: "u", video_url: "w", character_orientation: "video", keep_original_sound: false });
@@ -493,6 +514,52 @@ describe("roughs, finals and whole passes", () => {
     const cut = join(dir, ".cache", "drive", `${jobs[0]!.id}.mp4`);
     expect(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v", "-count_frames", "-show_entries", "stream=width,height,nb_read_frames", "-of", "csv=p=0", cut], { encoding: "utf8" }).trim()).toBe("960,720,120");
     expect(shot("s2")).toMatchObject({ fidelity: "rough", content: { take: "s2-take-2", in: 0.5 } });
+  });
+
+  it("makes the board say the line heard while the shot plays, lined up with it and silent, then redoes the mouths in that clip", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    // A line voiced in the cat's voice, heard from 3s to 4.5s, while s2 plays (2.5s to 5.7s).
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=1.5", join(dir, "boast.wav")]);
+    store.updateProject(PROJECT, (p) => void (p.voice = { leadIn: 3, defaultGap: 0.5, tail: 1, lines: [{ id: "boast", text: "Nobody owns this alley but me.", file: join(dir, "boast.wav"), duration: 1.5, words: [], speaker: "cat" }] }));
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 });
+    await make.driveJobs(PROJECT);
+    // Nothing but a lip sync model can say it, and Auto's is H3 Max Lip Sync: its shortest take, 5 seconds at 480p.
+    const talk = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", speech: {}, count: 1 });
+    expect(talk.fit).toMatchObject({ model: "minimax-h3-max-lipsync", endpoint: "minimax/h3-max/lip-sync/image-to-video", seconds: 5, usd: 0.25 });
+    await make.driveJobs(PROJECT);
+    expect(seen.submits.at(-1)).toEqual({
+      endpoint: "minimax/h3-max/lip-sync/image-to-video",
+      input: { image_url: `${base}/out/uploaded-1.jpg`, audio_url: `${base}/out/uploaded-2.jpg`, resolution: "480P", seed: talk.jobs[0]!.request.seed },
+    });
+    // What it said: the shot widened by 0.9s either side, so the line starts 1.4s in.
+    const said = execFileSync("ffmpeg", ["-v", "error", "-i", join(dir, ".cache", "speech", `${talk.jobs[0]!.id}.wav`), "-f", "s16le", "-ac", "1", "-ar", "8000", "-"]);
+    const s = Array.from(new Int16Array(said.buffer, said.byteOffset, said.length / 2));
+    const peak = (from: number, to: number) => Math.max(0, ...s.slice(from * 8000, to * 8000).map(Math.abs));
+    expect(s.length / 8000).toBeCloseTo(5, 2);
+    expect([peak(0, 1.3), peak(1.5, 2.8) > 1000, peak(3, 5)]).toEqual([0, true, 0]);
+    // The take shows from where the shot starts in it, silent; the shot remembers what it says.
+    expect(shot("s2")).toMatchObject({ fidelity: "rough", content: { take: "s2-take-2", start: "s2-take", speech: { lines: ["boast"] }, in: 0.9, model: "minimax-h3-max-lipsync" } });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    expect(execFileSync("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", take.path], { encoding: "utf8" }).trim()).toBe("");
+
+    // A final with the mouths redone in that clip: sync-3, sent the stretch the shot plays and half a second either side, in step with the line.
+    const dub = make.startMake(PROJECT, { op: "video", shot: "s2", clip: "take", quality: "final", count: 1 });
+    expect(dub.fit).toMatchObject({ model: "sync-3", endpoint: "fal-ai/sync-lipsync/v3", seconds: 4.2, usd: 0.56 });
+    expect(dub.jobs[0]!.request).toMatchObject({ clip: { asset: "s2-take-2", from: 0.9, to: 4.1 }, speech: { lines: ["boast"], from: 2.5, to: 5.7 } });
+    await make.driveJobs(PROJECT);
+    expect(seen.submits.at(-1)!.input).toEqual({ video_url: `${base}/out/uploaded-3.jpg`, audio_url: `${base}/out/uploaded-4.jpg`, sync_mode: "cut_off" });
+    const cut = join(dir, ".cache", "dub", `${dub.jobs[0]!.id}.mp4`);
+    expect(Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", cut], { encoding: "utf8" }))).toBeCloseTo(4.2, 1);
+    // It takes the place of the clip it was made from, and keeps the board that clip came from.
+    expect(shot("s2")).toMatchObject({ fidelity: "final", content: { take: "s2-take-3", start: "s2-take", speech: { lines: ["boast"] }, in: 0.5, model: "sync-3" } });
+
+    // A rough redo goes to Kling's lip sync, which takes a clip only 720 pixels or more a side.
+    store.updateFile(PROJECT, (d) => void Object.assign(d.assets.find((a) => a.id === "s2-take-3")!, { width: 540, height: 960 }));
+    const rough = make.startMake(PROJECT, { op: "video", shot: "s2", clip: "take", count: 1 });
+    expect(rough.fit).toMatchObject({ model: "kling-lipsync", seconds: 4.2 });
+    await make.driveJobs(PROJECT);
+    expect(seen.submits.at(-1)!.endpoint).toBe("fal-ai/kling-video/lipsync/audio-to-video");
+    expect(execFileSync("ffprobe", ["-v", "error", "-select_streams", "v", "-show_entries", "stream=width,height", "-of", "csv=p=0", join(dir, ".cache", "dub", `${rough.jobs[0]!.id}.mp4`)], { encoding: "utf8" }).trim()).toBe("720,1280");
   });
 
   it("says a shot has no board yet when asked to start from one", () => {
