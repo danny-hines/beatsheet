@@ -1,7 +1,8 @@
-import type { HandOff, ProjectFile } from "@beatsheet/schema";
-import { useState } from "react";
-import { AGENT_NAMES, pickFootage, pickPath, posterUrl, projectFileUrl, runJob, sessionActivity } from "../lib";
+import type { Asset, HandOff, ProjectFile } from "@beatsheet/schema";
+import { useState, type ReactNode } from "react";
+import { AGENT_NAMES, imageUrl, pickFootage, pickPath, posterUrl, projectFileUrl, proxyUrl, runJob, sessionActivity } from "../lib";
 import { actions, getState, setState, useStore } from "../store";
+import { EnlargeIcon, Viewer, type ViewerItem } from "./Viewer";
 
 /**
  * Whose move it is on the open project: the agent's (and what it's doing) or the person's (and what's asked).
@@ -225,23 +226,20 @@ const KINDS = { character: "Character", place: "Place", prop: "Prop" } as const;
 function KeepCast({ ask }: { ask: Extract<HandOff, { kind: "cast" }> }) {
   const projectId = useStore((s) => s.projectId);
   const cast = useStore((s) => s.doc?.cast);
+  const assets = useStore((s) => s.doc?.assets);
   const [keep, setKeep] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [large, setLarge] = useState<string>();
   const toggle = (id: string) => setKeep((k) => (k.includes(id) ? k.filter((x) => x !== id) : [...k, id]));
+  const pics = projectId ? ask.proposals.map((p) => pictures(projectId, assets, p.id, p.name, undefined, p.assets)) : [];
   return (
     <>
       <div className="turn-options">
-        {ask.proposals.map((p) => {
+        {ask.proposals.map((p, i) => {
           const there = cast?.find((m) => m.id === p.id && m.kind !== "style");
           return (
             <button key={p.id} className={`turn-option ${keep.includes(p.id) ? "on" : ""}`} onClick={() => toggle(p.id)} aria-pressed={keep.includes(p.id)}>
-              {projectId && (
-                <span className="turn-board">
-                  {p.assets.slice(0, 4).map((a) => (
-                    <img key={a} src={posterUrl(projectId, a)} alt="" />
-                  ))}
-                </span>
-              )}
+              <Board pics={pics[i] ?? []} onOpen={setLarge} />
               <span className="turn-option-text">
                 <strong>
                   {p.name} <span className="dim small">@{p.id}</span>
@@ -255,6 +253,19 @@ function KeepCast({ ask }: { ask: Extract<HandOff, { kind: "cast" }> }) {
             </button>
           );
         })}
+        {projectId && large && (
+          <Large
+            projectId={projectId}
+            pics={pics.flat()}
+            at={large}
+            onClose={() => setLarge(undefined)}
+            action={(of) => (
+              <button className={keep.includes(of) ? "on" : "primary"} onClick={() => toggle(of)} title={keep.includes(of) ? "Don't keep this one" : undefined}>
+                {keep.includes(of) ? "Kept" : "Keep this one"}
+              </button>
+            )}
+          />
+        )}
       </div>
       <div className="turn-actions">
         <span className="dim small">Pick the ones to keep; they join Cast & sets with their pictures.</span>
@@ -275,21 +286,76 @@ function KeepCast({ ask }: { ask: Extract<HandOff, { kind: "cast" }> }) {
   );
 }
 
+/** A picture an option shows: small in the card, whole in the large view. `of` is the option it belongs to. */
+type Pic = ViewerItem & { thumb: string; of: string };
+
+/** An option's pictures: the one the agent made for it, then up to four of the footage it points at. */
+function pictures(projectId: string, assets: Asset[] | undefined, of: string, caption: string, image: string | undefined, ids: string[]): Pic[] {
+  const pics: Pic[] = image ? [{ id: `${of}/image`, of, caption, src: projectFileUrl(projectId, image), thumb: projectFileUrl(projectId, image) }] : [];
+  ids.slice(0, 4).forEach((a, i) => {
+    const video = assets?.find((x) => x.id === a)?.kind === "video";
+    pics.push({ id: `${of}/${i}`, of, caption, video, src: video ? proxyUrl(projectId, a) : imageUrl(projectId, a), thumb: posterUrl(projectId, a) });
+  });
+  // One picture fills the card's width, where a poster would be soft.
+  if (pics.length === 1 && !pics[0]!.video) pics[0]!.thumb = pics[0]!.src!;
+  return pics;
+}
+
+/** An option's pictures, big enough to judge by: one fills the card's width, more go two to a row. Each opens large. */
+function Board({ pics, onOpen }: { pics: Pic[]; onOpen: (id: string) => void }) {
+  if (!pics.length) return null;
+  return (
+    <span className={`turn-board ${pics.length === 1 ? "one" : ""}`}>
+      {pics.map((p) => (
+        <span
+          key={p.id}
+          className="turn-pic"
+          title="See it large (← and → go through the others)"
+          onClick={(e) => {
+            // It's inside the option's button: looking isn't picking.
+            e.stopPropagation();
+            onOpen(p.id);
+          }}
+        >
+          <img src={p.thumb} alt="" />
+          <span className="enlarge">
+            <EnlargeIcon />
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Every option's pictures in one large view, so ← and → compare them, with the option's own answer in its bar. */
+function Large({ projectId, pics, at, onClose, action }: { projectId: string; pics: Pic[]; at: string; onClose: () => void; action: (of: string) => ReactNode }) {
+  return (
+    <Viewer
+      projectId={projectId}
+      items={pics}
+      at={Math.max(0, pics.findIndex((p) => p.id === at))}
+      onClose={onClose}
+      actions={(item) => {
+        const of = pics.find((p) => p.id === item.id)?.of;
+        return of ? action(of) : null;
+      }}
+    />
+  );
+}
+
 /** One question's options: a few words each, with the frames, picture or cut that shows it. */
 function Options({ options, picked, onPick }: { options: Option[]; picked: string[]; onPick: (id: string) => void }) {
   const projectId = useStore((s) => s.projectId);
+  const assets = useStore((s) => s.doc?.assets);
+  const [large, setLarge] = useState<string>();
+  const pics = projectId
+    ? options.map((o) => pictures(projectId, assets, o.id, [o.label, o.detail].filter(Boolean).join(" · "), o.image, o.assets?.length ? o.assets : o.asset ? [o.asset] : []))
+    : [];
   return (
     <div className="turn-options">
-      {options.map((o) => (
+      {options.map((o, i) => (
         <button key={o.id} className={`turn-option ${picked.includes(o.id) ? "on" : ""}`} onClick={() => onPick(o.id)}>
-          {projectId && o.image && <img className="turn-image" src={projectFileUrl(projectId, o.image)} alt="" />}
-          {projectId && (o.assets?.length || o.asset) && (
-            <span className="turn-board">
-              {(o.assets?.length ? o.assets : [o.asset!]).slice(0, 4).map((a, i) => (
-                <img key={`${a}-${i}`} src={posterUrl(projectId, a)} alt="" />
-              ))}
-            </span>
-          )}
+          <Board pics={pics[i] ?? []} onOpen={setLarge} />
           <span className="turn-option-text">
             <strong>{o.label}</strong>
             {o.detail && <span className="dim small">{o.detail}</span>}
@@ -307,6 +373,19 @@ function Options({ options, picked, onPick }: { options: Option[]; picked: strin
           </span>
         </button>
       ))}
+      {projectId && large && (
+        <Large
+          projectId={projectId}
+          pics={pics.flat()}
+          at={large}
+          onClose={() => setLarge(undefined)}
+          action={(of) => (
+            <button className={picked.includes(of) ? "on" : "primary"} onClick={() => onPick(of)}>
+              {picked.includes(of) ? "Picked" : "Pick this"}
+            </button>
+          )}
+        />
+      )}
     </div>
   );
 }

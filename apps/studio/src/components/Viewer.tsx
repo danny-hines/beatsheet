@@ -7,7 +7,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { imageUrl, proxyUrl } from "../lib";
 
-export type ViewerItem = { id: string; video?: boolean; caption?: string };
+/** `src` is the file to show when it isn't the asset `id` itself (a picture the agent made in the project's folder). */
+export type ViewerItem = { id: string; video?: boolean; caption?: string; src?: string };
 
 /** The most it zooms in, as a multiple of fitting the window. */
 const MOST = 12;
@@ -131,9 +132,9 @@ export function Viewer({
         }}
       >
         {item.video ? (
-          <video key={item.id} src={proxyUrl(projectId, item.id)} style={style} controls autoPlay loop playsInline />
+          <video key={item.id} src={item.src ?? proxyUrl(projectId, item.id)} style={style} controls autoPlay loop playsInline />
         ) : (
-          <img key={item.id} src={imageUrl(projectId, item.id)} style={style} alt="" draggable={false} />
+          <img key={item.id} src={item.src ?? imageUrl(projectId, item.id)} style={style} alt="" draggable={false} />
         )}
         {items.length > 1 && (
           <>

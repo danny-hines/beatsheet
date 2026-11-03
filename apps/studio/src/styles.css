@@ -664,10 +664,14 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 .player-waiting .dots { width: 40px; height: 8px; background: radial-gradient(circle, var(--accent) 3px, transparent 3.5px) 0 0 / 13px 8px repeat-x; animation: blink 1.2s infinite; margin-bottom: 10px; }
 .asset-row-moments { color: var(--accent); font-size: 10.5px; }
 .turn-option { flex-direction: column; }
-.turn-board { display: flex; flex-direction: row; gap: 3px; width: 100%; }
-.turn-board img { flex: 1; min-width: 0; height: 64px; width: auto; object-fit: cover; border-radius: 4px; }
-.turn-option .turn-board img:only-child { flex: none; width: 64px; }
-.turn-image { display: block; max-width: 100%; max-height: 240px; border-radius: 4px; }
+/* An option's pictures, big enough to judge by: one fills the card's width, more go two to a row; each opens large. */
+.turn-board { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; width: 100%; }
+.turn-board.one { grid-template-columns: 1fr; }
+.turn-pic { position: relative; display: block; overflow: hidden; border-radius: 4px; background: #000; cursor: zoom-in; }
+.turn-pic img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.turn-board.one .turn-pic img { aspect-ratio: auto; max-height: 420px; object-fit: contain; }
+.turn-pic .enlarge { opacity: 0.7; }
+.turn-pic:hover .enlarge { opacity: 1; }
 .turn-question { margin-top: 10px; }
 .turn-question > p { margin: 0 0 6px; }
 .turn-changes { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; padding-bottom: 6px; border-bottom: 1px solid #3a3220; }
