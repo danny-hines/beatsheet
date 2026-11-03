@@ -660,7 +660,11 @@ export type Marker = z.infer<typeof Marker>;
 
 export const NoteTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("project") }),
-  z.object({ kind: z.literal("shot"), shot: z.string() }),
+  z.object({
+    kind: z.literal("shot"),
+    shot: z.string(),
+    also: z.array(z.string()).optional().describe("More shots the note is on, when it was left on several at once; all of them in the order they play"),
+  }),
   z.object({ kind: z.literal("line"), line: z.string() }),
   z.object({ kind: z.literal("word"), line: z.string(), word: z.string(), nth: z.number().int().optional() }),
   z.object({ kind: z.literal("asset"), asset: z.string() }),
@@ -670,6 +674,11 @@ export const NoteTarget = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("range"), from: z.number(), to: z.number() }).describe("A stretch of the cut, in seconds"),
 ]);
 export type NoteTarget = z.infer<typeof NoteTarget>;
+/** The shots a note is on: its shot and, for a note on several, the others. */
+export const noteShots = (t: NoteTarget): string[] => (t.kind === "shot" ? [t.shot, ...(t.also ?? [])] : []);
+/** A note on these shots, in the order given; none for no shots. */
+export const onShots = ([shot, ...also]: string[]): NoteTarget | undefined =>
+  shot === undefined ? undefined : also.length ? { kind: "shot", shot, also } : { kind: "shot", shot };
 
 export const NOTE_STATUSES = ["open", "queued", "working", "done", "dismissed"] as const;
 export const Note = z.object({

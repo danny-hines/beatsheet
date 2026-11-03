@@ -1,7 +1,7 @@
 /** Loading and integrity checks: schema validation plus the cross-references a schema can't express. */
 import { cutView, upgrade } from "./cuts.ts";
 import { CAST_ID, lookAssets } from "./make.ts";
-import { pictureOf, ProjectFile, SFX_SOUNDS, type Anchor, type Project } from "./types.ts";
+import { noteShots, pictureOf, ProjectFile, SFX_SOUNDS, type Anchor, type Project } from "./types.ts";
 
 export type CheckIssue = { path: string; message: string };
 
@@ -163,7 +163,7 @@ export function checkCut(p: Project): CheckIssue[] {
   p.notes.forEach((n, i) => {
     const t = n.target;
     const path = `notes.${i}.target`;
-    if (t.kind === "shot" && !ids.shots.has(t.shot)) add(path, `unknown shot "${t.shot}"`);
+    for (const id of noteShots(t)) if (!ids.shots.has(id)) add(path, `unknown shot "${id}"`);
     if ((t.kind === "line" || t.kind === "word") && !ids.lines.has(t.line)) add(path, `unknown line "${t.line}"`);
     if (t.kind === "asset" && !ids.assets.has(t.asset)) add(path, `unknown asset "${t.asset}"`);
     if (t.kind === "cue" && !ids.cues.has(t.cue)) add(path, `unknown cue "${t.cue}"`);

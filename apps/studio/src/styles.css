@@ -637,7 +637,7 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 .note-pop textarea { resize: none; background: #0e0f12; border: 1px solid var(--line-2); border-radius: 7px; padding: 7px 9px; }
 .note-pop textarea:focus { outline: none; border-color: var(--accent); }
 .note-pop-actions { display: flex; align-items: center; gap: 6px; }
-.attached { display: flex; flex-wrap: wrap; gap: 5px; }
+.attached { display: flex; flex-wrap: wrap; gap: 5px; max-height: min(30vh, 260px); overflow-y: auto; overscroll-behavior: contain; }
 .attached-note { display: inline-flex; align-items: stretch; max-width: 100%; border: 1px solid #5a4a20; background: #2a2414; border-radius: 7px; overflow: hidden; }
 .attached-body { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; background: none; border: none; border-radius: 0; padding: 3px 7px; max-width: 280px; text-align: left; }
 .attached-on { font-size: 10.5px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }

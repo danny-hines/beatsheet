@@ -13,8 +13,10 @@ import {
   slipShot,
   splitShot,
   STAGE_IDS,
+  trimEnd,
   trimStart,
   type Anchor,
+  type NoteTarget,
   type ProjectInput,
 } from "../src/index.ts";
 
@@ -134,6 +136,20 @@ describe("taking shots out", () => {
     ok(p);
   });
 
+  it("a note on several stays on the ones left, and covers their stretch once they're all gone", () => {
+    const p = voiced();
+    const note = (id: string, target: NoteTarget) => ({ id, text: "warmer", status: "queued" as const, target, author: "you" as const, createdAt: "2026-11-01T00:00:00Z" });
+    p.notes.push(note("n1", { kind: "shot", shot: "s1", also: ["s2", "s3"] }), note("n2", { kind: "shot", shot: "s1", also: ["s2"] }));
+    removeShots(p, resolveTimeline(p), ["s2"]);
+    expect(p.notes[0]!.target).toEqual({ kind: "shot", shot: "s1", also: ["s3"] });
+    expect(p.notes[1]!.target).toEqual({ kind: "shot", shot: "s1" });
+    ok(p);
+    const q = voiced();
+    q.notes.push(note("n1", { kind: "shot", shot: "s1", also: ["s2"] }));
+    removeShots(q, resolveTimeline(q), ["s1", "s2"]);
+    expect(q.notes[0]!.target).toEqual({ kind: "range", from: 0, to: 6 });
+  });
+
   it("in a chain, the next shot starts where it ended, leaving the shot before to hold on", () => {
     const p = chain();
     removeShots(p, resolveTimeline(p), ["s2"]);
@@ -236,6 +252,28 @@ describe("trimming and slipping", () => {
     expect(trimStart(p, resolveTimeline(p), "s2", { kind: "time", t: 0 }, 0)).toBe(false);
   });
 
+  // An edge nudged without really moving snaps to the shot beside it, whose edge is the same cut: taken as it is,
+  // the shot would be timed by itself and everything after it would lose its time.
+  it("a cut snapped onto the edge beside it stays put, timed by something else", () => {
+    const p = chain();
+    expect(trimStart(p, resolveTimeline(p), "s2", { kind: "shot", shot: "s1", edge: "end" }, 4)).toBe(true);
+    expect(spans(p)).toEqual(["s1 0-4 @2", "s2 4-7 @0", "s3 7-12 @1"]);
+    ok(p);
+
+    const q = chain();
+    expect(trimEnd(q, resolveTimeline(q), "s2", { kind: "shot", shot: "s3" }, 7)).toBe(true);
+    expect(spans(q)).toEqual(["s1 0-4 @2", "s2 4-7 @0", "s3 7-12 @1"]);
+    ok(q);
+  });
+
+  it("on a cut timed by words, it goes back on its word", () => {
+    const p = voiced();
+    expect(trimStart(p, resolveTimeline(p), "s3", { kind: "shot", shot: "s3" }, 6)).toBe(true);
+    expect(p.shots.find((s) => s.id === "s3")!.start).toEqual({ kind: "word", line: "L1", word: "four" });
+    expect(spans(p)).toEqual(["s1 0-2 @0", "s2 2-6 @5", "s3 6-8 @0"]);
+    ok(p);
+  });
+
   it("slips the footage under a shot, and stops at either end of the file", () => {
     const p = chain();
     expect(slipShot(p, resolveTimeline(p), "s2", 1.5)).toBe(1.5);
@@ -285,6 +323,19 @@ describe("moving shots", () => {
     moveShot(p, resolveTimeline(p), "t2", 7, at);
     expect(spans(p, "txt")).toEqual(["t1 0-2", "t3 4-5", "t2 7-9"]);
     ok(p);
+  });
+
+  it("a title moved onto one that follows it isn't timed by itself", () => {
+    const p = make({
+      shots: [
+        { id: "s1", track: "pic", duration: 10, content: clip("a"), fidelity: "rough" },
+        { id: "t1", track: "txt", start: { kind: "time", t: 0 }, duration: 2, content: { kind: "text", text: "one" }, fidelity: "final" },
+        { id: "t2", track: "txt", start: { kind: "shot", shot: "t1", edge: "end" }, duration: 1, content: { kind: "text", text: "two" }, fidelity: "final" },
+      ],
+    });
+    moveShot(p, resolveTimeline(p), "t1", 2, { kind: "shot", shot: "t2" });
+    expect(p.shots.find((s) => s.id === "t1")!.start).toEqual({ kind: "time", t: 2 });
+    expect(resolveTimeline(p).diagnostics).toEqual([]);
   });
 });
 

@@ -4,7 +4,7 @@
  * runs in milliseconds; the agent's job is to improve on it (better picks, moments, framing), not to start from zero.
  */
 import { resolveTimeline } from "./resolve.ts";
-import type { Anchor, Asset, MusicSection, Note, Project, Shot } from "./types.ts";
+import { noteShots, onShots, type Anchor, type Asset, type MusicSection, type Note, type Project, type Shot } from "./types.ts";
 
 export type AssembleOptions = {
   /** Seconds; default the brief's target length, else 30. */
@@ -140,7 +140,11 @@ export function autoAssemble(input: Project, opts: AssembleOptions = {}): Assemb
 
   // Notes on shots that no longer exist keep their place in the cut instead.
   const ids = new Set(p.shots.map((s) => s.id));
-  p.notes = p.notes.map((n): Note => (n.target.kind === "shot" && !ids.has(n.target.shot) ? { ...n, target: { kind: "time", t: n.at ?? 0 } } : n));
+  p.notes = p.notes.map((n): Note => {
+    const on = noteShots(n.target);
+    if (on.every((id) => ids.has(id))) return n;
+    return { ...n, target: onShots(on.filter((id) => ids.has(id))) ?? { kind: "time", t: n.at ?? 0 } };
+  });
   p.stages.structure = { ...p.stages.structure, status: "done", summary: summary[0] };
   if (p.stages.assemble.status !== "done") p.stages.assemble = { ...p.stages.assemble, status: "active" };
   return { project: p, summary };

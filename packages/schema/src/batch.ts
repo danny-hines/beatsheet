@@ -3,8 +3,10 @@
  * resolved, so the agent opens only what it needs instead of re-reading the whole project.
  */
 import { describeAnchor, describeTarget, formatTime } from "./describe.ts";
-import { resolveTimeline, type Timeline } from "./resolve.ts";
-import type { Note, Project, Shot } from "./types.ts";
+import { resolveTimeline, type ResolvedShot, type Timeline } from "./resolve.ts";
+import { noteShots, type Note, type Project, type Shot } from "./types.ts";
+
+export type BatchShot = { id: string; label?: string; kind: string; fidelity: string; plays?: string; startsOn: string; content: string; intent?: string };
 
 export type BatchNote = {
   id: string;
@@ -13,7 +15,9 @@ export type BatchNote = {
   at?: string;
   format: string;
   stage?: string;
-  shot?: { id: string; label?: string; kind: string; fidelity: string; plays?: string; startsOn: string; content: string; intent?: string };
+  shot?: BatchShot;
+  /** For a note left on several shots at once: each of them, in the order they play. */
+  shots?: BatchShot[];
   line?: { id: string; text?: string; plays?: string };
   /** For a note on a stretch of the cut: the shots that play in it. */
   range?: { from: string; to: string; shots: string[] };
@@ -56,22 +60,22 @@ export function buildBatch(p: Project, notes: Note[], opts: { file?: string } = 
       const out: BatchNote = { id: n.id, note: n.text, on: describeTarget(n.target, p), format, stage: n.stage };
       if (n.at !== undefined) out.at = formatTime(n.at);
       const t = n.target;
-      if (t.kind === "shot") {
-        const s = p.shots.find((x) => x.id === t.shot);
-        const r = tl.shots.find((x) => x.id === t.shot);
-        if (s) {
-          out.shot = {
-            id: s.id,
-            label: s.label,
-            kind: s.content.kind,
-            fidelity: s.fidelity,
-            plays: r ? `${formatTime(r.start)}–${formatTime(r.end)}` : undefined,
-            startsOn: s.start ? describeAnchor(s.start, p) : "end of previous shot",
-            content: shotContentSummary(s, p),
-            intent: s.intent,
-          };
-        }
-      }
+      const shots = noteShots(t)
+        .map((id) => ({ s: p.shots.find((x) => x.id === id), r: tl.shots.find((x) => x.id === id) }))
+        .filter((x): x is { s: Shot; r: ResolvedShot | undefined } => !!x.s)
+        .sort((a, b) => (a.r?.start ?? Infinity) - (b.r?.start ?? Infinity))
+        .map(({ s, r }): BatchShot => ({
+          id: s.id,
+          label: s.label,
+          kind: s.content.kind,
+          fidelity: s.fidelity,
+          plays: r ? `${formatTime(r.start)}–${formatTime(r.end)}` : undefined,
+          startsOn: s.start ? describeAnchor(s.start, p) : "end of previous shot",
+          content: shotContentSummary(s, p),
+          intent: s.intent,
+        }));
+      if (shots.length > 1) out.shots = shots;
+      else if (shots[0]) out.shot = shots[0];
       if (t.kind === "line" || t.kind === "word") {
         const r = tl.lines.find((l) => l.id === t.line);
         out.line = { id: t.line, text: r?.text, plays: r ? `${formatTime(r.start)}–${formatTime(r.end)}` : undefined };

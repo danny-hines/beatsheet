@@ -1,5 +1,5 @@
 import type { AgentId, AgentInfo, AgentItem, AgentView } from "@beatsheet/engine";
-import type { Asset, Fidelity, Note, NoteTarget, Project, ResolvedShot, Shot, ShotKind, Timeline } from "@beatsheet/schema";
+import { noteShots, onShots, type Asset, type Fidelity, type Note, type NoteTarget, type Project, type ResolvedShot, type Shot, type ShotKind, type Timeline } from "@beatsheet/schema";
 import { shortcut, splitPath, words } from "./os";
 import { actions, getState, timelineFor, type Selection } from "./store";
 
@@ -80,17 +80,25 @@ export function pictureTrack(p: Project): string | undefined {
 
 /**
  * What a new note points at: the selection if it's on screen at the playhead (or isn't about time, like an asset),
- * otherwise whatever is playing, since a note made while watching is about what's on screen.
+ * otherwise whatever is playing, since a note made while watching is about what's on screen. Several shots selected
+ * are picked on purpose, so a note goes on all of them wherever the playhead is.
  */
-export function targetFromSelection(sel: Selection | undefined, p: Project, tl: Timeline, t: number): NoteTarget {
+export function targetFromSelection(sel: Selection | undefined, p: Project, tl: Timeline, t: number, also: string[] = []): NoteTarget {
   const covers = (span: { start: number; end: number } | undefined) => !!span && t >= span.start - 1e-3 && t < span.end + 1e-3;
   if (sel?.kind === "asset") return { kind: "asset", asset: sel.id };
+  if (sel?.kind === "shot" && also.length) return shotsTarget([sel.id, ...also], tl);
   if (sel?.kind === "shot" && covers(tl.shots.find((s) => s.id === sel.id))) return { kind: "shot", shot: sel.id };
   if (sel?.kind === "line" && covers(tl.lines.find((l) => l.id === sel.id))) return { kind: "line", line: sel.id };
   if (sel?.kind === "cue" && covers(tl.cues.find((c) => c.id === sel.id))) return { kind: "cue", cue: sel.id };
   const pic = pictureTrack(p);
   const shot = pic ? shotsAt(tl, pic, t)[0] : undefined;
   return shot ? { kind: "shot", shot: shot.id } : { kind: "time", t: round2(t) };
+}
+
+/** A note on these shots, in the order they play. */
+export function shotsTarget(ids: string[], tl: Timeline): NoteTarget {
+  const at = (id: string) => tl.shots.find((r) => r.id === id)?.start ?? Infinity;
+  return onShots([...new Set(ids)].sort((a, b) => at(a) - at(b)))!;
 }
 
 export const round2 = (x: number) => Math.round(x * 100) / 100;
@@ -107,13 +115,13 @@ export function nextId(prefix: string, existing: { id: string }[]): string {
   while (ids.has(`${prefix}${n}`)) n++;
   return `${prefix}${n}`;
 }
-
+
 
 export function noteMatches(n: Note, sel: Selection | undefined): boolean {
   if (!sel) return false;
   const t = n.target;
   return (
-    (sel.kind === "shot" && t.kind === "shot" && t.shot === sel.id) ||
+    (sel.kind === "shot" && noteShots(t).includes(sel.id)) ||
     (sel.kind === "asset" && t.kind === "asset" && t.asset === sel.id) ||
     (sel.kind === "line" && (t.kind === "line" || t.kind === "word") && t.line === sel.id) ||
     (sel.kind === "cue" && t.kind === "cue" && t.cue === sel.id)
@@ -360,7 +368,7 @@ export function noteHere() {
   const s = getState();
   if (!s.project) return;
   const frame = document.querySelector(".frame")?.getBoundingClientRect();
-  const target = targetFromSelection(s.selection, s.project, timelineFor(s.project, s.format), s.playhead);
+  const target = targetFromSelection(s.selection, s.project, timelineFor(s.project, s.format), s.playhead, s.also);
   actions.noteOn(target, frame ? { x: frame.left + frame.width / 2, y: frame.top + frame.height * 0.6 } : { x: innerWidth / 2, y: innerHeight / 2 });
 }
 

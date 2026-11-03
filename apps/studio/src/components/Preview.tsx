@@ -1,4 +1,4 @@
-import { formatTime, subjectAt } from "@beatsheet/schema";
+import { formatTime, noteShots, subjectAt } from "@beatsheet/schema";
 import { BeatsheetVideo, metadataFor, placement, underlayFinder, type VideoProps } from "@beatsheet/video";
 import { Player, Thumbnail, type PlayerRef } from "@remotion/player";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -98,7 +98,7 @@ export function Preview({ at }: { at?: number }) {
 
   const regions = project.notes.filter((n) => {
     if (!n.region || n.status === "dismissed" || (n.format && n.format !== formatId)) return false;
-    if (n.target.kind === "shot" && n.target.shot !== current?.id) return false;
+    if (n.target.kind === "shot" && !noteShots(n.target).includes(current?.id ?? "")) return false;
     const nt = noteTime(n, tl);
     return nt !== undefined && Math.abs(nt - t) < 0.75;
   });

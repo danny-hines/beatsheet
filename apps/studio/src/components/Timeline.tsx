@@ -1,7 +1,7 @@
-import { anchorForTime, describeAnchor, formatTime, frozen, moveShot, slipShot, snapPoints, trimEnd, trimStart, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
+import { anchorForTime, describeAnchor, formatTime, frozen, moveShot, noteShots, slipShot, snapPoints, trimEnd, trimStart, type Anchor, type Asset, type NoteTarget, type Shot, type SnapPoint } from "@beatsheet/schema";
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { deleteSelected, putSource, splitHere } from "../editing";
-import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
+import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotsTarget, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 import { Strip, Wave } from "./TrackMedia";
 import { Mixer } from "./Mixer";
@@ -13,7 +13,7 @@ const SECTION_COLORS = ["#5b4a8f", "#3f6f8f", "#8f5b3f", "#3f8f6b", "#8f3f5e", "
 
 /** What a drag on the timeline is doing: moving a cut (an edge), moving a shot, or slipping the footage under it. */
 type Drag =
-  | { mode: "edge"; shot: string; edge: "start" | "end"; t: number; anchor?: Anchor; label: string; snapped: boolean }
+  | { mode: "edge"; shot: string; edge: "start" | "end"; from: number; t: number; anchor?: Anchor; label: string; snapped: boolean }
   | { mode: "move"; shot: string; grab: number; t: number; track: string; anchor?: Anchor; label: string; snapped: boolean }
   | { mode: "slip"; shot: string; x0: number; delta: number };
 
@@ -156,13 +156,15 @@ export function Timeline() {
     e.stopPropagation();
   };
 
-  // ---- Dragging a cut (a shot's edge).
+  // ---- Dragging a cut (a shot's edge). A right-click on an edge is a note on the shot, like anywhere else on it.
   const startEdge = (e: ReactPointerEvent, shot: string, edge: "start" | "end") => {
+    if (e.button !== 0) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragPoints.current = snapPoints(tl, { excludeShot: shot });
     const r = tl.shots.find((s) => s.id === shot)!;
-    setDrag({ mode: "edge", shot, edge, t: edge === "start" ? r.start : r.end, label: "", snapped: false });
+    const from = edge === "start" ? r.start : r.end;
+    setDrag({ mode: "edge", shot, edge, from, t: from, label: "", snapped: false });
     actions.select({ kind: "shot", id: shot });
   };
   const moveEdge = (e: ReactPointerEvent) => {
@@ -174,7 +176,8 @@ export function Timeline() {
     setDrag(null);
     dragPoints.current = [];
     if (!d) return;
-    if (d.mode === "edge" && d.anchor) {
+    // An edge let go where it was (a click, or a nudge that snapped back) leaves the cut as it is.
+    if (d.mode === "edge" && d.anchor && Math.abs(d.t - d.from) > 1e-3) {
       const { shot, edge, anchor, t } = d;
       actions.edit((draft) => {
         if (edge === "start") return void trimStart(draft, tl, shot, anchor, t);
@@ -234,6 +237,9 @@ export function Timeline() {
   const formatNotes = project.notes.filter((n) => n.status !== "dismissed" && (!n.format || n.format === format));
   const lineFiles = new Map((project.voice?.lines ?? []).filter((l) => l.file).map((l) => [l.id, l.file!]));
   const isSel = (id: string) => (selection?.kind === "shot" && selection.id === id) || also.includes(id);
+  // A right-click on one of several selected shots is a note on all of them, and they stay selected.
+  const shotNote = (id: string) =>
+    selection?.kind === "shot" && also.length && isSel(id) ? noteMenu(shotsTarget([selection.id, ...also], tl)) : noteMenu({ kind: "shot", shot: id }, { kind: "shot", id });
   const moving = drag?.mode === "move" ? drag : undefined;
   const slipping = drag?.mode === "slip" ? drag : undefined;
   const landing = moving && project.tracks.find((t) => t.id === moving.track)?.kind === "picture" ? tl.shots.find((r) => r.track === moving.track && moving.t >= r.start && moving.t < r.end) : undefined;
@@ -374,7 +380,7 @@ export function Timeline() {
                   .map((r) => {
                     const shot = shotById.get(r.id)!;
                     const sel = isSel(r.id);
-                    const notes = formatNotes.filter((n) => n.target.kind === "shot" && n.target.shot === r.id && n.status !== "done").length;
+                    const notes = formatNotes.filter((n) => noteShots(n.target).includes(r.id) && n.status !== "done").length;
                     const media = shotMedia(shot, r, assets);
                     const thumb = track.kind === "picture" && shotAsset(shot) && !media?.strip ? `url(${posterUrl(projectId, shotAsset(shot)!)})` : undefined;
                     const lifted = moving?.shot === r.id;
@@ -386,7 +392,7 @@ export function Timeline() {
                         style={{ left: x(r.start), width: Math.max(3, x(r.end) - x(r.start)), "--swatch": shotSwatch(shot, assets), "--thumb": thumb } as CSSProperties}
                         title={`${r.id} · ${shot.label ?? ""}\n${formatTime(r.start)} → ${formatTime(r.end)}\n${shotSummary(shot, assets)}`}
                         onPointerDown={(e) => shotDown(e, r)}
-                        onContextMenu={noteMenu({ kind: "shot", shot: r.id }, { kind: "shot", id: r.id })}
+                        onContextMenu={shotNote(r.id)}
                       >
                         {media?.strip && track.kind !== "text" && (
                           <Strip url={`/media/${projectId}/asset/${media.asset.id}/frames`} duration={media.asset.duration ?? 1} from={media.from} seconds={media.seconds} width={w} height={H[track.kind] - 10} aspect={media.aspect} />
@@ -413,7 +419,7 @@ export function Timeline() {
                 const open = (e: ReactPointerEvent) => {
                   e.stopPropagation();
                   actions.seek(t);
-                  actions.select(selectionForTarget(n.target));
+                  actions.select(selectionForTarget(n.target), noteShots(n.target).slice(1));
                   // Attached notes can still be changed; sent ones are history in the Notes tab.
                   if (n.status === "queued") actions.noteOn(n.target, { x: e.clientX, y: e.clientY }, { id: n.id, text: n.text, at: n.at, region: n.region });
                   else setState({ side: "notes" });

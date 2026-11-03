@@ -563,8 +563,9 @@ export const actions = {
     scheduleSave();
   },
 
-  select(selection: Selection | undefined) {
-    setState({ selection, also: [], side: selection && selection.kind !== "note" ? "inspect" : state.side });
+  /** Selects one thing, or a shot and `also` more with it. */
+  select(selection: Selection | undefined, also: string[] = []) {
+    setState({ selection, also, side: selection && selection.kind !== "note" ? "inspect" : state.side });
   },
   /** Adds a shot to the selection or takes it out (⌘-click), or selects the run from the selected one to it (⇧-click). */
   selectMore(id: string, how: "toggle" | "run") {

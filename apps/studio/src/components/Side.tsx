@@ -3,6 +3,7 @@ import {
   describeTarget,
   FIDELITY,
   formatTime,
+  noteShots,
   type Fidelity,
   type Note,
   type Project,
@@ -393,6 +394,7 @@ function NotesFor() {
   const p = useProject();
   const tl = useTimeline();
   const sel = useStore((s) => s.selection);
+  const also = useStore((s) => s.also);
   const notes = p.notes.filter((n) => n.status !== "dismissed" && noteMatches(n, sel));
   return (
     <div className="notes-for">
@@ -402,7 +404,7 @@ function NotesFor() {
           className="link"
           onClick={(e) => {
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            actions.noteOn(targetFromSelection(sel, p, tl, getState().playhead), { x: r.left - 120, y: r.bottom });
+            actions.noteOn(targetFromSelection(sel, p, tl, getState().playhead, also), { x: r.left - 120, y: r.bottom });
           }}
         >
           + Add
@@ -463,7 +465,7 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
           className="chip"
           onClick={() => {
             const s = selectionForTarget(n.target);
-            if (s) actions.select(s);
+            if (s) actions.select(s, noteShots(n.target).slice(1));
             if (t !== undefined) actions.seek(t);
             if (n.format && n.format !== getState().format) actions.setFormat(n.format);
             setState({ side: "notes" });

@@ -52,7 +52,9 @@ export function describeTarget(t: NoteTarget, project?: Project): string {
       return "whole project";
     case "shot": {
       const s = project?.shots.find((x) => x.id === t.shot);
-      return s?.label ? `${t.shot} · ${s.label}` : t.shot;
+      const one = s?.label ? `${t.shot} · ${s.label}` : t.shot;
+      const more = t.also?.length ?? 0;
+      return more ? `${one} and ${more} more shot${more === 1 ? "" : "s"}` : one;
     }
     case "line":
       return `line ${t.line}`;

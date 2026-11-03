@@ -7,7 +7,7 @@
  */
 import { anchorForTime, snapPoints } from "./snap.ts";
 import { resolveTimeline, type ResolvedShot, type Timeline } from "./resolve.ts";
-import type { Anchor, Motion, Project, Shot } from "./types.ts";
+import { noteShots, onShots, type Anchor, type Motion, type Project, type Shot } from "./types.ts";
 
 const round3 = (x: number) => Math.round(x * 1000) / 1000;
 const round2 = (x: number) => Math.round(x * 100) / 100;
@@ -59,8 +59,39 @@ export function placeAt(tl: Timeline, t: number, tolerance = SAME): { anchor: An
   return { anchor: r.anchor, t: r.snapped && r.point ? r.point.t : t };
 }
 
+/**
+ * Notes on shots that are going: a note on several stays on the ones left, and one with none left points at the
+ * stretch of the cut they played instead.
+ */
+function notesOff(p: Project, tl: Timeline, gone: Set<string>) {
+  for (const n of p.notes) {
+    const ids = noteShots(n.target);
+    if (!ids.some((id) => gone.has(id))) continue;
+    const left = onShots(ids.filter((id) => !gone.has(id)));
+    if (left) {
+      n.target = left;
+      continue;
+    }
+    const spans = ids.map((id) => resolved(tl, id)).filter((r): r is ResolvedShot => !!r && Number.isFinite(r.start) && Number.isFinite(r.end));
+    n.target = spans.length ? { kind: "range", from: round2(Math.min(...spans.map((r) => r.start))), to: round2(Math.max(...spans.map((r) => r.end))) } : { kind: "project" };
+  }
+}
+
 /** The cut's timeline again after a step of an edit, in the same format. */
 const again = (p: Project, tl: Timeline) => resolveTimeline(p, tl.format);
+/**
+ * Whether an edit has left the cut timed in a circle: a shot, or the cut's end, that had a time before it and has
+ * none now. A cut snapped onto the edge of the shot beside it (which is where it already was) does this.
+ */
+function circular(p: Project, tl: Timeline): boolean {
+  const now = again(p, tl);
+  if (Number.isFinite(tl.duration) && !Number.isFinite(now.duration)) return true;
+  const after = new Map(now.shots.map((r) => [r.id, r]));
+  return tl.shots.some((r) => {
+    const x = after.get(r.id);
+    return !!x && ((Number.isFinite(r.start) && !Number.isFinite(x.start)) || (Number.isFinite(r.end) && !Number.isFinite(x.end)));
+  });
+}
 const resolved = (tl: Timeline, id: string) => tl.shots.find((r) => r.id === id);
 /** A shot that can't be edited by hand: locked itself, or on a locked track. */
 export const frozen = (p: Project, s: Shot) => !!s.locked || !!p.tracks.find((t) => t.id === s.track)?.locked;
@@ -185,12 +216,7 @@ export function removeShots(p: Project, tl: Timeline, ids: string[], opts: Remov
   eachAnchor(p, (a, set, owner) => {
     if (points(a, gone) && !(owner && gone.has(owner))) set(anchorAt(tl, timeOf(p, tl, a)));
   });
-  for (const n of p.notes) {
-    const t = n.target;
-    if (t.kind !== "shot" || !gone.has(t.shot)) continue;
-    const r = resolved(tl, t.shot);
-    n.target = r && Number.isFinite(r.start) ? { kind: "range", from: round2(r.start), to: round2(r.end) } : { kind: "project" };
-  }
+  notesOff(p, tl, gone);
 
   for (const id of gone) {
     const s = p.shots.find((x) => x.id === id)!;
@@ -294,7 +320,7 @@ export function overwrite(p: Project, tl: Timeline, track: string, t: number, le
       if (a.kind === "shot" && a.shot === first.id) set({ ...a, shot: id });
       else if (points(a, was)) set(anchorAt(work, timeOf(p, work, a)));
     });
-    for (const n of p.notes) if (n.target.kind === "shot" && n.target.shot === first.id) n.target = { kind: "range", from: round2(inside[0]!.start), to: round2(inside[0]!.end) };
+    notesOff(p, work, was);
     p.shots[p.shots.indexOf(first)] = fresh;
     work = again(p, tl);
     removeShots(p, work, inside.slice(1).map((r) => r.id));
@@ -341,6 +367,7 @@ export function trimStart(p: Project, tl: Timeline, id: string, at: Anchor, t: n
   }
   s.start = at;
   if (s.duration !== undefined) s.duration = round3(r.end - t);
+  if (circular(p, tl)) s.start = anchorAt(tl, t);
   return true;
 }
 
@@ -355,6 +382,7 @@ export function trimEnd(p: Project, tl: Timeline, id: string, at: Anchor, t: num
   if (nr && t >= nr.end - SHORTEST) return false;
   s.end = at;
   delete s.duration;
+  if (circular(p, tl)) s.end = anchorAt(tl, t);
   return true;
 }
 
@@ -418,6 +446,7 @@ export function moveShot(p: Project, tl: Timeline, id: string, t: number, at: An
   const last = onTrack(p, to).at(-1);
   const index = after ? p.shots.indexOf(after.x) : last ? p.shots.indexOf(last) + 1 : p.shots.length;
   p.shots.splice(index, 0, s);
+  if (circular(p, tl)) s.start = anchorAt(tl, t);
   return true;
 }
 
