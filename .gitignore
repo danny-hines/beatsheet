@@ -11,3 +11,6 @@ projects/
 
 # The Mac app build
 apps/desktop/release
+
+# Original research notes that name people stay on this machine
+research_notes/private/
