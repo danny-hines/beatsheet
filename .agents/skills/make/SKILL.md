@@ -25,17 +25,25 @@ With Auto's picks, a still costs about 4¢, a rough five-second clip about 20¢,
 
 A clip that starts from a board keeps everything the board settled, so never skip to video without one.
 
+Waste comes from making things before they're settled, more than from what a model costs. On a 13-minute remake, all 305 boards made before the portraits were picked went unused, and so did 35 of 77 clips. So:
+
+- **Settle before a pass.** No pass over many shots until every character in them has a chosen portrait and the person has approved a sample of boards.
+- **Fix it on the board.** A board costs a few cents or nothing; a clip costs 20¢ to $2. A note about framing, staging, the set or who's there gets settled on the board, with the person, before its clip is made again. After rounds of notes on free boards, three of four clips held on the first try, where the earlier clips for those shots had all been rejected.
+- **Agree the staging of a dear take.** Before a take over about $1 (a long take, or Kling 4.0 past about 6 seconds), tell the person what happens in it, in order, and show a board of the hard moment when there is one. One 15-second shot took three Kling takes and $6.59 over which side the doors shut from and how they're barred, which a sentence could have settled first.
+
 ## Models
 
 - Leave the model to Auto unless there's a reason; it picks the first ready model of the quality asked for. `list_models` says what each is good for.
 - Keep to one model per pass: mixing models across shots changes how they look. Name it with `model` once you've picked.
-- Stills: Nano Banana 2.1 (fal or a Gemini key, about 4¢, Auto's pick). Also Muse Image (a Meta key, 1¢ a still, good for many boards) and GPT Image (an OpenAI key or fal, about 3¢; first in blind votes, follows long, exact prompts, keeps a real person's face from their photos, and draws legible text like a sign or a note). The first Nano Banana stays until Google retires it in March 2027. GPT Image also runs on the person's ChatGPT plan through Codex, and Muse Image on a Muse Code plan where Meta has turned its image tool on: no charge, from the plan's allowance, about half a minute each. list_models says where each model runs (`via`); generate uses the plan unless you pass the key's `via`. A plan's allowance runs out, so for a big pass of boards a cheap key (Muse Image, 1¢) can be kinder.
+- Stills: Nano Banana 2.1 (fal or a Gemini key, about 4¢, Auto's pick). Also Muse Image (a Meta key, 1¢ a still, good for many boards) and GPT Image (an OpenAI key or fal, about 3¢; first in blind votes, follows long, exact prompts, keeps a real person's face from their photos, and draws legible text like a sign or a note). The first Nano Banana stays until Google retires it in March 2027. GPT Image also runs on the person's ChatGPT plan through Codex, and Muse Image on a Muse Code plan where Meta has turned its image tool on: no charge, from the plan's allowance, about half a minute each on their own, but a big pass queues (on the ChatGPT plan, half of a remake's stills took over a minute and a half, and one in ten over ten minutes). list_models says where each model runs (`via`); generate uses the plan unless you pass the key's `via`. A plan's allowance runs out, so for a big pass of boards a cheap key (Muse Image, 1¢) can be kinder.
+- **Fights and blood in stills:** GPT Image refuses them for people drawn from real photos, on the plan and on a key alike. On the plan a refusal can take many minutes, and can come back as a failed job that says only "done". So take those shots out of a GPT Image pass before it starts: Nano Banana 2.1 draws stage blood and keeps a photographic look but ages young faces; FLUX 3 Image Klein is free on the person's card but flatter; or draw the fighters apart with GPT Image and copy the clash (see Copying movement below). One refusal says the same about every shot like it.
 - Video, by kind of shot (`docs/MODELS.md` has the evidence, and says where it's thin). Prices are for five seconds.
   - **Auto:** H3 Max Turbo for roughs (about 20¢) and H3 Max for finals (1080p, about 80¢), fal's tunings of MiniMax H3: the best value in blind votes, but not strong at big action or steady close-up faces.
   - **Wan 3.0** (480p rough about 25¢, 1080p final about $1): first in blind votes from a prompt, takes real people, 2 to 30 seconds in one take.
   - **Kling 4.0** (720p rough about 79¢, 1080p final about $1.18): camera moves (the only one that orbited on request) and long takes that keep to their beats, 3 to 30 seconds.
   - **Seedance 2.5** (480p rough about $1.10, 1080p final about $5.80): first from a board, and for dialogue, bodies in motion, contact and weight. The dearest by far; save it for the shots that need it.
   - **Gemini Omni Flash** (360p rough about 15¢, 1080p final about 75¢): sound from a prompt, 3 to 10 seconds, wide or tall only.
+  - **From a first long film** (one project; `docs/MODELS.md` has the numbers): Wan 3.0 for a simple shot with one person. Kling 4.0 when faces or a held prop must stay steady, or the camera move matters: on the five shots where both ran it was kept on three, at three times the price a second, and a take runs about five minutes, sometimes fifteen. H3 Max Turbo comes back in about 12 seconds, so it's a cheap look at how a board moves.
   - Older and ranked below these: MiniMax H3 itself (5–15s, about 30¢), Kling 3 Pro, Kling 2.5 Turbo, Wan 2.2.
   - A model with no tier (Wan 3.0, Kling 4.0, Seedance 2.5, Gemini Omni Flash) makes roughs and finals both: `quality` picks the size and the price.
   - **Sound:** all of these but Kling 3 Pro, Kling 2.5 Turbo and Wan 2.2 make their own, so write what's heard into the prompt ("Sound: …") and leave the score to the cut.
@@ -60,6 +68,8 @@ One moment, described as a camera would see it:
 
 Specific nouns beat adjectives. Say what's in the frame, not what it means in the story. No words or signs to read in the picture unless the shot is about them. Write the shot's description so it also works for the clip: the moment, then what moves ("…; it trots off down the path, camera holding low").
 
+**A board a clip will start from is that clip's first frame.** Draw the moment before the action, not its peak: the fist still back, both hands holding the book, the sheet still over the clock. A board of the peak gives a clip that starts halfway through. When the shot's payoff is one particular frame (a pose that has to match the original, a reveal), make that frame first, let the person pick it, then make the start frame and run the clip between them (`start` and `end`). A board that stays a still can be the peak.
+
 ## Writing a prompt for a clip
 
 The board already says what's in the frame, so say what changes:
@@ -69,6 +79,8 @@ The board already says what's in the frame, so say what changes:
 - the pace: "slowly", "in one quick dash".
 
 Don't cut to another scene or bring in new people mid-clip; that's another shot.
+
+**Everyone in a clip has to be in a picture it's given.** Clips get no cast pictures, only their start and end frames, so anyone in neither is invented: a stranger, often a small one. Before you send it, check which frame has each face. When someone has to arrive during the clip, put them in an end frame drawn from their portrait. A clip only holds a face as far as its frames show it, so keep head turns small and faces large.
 
 Each model has its own way with a prompt (what to describe from the board, how it takes sound and dialogue, how to name reference pictures): read its section in [models.md](models.md) before writing for it. Which model suits which kind of shot, and why, is in `docs/MODELS.md`.
 
@@ -112,14 +124,17 @@ What keeps the cat the same cat from shot to shot.
 - **Looks** (`variants`) for another outfit, state or time of day: `{ id: "heist", about: "wearing a tiny black eye mask" }`, named @cat/heist. Each look has its own steps, and models get its own chosen picture, never mixed with the plain one's, or the plain one's while it has none. A look that only adds something (blood, rain, a scarf) needs no portrait: its sheet is made from the plain look's chosen portrait, with what's different in every view. A look that changes the face (a fake beard, a hat, a wig) gets portraits of its own first. Make a look only for someone seen more than one way in the film; a character only ever seen in costume is described in costume in the plain one (Inspect's Merge into Plain folds a look in, and every shot that names it follows).
 - **In every prompt it's in,** by @id. The model reads the name and description, and stills are given each one's main picture, then up to two more each while there's room: characters first, then props, places and the style. Nano Banana takes four (two people get two each), GPT Image and Muse Image ten; whoever is left out is described in words only. Clips get no cast pictures: the board they start from carries the cast.
 - **Close shots leave the place's @ out.** A place's picture is a wide view, and the model copies its framing: a "close-up at the fish market" with @market comes back as a wide shot of the market with the cat small in it. Say where in a few words instead ("at a fish market stall, on crushed ice").
+- **A pose reference costs likeness.** A frame from old footage given first pulls the face away from the portrait. Put the chosen portrait first, say the pose in words, and turn the face three-quarters to the camera, large enough to read. To match a pose exactly (a cut back to the original), give the frame and a copy with its parts labeled, and check the labels with the person: old footage misleads (a blurred bat read as a tree trunk).
 - **Real people** only when they've agreed: the person, and family they've sent photos of for this. Someone who has died: their family decides. Some models won't take pictures of real people; `list_models` says so.
 - Famous films' names and characters are often refused: describe the look instead ("a hooded knight with a glowing blue blade").
 
 ## Takes
 
-- Boards: 2 takes a shot. Look at both (`look_at_assets`), pick the better (`/shots/id=…/content/take`), and say why in a word if it isn't obvious.
+- Boards: 2 takes a shot (1 for a first pass over a long film, as many get redrawn when their scene's clips are made). Look at both (`look_at_assets`), pick the better (`/shots/id=…/content/take`), and say why in a word if it isn't obvious.
 - A board that's wrong (off-model cast, the wrong framing, a continuity slip like the wrong time of day) gets a sharper prompt and another try. After two tries that miss the same way, change the approach (split the shot, simplify the action) or ask the person.
-- Roughs: 1–2 takes. Watch them in the cut (`review_cut`, `frame`), not alone.
+- **A board that's nearly right gets edited, not drawn again.** Redrawing rolls everything, and the part that was right goes with it. `generate` with the take first in `refs` and a prompt that starts "Edit this picture" and says what changes and what stays exactly as it is. To fix a face, keep the scene and change only the face, with the chosen portrait as the second ref. For the next shot in the same place, start from its neighbor's frame (edit it, or crop it first) so the set stays the same set: a railing drawn twice comes out as two railings. Go back to the first picture each time rather than chaining edits ([models.md](models.md)).
+- Roughs: 1–2 takes. Before you hand one off, `frame` its start, middle and end: each face against the portrait, who's in frame and how big, hands, props that bend or open, and that it starts where the action should. Then watch it in the cut (`review_cut`), not alone.
+- A clip that misses gets a better board or prompt, not the same request again: it's far more often those than luck. After two that miss the same way, change the frame, the model or the shot.
 - Finals: 1 take, from the board the rough came from.
 
 ## Money
@@ -127,5 +142,6 @@ What keeps the cat the same cat from shot to shot.
 - The person sets how much a turn may spend without asking (a few dollars); `generate` refuses past it and says so.
 - Before a pass over many shots, estimate it: `list_models` with `shots`. If it's over what's left, ask first: a `choose` hand-off whose options say what they'd cost ("Rough clips for all 16 shots · about $5.60", "Just the 6 key shots · about $2.10").
 - A pass over several shots starts all or nothing, so nothing is half made.
-- When fal refuses something (its safety checker), rephrase what's in the shot; don't try to get around it.
+- A final isn't an upscale: it renders the shot again, so motion the person approved can change, and a pass costs far more than the roughs did (on a 13-minute cut, $190–220 for one take of each shot). Price it early, make finals only where the difference shows, and ask first. A shot under a heavy look (an old-film treatment, black and white, strong grain) may not need one: show the person the rough in the cut and let them say.
+- When a service refuses something, rephrase what's in the shot, or move that kind of shot to a model whose rules allow it. Don't disguise it to get it past the same filter.
 - What runs on the person's own hardware costs nothing, but takes minutes a take and the card does one at a time (a 3-second SCAIL-2 rough took 13 minutes on an RTX 4090); a final (the full workflow) takes much longer. Say roughly how long a pass will take rather than what it costs, and ask before a pass of finals.

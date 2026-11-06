@@ -2,14 +2,14 @@
 
 What we know about the image and video models beatsheet could use, and what we think about each kind of shot, so the catalog (`packages/schema/src/catalog.ts`), Auto's ranking and the make skill can follow. Read on 2 November 2026; prices and leaderboards move monthly, so check a model's own page before you change its entry. The craft of prompting each model is in the make skill's [models.md](../.agents/skills/make/models.md).
 
-What beatsheet offers today is the catalog. This page is the field around it and our opinions, marked with how sure we are. Our own side-by-side tests (at the end) haven't been run yet; when they are, their results outrank everything below.
+What beatsheet offers today is the catalog. This page is the field around it and our opinions, marked with how sure we are. Our own side-by-side tests (at the end) haven't been run yet; when they are, their results outrank everything below. The first evidence from a real project is in [From real work](#from-real-work).
 
 ## How to pick
 
 1. **Rule out before ranking.** Refusals and licenses remove more models than quality does.
    - A real person in the shot (a cast member made from their own photos): not Seedance (refuses real faces by policy since February 2026) and not Gemini Omni Flash (blocked a developer's own footage).
    - Where the person is: MiniMax H3's open weights aren't licensed in the US, EU, UK or South Korea (see Licenses).
-   - Mature content: hosted models soften implied violence and refuse gore; blood stays on the person's own card (Wan 2.2, LTX-2.5).
+   - Mature content: hosted models soften implied violence and refuse gore; blood stays on the person's own card (Wan 2.2, LTX-2.5). For stills, GPT Image refuses fights and blood with people from real photos.
    - Length: past 15 seconds in one take, only Seedance 2.5, Wan 3.0 and Kling 4.0 (all to 30 s).
    - From a board or from words: the rankings differ (Wan 3.0 is first from text, ninth from a still; FLUX 3 Max fifth and twelfth). beatsheet mostly animates boards, so the image-to-video board counts most.
 2. **Rank by the kind of shot** (the table below).
@@ -143,9 +143,9 @@ A model added later that runs somewhere under a restricting license gets its lab
 - **MiniMax H3's open weights.** The [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) grants rights "solely within the Applicable Territory": worldwide excluding the EU, the UK, South Korea and the US. A commercial product using it must show "MiniMax H3"; above $20M a year needs MiniMax's written permission. [Comfy's H3 tutorial](https://docs.comfy.org/tutorials/video/minimax/minimax-h3) says commercial use of output made locally needs a MiniMax license bought through Comfy. H3 on fal is MiniMax's model served as a paid API, which fal marks for commercial use.
 - **Seedance:** refuses photos of real people; made-up people are sometimes refused too.
 - **Gemini Omni Flash:** blocks real people's likenesses, even someone's own footage.
-- **GPT Image:** edits of real people need their consent; strictest on wardrobe.
+- **GPT Image:** edits of real people need their consent; strictest on wardrobe. It refused 45 of 46 fight shots on a key, and the ChatGPT plan does the same more slowly (see From real work).
 - **Violence:** implied and action violence pass on hosted models with the contact softened; gore is refused. fal's safety checkers can only be relaxed by authorized accounts. Veo (`safety_tolerance` 1–6) and FLUX 3 (0–4) expose a level.
-- When a service refuses a shot, rephrase what's in it; don't route around the filter. Creator videos that rename trademarked props or hide faces and pitch-shift voices to get past a filter aren't a model for beatsheet.
+- A refusal is part of the ranking: rule that model out for that kind of shot, up front where we know it, and use one whose rules allow the shot, or rephrase what's in it. Don't disguise a shot to get it past a filter. Creator videos that rename trademarked props or hide faces and pitch-shift voices to do that aren't a model for beatsheet.
 
 ## Prompting, across models
 
@@ -167,6 +167,32 @@ Six popular YouTube tutorials were checked against the research. All six make mo
 - **Right:** the workflow. Sheets first; numbered references with roles; a long structured prompt written by an LLM; a 480p draft before 1080p; dialogue sized to the clip; the person's real voice lines; one long take mined for its cuts (`split_at_cuts`); a person approving before money is spent.
 - **Wrong:** Seedance as the answer to every shot (it's tied on text-to-video at many times the price, and refuses real people). The 1080p pass isn't an upscale: it renders again from the draft's seed, so details change.
 - **Untested:** voice references wrapped as black-screen MP4s; one long take holding together better than stitched clips.
+
+## From real work
+
+The first long film made here: a 13-minute remake of a home movie, 1 to 5 November 2026, about 1,000 requests and $45 by the engine's estimates. The person's picks are the evidence. It's one project, no take was blind, and models weren't given the same shots, so none of this moves Auto yet.
+
+| Clips | Made | In the cut | Per second | Median wait |
+|---|---|---|---|---|
+| Wan 3.0, 480p | 49 | 31 | $0.05 | 1.7 min |
+| Kling 4.0, 720p | 12 | 7 | $0.157 | 4.6 min (one in ten over 15) |
+| H3 Max Turbo | 13 | 3 | $0.04 | 12 s |
+| H3 Max | 1 | 1 | $0.16 | 22 s |
+
+| Stills | Made | Failed | Median wait |
+|---|---|---|---|
+| GPT Image, ChatGPT plan | 405 | 34 | 96 s (one in ten over 11 min) |
+| GPT Image, OpenAI key | 42 | 55 | 16 s |
+| Nano Banana 2.1 | 90 | 0 | 21 s |
+| Nano Banana | 104 | 4 | 12 s |
+| FLUX 3 Image Klein, on the card | 123 | 0 | 85 s |
+| Muse Image | 28 | 4 | 34 s |
+
+- **Kling 4.0 against Wan 3.0:** of the five shots both made, Kling was kept on three (a pan matching the original's direction, a figure who had to keep a likeness, two faces and a closed book). Wan was kept on two: a bat swing into an end frame, where Kling's bat bounced back out, and a catch where Kling's take had no picture of the character, so it wasn't a fair loss.
+- **H3 Max Turbo's** count isn't a fair score: its takes were the person's own quick retries on shots already in trouble, 7 of them worded as a board rather than as what moves. Coming back in 12 seconds is what made it the model to retry with.
+- **GPT Image's failures** on a key are the fight shots sent there after the plan stalled on them for 38 minutes: 45 of 46 refused. Most of the plan's 34 were fights too, and 23 came back saying only "done".
+- **Where the money went:** 35 of 77 clips went unused ($14.42 of $34.18). By the person's notes, that was staging ($5.74), their own retries ($3.03), likeness ($2.54), trying camera moves and lengths ($2.12) and clips starting mid-action ($1.00). All 305 boards made before the portraits were picked went unused, against 85 of the 116 made after. What changed in the process is in the make and film skills.
+- **Finals:** one take of all 126 shots would be about $187 with Wan 3.0 or $219 with Kling 4.0, and only one final has been made, so whether a picked rough survives is still test 2. A picked rough can't be upscaled on the card today: `restore` only shows on clip shots, so a final that renders again is the only way to 1080p.
 
 ## Our own tests
 

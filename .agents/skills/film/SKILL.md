@@ -36,40 +36,47 @@ What separates a great one from a pile of pretty clips:
 
    Write `BEATS.md` with `write_scene` too, so the person (and you, next turn) can read the plan.
 3. **Cast and sets from the beats.** Every character, place and prop that recurs, and a style: add them to `/cast` with `about` written from the person's photos (`look_at_assets`) or from the story, and `seen` for the photos they're in. Ids are what prompts call them: short and lowercase.
-4. `hand_off` with kind `review`: the cards play in time, so the person can judge the pacing and leave notes before anything is made.
+4. `hand_off` with kind `review`: the cards play in time, so the person can judge the pacing and leave notes before anything is made. Ask what each shot is meant to show, not only its timing: it's free to fix here, and it's most of what first boards get wrong. For a remake, old footage won't tell you the joke or even what's happening, so write what you think happens in each shot and let the person correct it.
 
 ## Turn 3: cast and sets
 
 1. **The style, first.** Sheets and boards are drawn in the project's style (`/look/style`, naming a style entry in `/cast`), and photographs without one. If the person has said (photographic, hand-drawn, stop-motion…), add it and set it. If not, make one beat as a board in 2–3 styles (a style entry each, named in the prompt) and ask. A character drawn unlike the world gets its own `style`.
 2. **Sheets.** `generate` with `sheet` for each character and key prop, from two or three still models at once (`models`, `count: 1` or `2`), and a view or two of each place. Each character, and each look that changes the face, gets portraits first (`portrait: true`); the one the person picks becomes its `portrait`, and its sheet is made from that (the `make` skill says how). Look at them (`look_at_assets`): the right subject, on-model with the photos, in the style, on a clean background. Keep the best in `images`, best first, take the rest out, and make the boards with the model that won.
-3. `hand_off` with kind `choose` where there's a real decision (a character's look, the style), each option's `assets` the pictures; otherwise go straight on.
+3. `hand_off` with kind `choose` where there's a real decision (a character's look, the style), each option's `assets` the pictures; otherwise go straight on. A real person's likeness is always a real decision: the person making the film picks each portrait before any board is made.
 
 ## Turn 4: boards
 
-1. **Estimate,** then make: `list_models` with every shot (`op: "image"`, `count: 2`), then `generate` with the same. A board pass for 16 shots is about $1.30.
-2. `jobs` with `wait`. Look at every board (`look_at_assets`, or a contact sheet of them): the cast on-model, the framing the beat needs, continuity from shot to shot, and no words printed in the picture. Pick each shot's take; make the weak ones again with sharper prompts. A close shot that came back wide named its place with @: say where in words instead (the `make` skill).
-3. **Music.** `set_song` if the person gave one; otherwise, if they asked, `generate_music` with the genre's feel (a heist wants pizzicato and brushed drums), instrumental, a few seconds longer than the cut; then `fit_music`, which jumps the song on a bar line so its own ending lands on the last shot.
-4. **Titles.** A title over the opening and a line over the last shot (text shots on the text track, `title-bold` and `handwritten`) are often all the designed shots a film needs.
-5. `hand_off` with kind `review`: the board plays as an animatic.
+1. **A sample first.** Board one scene, `hand_off` with kind `review`, and go on only when the person says the cast, costumes and look are right. Boards made before that get thrown away.
+2. **Estimate,** then make: `list_models` with every shot (`op: "image"`, `count: 2`), then `generate` with the same. A board pass for 16 shots is about $1.30. Take fights and blood out of a GPT Image pass first (the `make` skill).
+3. `jobs` with `wait`. Look at every board (`look_at_assets`, or a contact sheet of them): the cast on-model, the framing the beat needs, continuity from shot to shot, and no words printed in the picture. Pick each shot's take; make the weak ones again with sharper prompts. A close shot that came back wide named its place with @: say where in words instead (the `make` skill).
+4. **Music.** `set_song` if the person gave one; otherwise, if they asked, `generate_music` with the genre's feel (a heist wants pizzicato and brushed drums), instrumental, a few seconds longer than the cut; then `fit_music`, which jumps the song on a bar line so its own ending lands on the last shot.
+5. **Titles.** A title over the opening and a line over the last shot (text shots on the text track, `title-bold` and `handwritten`) are often all the designed shots a film needs.
+6. `hand_off` with kind `review`: the board plays as an animatic.
 
 ## Turn 5: roughs
 
 1. **Estimate:** `list_models` with every shot, `op: "video"`, `start: "board"`. If it's more than the turn may spend, ask first: a `choose` hand-off whose options say what they'd cost (all the shots, or the key ones first).
 2. `generate` with the same (`count: 1`, or 2 for the shots that carry the film). `jobs` with `wait`; clips take a few minutes.
-   - **Action a prompt won't carry** (a fight, people grabbing each other, a dance, a stunt): when there's footage of it, the original film or the person's friends acting it out on a phone, copy its movement instead (`drive`, SCAIL-2: the make skill's "Copying movement"). With no footage yet, a `provide` hand-off asks for it: "Film yourselves doing the swing and the fall, about five seconds each, camera still, and bring it in."
+   - **First frames.** Each board is its clip's first frame: redraw one that shows the action's peak, and check that everyone in the clip is in a frame it's given (the `make` skill). For a payoff, make the end frame first and let the person pick it.
+   - **Action a prompt won't carry** (a fight, people grabbing each other, a dance, a stunt): every model softens these, so plan for it before the pass. When there's footage of it, the original film or the person's friends acting it out on a phone, copy its movement instead (`drive`, SCAIL-2: the make skill's "Copying movement"). With no footage yet, a `provide` hand-off asks for it: "Film yourselves doing the swing and the fall, about five seconds each, camera still, and bring it in."
 3. `review_cut` and `frame` what matters. Make the weak shots again on their own, with a clearer action or camera move.
 4. **Sound.** `/sfx` cues on every action and hit (whooshes on moves, impacts on landings, a riser into the reveal); `generate_sfx` for anything specific (a cat flap's clack). If the characters speak, give each a `voice` in `/cast` (`list_voices`) and pass their lines to `narrate` with `speaker`; a line without one is the narrator's.
 5. `hand_off` with kind `review`.
 
 ## Turn 6: finals
 
-Once the person says the rough holds: estimate the finals (`quality: "final"`, `start: "board"`, `count: 1`), ask with the cost if it's over the turn's budget, then make them. A final replaces the rough on its shot by itself. `review_cut`, fix, and `hand_off` with kind `review`.
+Once the person says the rough holds: estimate the finals (`quality: "final"`, `start: "board"`, `count: 1`), ask with the cost if it's over the turn's budget, then make them. A final replaces the rough on its shot by itself. It renders the shot again, so it can change what was approved: make finals where the difference shows, and let the person leave the rest as roughs (a shot under a heavy look may not need one). `review_cut`, fix, and `hand_off` with kind `review`.
+
+## A long film
+
+Past a few minutes, don't run each turn over the whole film. Boards drawn long before their clips mostly get redrawn: on a 13-minute remake, over half the clips in the cut needed a new board first. So make one cheap pass of boards for the animatic (`count: 1`, on a free route when there is one), then take the film a scene at a time: that scene's boards, its clips and sound, its notes, and what you learned carried into the next. Finals come last, over the whole cut.
 
 ## Before you hand off: the taste check
 
 - Does the first shot hook, and does the turn land?
 - Is every character the same character in every shot? Every place the same place?
 - Does each shot have one clear action, and do they cut together: eyelines, direction of travel, light and time of day?
+- Does every clip start before its action, not halfway through?
 - Does something change every second or two, with no shot held still too long?
 - Is there sound on every hit, and does the score's feel match the genre?
 - Is it the person's: their cat, their street, their family's in-jokes from the brief?
