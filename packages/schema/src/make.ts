@@ -5,7 +5,7 @@
  */
 import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
-import type { CastMember, CastProposal, Project, ProjectFile } from "./types.ts";
+import type { Asset, CastMember, CastProposal, Project, ProjectFile, ShotContent } from "./types.ts";
 
 /**
  * What can be asked for. Lip sync is video with speech (MakeRequest.speech). More join as they're wired up: extend,
@@ -161,8 +161,15 @@ export type FitOk = {
 };
 export type Fit = FitOk | { ok: false; model: string; label: string; why: Why };
 
-/** Takes are made this much longer at each end, when the model allows, so the shot can be retimed without another. */
+/**
+ * Takes are made this much longer at each end, when the model allows, so the shot can be retimed without another. A
+ * clip from a start frame opens on it, so it only has this at its end; one with an end frame too has none, as it runs
+ * from the one to the other.
+ */
 export const HANDLE = 0.5;
+
+/** How much longer than the shot to make a take, in all. One that follows a clip or says a line has its spare either side. */
+const spareOf = (req: Pick<MakeRequest, "start" | "end" | "drive" | "speech">) => (req.drive || req.speech || !req.start ? 2 * HANDLE : req.end ? 0 : HANDLE);
 
 /** A stretch of a file, in seconds of the file. */
 export type Stretch = { asset: string; from: number; to: number };
@@ -202,6 +209,22 @@ export function speechWindow(speech: Speech, clip: Stretch | undefined, seconds:
   return { from, to: r(from + w.to - w.from), lead: w.lead, clip: { from: w.from, to: w.to } };
 }
 
+/** How a take was asked for, as far as where a shot starts in it goes. */
+type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "seconds"> & { shotSeconds?: number };
+
+/**
+ * Where a shot starts in a take made for it: one that follows a clip, or says what's heard, where the stretch asked for
+ * does. Any other clip opens on its start frame, so the approved board is what's seen first, unless it has an end
+ * frame, which the shot ends on. One from words alone has its spare evenly either side.
+ */
+export function takeLead(r: Asked, duration: number | undefined, durationOf: (asset: string | undefined) => number | undefined): number {
+  if (r.speech) return speechWindow(r.speech, r.clip, r.seconds ?? (r.clip ?? r.speech).to - (r.clip ?? r.speech).from, durationOf(r.clip?.asset ?? ("asset" in r.speech ? r.speech.asset : undefined))).lead;
+  if (r.drive) return driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, durationOf(r.drive.asset)).lead;
+  if (!duration || !r.shotSeconds) return 0;
+  const spare = Math.max(0, duration - r.shotSeconds);
+  return r.end ? spare : r.start ? 0 : Math.min(HANDLE, spare / 2);
+}
+
 /** The aspects models are asked for, widest first. */
 export const ASPECTS = ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"] as const;
 
@@ -234,7 +257,7 @@ export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "spe
   req.speech ? (req.clip ? "dub" : "talk") : req.drive ? "drive" : req.refs?.length ? "refs" : req.start ? "start" : "text";
 
 /** The length to ask for, or why it can't be made. */
-function lengthFor(model: CatalogModel, wanted: number | undefined): { seconds: number } | { why: Why } {
+function lengthFor(model: CatalogModel, wanted: number | undefined, spare: number): { seconds: number } | { why: Why } {
   const l = model.lengths;
   if (!l) return { why: { kind: "fit", reason: `${model.label} doesn't say what lengths it makes` } };
   const options = Array.isArray(l) ? [...l].sort((a, b) => a - b) : undefined;
@@ -242,11 +265,11 @@ function lengthFor(model: CatalogModel, wanted: number | undefined): { seconds: 
   const min = options ? options[0]! : (l as { min: number }).min;
   if (wanted === undefined || !Number.isFinite(wanted)) return { seconds: options ? options[0]! : Math.min(max, Math.max(min, 5)) };
   if (wanted > max + 1e-6) return { why: { kind: "fit", reason: `Makes up to ${seconds1(max)}; this shot is ${seconds1(wanted)}`, fix: "split" } };
-  const padded = wanted + 2 * HANDLE;
+  const padded = wanted + spare;
   if (options) {
     const bare = options.find((o) => o >= wanted - 1e-6) ?? max;
     const roomy = options.find((o) => o >= padded - 1e-6);
-    // The spare either side is worth a little more length (5 seconds rather than 4), not a take twice as long at twice the price.
+    // The spare is worth a little more length (5 seconds rather than 4), not a take twice as long at twice the price.
     return { seconds: roomy !== undefined && roomy <= bare * 1.5 ? roomy : bare };
   }
   return { seconds: Math.round(Math.min(max, Math.max(min, padded)) * 100) / 100 };
@@ -306,7 +329,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   }
   let seconds: number | undefined;
   if (req.op === "video") {
-    const l = lengthFor(model, req.seconds);
+    const l = lengthFor(model, req.seconds, spareOf(req));
     if ("why" in l) return no(l.why);
     seconds = l.seconds;
   }
@@ -342,7 +365,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   // A route can make less than the model does elsewhere (a workflow on your own card): its own length there, or why not.
   const timed = offered.map((r): { r: ModelRoute; seconds?: number } | { r: ModelRoute; why: Why } => {
     if (req.op !== "video" || !r.lengths) return { r, seconds };
-    const l = lengthFor({ ...model, lengths: r.lengths }, req.seconds);
+    const l = lengthFor({ ...model, lengths: r.lengths }, req.seconds, spareOf(req));
     return "why" in l ? { r, why: l.why } : { r, seconds: l.seconds };
   });
   const routes = timed.filter((x): x is { r: ModelRoute; seconds?: number } => !("why" in x));
@@ -461,6 +484,49 @@ export function realPeople(uses: CastUse[], assets: Project["assets"]): string[]
   };
   const real = (m: CastMember) => m.kind === "character" && !!m.seen?.some(looksLikeOne);
   return [...new Set(uses.filter((u) => real(u.member)).map((u) => u.member.name))];
+}
+
+/** A character's name in the story, in lowercase words: "Hamlet (Sam)" is Hamlet, played by Sam. */
+const calledBy = (m: CastMember) => m.name.replace(/\s*\(.*\)\s*$/, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** The characters a text calls by name, longest names first, so "Young Hamlet" isn't Hamlet as well. */
+function calledIn(text: string, characters: CastMember[]): CastMember[] {
+  let words = ` ${text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ")} `;
+  return [...characters]
+    .sort((a, b) => calledBy(b).length - calledBy(a).length)
+    .filter((m) => {
+      const name = calledBy(m);
+      if (!name || !words.includes(` ${name} `)) return false;
+      words = words.split(` ${name} `).join(" ");
+      return true;
+    });
+}
+
+/**
+ * The characters a clip is about that its pictures aren't known to show, by name. Clips get no cast pictures, only their
+ * frames, so a model invents anyone who isn't in one: a stranger, often a small one. Who it's about: the cast it's asked
+ * for (`uses`), and characters called by name in `texts` (its prompt, what the shot is for), which someone of the same
+ * name in a picture answers ("Young Hamlet" for "Hamlet"). Who a picture shows: the cast it was made with and the cast
+ * pictures it was given, not what was in a picture it was edited from, as an edit can take them out. A picture with no
+ * such record (a photo, a still from a clip) could show anyone, so then nothing's said.
+ */
+export function missingFromFrames(project: Pick<Project, "assets" | "cast">, frames: string[], uses: CastUse[], texts: string[]): string[] {
+  const characters = (project.cast ?? []).filter((m) => m.kind === "character");
+  const whose = (id: string) => characters.find((m) => [m, ...(m.variants ?? [])].some((l) => lookAssets(l).includes(id)) || m.seen?.some((s) => s.asset === id));
+  const shows = (id: string) => {
+    const own = whose(id);
+    if (own) return [own];
+    const a = project.assets.find((x) => x.id === id);
+    const made = a?.provenance;
+    if (a?.kind !== "image" || made?.source !== "generated") return undefined;
+    return [...castOf("", project.cast, made.cast).map((u) => u.member), ...(made.refs ?? []).flatMap((r) => whose(r) ?? [])];
+  };
+  const shown = frames.map(shows);
+  if (shown.some((s) => !s)) return [];
+  const there = shown.flatMap((s) => s ?? []);
+  const asked = uses.map((u) => u.member).filter((m) => m.kind === "character" && !there.includes(m));
+  const called = texts.flatMap((t) => calledIn(t, characters)).filter((m) => !there.some((x) => ` ${calledBy(x)} `.includes(` ${calledBy(m)} `)));
+  return [...new Set([...asked, ...called])].map((m) => m.name);
 }
 
 /** A cast member as the model reads it: its name, then what it looks like, and its own style unless the prompt names that style anyway. */
@@ -590,6 +656,7 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
       const c = shot.content;
       if (c?.kind !== "generated") continue;
       c.prompt = inPrompt(c.prompt);
+      if (c.clipPrompt) c.clipPrompt = inPrompt(c.clipPrompt);
       if (c.cast) c.cast = c.cast.map(map);
     }
     if (!variant) for (const l of cut.voice?.lines ?? []) if (l.speaker === id) l.speaker = to;
@@ -599,6 +666,7 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
     const p = a.provenance;
     if (p?.cast) p.cast = p.cast.map(map);
     if (p?.prompt) p.prompt = inPrompt(p.prompt);
+    if (typeof p?.params?.prompt === "string") p.params.prompt = inPrompt(p.params.prompt);
   }
   return true;
 }
@@ -705,6 +773,7 @@ export function mergeLook(file: ProjectFile, look: string): boolean {
       if (c?.kind === "placeholder") c.description = text(c.description);
       if (c?.kind !== "generated") continue;
       c.prompt = text(c.prompt);
+      if (c.clipPrompt) c.clipPrompt = text(c.clipPrompt);
       if (c.cast) c.cast = keys(c.cast);
     }
   for (const a of file.assets) {
@@ -712,6 +781,7 @@ export function mergeLook(file: ProjectFile, look: string): boolean {
     const p = a.provenance;
     if (p?.cast) p.cast = keys(p.cast);
     if (p?.prompt) p.prompt = text(p.prompt);
+    if (typeof p?.params?.prompt === "string") p.params.prompt = text(p.params.prompt);
   }
   return true;
 }
@@ -727,7 +797,7 @@ export const fewestStillRefs = (catalog: CatalogModel[]) =>
   Math.min(...catalog.filter((m) => m.ops.includes("image") && (m.takes.refs ?? 0) > 0).map((m) => m.takes.refs!), Infinity) || 0;
 
 /** What a shot asks of a take: how long it plays (in the cut's first format), that format's shape, and a first prompt. */
-export function shotNeeds(project: Project, shotId: string): { seconds?: number; aspect: string; prompt?: string } {
+export function shotNeeds(project: Project, shotId: string, op?: MakeOp): { seconds?: number; aspect: string; prompt?: string } {
   const format = project.formats[0]!;
   const aspect = aspectOf(format.width, format.height);
   const shot = project.shots.find((s) => s.id === shotId);
@@ -735,6 +805,51 @@ export function shotNeeds(project: Project, shotId: string): { seconds?: number;
   const r = resolveTimeline(project, format.id).shots.find((s) => s.id === shotId);
   const length = r ? r.end - r.start : NaN;
   const c = shot.content;
-  const prompt = c.kind === "placeholder" ? c.description : c.kind === "generated" ? c.prompt : shot.intent;
+  const prompt = c.kind === "placeholder" ? c.description : c.kind === "generated" ? ((op === "video" ? c.clipPrompt : undefined) ?? c.prompt) : shot.intent;
   return { seconds: Number.isFinite(length) && length > 0 ? Math.round(length * 1000) / 1000 : undefined, aspect, prompt };
+}
+
+type Generated = Extract<ShotContent, { kind: "generated" }>;
+
+/** What a take says, as a shot keeps it: lines to find again where the shot plays, or a stretch of a file's sound. */
+export const speechOnShot = (s: Speech): NonNullable<Generated["speech"]> => ("lines" in s ? { lines: s.lines } : { asset: s.asset, from: s.from, to: s.to });
+
+/**
+ * A made shot set to show one of its takes. What it says about its take follows, so the next one is asked for the same
+ * way: who made it, what it was told, what it started and ended on, what it followed or said, and where the shot starts
+ * in it (`seconds` is how long the shot plays). A take with its mouths changed keeps the board and the movement of the
+ * clip it was made from. One from before takes recorded how they were asked for can only say who made it.
+ */
+export function showTake(c: Generated, take: Asset, assets: Asset[], seconds?: number): Generated {
+  const made = take.provenance;
+  const asked = (made?.params ?? {}) as Asked & { model?: string; prompt?: string };
+  const next: Generated = { ...c, take: take.id, ...(made?.provider ? { provider: made.provider } : {}), ...(asked.model ? { model: asked.model } : {}) };
+  if (take.kind !== "video") delete next.in;
+  if (asked.prompt === undefined) return next;
+  if (take.kind !== "video") return { ...next, prompt: asked.prompt };
+  const { start, end, drive, speech: _said, in: _in, ...rest } = next;
+  const lead = takeLead({ ...asked, shotSeconds: seconds ?? asked.shotSeconds }, take.duration, (id) => assets.find((a) => a.id === id)?.duration);
+  const from = asked.clip ? { start, end, drive } : asked;
+  return {
+    ...rest,
+    clipPrompt: asked.prompt,
+    ...(from.start ? { start: from.start } : {}),
+    ...(from.end ? { end: from.end } : {}),
+    ...(from.drive ? { drive: from.drive } : {}),
+    ...(asked.speech ? { speech: speechOnShot(asked.speech) } : {}),
+    ...(lead > 0 ? { in: Math.round(lead * 1000) / 1000 } : {}),
+  };
+}
+
+/** After an edit: a shot set by hand to show another take follows it (showTake), keeping an `in` the edit set as well. */
+export function followTakes(before: Pick<Project, "shots">, after: Project) {
+  for (const s of after.shots) {
+    const was = before.shots.find((x) => x.id === s.id)?.content;
+    const c = s.content;
+    if (c.kind !== "generated" || was?.kind !== "generated" || !c.take || c.take === was.take) continue;
+    const take = after.assets.find((a) => a.id === c.take);
+    if (!take) continue;
+    const shown = showTake(c, take, after.assets, shotNeeds(after, s.id).seconds);
+    s.content = c.in === was.in ? shown : { ...shown, in: c.in };
+  }
 }

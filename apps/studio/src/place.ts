@@ -2,7 +2,7 @@
  * Putting a picture into the cut: as the take a placeholder or made shot shows, or as a new clip where it was dropped
  * on the timeline. Pure (no DOM), so it's tested on its own.
  */
-import type { Anchor, Asset, Project, Shot, Timeline } from "@beatsheet/schema";
+import { showTake, type Anchor, type Asset, type Project, type Shot, type Timeline } from "@beatsheet/schema";
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 const freeId = (prefix: string, taken: { id: string }[]) => {
@@ -32,8 +32,7 @@ export function putInShot(d: Project, shotId: string, a: Asset) {
       ...(typeof from?.params?.model === "string" ? { model: from.params.model } : {}),
     };
   } else if (c.kind === "generated") {
-    c.takes = [...new Set([...(c.takes ?? []), a.id])];
-    c.take = a.id;
+    s.content = showTake({ ...c, takes: [...new Set([...(c.takes ?? []), a.id])] }, a, d.assets);
   } else return;
   const made = s.content as Extract<Shot["content"], { kind: "generated" }>;
   // A clip made from a still remembers it, so a final can start from the same board.

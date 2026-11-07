@@ -210,7 +210,7 @@ describe("making takes for a shot", () => {
     expect(readFileSync(take.path, "utf8")).toBe("a picture");
   });
 
-  it("animates a board: uploads it, asks for the next length over the shot's, and trims the take to the middle", async () => {
+  it("animates a board: uploads it, asks for the next length over the shot's, and the shot opens on it", async () => {
     make.startMake(PROJECT, { op: "image", shot: "s2" });
     await make.driveJobs(PROJECT);
     const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "s2-take", model: "kling-2.5-turbo" });
@@ -220,8 +220,9 @@ describe("making takes for a shot", () => {
     expect(seen.uploads).toBe(1);
     expect(seen.submits[1]!.input).toEqual({ prompt: "The cat strolls down the alley like it owns it", duration: "5", image_url: `${base}/out/uploaded-1.jpg` });
     const s = shot("s2");
-    // The 6-second take covers the 3.2-second shot with half a second spare at the start.
-    expect(s.content).toMatchObject({ kind: "generated", take: "s2-take-2", takes: ["s2-take", "s2-take-2"], start: "s2-take", in: 0.5 });
+    // The 6-second take covers the 3.2-second shot, which starts on the board it was made from.
+    expect(s.content).toMatchObject({ kind: "generated", take: "s2-take-2", takes: ["s2-take", "s2-take-2"], start: "s2-take" });
+    expect(s.content).not.toHaveProperty("in");
     expect(s.fidelity).toBe("rough");
   });
 
@@ -491,11 +492,40 @@ describe("roughs, finals and whole passes", () => {
     expect(shot("s2")).toMatchObject({ fidelity: "rough", content: { take: "s2-take-2" } });
 
     const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", quality: "final", model: "kling-3", count: 1 });
-    expect(fit).toMatchObject({ model: "kling-3", seconds: 5, usd: 0.56 });
+    expect(fit).toMatchObject({ model: "kling-3", seconds: 4, usd: 0.448 });
     await make.driveJobs(PROJECT);
-    expect(seen.submits.at(-1)!.input).toEqual({ prompt: "The cat strolls down the alley like it owns it", duration: "5", start_image_url: `${base}/out/uploaded-2.jpg`, generate_audio: false });
+    expect(seen.submits.at(-1)!.input).toEqual({ prompt: "The cat strolls down the alley like it owns it", duration: "4", start_image_url: `${base}/out/uploaded-2.jpg`, generate_audio: false });
     // The board is still where the clips start from, after a rough took its place.
     expect(shot("s2")).toMatchObject({ fidelity: "final", content: { take: "s2-take-3", start: "s2-take" } });
+  });
+
+  it("ends a clip on its end frame, keeps what it was asked on the take, and a retake ends there too unless told not to", async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 2 });
+    await make.driveJobs(PROJECT);
+    const { fit } = make.startMake(PROJECT, { op: "video", shot: "s2", start: "s2-take", end: "s2-take-2", prompt: "It stops and looks up", model: "wan-3", count: 1 });
+    // Both ends are set, so nothing's bought either side of the 3.2-second shot.
+    expect(fit).toMatchObject({ model: "wan-3", seconds: 4 });
+    await make.driveJobs(PROJECT);
+    // The take comes back 6 seconds long, and the shot plays its last 3.2 so it lands on the end frame.
+    expect(shot("s2").content).toMatchObject({ take: "s2-take-3", start: "s2-take", end: "s2-take-2", in: 2.8, model: "wan-3", clipPrompt: "It stops and looks up", prompt: "The cat strolls down the alley like it owns it" });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-3")!;
+    expect(take.provenance?.params).toMatchObject({ prompt: "It stops and looks up", start: "s2-take", end: "s2-take-2", shotSeconds: 3.2 });
+
+    const again = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", model: "wan-3", count: 1 }).jobs[0]!;
+    expect(again.request).toMatchObject({ start: "s2-take", end: "s2-take-2", prompt: "It stops and looks up" });
+    const plain = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", end: null, model: "wan-3", count: 1 }).jobs[0]!;
+    expect(plain.request.end).toBeUndefined();
+    await make.cancelJobs(PROJECT, [again.id, plain.id]);
+  });
+
+  it("says who a clip is about that its frames don't show, before anything's spent", async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2", prompt: "An empty alley at dawn", count: 1 });
+    await make.driveJobs(PROJECT);
+    expect(make.absentFrom(PROJECT, [{ op: "video", shot: "s2", start: "board", prompt: "@cat strolls in from the left" }])).toEqual([{ shot: "s2", who: ["the cat"] }]);
+    expect(make.absentFrom(PROJECT, [{ op: "video", shot: "s2", start: "board", prompt: "Mist drifts down the alley" }])).toEqual([]);
+    // A shot with no board can't be asked for at all, which starting it says.
+    expect(make.absentFrom(PROJECT, [{ op: "video", shot: "s1", start: "board", prompt: "@cat slips out" }])).toEqual([]);
+    expect(make.requestFor(PROJECT, { op: "image", shot: "s2", prompt: "@cat in the alley" }).absent).toBeUndefined();
   });
 
   it("copies the movement in a clip on fal: cuts the stretch to follow, and sends it with the board to Kling's motion control", async () => {

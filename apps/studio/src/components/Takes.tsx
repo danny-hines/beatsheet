@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { CATALOG, castOf, commercialWords, resolveTimeline, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { TextField } from "./ui";
@@ -47,6 +47,12 @@ export function fitOf(choices: Choices | undefined, value: string): FitOk | unde
   const f = choices.ready.find((x) => x.model === model);
   return f && (via ? placesOf(f).find((x) => x.route === via) : f);
 }
+/** The pick for the model that made a take, in the place it made it, when it can make this now; else Auto. */
+const pickOfTake = (choices: Choices | undefined, a: Asset | undefined): string => {
+  const f = choices?.ready.find((x) => x.model === a?.provenance?.params?.model);
+  if (!f) return "";
+  return f.also?.length ? `${f.model}@${(placesOf(f).find((x) => x.route === a?.provenance?.provider) ?? f).route}` : f.model;
+};
 
 /**
  * The project's jobs that `match` (a shot's, a sheet's), asked for again every couple of seconds while any is going;
@@ -115,21 +121,23 @@ export function useChoices(query: Record<string, string | number | undefined>) {
   const projectId = useStore((s) => s.projectId)!;
   const version = useStore((s) => s.version);
   const [choices, setChoices] = useState<Choices>();
+  const [absent, setAbsent] = useState<string[]>([]);
   const [problem, setProblem] = useState("");
   const q = new URLSearchParams(Object.entries(query).flatMap(([k, v]) => (v === undefined || v === "" ? [] : [[k, String(v)]]))).toString();
   useEffect(() => {
     let live = true;
     fetch(`/api/projects/${projectId}/make?${q}`)
-      .then((r) => r.json() as Promise<{ choices?: Choices; error?: string }>)
+      .then((r) => r.json() as Promise<{ choices?: Choices; req?: { absent?: string[] }; error?: string }>)
       .then((j) => {
         if (!live) return;
         setProblem(j.choices ? "" : (j.error ?? "Couldn't list the models"));
         if (j.choices) setChoices(j.choices);
+        setAbsent(j.req?.absent ?? []);
       })
       .catch((e: unknown) => live && setProblem(e instanceof Error ? e.message : String(e)));
     return () => void (live = false);
   }, [projectId, q, version]);
-  return { choices, problem };
+  return { choices, problem, absent };
 }
 
 export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
@@ -143,13 +151,16 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const showing = c.kind === "generated" && c.take ? p.assets.find((a) => a.id === c.take) : undefined;
   // The still a clip starts from: the one showing, or the one the clip showing was made from.
   const board = showing?.kind === "image" ? showing.id : c.kind === "generated" ? c.start : undefined;
-  const prompt = c.kind === "placeholder" ? c.description : c.prompt;
   const format = p.formats[0]!;
 
   const [op, setOp] = useState<MakeOp>(board ? "video" : "image");
+  // A still is told what's in the frame and a clip what moves. A clip has the still's words until it has its own.
+  const prompt = c.kind === "placeholder" ? c.description : ((op === "video" ? c.clipPrompt : undefined) ?? c.prompt);
+  const stillsWords = op === "video" && showing?.kind === "image" && c.kind === "generated" && !c.clipPrompt;
   const [quality, setQuality] = useState<Quality>("rough");
   const [fromBoard, setFromBoard] = useState(true);
-  const [model, setModel] = useState("");
+  const [toEnd, setToEnd] = useState(true);
+  const [picked, setModel] = useState<string>();
   const [count, setCount] = useState(2);
   // A clip can copy the movement in a stretch of another (SCAIL-2): the one the shot's takes followed, until changed.
   const clips = p.assets.filter((a) => a.kind === "video" && !a.cutout && !a.version && a.provenance?.source !== "generated");
@@ -172,29 +183,37 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const speaking = op === "video" && say && heard.length > 0;
   const changing = speaking && dub && showing?.kind === "video";
   const start = op === "video" && fromBoard && !changing ? board : undefined;
+  // The frame its clips ended on, which a new one ends on too; one that copies movement or says a line doesn't take one.
+  const endFrame = start && !speaking && !follow && c.kind === "generated" ? c.end : undefined;
+  const end = endFrame && toEnd ? endFrame : undefined;
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
   const drive = op === "video" ? (follow && !speaking ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
   const lipsync = op === "video" ? (speaking ? { speech: "lines", ...(changing ? { clip: "take" } : {}) } : { speech: "none" }) : {};
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
-  const { choices, problem } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, quality: op === "video" ? quality : undefined, ...drive, ...lipsync });
+  const { choices, problem, absent } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, end: op === "video" ? (end ?? "none") : undefined, quality: op === "video" ? quality : undefined, ...drive, ...lipsync });
+  // Another take comes from the model that made the one showing (or the last of its kind), until another is picked.
+  const model = picked ?? pickOfTake(choices, [showing, ...[...shown].reverse()].find((a) => a?.kind === op));
   const chosen = fitOf(choices, model);
   // A model picked for stills can't make video, and the other way round.
   useEffect(() => {
-    if (model && choices && !fitOf(choices, model)) setModel("");
-  }, [choices, model]);
+    if (picked && choices && !fitOf(choices, picked)) setModel(undefined);
+  }, [choices, picked]);
   const style = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
   const unknown = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
 
   const pick = (id: string) =>
     actions.edit((d) => {
       const s = d.shots.find((x) => x.id === shot.id)!;
-      if (s.content.kind === "generated") s.content.take = id;
+      const take = d.assets.find((a) => a.id === id);
+      if (s.content.kind === "generated" && take) s.content = showTake(s.content, take, d.assets, length);
     });
   const editPrompt = (v: string) =>
     actions.edit((d) => {
       const s = d.shots.find((x) => x.id === shot.id)!;
       if (s.content.kind === "placeholder") s.content.description = v;
-      else if (s.content.kind === "generated") s.content.prompt = v;
+      else if (s.content.kind === "generated" && op === "image") s.content.prompt = v;
+      else if (s.content.kind === "generated" && v.trim()) s.content.clipPrompt = v;
+      else if (s.content.kind === "generated") delete s.content.clipPrompt;
     });
   const what = op === "image" ? (count === 1 ? "still" : "stills") : `${quality} ${count === 1 ? "clip" : "clips"}`;
   const aspect = `${format.width} / ${format.height}`;
@@ -244,8 +263,9 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
       )}
       <label>
         Prompt
-        <TextField multiline value={prompt} placeholder="What's in the shot, and how the camera sees it. Name the cast with @: @cat" onCommit={editPrompt} />
+        <TextField multiline value={prompt} placeholder={op === "video" ? "What moves, and how the camera does." : "What's in the shot, and how the camera sees it. Name the cast with @: @cat"} onCommit={editPrompt} />
       </label>
+      {stillsWords && <p className="dim small">These are the still's words. Say what moves and how the camera does: a clip that repeats its picture barely moves.</p>}
       {(named.length > 0 || unknown.length > 0 || style) && (
         <p className="dim small cast-line">
           {named.length > 0 && (
@@ -283,6 +303,12 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
         <label className="check-row small">
           <input type="checkbox" checked={fromBoard} onChange={(e) => setFromBoard(e.target.checked)} />
           Start from the chosen still
+        </label>
+      )}
+      {endFrame && (
+        <label className="check-row small" title="The clip ends on the frame the shot's clips were made to end on">
+          <input type="checkbox" checked={toEnd} onChange={(e) => setToEnd(e.target.checked)} />
+          End on the shot's end frame
         </label>
       )}
       {op === "video" && heard.length > 0 && (
@@ -345,6 +371,11 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
         </>
       )}
       <WhyNot choices={choices} only={speaking ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.speech : follow ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive : undefined} />
+      {op === "video" && absent.length > 0 && (
+        <p className="warn small">
+          {absent.join(", ")} {absent.length === 1 ? "isn't" : "aren't"} in this clip's frames, going by what they were made with. Clips get no cast pictures, so the model would make them up. Give it a frame with them in it.
+        </p>
+      )}
       <div className="make-row">
         <button
           className="primary"
@@ -356,7 +387,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
               shot: shot.id,
               prompt,
               count,
-              ...(op === "video" ? { quality, drive: speaking ? null : (follow ?? null), speech: speaking ? {} : null, ...(changing ? { clip: "take" as const } : {}) } : {}),
+              ...(op === "video" ? { quality, end: end ?? null, drive: speaking ? null : (follow ?? null), speech: speaking ? {} : null, ...(changing ? { clip: "take" as const } : {}) } : {}),
               ...pickOf(model),
               ...(start ? { start } : {}),
               ...(length ? { seconds: length } : {}),

@@ -37,6 +37,7 @@ import {
   whoSpeaks,
   MAKE_OPS,
   SFX_SOUNDS,
+  followTakes,
   resolveTimeline,
   shotContentSummary,
   slugify,
@@ -55,7 +56,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { cancelJobs, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { absentFrom, cancelJobs, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -597,7 +598,7 @@ const makeArgs = {
   cast: z.array(z.string()).optional().describe("Cast and sets in it that the prompt doesn't name"),
   quality: z.enum(["rough", "final"]).optional().describe("For video: rough (default; fast and cheap, to judge the cut) or final (the best model, once the cut holds)"),
   start: z.string().optional().describe('The picture a video starts from: an asset id, or "board" for each shot\'s chosen still'),
-  end: z.string().optional().describe("Asset id of a picture a video ends on"),
+  end: z.string().nullable().optional().describe("Asset id of a picture a video ends on. A generated shot whose clips ended on a frame ends on it again unless this is null"),
   refs: z.array(z.string()).optional().describe("Asset ids of reference pictures, instead of the cast's own"),
   drive: z
     .object({
@@ -640,7 +641,7 @@ type MakeToolArgs = {
   cast?: string[];
   quality?: "rough" | "final";
   start?: string;
-  end?: string;
+  end?: string | null;
   refs?: string[];
   drive?: { asset: string; from?: number; to?: number } | null;
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
@@ -657,8 +658,12 @@ const asksFor = ({ shots, models, ...ask }: MakeToolArgs): MakeAsk[] => {
   const each = shots?.length ? shots.map((shot) => ({ ...ask, shot })) : [ask];
   return models?.length ? each.flatMap((a) => models.map((model) => ({ ...a, model }))) : each;
 };
+/** Clips that would have a model make someone up, a line each. */
+const absentLines = (held: { shot?: string; who: string[] }[]) =>
+  [...new Map(held.map((h) => [h.shot, h])).values()].map((h) => `- ${h.shot ? `Shot ${h.shot}` : "This clip"}: ${h.who.join(", ")} ${h.who.length === 1 ? "isn't" : "aren't"} in its frames, going by what they were made with.`);
+const ABSENT_WHY = "Clips get no cast pictures, only their frames, so a model would make them up: a stranger, often a small one.";
 const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
-const minutes = (s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
+const minutes =(s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
 /** What it costs where it runs: nothing extra on a plan, nothing at all on the person's own graphics card. */
 const costAt = (x: { route: string; usd?: number }) => (PLAN_ROUTES.includes(x.route) ? "no charge, from the plan's allowance" : x.route === "comfy" ? "no charge, on the person's own graphics card" : usd(x.usd));
 /** When what a route makes isn't free to use commercially: "Not for commercial use: …". */
@@ -679,6 +684,8 @@ server.registerTool(
   },
   async ({ project: id, ...args }) => {
     const asks = asksFor(args);
+    const held = absentLines(absentFrom(id, asks));
+    const absent = held.length ? [`Someone's missing, so generate will hold ${held.length === 1 ? "this" : "these"}:`, ...held, ABSENT_WHY] : [];
     if (asks.length > 1) {
       const { rows, problems } = estimate(id, asks);
       const can = asks.length - problems.length;
@@ -690,6 +697,7 @@ server.registerTool(
             .sort((a, b) => b.made - a.made || a.usd - b.usd)
             .map((r) => `- ${r.label} (${r.model}): ${r.made ? `${usd(r.usd)} for ${all(r.made)}` : "none of them"}${r.unfit.length ? `; can't make ${r.unfit.map((u) => `${u.shot} (${u.reason})`).join(", ")}` : ""}`),
           ...(problems.length ? ["Not counted:", ...problems.map((p) => `- ${p.reason}`)] : []),
+          ...absent,
         ].join("\n"),
       );
     }
@@ -697,6 +705,7 @@ server.registerTool(
     const out = [
       `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
     ];
+    out.push(...absent);
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
     if (choices.setup.length) out.push("Needs something the person has to set up (a key in Settings → Media services; ComfyUI in Settings → Making):", ...choices.setup.map(fitLine));
     if (choices.unfit.length) out.push("Can't make this:", ...choices.unfit.map(fitLine));
@@ -718,11 +727,16 @@ server.registerTool(
         .optional()
         .describe("Several model ids from list_models instead of model: the same request made with each, count takes apiece, to compare (a cast member's sheets from two or three still models) and keep the best"),
       via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one place (a plan like "chatgpt" or a key like "openai"); default the cheapest ready one'),
+      anyway: z.boolean().optional().describe("Make a clip that was held because a character it's about isn't in its frames: you've looked and they are there (an edit that didn't name them), or they aren't meant to be seen"),
     },
   },
-  async ({ project: id, ...args }) => {
+  async ({ project: id, anyway, ...args }) => {
+    const asks = asksFor({ ...args, count: args.count ?? 2 });
+    const held = anyway ? [] : absentLines(absentFrom(id, asks));
+    if (held.length)
+      return text(["Not started, so nothing's spent:", ...held, ABSENT_WHY, "Give the clip a frame with them in it (an end frame drawn from their portrait). If you've looked and they're there, or they aren't meant to be seen, ask again with anyway: true."].join("\n"));
     const spendable = turnBudget() - spentThisTurn(id);
-    const { plans, usd: total } = startMakeAll(id, asksFor({ ...args, count: args.count ?? 2 }), { spendable });
+    const { plans, usd: total } = startMakeAll(id, asks, { spendable });
     const what = (p: (typeof plans)[number]) => (p.ask.shot ? `shot ${p.ask.shot}` : p.ask.sheet ? `a ${p.ask.portrait ? "portrait" : "sheet"} for @${p.ask.sheet}` : args.op === "image" ? "a still" : "a clip");
     const lines = plans.map(
       (p) =>
@@ -788,6 +802,7 @@ server.registerTool(
     const { project, version } = loadProject(id, cut);
     const doc = structuredClone(project);
     for (const op of ops) applyOp(doc, op);
+    followTakes(project, doc);
     // The cut it names is the one written, whatever the ops did to `cut`.
     const saved = saveProject(id, { ...doc, cut: { ...doc.cut, id: project.cut.id } }, version);
     const tl = resolveTimeline(saved.project);

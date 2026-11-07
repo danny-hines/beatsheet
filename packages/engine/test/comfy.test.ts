@@ -324,18 +324,18 @@ describe("copying movement from a clip on ComfyUI", () => {
 describe("Wan 2.2 from a board on ComfyUI", () => {
   it("makes a rough at the small size, a whole number of fours plus one frames at 16 a second, with no clip to follow", async () => {
     const { fit } = make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", drive: null, model: "wan-2.2", via: "comfy", count: 1 });
-    // The 2-second shot with half a second either side: 3 seconds, at no charge.
-    expect(fit).toMatchObject({ model: "wan-2.2", route: "comfy", endpoint: "wan22-i2v", seconds: 3, usd: 0 });
+    // The 2-second shot with half a second at its end: 2.5 seconds, at no charge.
+    expect(fit).toMatchObject({ model: "wan-2.2", route: "comfy", endpoint: "wan22-i2v", seconds: 2.5, usd: 0 });
     await make.driveJobs(PROJECT);
     const [job] = make.listJobs(PROJECT);
-    expect(job).toMatchObject({ status: "done", comfy: { profile: "fast", frames: 49, fps: 16 } });
+    expect(job).toMatchObject({ status: "done", comfy: { profile: "fast", frames: 41, fps: 16 } });
     expect(seen.uploads).toEqual([`${job!.id}_ref.png`]);
     const p = seen.prompts[0]!.prompt;
     expect(seen.prompts[0]!.partial_execution_targets).toEqual(["32"]);
-    expect([p["3"]!.inputs.value, p["4"]!.inputs.value, p["5"]!.inputs.value, p["31"]!.inputs.fps]).toEqual([848, 480, 49, 16]);
+    expect([p["3"]!.inputs.value, p["4"]!.inputs.value, p["5"]!.inputs.value, p["31"]!.inputs.fps]).toEqual([848, 480, 41, 16]);
     // The 4-step LoRAs make it quick.
     expect(p["13"]!.inputs.lora_name).toBe("wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors");
-    expect(probe(job!.file!).frames).toBe(49);
+    expect(probe(job!.file!).frames).toBe(41);
     expect(shot().content).toMatchObject({ take: "duel-take", model: "wan-2.2", provider: "comfy" });
     expect((shot().content as { drive?: unknown }).drive).toBeUndefined();
   });
@@ -372,8 +372,8 @@ describe("MiniMax H3 from a board on ComfyUI", () => {
 
   it("ends on the picture it's given", async () => {
     const { job, p, uploads } = await made({ op: "video", shot: "duel", start: "board", end: "board", drive: null, model: "minimax-h3", via: "comfy", seconds: 6, count: 1 });
-    // 6 seconds with half a second either side, rounded up to the grid.
-    expect(job).toMatchObject({ status: "done", comfy: { frames: 175 } });
+    // 6 seconds from the one frame to the other, rounded up to the grid.
+    expect(job).toMatchObject({ status: "done", comfy: { frames: 158 } });
     expect(p["7"]!.inputs.image).toBe(`beatsheet/${job.id}_end.png`);
     expect(p["20"]!.inputs.last_frame).toEqual(["7", 0]);
     expect(uploads).toEqual([`${job.id}_ref.png`, `${job.id}_end.png`]);

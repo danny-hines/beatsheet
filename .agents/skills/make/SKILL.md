@@ -82,6 +82,8 @@ Don't cut to another scene or bring in new people mid-clip; that's another shot.
 
 **Everyone in a clip has to be in a picture it's given.** Clips get no cast pictures, only their start and end frames, so anyone in neither is invented: a stranger, often a small one. Before you send it, check which frame has each face. When someone has to arrive during the clip, put them in an end frame drawn from their portrait. A clip only holds a face as far as its frames show it, so keep head turns small and faces large.
 
+`generate` holds a clip when a character it's about (by @id, or by name in the prompt or the shot's intent) isn't in its frames, going by what they were made with, and nothing's spent. Look at the frames, then give it one with them in it, or ask again with `anyway: true` when they're there or aren't meant to be seen.
+
 Each model has its own way with a prompt (what to describe from the board, how it takes sound and dialogue, how to name reference pictures): read its section in [models.md](models.md) before writing for it. Which model suits which kind of shot, and why, is in `docs/MODELS.md`.
 
 **Carrying a clip on.** A clip that ends mid-action continues in the next shot from its last frame: `still_from_clip` on it, then `generate` (op `video`) with `start` set to that still, and a prompt for what happens next. The cut between them lands on the same frame, so it reads as one continuous move.
@@ -132,9 +134,11 @@ What keeps the cat the same cat from shot to shot.
 
 - Boards: 2 takes a shot (1 for a first pass over a long film, as many get redrawn when their scene's clips are made). Look at both (`look_at_assets`), pick the better (`/shots/id=…/content/take`), and say why in a word if it isn't obvious.
 - A board that's wrong (off-model cast, the wrong framing, a continuity slip like the wrong time of day) gets a sharper prompt and another try. After two tries that miss the same way, change the approach (split the shot, simplify the action) or ask the person.
-- **A board that's nearly right gets edited, not drawn again.** Redrawing rolls everything, and the part that was right goes with it. `generate` with the take first in `refs` and a prompt that starts "Edit this picture" and says what changes and what stays exactly as it is. To fix a face, keep the scene and change only the face, with the chosen portrait as the second ref. For the next shot in the same place, start from its neighbor's frame (edit it, or crop it first) so the set stays the same set: a railing drawn twice comes out as two railings. Go back to the first picture each time rather than chaining edits ([models.md](models.md)).
+- **A board that's nearly right gets edited, not drawn again.** Redrawing rolls everything, and the part that was right goes with it. `generate` with the take first in `refs`, who's in it in `cast` (so the picture records them), and a prompt that starts "Edit this picture" and says what changes and what stays exactly as it is. To fix a face, keep the scene and change only the face, with the chosen portrait as the second ref. For the next shot in the same place, start from its neighbor's frame (edit it, or crop it first) so the set stays the same set: a railing drawn twice comes out as two railings. Go back to the first picture each time rather than chaining edits ([models.md](models.md)).
 - Roughs: 1–2 takes. Before you hand one off, `frame` its start, middle and end: each face against the portrait, who's in frame and how big, hands, props that bend or open, and that it starts where the action should. Then watch it in the cut (`review_cut`), not alone.
 - A clip that misses gets a better board or prompt, not the same request again: it's far more often those than luck. After two that miss the same way, change the frame, the model or the shot.
+- A clip opens on its start frame, with half a second spare at its end. One with an end frame has no spare and ends on it, and so do its retakes (`end: null` for none). Set `/shots/id=…/content/take` and the shot follows that take: its model, its frames, its prompt.
+- A shot keeps two prompts: `prompt`, what's in the frame, and `clipPrompt`, what moves. `generate` with no `prompt` uses the one for what it's making, and a clip has the still's words until it has its own.
 - Finals: 1 take, from the board the rough came from.
 
 ## Money

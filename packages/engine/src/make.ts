@@ -22,12 +22,14 @@ import {
   driveWindow,
   FIDELITY,
   fitModel,
-  HANDLE,
+  missingFromFrames,
   realPeople,
   resolveTimeline,
   shapeOf,
   shotNeeds,
+  speechOnShot,
   speechWindow,
+  takeLead,
   type Asset,
   type CastMember,
   type Choices,
@@ -227,7 +229,7 @@ export function serviceStates(): Record<string, ServiceState> {
 const LOCAL_ROUTES = ["comfy"];
 
 /** Something to make, as the agent's tools and the studio ask for it. */
-export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive" | "speech" | "clip">> & {
+export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive" | "speech" | "clip">> & {
   op: MakeOp;
   cut?: string;
   /** A placeholder or generated shot it's for: its length, the cut's shape and its description fill in what's missing, and the takes land on it. */
@@ -243,6 +245,8 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive" | "spee
   cast?: string[];
   /** Asset id of the picture a clip starts from, or "board": the shot's chosen still. */
   start?: string;
+  /** Asset id of the picture a clip ends on. Without it, a generated shot whose clips ended on a frame ends on it again; null for none. */
+  end?: string | null;
   /**
    * For a clip that copies movement: the clip to follow, from a second of it (default 0) to another (default the shot's
    * length later). Without it, a generated shot's clips follow what its takes followed before; null for none.
@@ -264,7 +268,12 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "drive" | "spee
 };
 
 /** A request in full, with what goes to the model: the prompt with its cast described, and the cast it names. */
-export type FullRequest = MakeRequest & { sent: string; cast: string[] };
+export type FullRequest = MakeRequest & {
+  sent: string;
+  cast: string[];
+  /** For a clip: the characters it's about that its pictures aren't known to show, by name (missingFromFrames). */
+  absent?: string[];
+};
 
 /**
  * The prompt a sheet is made from when none is given: clean views of one cast member, to give models later, in its
@@ -364,7 +373,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   if (ask.sheet && (!member || (variantId && !member.variants?.some((v) => v.id === variantId)))) throw new Error(`No cast member "${ask.sheet}"`);
   const portrait = !!member && !!ask.portrait;
   if (portrait && member.kind !== "character") throw new Error(`A portrait is of a character; @${castId} is a ${member.kind}`);
-  const needs = shot ? shotNeeds(project, shot.id) : undefined;
+  const needs = shot ? shotNeeds(project, shot.id, ask.op) : undefined;
   const format = project.formats[0]!;
   // The style made shots are drawn in; a sheet takes its member's own when it has one, and names it in its prompt.
   const style = (id: string | undefined) => (id && project.cast?.some((m) => m.id === id && m.kind === "style") ? id : undefined);
@@ -426,6 +435,10 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   const people = realPeople(uses, project.assets);
   const along = clip ?? drive ?? speech;
+  // A clip that ended on a frame ends on it again; one that copies movement or says a line doesn't take one.
+  const lastEnd = ask.op === "video" && start && !along && shot?.content.kind === "generated" ? shot.content.end : undefined;
+  const end = ask.end === undefined ? lastEnd : (ask.end ?? undefined);
+  const absent = ask.op === "video" && !clip ? missingFromFrames(project, [...(start ? [start] : []), ...(end ? [end] : []), ...(refs ?? [])], uses, [prompt, shot?.intent ?? ""]) : [];
   return {
     op: ask.op,
     prompt,
@@ -436,8 +449,9 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     quality: ask.quality ?? (ask.op === "video" ? "rough" : undefined),
     // A clip whose mouths are changed is the picture; it doesn't start from another.
     start: clip ? undefined : start,
-    end: ask.end,
+    end,
     refs,
+    ...(absent.length ? { absent } : {}),
     ...(drive ? { drive } : {}),
     ...(speech ? { speech } : {}),
     ...(clip ? { clip } : {}),
@@ -534,6 +548,18 @@ function speechFor(project: Project, shot: Shot | undefined, ask: NonNullable<Ma
   const silent = lines.filter((l) => !voiced.find((v) => v.id === l.id)?.file);
   if (silent.length) throw new Error(`${silent.map((l) => `"${l.id}"`).join(", ")} ${silent.length === 1 ? "isn't" : "aren't"} voiced yet: narrate it first`);
   return { lines: lines.map((l) => l.id), from: r3(from), to: r3(to) };
+}
+
+/** The clips among some requests that would have a model make someone up, and who. One that can't be made says so when it's started. */
+export function absentFrom(projectId: string, asks: MakeAsk[]): { shot?: string; who: string[] }[] {
+  return asks.flatMap((ask) => {
+    try {
+      const who = requestFor(projectId, ask).absent;
+      return who?.length ? [{ shot: ask.shot, who }] : [];
+    } catch {
+      return [];
+    }
+  });
 }
 
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
@@ -1298,7 +1324,11 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
       op: job.op,
       params: {
         model: job.model,
+        prompt: r.prompt,
+        ...(r.start ? { start: r.start } : {}),
+        ...(r.end ? { end: r.end } : {}),
         ...(r.seconds !== undefined ? { seconds: r.seconds } : {}),
+        ...(r.shotSeconds !== undefined ? { shotSeconds: r.shotSeconds } : {}),
         ...(r.aspect ? { aspect: r.aspect } : {}),
         ...(job.quality ? { quality: job.quality } : {}),
         ...(r.drive ? { drive: r.drive } : {}),
@@ -1322,8 +1352,7 @@ const qualityOf = (a: Asset | undefined) => a?.provenance?.params?.quality as Qu
  * has none yet, so it works straight away, and after that joins the others made for that step, for the person to
  * choose between. Anything else's sheet becomes its picture when it has none, and is kept beside it after that. A take
  * joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a still) and the
- * first final over a rough, trimmed to the middle of the little extra it was made with. The shot's fidelity moves up
- * to match.
+ * first final over a rough, starting where takeLead says. The shot's fidelity moves up to match.
  */
 function attach(projectId: string, job: MakeJob, asset: Asset) {
   if (job.sheet) {
@@ -1356,28 +1385,20 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
       const dubbed = !!r.clip && r.clip.asset === showing?.id;
       const better = asset.kind === "video" && (showing?.kind === "image" || dubbed || (job.quality === "final" && qualityOf(showing) !== "final"));
       if (!showing || better) {
-        // A take that follows a clip, or says what's heard, starts where the stretch asked for does; others have their spare evenly either side.
-        const durationOf = (id: string | undefined) => p.assets.find((a) => a.id === id)?.duration;
-        const spare = r.speech
-          ? speechWindow(r.speech, r.clip, r.seconds ?? (r.clip ?? r.speech).to - (r.clip ?? r.speech).from, durationOf(r.clip?.asset ?? ("asset" in r.speech ? r.speech.asset : undefined))).lead
-          : r.drive
-            ? driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, durationOf(r.drive.asset)).lead
-            : asset.kind === "video" && asset.duration && r.shotSeconds
-              ? Math.min(HANDLE, Math.max(0, (asset.duration - r.shotSeconds) / 2))
-              : 0;
+        const spare = takeLead(r, asset.kind === "video" ? asset.duration : undefined, (id) => p.assets.find((a) => a.id === id)?.duration);
         // What it was made from: the clip's own board and movement, for one whose mouths were changed.
         const made = dubbed ? g : r;
         const { start: _s, end: _e, in: _i, refs: _r, drive: _d, speech: _p, ...rest } = g;
         Object.assign(rest, {
           take: asset.id,
-          prompt: r.prompt,
+          ...(asset.kind === "video" ? { clipPrompt: r.prompt } : { prompt: r.prompt }),
           provider: job.route,
           model: job.model,
           ...(made.start ? { start: made.start } : {}),
           ...(made.end ? { end: made.end } : {}),
           ...(made.refs?.length ? { refs: made.refs } : {}),
           ...(made.drive ? { drive: made.drive } : {}),
-          ...(r.speech ? { speech: "lines" in r.speech ? { lines: r.speech.lines } : { asset: r.speech.asset, from: r.speech.from, to: r.speech.to } } : {}),
+          ...(r.speech ? { speech: speechOnShot(r.speech) } : {}),
           ...(spare > 0 ? { in: Math.round(spare * 1000) / 1000 } : {}),
         });
         s.content = rest;

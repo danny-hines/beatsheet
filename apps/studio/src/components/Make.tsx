@@ -72,7 +72,7 @@ export function MakeView() {
 function shotsToMake(p: Project): Shot[] {
   return p.shots.filter((s) => s.content.kind === "placeholder" || s.content.kind === "generated");
 }
-const shotPrompt = (s: Shot) => (s.content.kind === "placeholder" ? s.content.description : s.content.kind === "generated" ? s.content.prompt : "");
+const shotPrompt = (s: Shot, op?: MakeOp) => (s.content.kind === "placeholder" ? s.content.description : s.content.kind === "generated" ? ((op === "video" ? s.content.clipPrompt : undefined) ?? s.content.prompt) : "");
 
 /** "For" set to this makes takes for every shot that still needs one, each from its own description. */
 const PASS = "*";
@@ -260,7 +260,7 @@ function Composer({ draft, setDraft, onStarted }: { draft: Draft; setDraft: (fn:
   };
   const pickShot = (id: string) => {
     const s = p.shots.find((x) => x.id === id);
-    set({ shot: id || undefined, ...(s && !draft.prompt.trim() ? { prompt: shotPrompt(s) } : {}) });
+    set({ shot: id || undefined, ...(s && !draft.prompt.trim() ? { prompt: shotPrompt(s, draft.op) } : {}) });
   };
 
   const make = async () => {

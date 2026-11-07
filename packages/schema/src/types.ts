@@ -560,6 +560,7 @@ export const ShotContent = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("generated"),
     prompt: z.string(),
+    clipPrompt: z.string().optional().describe("What its clips are told: what moves, and how the camera does. `prompt` says what's in the frame, and stands in until there's one of these"),
     take: z.string().optional().describe("Asset id of the chosen take"),
     takes: z.array(z.string()).optional(),
     provider: z.string().optional(),

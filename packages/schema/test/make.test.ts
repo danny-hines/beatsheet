@@ -13,9 +13,11 @@ import {
   cutView,
   driveWindow,
   fitModel,
+  followTakes,
   HANDLE,
   fewestStillRefs,
   maxStillRefs,
+  missingFromFrames,
   parseFile,
   pictureOf,
   keepCast,
@@ -26,9 +28,12 @@ import {
   resolveTimeline,
   SCHEMA_VERSION,
   shotNeeds,
+  showTake,
   speechWindow,
   STAGE_IDS,
+  takeLead,
   withCut,
+  type Asset,
   type CastMember,
   type CatalogModel,
   type ProjectFile,
@@ -271,8 +276,8 @@ describe("roughs and finals", () => {
   it("prices a model that makes both at the size it makes each: Wan 3.0's rough at 480p, its final at 1080p", () => {
     const board = { op: "video" as const, prompt: "the cat leaves", start: "board", seconds: 3.2 };
     const wan = CATALOG.find((m) => m.id === "wan-3")!;
-    expect(fitModel(wan, { ...board, quality: "rough" }, services)).toMatchObject({ ok: true, seconds: 5, usd: 0.25 });
-    expect(fitModel(wan, { ...board, quality: "final" }, services)).toMatchObject({ ok: true, seconds: 5, usd: 1 });
+    expect(fitModel(wan, { ...board, quality: "rough" }, services)).toMatchObject({ ok: true, seconds: 4, usd: 0.2 });
+    expect(fitModel(wan, { ...board, quality: "final" }, services)).toMatchObject({ ok: true, seconds: 4, usd: 0.8 });
     // With no tier, it's in both lists, where the catalog puts it.
     const rough = chooseModels(CATALOG, { ...board, quality: "rough" }, services).ready.map((f) => f.model);
     const final = chooseModels(CATALOG, { ...board, quality: "final" }, services).ready.map((f) => f.model);
@@ -788,8 +793,8 @@ describe("models on your own hardware", () => {
   const ask = (seconds: number) => ({ op: "video" as const, prompt: "x", start: "board", seconds });
 
   it("makes it on your card where it fits there, at no charge, and on the service where only that makes it long enough", () => {
-    expect(fitModel(both, ask(3), { fal, comfy: comfy() })).toMatchObject({ ok: true, route: "comfy", seconds: 4, usd: 0, wait: 300, also: [{ route: "fal", usd: 0.32 }] });
-    expect(fitModel(both, ask(7), { fal, comfy: comfy() })).toMatchObject({ ok: true, route: "fal", seconds: 8 });
+    expect(fitModel(both, ask(3), { fal, comfy: comfy() })).toMatchObject({ ok: true, route: "comfy", seconds: 3.5, usd: 0, wait: 300, also: [{ route: "fal", usd: 0.28 }] });
+    expect(fitModel(both, ask(7), { fal, comfy: comfy() })).toMatchObject({ ok: true, route: "fal", seconds: 7.5 });
     expect(fitModel(both, ask(7), { comfy: comfy() })).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal"] } });
     expect(fitModel({ ...both, routes: [both.routes[1]!] }, ask(7), { comfy: comfy() })).toMatchObject({ ok: false, why: { kind: "fit", fix: "split", reason: "Makes up to 5s; this shot is 7s" } });
   });
@@ -815,5 +820,191 @@ describe("models on your own hardware", () => {
     const board = chooseModels(CATALOG, { op: "video", prompt: "x", start: "board", seconds: 3 }, { comfy: mac });
     expect(board.setup.find((f) => f.model === "wan-2.2-5b")).toMatchObject({ why: { kind: "install" } });
     expect(board.auto?.model).toBe("minimax-h3");
+  });
+});
+
+describe("a take's spare", () => {
+  const clip = { op: "video" as const, prompt: "the cat leaves", seconds: 3.2 };
+
+  it("makes a clip from a start frame a little longer at its end, and one with an end frame too no longer than the shot", () => {
+    const model: CatalogModel = { ...ranged, takes: { start: true, end: true }, routes: [{ via: "fal", shape: "wan", endpoints: { start: "fal/ranged" }, price: { perSecond: 0.08 } }] };
+    expect(fitModel(model, { ...clip, start: "board" }, services)).toMatchObject({ ok: true, seconds: 3.2 + HANDLE });
+    expect(fitModel(model, { ...clip, start: "board", end: "pose" }, services)).toMatchObject({ ok: true, seconds: 3.2 });
+    // From words alone there's no frame it has to open on, so it keeps its spare either side.
+    expect(fitModel(ranged, clip, services)).toMatchObject({ ok: true, seconds: 3.2 + 2 * HANDLE });
+  });
+
+  it("keeps a short shot from paying for a whole extra second", () => {
+    const wan = CATALOG.find((m) => m.id === "wan-3")!;
+    expect(fitModel(wan, { ...clip, start: "board", seconds: 2.02 }, services)).toMatchObject({ ok: true, seconds: 3 });
+    expect(fitModel(wan, { ...clip, start: "board", seconds: 5.24 }, services)).toMatchObject({ ok: true, seconds: 6 });
+  });
+
+  it("starts the shot on the start frame, or where it ends on the end frame, or in the middle of a clip from words", () => {
+    const none = () => undefined;
+    expect(takeLead({ start: "board", shotSeconds: 3.2 }, 6, none)).toBe(0);
+    expect(takeLead({ start: "board", end: "pose", shotSeconds: 3.2 }, 6, none)).toBeCloseTo(2.8);
+    expect(takeLead({ shotSeconds: 3.2 }, 6, none)).toBe(HANDLE);
+    expect(takeLead({ shotSeconds: 3.2 }, 3.6, none)).toBeCloseTo(0.2);
+    expect(takeLead({ start: "board", end: "pose", shotSeconds: 6 }, 5, none)).toBe(0);
+    // One that follows a clip starts where the stretch does, whatever frames it has.
+    expect(takeLead({ start: "board", drive: { asset: "fight", from: 2, to: 5 }, seconds: 4, shotSeconds: 3 }, 4, () => 10)).toBe(HANDLE);
+  });
+});
+
+const shotProject = (assets: Asset[], cast: CastMember[], shots: ProjectInput["shots"]) =>
+  Project.parse({
+    schema: SCHEMA_VERSION,
+    id: "t",
+    title: "test",
+    recipe: "film",
+    brief: { goal: "test" },
+    formats: [{ id: "wide", label: "16:9", width: 1920, height: 1080, fps: 30 }],
+    stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])),
+    spine: "shots",
+    assets,
+    cast,
+    tracks: [{ id: "pic", kind: "picture", label: "Picture" }],
+    shots,
+    notes: [],
+  });
+
+describe("showing another take", () => {
+  const madeBy = (id: string, model: string, provider: string, params: Record<string, unknown>, kind: "video" | "image" = "video"): Asset => ({
+    id,
+    kind,
+    path: `${id}.mp4`,
+    ...(kind === "video" ? { duration: 5 } : {}),
+    provenance: { source: "generated", provider, params: { model, ...params } },
+  });
+  const wan = madeBy("wan-take", "wan-3", "fal", { prompt: "he dives in and catches both", start: "hall", end: "catch", seconds: 5, shotSeconds: 4 });
+  const kling = madeBy("kling-take", "kling-4", "fal", { prompt: "he streaks in", start: "hall", seconds: 5, shotSeconds: 4 });
+  const shown = { kind: "generated" as const, prompt: "an empty hall", clipPrompt: "he streaks in", take: "kling-take", takes: ["kling-take", "wan-take"], model: "kling-4", provider: "fal", start: "hall", in: 0.8 };
+
+  it("says who made it, what it was told, and what it started and ended on", () => {
+    const next = showTake(shown, wan, [wan, kling], 4);
+    expect(next).toMatchObject({ take: "wan-take", model: "wan-3", clipPrompt: "he dives in and catches both", prompt: "an empty hall", start: "hall", end: "catch", in: 1 });
+  });
+
+  it("drops the end frame and the trim the take it replaces had", () => {
+    const next = showTake({ ...shown, take: "wan-take", end: "catch", in: 1 }, kling, [wan, kling], 4);
+    expect(next).toMatchObject({ take: "kling-take", model: "kling-4", clipPrompt: "he streaks in", start: "hall" });
+    expect(next).not.toHaveProperty("end");
+    expect(next).not.toHaveProperty("in");
+  });
+
+  it("only says who made a take that doesn't record how it was asked for, leaving the trim it was given", () => {
+    const old = madeBy("old-take", "wan-3", "fal", { seconds: 5 });
+    expect(showTake(shown, old, [old], 4)).toMatchObject({ take: "old-take", model: "wan-3", clipPrompt: "he streaks in", start: "hall", in: 0.8 });
+  });
+
+  it("has a still say what's in the frame, with no trim", () => {
+    const board = madeBy("board", "gpt-image", "chatgpt", { prompt: "the hall, with the book mid-fall" }, "image");
+    const next = showTake(shown, board, [board], 4);
+    expect(next).toMatchObject({ take: "board", model: "gpt-image", provider: "chatgpt", prompt: "the hall, with the book mid-fall", clipPrompt: "he streaks in" });
+    expect(next).not.toHaveProperty("in");
+  });
+
+  it("keeps the board of the clip a take with changed mouths was made from", () => {
+    const dub = madeBy("dub", "sync-3", "fal", { prompt: "he talks", clip: { asset: "wan-take", from: 0, to: 4 }, speech: { lines: ["boast"], from: 1, to: 5 }, seconds: 4, shotSeconds: 4 });
+    expect(showTake(shown, dub, [dub], 4)).toMatchObject({ take: "dub", model: "sync-3", start: "hall", speech: { lines: ["boast"] } });
+  });
+
+  it("follows a take set by hand in an edit, keeping a trim the same edit set", () => {
+    const before = shotProject([wan, kling], [], [{ id: "catch", track: "pic", duration: 4, content: shown, fidelity: "rough" }]);
+    const after = structuredClone(before);
+    Object.assign(after.shots[0]!.content, { take: "wan-take" });
+    followTakes(before, after);
+    expect(after.shots[0]!.content).toMatchObject({ take: "wan-take", model: "wan-3", end: "catch", in: 1 });
+
+    const trimmed = structuredClone(before);
+    Object.assign(trimmed.shots[0]!.content, { take: "wan-take", in: 0.25 });
+    followTakes(before, trimmed);
+    expect(trimmed.shots[0]!.content).toMatchObject({ take: "wan-take", model: "wan-3", in: 0.25 });
+  });
+});
+
+describe("who's in a clip's frames", () => {
+  const made = (id: string, cast: string[], refs: string[] = []): Asset => ({ id, kind: "image", path: `${id}.png`, provenance: { source: "generated", cast, refs } });
+  const old = { id: "hamlet", name: "Hamlet (Sam)", kind: "character", about: "a black cloak", portrait: "old-face" } as CastMember;
+  const young = { id: "young-hamlet", name: "Young Hamlet (Max)", kind: "character", about: "a boy", portrait: "young-face" } as CastMember;
+  const epic = { id: "epic", name: "Period epic", kind: "style", about: "steel-blue" } as CastMember;
+  const assets: Asset[] = [
+    made("old-face", ["hamlet"]),
+    made("young-face", ["young-hamlet"]),
+    made("gallery", ["hamlet", "epic"], ["old-face"]),
+    // Edited from a frame he's in, to take him out of it: all it was made with is the style.
+    made("empty-hall", ["epic"], ["gallery"]),
+    made("catch", ["hamlet", "epic"], ["empty-hall", "old-face"]),
+    made("face-swap", ["epic"], ["empty-hall", "young-face"]),
+    made("boy", ["young-hamlet", "epic"]),
+    { id: "photo", kind: "image", path: "photo.jpg" },
+    { id: "lifted", kind: "image", path: "still.png", provenance: { source: "synth" } },
+  ];
+  const project = { assets, cast: [old, young, epic] };
+  const missing = (frames: string[], prompt: string, intent = "") => missingFromFrames(project, frames, castOf(prompt, project.cast), [prompt, intent]);
+
+  it("catches a character who's in neither frame, though the prompt only describes them and the shot says who", () => {
+    expect(missing(["empty-hall"], "The red-haired young man streaks into frame", "Hamlet streaks in and catches both")).toEqual(["Hamlet (Sam)"]);
+  });
+
+  it("is content when an end frame has them, or they're named on the frame", () => {
+    expect(missing(["empty-hall", "catch"], "He streaks in", "Hamlet streaks in and catches both")).toEqual([]);
+    expect(missing(["gallery"], "@hamlet lets go")).toEqual([]);
+  });
+
+  it("goes by the cast pictures a frame was given, as an edit doesn't always name them", () => {
+    expect(missing(["face-swap"], "@young-hamlet raises the skull")).toEqual([]);
+  });
+
+  it("takes a younger self for someone of that name, but not for someone asked for by id", () => {
+    expect(missing(["boy"], "Flashback, the lamp swings", "Hamlet at the university")).toEqual([]);
+    expect(missing(["boy"], "@hamlet watches the lamp swing")).toEqual(["Hamlet (Sam)"]);
+  });
+
+  it("doesn't take Young Hamlet for Hamlet as well when working out who a shot is about", () => {
+    expect(missing(["boy"], "Young Hamlet works alone")).toEqual([]);
+    expect(missing(["gallery"], "Young Hamlet works alone")).toEqual(["Young Hamlet (Max)"]);
+  });
+
+  it("says nothing of a frame it knows nothing about: a photo, a still from a clip", () => {
+    expect(missing(["photo"], "@hamlet walks away")).toEqual([]);
+    expect(missing(["lifted"], "@hamlet walks away")).toEqual([]);
+    expect(missing(["empty-hall", "photo"], "@hamlet walks away")).toEqual([]);
+  });
+
+  it("names everyone missing from a clip with no pictures at all, and nobody from a clip of no one", () => {
+    expect(missing([], "@hamlet walks away")).toEqual(["Hamlet (Sam)"]);
+    expect(missing(["empty-hall"], "The camera trucks past the columns, mist drifting")).toEqual([]);
+  });
+});
+
+describe("what a clip is told", () => {
+  const p = shotProject([], [{ id: "cat", name: "the cat", kind: "character", about: "orange tabby" } as CastMember], [
+    { id: "a", track: "pic", duration: 3, content: { kind: "generated", prompt: "@cat on a wall at dawn", clipPrompt: "@cat jumps down" }, fidelity: "rough" },
+    { id: "b", track: "pic", duration: 3, content: { kind: "generated", prompt: "@cat in the alley" }, fidelity: "board" },
+  ]);
+
+  it("says what moves in a clip and what's in the frame in a still, a clip having the still's words until it has its own", () => {
+    expect(shotNeeds(p, "a", "video").prompt).toBe("@cat jumps down");
+    expect(shotNeeds(p, "a", "image").prompt).toBe("@cat on a wall at dawn");
+    expect(shotNeeds(p, "a").prompt).toBe("@cat on a wall at dawn");
+    expect(shotNeeds(p, "b", "video").prompt).toBe("@cat in the alley");
+  });
+
+  it("follows a cast member renamed in a clip's words, and in what a take recorded", () => {
+    const f: ProjectFile = {
+      schema: SCHEMA_VERSION,
+      id: "t",
+      title: "t",
+      sources: [],
+      brief: { goal: "t" },
+      assets: [{ id: "take", kind: "video", path: "t.mp4", provenance: { source: "generated", params: { prompt: "@cat jumps down" } } }],
+      cast: [{ id: "cat", name: "the cat", kind: "character", about: "orange tabby" } as CastMember],
+      cuts: [{ id: "main", name: "Main", recipe: "film", spec: {}, formats: p.formats, stages: p.stages, spine: "shots", tracks: p.tracks, shots: structuredClone(p.shots), notes: [] }],
+    } as ProjectFile;
+    expect(renameCast(f, "cat", "marmalade")).toBe(true);
+    expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ clipPrompt: "@marmalade jumps down" });
+    expect(f.assets[0]!.provenance?.params?.prompt).toBe("@marmalade jumps down");
   });
 });
