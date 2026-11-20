@@ -7,7 +7,7 @@ What beatsheet offers today is the catalog. This page is the field around it and
 ## How to pick
 
 1. **Rule out before ranking.** Refusals and licenses remove more models than quality does.
-   - A real person in the shot (a cast member made from their own photos): not Seedance (refuses real faces by policy since February 2026) and not Gemini Omni Flash (blocked a developer's own footage).
+   - A real person in the shot (a cast member made from their own photos): not Seedance on fal (refuses real faces by policy since February 2026) and not Gemini Omni Flash (blocked a developer's own footage). Seedance 2.5 through Tein does take them: Tein keeps the faces in the pictures it's given (`pass_faces`), and a selfie came through as a start frame and as a reference on 19 November 2026 (two 4-second 480p takes, one photo; nothing longer or at 1080p was tried). Tein's terms want each real person's consent.
    - Where the person is: MiniMax H3's open weights aren't licensed in the US, EU, UK or South Korea (see Licenses).
    - Mature content: hosted models soften implied violence and refuse gore; blood stays on the person's own card (Wan 2.2, LTX-2.5). For stills, GPT Image refuses fights and blood with people from real photos.
    - Length: past 15 seconds in one take, only Seedance 2.5, Wan 3.0 and Kling 4.0 (all to 30 s).
@@ -24,7 +24,7 @@ Blind votes on [Artificial Analysis](https://artificialanalysis.ai/video/leaderb
 |---|---|---|---|---|---|
 | Wan 3.0 | #1 (1175) | #9 (1111) | #3 | fal $1.00 (1080p) | yes |
 | MiniMax H3 (768p) | #3 (1161) | #4 (1128) | #1 (1495) | fal $0.30 | yes |
-| Seedance 2.5 | #4 (1157) | #1 (1153) | #4 | fal $5.82, Runway $3.40 (1080p) | yes |
+| Seedance 2.5 | #4 (1157) | #1 (1153) | #4 | fal $5.82, Tein $3.83, Runway $3.40 (1080p) | yes |
 | FLUX 3 Max | #5 (provisional) | #12 (1064) | — | fal $1.45 after 7 Nov | no |
 | HeyGen Video 1 | #6 (1156) | #6 (1120) | — | HeyGen API, about $0.20 | no |
 | H3 Max | #7 (1149) | #8 (1117) | Design Arena #1 | fal $0.80 (1080p) | yes |
@@ -141,7 +141,7 @@ Two people talking in one shot: MultiTalk on fal and InfiniteTalk's two-speaker 
 A model added later that runs somewhere under a restricting license gets its label with it (LatentSync on your own card would be "no": its InsightFace face detector is for non-commercial research).
 
 - **MiniMax H3's open weights.** The [MiniMax H3 Community License](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/LICENSE) grants rights "solely within the Applicable Territory": worldwide excluding the EU, the UK, South Korea and the US. A commercial product using it must show "MiniMax H3"; above $20M a year needs MiniMax's written permission. [Comfy's H3 tutorial](https://docs.comfy.org/tutorials/video/minimax/minimax-h3) says commercial use of output made locally needs a MiniMax license bought through Comfy. H3 on fal is MiniMax's model served as a paid API, which fal marks for commercial use.
-- **Seedance:** refuses photos of real people; made-up people are sometimes refused too.
+- **Seedance:** refuses photos of real people; made-up people are sometimes refused too. Through Tein it keeps real faces (its `pass_faces`, on by default); Tein bans accounts that use a real person's face without their documented consent.
 - **Gemini Omni Flash:** blocks real people's likenesses, even someone's own footage.
 - **GPT Image:** edits of real people need their consent; strictest on wardrobe. It refused 45 of 46 fight shots on a key, and the ChatGPT plan does the same more slowly (see From real work).
 - **Violence:** implied and action violence pass on hosted models with the contact softened; gore is refused. fal's safety checkers can only be relaxed by authorized accounts. Veo (`safety_tolerance` 1–6) and FLUX 3 (0–4) expose a level.

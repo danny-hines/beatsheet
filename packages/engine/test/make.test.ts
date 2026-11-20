@@ -20,7 +20,7 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini"].includes(id) ? "test-key" : undefined),
+    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein"].includes(id) ? "test-key" : undefined),
     readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" }, ...settings.services }, checks: {}, make: settings.make }),
   };
 });
@@ -67,6 +67,8 @@ let store: typeof import("../src/store.ts");
 // OpenAI's and Meta's Images API, which answer with the picture.
 type Seen = { submits: { endpoint: string; input: Record<string, unknown> }[]; uploads: number; direct: { url: string; type: string; body: string }[] };
 let seen: Seen;
+// And for Tein: uploads, the one endpoint (which gives the same job for the same idempotency key), and the job to follow.
+let tein: { submits: Record<string, unknown>[]; keys: string[]; uploads: number; jobs: Map<string, string> };
 let refuse: string | undefined;
 let server: Server;
 let base = "";
@@ -98,6 +100,32 @@ beforeAll(async () => {
         if (refuse && body.includes(refuse)) return send(400, { error: { message: "Your request was rejected by the safety system.", code: "moderation_blocked" } });
         if (body.includes("busy")) return send(503, { error: { message: "Overloaded" } });
         return send(200, { data: [{ b64_json: Buffer.from("a made picture").toString("base64") }], usage: { input_tokens: 50, input_tokens_details: { text_tokens: 50, image_tokens: 0 }, output_tokens: 1000 } });
+      }
+      if (url.startsWith("/tein/")) {
+        if (req.headers.authorization !== "Bearer test-key") return send(401, { error: { code: "invalid_api_key", message: "no" } });
+        if (req.method === "POST" && url === "/tein/uploads") {
+          tein.uploads++;
+          return send(200, { url: `${base}/out/tein-upload-${tein.uploads}.jpg`, kind: "image" });
+        }
+        if (req.method === "POST" && url === "/tein/generate") {
+          const input = JSON.parse(body) as Record<string, unknown>;
+          const key = String(input.idempotency_key);
+          tein.keys.push(key);
+          if (refuse && String(input.prompt).includes(refuse)) return send(400, { error: { code: "content_blocked", message: "Content moderation blocked the request or its output. Nothing is charged." } });
+          if (!tein.jobs.has(key)) {
+            tein.submits.push(input);
+            tein.jobs.set(key, `gen_${tein.submits.length}`);
+          }
+          return send(202, { id: tein.jobs.get(key), status: "queued" });
+        }
+        const id = url.match(/^\/tein\/jobs\/([^/]+)$/)?.[1];
+        if (id) {
+          const n = (polls.get(id) ?? 0) + 1;
+          polls.set(id, n);
+          if (n < 3) return send(200, { id, status: n === 1 ? "queued" : "running" });
+          return send(200, { id, status: "succeeded", data: [{ url: `${base}/out/${id}.mp4`, duration: 4 }], usage: { cost: 0.5288 } });
+        }
+        return send(404, { error: { code: "not_found", message: "Not found." } });
       }
       if (req.headers.authorization !== "Key test-key" && !url.startsWith("/out/") && !url.startsWith("/upload/")) return send(401, { detail: "no" });
       if (url.startsWith("/rest/storage/upload/initiate")) {
@@ -136,6 +164,7 @@ beforeAll(async () => {
   process.env.BEATSHEET_OPENAI = `${base}/direct/openai`;
   process.env.BEATSHEET_META = `${base}/direct/meta`;
   process.env.BEATSHEET_GEMINI = `${base}/gemini`;
+  process.env.BEATSHEET_TEIN = `${base}/tein`;
   make = await import("../src/make.ts");
   store = await import("../src/store.ts");
 });
@@ -149,6 +178,7 @@ afterAll(() => {
 const PROJECT = "cat";
 beforeEach(() => {
   seen = { submits: [], uploads: 0, direct: [] };
+  tein = { submits: [], keys: [], uploads: 0, jobs: new Map() };
   refuse = undefined;
   plans.ready = [];
   plans.asks = [];
@@ -262,6 +292,105 @@ describe("making takes for a shot", () => {
     expect(() => make.startMake(PROJECT, { op: "video", prompt: "a long walk", seconds: 40 })).toThrow(/Makes up to (10|15|30)s; this shot is 40s/);
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s2", model: "nano-banana" })).toThrow("doesn't make video");
     expect(seen.submits).toHaveLength(0);
+  });
+});
+
+describe("Seedance 2.5 through Tein", () => {
+  const board = async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2" });
+    await make.driveJobs(PROJECT);
+  };
+
+  it("runs there when a Tein key is added, as the cheaper place: the board sent up, the job followed, and what Tein charged kept", async () => {
+    await board();
+    const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
+    settings.services = { tein: { addedAt: "2026-11-19" } };
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "tein", where: "Tein", endpoint: "seedance-2-5", also: [{ route: "fal" }] });
+    expect(fit.usd).toBeCloseTo(0.1355 * fit.seconds!, 3);
+    await make.driveJobs(PROJECT);
+
+    expect(tein.uploads).toBe(1);
+    expect(tein.submits).toEqual([
+      { model: "seedance-2-5", prompt: "A red kite climbs over the hill", duration: fit.seconds, resolution: "480p", ratio: "adaptive", first_frame: `${base}/out/tein-upload-1.jpg`, idempotency_key: expect.any(String) },
+    ]);
+    // Nothing went to fal but the board.
+    expect(seen.submits).toHaveLength(1);
+    expect(make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)).toMatchObject({ status: "done", route: "tein", charged: true, usd: 0.5288, remote: { id: "gen_1" } });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    expect(take.provenance).toMatchObject({ source: "generated", provider: "tein", model: "seedance-2-5", costUsd: 0.5288, refs: ["s2-take"] });
+    expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "tein", model: "seedance-2.5" });
+  });
+
+  it("draws someone from the person's own photos there and nowhere else, and says so when Tein isn't connected", async () => {
+    await board();
+    // The cat's photo hasn't been looked through for faces, so the cat is taken to be a person.
+    const ask = { op: "video" as const, shot: "s2", prompt: "@cat strolls down the wet street", start: "s2-take", model: "seedance-2.5" };
+    expect(() => make.startMake(PROJECT, ask)).toThrow("Seedance 2.5 can't make this: With real people in it, runs only on Tein");
+    settings.services = { tein: { addedAt: "2026-11-19" } };
+    expect(() => make.startMake(PROJECT, { ...ask, via: "fal" })).toThrow("Won't draw real people on fal, and the cat is from your own photos; it does on Tein");
+    const { fit } = make.startMake(PROJECT, ask);
+    expect(fit).toMatchObject({ route: "tein" });
+    expect(fit).not.toHaveProperty("also");
+    await make.driveJobs(PROJECT);
+    // It starts from the board, so the cat's own pictures aren't sent as references as well: Tein doesn't take both.
+    expect(tein.uploads).toBe(1);
+    expect(tein.submits[0]).toMatchObject({ first_frame: `${base}/out/tein-upload-1.jpg`, ratio: "adaptive" });
+    expect(tein.submits[0]).not.toHaveProperty("reference_image");
+    expect(shot("s2").content).toMatchObject({ take: "s2-take-2", provider: "tein" });
+  });
+
+  it("sends a request again under the same key after a stop, so it isn't made twice, and under a new one when it's tried again", async () => {
+    await board();
+    settings.services = { tein: { addedAt: "2026-11-19" } };
+    const [job] = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" }).jobs;
+    await make.driveJobs(PROJECT);
+    // Pretend the process stopped after Tein took the request but before the job was saved with it.
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT, "jobs");
+    const saved = JSON.parse(readFileSync(join(dir, `${job!.id}.json`), "utf8")) as import("../src/make.ts").MakeJob;
+    expect(saved.once).toEqual(expect.any(String));
+    store.updateFile(PROJECT, (d) => {
+      d.assets = d.assets.filter((a) => a.id !== saved.asset);
+      const s = d.cuts[0]!.shots.find((x) => x.id === "s2")!;
+      s.content = { kind: "generated", prompt: "The cat strolls down the alley like it owns it", take: "s2-take", takes: ["s2-take"] };
+      s.fidelity = "board";
+    });
+    writeFileSync(join(dir, `${job!.id}.json`), JSON.stringify({ ...saved, status: "queued", remote: undefined, charged: undefined, asset: undefined }));
+    writeFileSync(join(dir, `${job!.id}.lock`), "999999");
+    polls.clear();
+    await make.driveJobs(PROJECT);
+    expect(tein.keys).toEqual([saved.once, saved.once]);
+    expect(tein.submits).toHaveLength(1);
+    expect(make.listJobs(PROJECT).find((j) => j.id === job!.id)).toMatchObject({ status: "done", remote: { id: "gen_1" } });
+
+    // One Tein wouldn't make says why, and trying it again is a new request.
+    refuse = "kite";
+    const [refused] = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "A red kite climbs over the hill", model: "seedance-2.5" }).jobs;
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT).find((j) => j.id === refused!.id)).toMatchObject({ status: "failed", error: "Content moderation blocked the request or its output. Nothing is charged." });
+    refuse = undefined;
+    make.retryJobs(PROJECT, [refused!.id]);
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT).find((j) => j.id === refused!.id)).toMatchObject({ status: "done", remote: { id: "gen_2" } });
+    expect(tein.keys[3]).not.toBe(tein.keys[2]);
+    // From a prompt alone it's asked for the cut's shape.
+    expect(tein.submits[1]).toMatchObject({ ratio: "9:16" });
+    expect(tein.submits[1]).not.toHaveProperty("first_frame");
+  });
+
+  it("asks for a final at 1080p, an end frame with its start, and references only when nothing starts it", async () => {
+    const { teinInput } = await import("../src/tein.ts");
+    expect(teinInput("seedance-2.5", "seedance-2-5", { prompt: "x", quality: "final", seconds: 5.2, start: "u", end: "v", refs: ["a"] })).toEqual({ model: "seedance-2-5", prompt: "x", duration: 6, resolution: "1080p", ratio: "adaptive", first_frame: "u", last_frame: "v" });
+    expect(teinInput("seedance-2.5", "seedance-2-5", { prompt: "x", seconds: 4, aspect: "16:9", refs: ["a", "b"] })).toEqual({
+      model: "seedance-2-5",
+      prompt: "x The 2 reference pictures show who and what is in it.",
+      duration: 4,
+      resolution: "480p",
+      ratio: "16:9",
+      reference_image: ["a", "b"],
+    });
+    expect(() => teinInput("kling", "kling-4", { prompt: "x" })).toThrow('no way to ask Tein for "kling" models yet');
   });
 });
 

@@ -110,6 +110,16 @@ export const SERVICES: Service[] = [
       ),
   },
   {
+    id: "tein",
+    label: "Tein",
+    does: "Seedance 2.5 for less than elsewhere, and with real people in the shot (your own photos of them; Tein's terms want each person's consent).",
+    unlocks: ["video"],
+    keyUrl: "https://app.tein.ai",
+    // The balance reads the account without starting anything; a key that can't run models is refused there with 403.
+    verify: (key) =>
+      tryKey("https://api.tein.ai/v1/balance", { Authorization: `Bearer ${key}` }, (b) => (typeof b.available === "number" ? `Key works · $${num(b.available)} to spend` : "Key works")),
+  },
+  {
     id: "openai",
     label: "OpenAI",
     does: "Images with GPT Image, and transcription.",

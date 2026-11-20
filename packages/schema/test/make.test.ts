@@ -340,8 +340,19 @@ describe("real people", () => {
   it("rule out the models that won't draw them, before anything else, and leave the rest", () => {
     const shot = { op: "video" as const, prompt: "x", start: "board", seconds: 5, quality: "final" as const, realPeople: ["Theo", "Nana"] };
     const c = chooseModels(CATALOG, shot, services);
-    expect(c.unfit.find((f) => f.model === "seedance-2.5")).toMatchObject({ why: { kind: "fit", reason: "Won't draw real people, and Theo and Nana are from your own photos" } });
-    expect(c.unfit.find((f) => f.model === "gemini-omni-flash")).toMatchObject({ why: { kind: "fit" } });
+    // Seedance 2.5 draws them on one route only, Tein, which isn't connected here: that's something to set up, not a misfit.
+    expect(c.unfit.some((f) => f.model === "seedance-2.5")).toBe(false);
+    expect(c.setup.find((f) => f.model === "seedance-2.5")).toMatchObject({ why: { kind: "connect", reason: "With real people in it, runs only on tein", services: ["tein"] } });
+    expect(c.unfit.find((f) => f.model === "gemini-omni-flash")).toMatchObject({ why: { kind: "fit", reason: "Won't draw real people, and Theo and Nana are from your own photos" } });
+    const withTein = { ...services, tein: { label: "Tein", state: "ready" as const } };
+    const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
+    // With Tein connected it runs there, and fal isn't offered beside it for this shot.
+    const there = fitModel(seedance, shot, withTein);
+    expect(there).toMatchObject({ ok: true, route: "tein", where: "Tein", endpoint: "seedance-2-5" });
+    expect(there).not.toHaveProperty("also");
+    expect(fitModel(seedance, { ...shot, via: "fal" }, withTein)).toMatchObject({ ok: false, why: { kind: "fit", reason: "Won't draw real people on fal, and Theo and Nana are from your own photos; it does on Tein" } });
+    // With nobody real in it, both places run it and the cheaper one is taken.
+    expect(fitModel(seedance, { ...shot, realPeople: undefined }, withTein)).toMatchObject({ ok: true, route: "tein", also: [{ route: "fal" }] });
     expect(c.ready.some((f) => f.model === "wan-3")).toBe(true);
     expect(chooseModels(CATALOG, { ...shot, realPeople: undefined }, services).ready.some((f) => f.model === "seedance-2.5")).toBe(true);
   });

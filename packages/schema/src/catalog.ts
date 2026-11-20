@@ -231,7 +231,7 @@ export const CATALOG: CatalogModel[] = [
     id: "seedance-2.5",
     label: "Seedance 2.5",
     by: "ByteDance",
-    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here, and it won't draw real people.",
+    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here on fal, where it won't draw real people; through Tein it costs less and does.",
     ops: ["video"],
     takes: { start: true, end: true, refs: 30 },
     lengths: Array.from({ length: 27 }, (_, i) => i + 4),
@@ -249,6 +249,18 @@ export const CATALOG: CatalogModel[] = [
         shape: "seedance-2.5",
         endpoints: { text: "bytedance/seedance-2.5/us/text-to-video", start: "bytedance/seedance-2.5/us/image-to-video", refs: "bytedance/seedance-2.5/us/reference-to-video" },
         price: { perSecond: 0.2205, finalPerSecond: 1.164 },
+      },
+      // api.tein.ai/v1/pricing/models?model=seedance-2-5 (Starter, checked 19 Nov 2026): $0.134 to $0.136 a second at
+      // 480p and $0.765 to $0.766 at 1080p, by task; the dearest of each is used. One model id for every task: the
+      // inputs sent decide which. It keeps the real faces in what it's given (its pass_faces, on unless turned off),
+      // which a selfie as a start frame and as a reference both came through with here. Tein's terms want each real
+      // person's consent. Its 480p draft can be finished at 1080p by its job id, which beatsheet doesn't do yet.
+      {
+        via: "tein",
+        shape: "seedance-2.5",
+        endpoints: { text: "seedance-2-5", start: "seedance-2-5", refs: "seedance-2-5" },
+        price: { perSecond: 0.1355, finalPerSecond: 0.7659 },
+        realPeople: true,
       },
     ],
   },

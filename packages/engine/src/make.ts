@@ -83,6 +83,7 @@ import {
 import { DIRECT, directImage } from "./direct.ts";
 import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
+import { teinCancel, teinInput, teinStatus, teinSubmit, teinUpload } from "./tein.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
 import { assetPath, cachePaths, cleanPath, mediaPath, projectDir } from "./paths.ts";
@@ -136,6 +137,11 @@ export type MakeJob = {
   status: "queued" | "running" | "done" | "failed" | "canceled";
   /** The service's request, once it's been sent. */
   remote?: FalRequest;
+  /**
+   * The idempotency key a request to Tein goes with, saved before it's sent: sent again after a crash or a lost
+   * answer, Tein gives the first request's job, not a second one to pay for.
+   */
+  once?: string;
   /**
    * A job on ComfyUI, saved before it's sent: our own prompt id, the server, the output nodes, a clip's frames to keep
    * and at what rate, the workflow profile, and the filled prompt itself, to send again if ComfyUI restarts and forgets it.
@@ -760,10 +766,12 @@ export function startMake(projectId: string, ask: MakeAsk, opts: { spendable?: n
 /** Stops jobs that haven't finished. The service is asked to drop them too; one already running may still bill. */
 export async function cancelJobs(projectId: string, ids: string[]): Promise<MakeJob[]> {
   const jobs = ids.map((id) => readJob(projectId, id)).filter((j): j is MakeJob => !!j && isOpen(j));
-  const key = jobs.some((j) => j.remote) ? await getSecret("fal") : undefined;
+  const keys = new Map<string, string | undefined>();
+  for (const route of new Set(jobs.filter((j) => j.remote).map((j) => j.route))) keys.set(route, await getSecret(route));
   const out: MakeJob[] = [];
   for (const job of jobs) {
-    if (job.remote && key) await falCancel(key, job.remote);
+    const key = keys.get(job.route);
+    if (job.remote && key) await (job.route === "tein" ? teinCancel : falCancel)(key, job.remote);
     if (job.comfy) await comfyCancel(job.comfy.url, job.comfy.id);
     out.push(saveJob(projectId, { ...job, status: "canceled" }));
   }
@@ -808,7 +816,7 @@ export function retryJobs(projectId: string, ids: string[]): MakeJob[] {
     const job = readJob(projectId, id);
     if (!job || job.status !== "failed") continue;
     const kept = job.charged && (job.remote || job.comfy || (job.file && existsSync(job.file)));
-    const again = kept ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, comfy: undefined, file: undefined, charged: undefined };
+    const again = kept ? { ...job, status: "running" as const } : { ...job, status: "queued" as const, remote: undefined, once: undefined, comfy: undefined, file: undefined, charged: undefined };
     out.push(saveJob(projectId, { ...again, error: undefined }));
   }
   if (out.length) void driveJobs(projectId);
@@ -925,6 +933,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
     throw new FalError(`Making this needs a ${name} key. The person can add one in Settings → Media services.`, true);
   }
   if (DIRECT.includes(job.route) || plan) return stepDirect(projectId, job, key);
+  if (job.route === "tein" && key) return stepTein(projectId, job, key);
   if (job.route !== "fal" || !key) throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
   if (!job.remote) {
     const { project, dir } = loadProject(projectId, job.cut);
@@ -966,6 +975,50 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
   const out = falOutput(await falResult(key, job.remote!));
   if (!out) throw new FalError("fal finished but didn't send a file", true);
   await finish(projectId, job, out);
+}
+
+/**
+ * A job on Tein (tein.ts): its pictures sent up and the request sent under a key saved first, then followed until it's
+ * done. Tein says what the take really cost, which replaces the estimate.
+ */
+async function stepTein(projectId: string, job: MakeJob, key: string) {
+  if (!job.remote) {
+    const { project, dir } = loadProject(projectId, job.cut);
+    const r = job.request;
+    const upload = (id: string) => {
+      const a = project.assets.find((x) => x.id === id);
+      if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      return teinUpload(key, assetPath(project, dir, a));
+    };
+    // A cast member's own photos go cut out, when that can be done here.
+    const uploadRef = async (id: string) => {
+      if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      return teinUpload(key, await refFile(project, dir, id, r.cast));
+    };
+    const input = teinInput(job.shape, job.endpoint, {
+      prompt: r.sent ?? r.prompt,
+      quality: job.quality,
+      seconds: r.seconds,
+      aspect: r.aspect,
+      start: r.start && (await upload(r.start)),
+      end: r.end && (await upload(r.end)),
+      // References don't go with a start frame there (teinInput), so they aren't sent up either.
+      refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
+    });
+    if (!job.once) job = updateJob(projectId, job, { once: randomUUID() });
+    const remote = await teinSubmit(key, input, job.once!);
+    updateJob(projectId, job, { status: "running", remote });
+    return;
+  }
+  const s = await teinStatus(key, job.remote);
+  if (s.state !== "done") {
+    if (job.status !== "running" || job.position !== undefined) updateJob(projectId, job, { status: "running", position: undefined });
+    return;
+  }
+  if (s.error) throw new FalError(s.error, true);
+  if (!s.url) throw new FalError("Tein finished but didn't send a file", true);
+  if (!job.charged || (s.usd !== undefined && s.usd !== job.usd)) job = updateJob(projectId, job, { charged: true, ...(s.usd !== undefined ? { usd: s.usd } : {}) });
+  await finish(projectId, job, { url: s.url });
 }
 
 /**

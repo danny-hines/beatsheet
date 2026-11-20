@@ -42,6 +42,8 @@ export type ModelRoute = {
   takes?: { end?: boolean; refs?: number };
   /** Roughly how long one take takes here, when that isn't the model's usual. */
   wait?: number;
+  /** It draws real people here, though the model won't elsewhere (Seedance 2.5 through Tein, which keeps the faces it's given). */
+  realPeople?: boolean;
 };
 
 /**
@@ -77,7 +79,10 @@ export type CatalogModel = {
   aspects: string[];
   /** Makes its own sound. */
   sound?: boolean;
-  /** The service won't draw real people's faces (Seedance, Gemini Omni Flash), so a shot with one goes elsewhere. */
+  /**
+   * The service won't draw real people's faces (Seedance, Gemini Omni Flash), so a shot with one goes elsewhere: to
+   * another model, or to a route of this one that does (its `realPeople`).
+   */
   refusesRealPeople?: boolean;
   /** Roughly how long one take takes, in seconds, for estimates. */
   wait?: number;
@@ -304,10 +309,11 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const no = (why: Why): Fit => ({ ok: false, model: model.id, label: model.label, why });
   const count = Math.max(1, req.count ?? 1);
   if (!model.ops.includes(req.op)) return no({ kind: "fit", reason: `${model.label} doesn't make ${req.op === "image" ? "images" : "video"}` });
-  if (model.refusesRealPeople && req.realPeople?.length) {
-    const who = req.realPeople.length < 2 ? req.realPeople[0] : `${req.realPeople.slice(0, -1).join(", ")} and ${req.realPeople.at(-1)}`;
-    return no({ kind: "fit", reason: `Won't draw real people, and ${who} ${req.realPeople.length === 1 ? "is" : "are"} from your own photos` });
-  }
+  // A model that won't draw real people may still draw them on one of its routes, and then a shot with them runs only there.
+  const real = req.realPeople?.length ? req.realPeople : undefined;
+  const refuses = (r: ModelRoute) => !!real && !!model.refusesRealPeople && !r.realPeople;
+  const theirs = real && `${real.length < 2 ? real[0] : `${real.slice(0, -1).join(", ")} and ${real.at(-1)}`} ${real.length === 1 ? "is" : "are"} from your own photos`;
+  if (real && model.routes.every(refuses)) return no({ kind: "fit", reason: `Won't draw real people, and ${theirs}` });
   if (req.drive && !model.takes.drive) return no({ kind: "fit", reason: "Doesn't copy movement from a clip" });
   if (model.takes.drive && !req.drive) return no({ kind: "fit", reason: "Copies the movement in a clip: say which stretch of which clip to follow" });
   if (req.drive && !req.start) return no({ kind: "fit", reason: "Needs a picture of who moves: start from the shot's board" });
@@ -343,8 +349,13 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
 
   const shape = shapeOf(req);
   const state = (r: ModelRoute): ServiceState => services[r.via] ?? { label: r.via, state: "missing" };
-  const there = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
-  if (!there.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
+  const asked = model.routes.filter((r) => r.endpoints[shape] && (!req.via || r.via === req.via));
+  if (!asked.length && req.via) return no({ kind: "fit", reason: `${model.label} doesn't run on ${services[req.via]?.label ?? req.via}` });
+  const there = asked.filter((r) => !refuses(r));
+  if (asked.length && !there.length) {
+    const does = [...new Set(model.routes.filter((r) => r.endpoints[shape] && !refuses(r)).map((r) => state(r).label))];
+    return no({ kind: "fit", reason: `Won't draw real people on ${list([...new Set(asked.map((r) => state(r).label))])}, and ${theirs}${does.length ? `; it does on ${list(does)}` : ""}` });
+  }
   const given: Record<RequestShape, string> = {
     text: "only a prompt",
     start: "a start frame",
@@ -413,7 +424,9 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
     // One that isn't connected may say why this computer couldn't run it either, so the person connects another.
     const hints = [...new Set(missing.flatMap(({ r }) => unusable(r)?.reason ?? []))];
     const labels = [...new Set(missing.map(({ r }) => state(r).label))];
-    return no({ kind: "connect", reason: [`Runs on ${list(labels)}`, ...hints].join(". "), services: [...new Set(missing.map(({ r }) => r.via))] });
+    // Said with why, when the routes that are connected were ruled out for the real people in it.
+    const runs = asked.length > there.length ? "With real people in it, runs only on" : "Runs on";
+    return no({ kind: "connect", reason: [`${runs} ${list(labels)}`, ...hints].join(". "), services: [...new Set(missing.map(({ r }) => r.via))] });
   }
   return no({ kind: "machine", reason: unusable(blocked[0]!.r)!.reason, service: blocked[0]!.r.via });
 }

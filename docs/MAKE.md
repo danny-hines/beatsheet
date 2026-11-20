@@ -298,7 +298,7 @@ type Why =
   | { kind: "failing"; detail: string };                   // key refused, service down
 ```
 
-Fit is checked first, because connecting a service won't help a model that can't make the shot. A model whose service won't draw real people (`refusesRealPeople`: Seedance 2.5, Gemini Omni Flash) doesn't fit a request with one in it: a character made from the person's own photos or clips (`realPeople` on the request, from `realPeople` in make.ts). Each reason has a button when there's something to do: Add a key opens Settings → Media services, Install opens the install card, Split splits the shot.
+Fit is checked first, because connecting a service won't help a model that can't make the shot. A model whose service won't draw real people (`refusesRealPeople`: Seedance 2.5, Gemini Omni Flash) doesn't fit a request with one in it: a character made from the person's own photos or clips (`realPeople` on the request, from `realPeople` in make.ts). A route can say it draws them all the same (`realPeople` on the route: Seedance 2.5 through Tein), and then a request with one runs only there, or asks for that service to be connected. Each reason has a button when there's something to do: Add a key opens Settings → Media services, Install opens the install card, Split splits the shot.
 
 The picker groups them:
 
