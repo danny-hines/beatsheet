@@ -394,6 +394,107 @@ describe("Seedance 2.5 through Tein", () => {
   });
 });
 
+describe("keeping a blockout's camera", () => {
+  const rendered: { cut: string; format: string; range: { from: number; to: number } }[] = [];
+  // A cut drawn as a blockout: two camera moves, 4 and 3 seconds. Rendering it is stood in for by a clip that's there.
+  const blockout = () => {
+    rendered.length = 0;
+    make.setRenderStretch(async (_id, o) => {
+      rendered.push({ cut: o.cut, format: o.format, range: o.range });
+      writeFileSync(o.out, readFileSync(clipMade));
+    });
+    const move = (id: string, duration: number) => ({ id, track: "pic", duration, content: { kind: "coded" as const, component: "scenes/Blockout.tsx#Blockout" }, fidelity: "board" as const });
+    store.updateFile(PROJECT, (d) => void d.cuts.push({ ...structuredClone(d.cuts[0]!), id: "blockout", name: "Blockout", shots: [move("orbit", 4), move("push", 3)] }));
+    settings.services = { tein: { addedAt: "2026-11-19" } };
+  };
+  const board = async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2" });
+    await make.driveJobs(PROJECT);
+  };
+
+  it("renders the stretch of the cut and sends it as the reference video, with the board as a reference picture", async () => {
+    await board();
+    blockout();
+    const ask = { op: "video" as const, shot: "s2", prompt: "@cat, the orange stand-in, strolls down the alley", start: "board", camera: { cut: "blockout", shots: ["orbit"] } };
+    // Only Seedance keeps a camera, and only through Tein, so Auto goes there.
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "tein", endpoint: "seedance-2-5", seconds: 4, aspect: "9:16" });
+    expect(fit.also).toBeUndefined();
+    // Tein bills the blockout's 4 seconds as well as the take's 4, at its rate for a take with a reference video.
+    expect(fit.usd).toBeCloseTo(8 * 0.0809, 3);
+    expect(jobs[0]!.request).toMatchObject({ refs: ["s2-take"], camera: { cut: "blockout", format: "vertical", from: 0, to: 4, shots: ["orbit"] }, seconds: 4 });
+    expect(jobs[0]!.request.start).toBeUndefined();
+    await make.driveJobs(PROJECT);
+
+    expect(rendered).toEqual([{ cut: "blockout", format: "vertical", range: { from: 0, to: 4 } }]);
+    // The board, then the clip.
+    expect(tein.uploads).toBe(2);
+    expect(tein.submits).toHaveLength(1);
+    expect(tein.submits[0]).toMatchObject({ model: "seedance-2-5", duration: 4, resolution: "480p", ratio: "9:16", reference_image: [`${base}/out/tein-upload-1.jpg`], reference_video: [`${base}/out/tein-upload-2.jpg`] });
+    expect(tein.submits[0]).not.toHaveProperty("first_frame");
+    expect(tein.submits[0]!.prompt).toMatch(/The reference picture shows who and what is in it\. The reference video is a blockout: keep its camera exactly .* none of them appears in the result\.$/);
+
+    // What went up is what Seedance takes: the stretch, H.264, without the sound the clip came with.
+    const sent = join(process.env.BEATSHEET_PROJECTS!, PROJECT, ".cache", "camera", `${jobs[0]!.id}.mp4`);
+    const probed = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", sent], { encoding: "utf8" })) as { format: { duration: string }; streams: { codec_type: string; codec_name: string; width?: number; height?: number }[] };
+    expect(Number(probed.format.duration)).toBeCloseTo(4, 1);
+    expect(probed.streams).toMatchObject([{ codec_type: "video", codec_name: "h264", width: 540, height: 960 }]);
+
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    expect(take.provenance).toMatchObject({ provider: "tein", costUsd: 0.5288, refs: ["s2-take"], params: { camera: { cut: "blockout", from: 0, to: 4 } } });
+    // The take starts where the blockout does, and the shot shows it.
+    expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "tein", model: "seedance-2.5" });
+    expect(shot("s2").content).not.toHaveProperty("in");
+    expect(shot("s2").content).not.toHaveProperty("start");
+  });
+
+  it("follows the whole cut when no shots are named, and a final is priced at the 1080p rate for one", () => {
+    blockout();
+    const { req, choices } = make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final", camera: { cut: "blockout" } });
+    expect(req).toMatchObject({ camera: { cut: "blockout", format: "vertical", from: 0, to: 7 }, seconds: 7 });
+    expect(req.camera).not.toHaveProperty("shots");
+    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7 });
+    expect(choices.auto!.usd).toBeCloseTo(14 * 0.4595, 3);
+    expect(choices.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't keep the camera of a clip it's given" } });
+  });
+
+  it("keeps the camera of a clip in the project too, and says that's what the video is for", async () => {
+    await board();
+    blockout();
+    make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", model: "seedance-2.5" });
+    await make.driveJobs(PROJECT);
+    tein.submits.length = 0;
+    const { fit, jobs } = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "The same move, at dawn", camera: { asset: "s2-take-2", from: 1, to: 5 } });
+    expect(fit).toMatchObject({ route: "tein", seconds: 4 });
+    await make.driveJobs(PROJECT);
+    expect(rendered).toEqual([]);
+    expect(tein.submits[0]).toMatchObject({ duration: 4, ratio: "9:16", reference_video: [expect.any(String)] });
+    expect(tein.submits[0]).not.toHaveProperty("reference_image");
+    expect(tein.submits[0]!.prompt).toBe("The same move, at dawn The reference video sets the camera: keep its move, its framing, its timing and where its cuts fall.");
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.provenance?.job === jobs[0]!.id)!;
+    expect(take.provenance).toMatchObject({ refs: ["s2-take-2"], params: { camera: { asset: "s2-take-2", from: 1, to: 5 } } });
+  });
+
+  it("says what's wrong before anything is sent: no such cut or shot, nothing connected that keeps a camera", () => {
+    blockout();
+    expect(() => make.startMake(PROJECT, { op: "video", shot: "s1", camera: { cut: "previs" } })).toThrow('No cut "previs" to take the blockout from');
+    expect(() => make.startMake(PROJECT, { op: "video", shot: "s1", camera: { cut: "blockout", shots: ["orbit", "crane"] } })).toThrow('No shot "crane" in cut "blockout" (9:16); it has orbit, push');
+    settings.services = {};
+    expect(() => make.startMake(PROJECT, { op: "video", shot: "s1", camera: { cut: "blockout" } })).toThrow(/Seedance 2\.5: Runs on Tein/);
+    expect(tein.uploads).toBe(0);
+    expect(rendered).toEqual([]);
+  });
+
+  it("sends a clip no larger than 1280 on its long side and no smaller than Seedance takes, in even numbers", () => {
+    expect(make.cameraSize(1280, 534)).toEqual({ width: 1280, height: 534 });
+    expect(make.cameraSize(1920, 1080)).toEqual({ width: 1280, height: 720 });
+    expect(make.cameraSize(1080, 1920)).toEqual({ width: 720, height: 1280 });
+    const small = make.cameraSize(640, 360);
+    expect(small.width * small.height).toBeGreaterThanOrEqual(407_696);
+    expect([small.width % 2, small.height % 2]).toEqual([0, 0]);
+  });
+});
+
 describe("what the agent's turn has spent", () => {
   it("adds up the takes asked for since its turn began", async () => {
     store.updateFile(PROJECT, (d) => void (d.turn = { who: "agent", since: new Date(Date.now() - 1000).toISOString() }));

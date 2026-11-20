@@ -5,7 +5,9 @@
  * unfinished jobs, and a lock file beside each stops two processes driving the same one. A finished take is added like
  * any other asset and, when the job was for a shot, becomes one of that shot's takes.
  */
+import { execFile } from "node:child_process";
 import { randomInt, randomUUID } from "node:crypto";
+import { promisify } from "node:util";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
@@ -31,8 +33,10 @@ import {
   speechWindow,
   takeLead,
   type Asset,
+  type Camera,
   type CastMember,
   type Choices,
+  type CutStretch,
   type Drive,
   type FitOk,
   type MakeOp,
@@ -88,6 +92,7 @@ import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
 import { assetPath, cachePaths, cleanPath, mediaPath, projectDir } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
+import { probe } from "./probe.ts";
 import { SERVICES } from "./services.ts";
 import { ledgerSince } from "./spend.ts";
 import { refFile } from "./refcut.ts";
@@ -127,6 +132,8 @@ export type MakeJob = {
     /** What a take that lip-syncs says, and the clip whose mouths it changes, when it changes one (both widened together: speechWindow). */
     speech?: Speech;
     clip?: Stretch;
+    /** What a take keeps the camera of: a stretch of a clip, or of a cut (a blockout) that's rendered when the take is made. */
+    camera?: Camera;
     seconds?: number;
     aspect?: string;
     seed?: number;
@@ -235,7 +242,7 @@ export function serviceStates(): Record<string, ServiceState> {
 const LOCAL_ROUTES = ["comfy"];
 
 /** Something to make, as the agent's tools and the studio ask for it. */
-export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive" | "speech" | "clip">> & {
+export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive" | "speech" | "clip" | "camera">> & {
   op: MakeOp;
   cut?: string;
   /** A placeholder or generated shot it's for: its length, the cut's shape and its description fill in what's missing, and the takes land on it. */
@@ -270,6 +277,13 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
    * clip the shot shows (where the shot plays it), or a clip from a second of it to another.
    */
   clip?: "take" | { asset: string; from?: number; to?: number };
+  /**
+   * For a clip that keeps another's camera (its move, its framing, where its cuts fall): a blockout, as a stretch of a
+   * cut (all of it, or from the first of `shots` to the last), or a stretch of a clip, from a second of it (default 0)
+   * to another (default the shot's length later). The take is as long as the stretch. A picture to start from goes as
+   * a reference instead, and there's no end frame.
+   */
+  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number };
   model?: string;
 };
 
@@ -391,6 +405,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   if (ask.start === "board" && !start) throw new Error(`Shot "${ask.shot}" has no board yet: make stills for it first`);
   const drive = ask.op === "video" ? driveFor(project, ask.drive === undefined && shot?.content.kind === "generated" ? shot.content.drive : ask.drive, needs?.seconds) : undefined;
   const clip = ask.op === "video" ? clipFor(project, shot, ask.clip, needs?.seconds) : undefined;
+  const camera = ask.op === "video" && ask.camera ? cameraFor(projectId, project, ask.camera, needs?.seconds, ask.aspect) : undefined;
   const said = ask.speech !== undefined ? ask.speech : shot?.content.kind === "generated" && shot.content.speech ? shot.content.speech : clip ? {} : undefined;
   const speech =
     ask.op === "video" && said
@@ -398,6 +413,8 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
       : undefined;
 
   let refs = ask.refs?.length ? ask.refs : undefined;
+  // One that keeps a clip's camera is made from references, so the picture it would start from goes first among them.
+  if (camera && start) refs = [...new Set([start, ...(refs ?? [])])];
   let sent = castPrompt(prompt, uses);
   if (!refs && ask.op === "image" && member?.kind === "character") {
     // A character's portrait and sheet come from its look's steps: the face, then the wardrobe.
@@ -440,11 +457,12 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${portrait ? "In this portrait" : "In every view"}: ${variant.about}.`;
   const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   const people = realPeople(uses, project.assets);
-  const along = clip ?? drive ?? speech;
-  // A clip that ended on a frame ends on it again; one that copies movement or says a line doesn't take one.
+  const along = clip ?? drive ?? speech ?? camera;
+  // A clip that ended on a frame ends on it again; one that copies movement, says a line or keeps a clip's camera doesn't take one.
   const lastEnd = ask.op === "video" && start && !along && shot?.content.kind === "generated" ? shot.content.end : undefined;
-  const end = ask.end === undefined ? lastEnd : (ask.end ?? undefined);
-  const absent = ask.op === "video" && !clip ? missingFromFrames(project, [...(start ? [start] : []), ...(end ? [end] : []), ...(refs ?? [])], uses, [prompt, shot?.intent ?? ""]) : [];
+  const end = camera ? undefined : ask.end === undefined ? lastEnd : (ask.end ?? undefined);
+  const absent =
+    ask.op === "video" && !clip ? missingFromFrames(project, [...(start && !camera ? [start] : []), ...(end ? [end] : []), ...(refs ?? [])], uses, [prompt, shot?.intent ?? ""]) : [];
   return {
     op: ask.op,
     prompt,
@@ -453,14 +471,15 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     // Some services won't draw real people, so they're ruled out for a shot with one in it.
     ...(people.length ? { realPeople: people } : {}),
     quality: ask.quality ?? (ask.op === "video" ? "rough" : undefined),
-    // A clip whose mouths are changed is the picture; it doesn't start from another.
-    start: clip ? undefined : start,
+    // A clip whose mouths are changed is the picture; it doesn't start from another. Nor does one made from references.
+    start: clip || camera ? undefined : start,
     end,
     refs,
     ...(absent.length ? { absent } : {}),
     ...(drive ? { drive } : {}),
     ...(speech ? { speech } : {}),
     ...(clip ? { clip } : {}),
+    ...(camera ? { camera } : {}),
     // A take that follows a clip is as long as the stretch it follows, and one that lip-syncs as what it says.
     seconds: along ? Math.round((along.to - along.from) * 1000) / 1000 : (ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined)),
     aspect: ask.aspect ?? sheetAspect ?? aspectOf(format.width, format.height),
@@ -488,6 +507,38 @@ function driveFor(project: Project, ask: { asset: string; from?: number; to?: nu
 }
 
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/**
+ * What a take keeps the camera of, in full. A stretch of a clip, as driveFor gives it. Or a blockout: a stretch of a
+ * cut (all of it, or from the first of the shots named to the last), in whichever of that cut's formats is closest in
+ * shape to what's being made, so a vertical take follows the blockout drawn vertical.
+ */
+function cameraFor(projectId: string, project: Project, ask: NonNullable<MakeAsk["camera"]>, shotSeconds: number | undefined, aspect: string | undefined): Camera {
+  if ("asset" in ask) return driveFor(project, ask, shotSeconds)!;
+  let blockout: Project;
+  try {
+    blockout = loadProject(projectId, ask.cut).project;
+  } catch {
+    throw new Error(`No cut "${ask.cut}" to take the blockout from`);
+  }
+  if (blockout.cut.id !== ask.cut) throw new Error(`No cut "${ask.cut}" to take the blockout from`);
+  const wanted = aspect ?? aspectOf(project.formats[0]!.width, project.formats[0]!.height);
+  const [w, h] = wanted.split(":").map(Number);
+  const off = (f: { width: number; height: number }) => Math.abs(Math.log(f.width / f.height / (w! / h!)));
+  const format = blockout.formats.reduce((best, f) => (off(f) < off(best) ? f : best));
+  const tl = resolveTimeline(blockout, format.id);
+  let from = 0;
+  let to = tl.duration;
+  if (ask.shots?.length) {
+    const spans = ask.shots.map((id) => tl.shots.find((s) => s.id === id));
+    const missing = ask.shots.filter((_, i) => !spans[i]);
+    if (missing.length) throw new Error(`No shot ${missing.map((id) => `"${id}"`).join(", ")} in cut "${ask.cut}" (${format.label}); it has ${tl.shots.map((s) => s.id).join(", ")}`);
+    from = Math.min(...spans.map((s) => s!.start));
+    to = Math.max(...spans.map((s) => s!.end));
+  }
+  if (!(to - from >= 0.1)) throw new Error(`Nothing to follow in cut "${ask.cut}"${ask.shots?.length ? ` across ${ask.shots.join(", ")}` : ""}`);
+  return { cut: ask.cut, format: format.id, from: r3(from), to: r3(to), ...(ask.shots?.length ? { shots: ask.shots } : {}) };
+}
 
 /**
  * The clip a take that lip-syncs changes the mouths in: the take the shot shows, where the shot plays it (from the
@@ -740,6 +791,7 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
           ...(p.req.drive ? { drive: p.req.drive } : {}),
           ...(p.req.speech ? { speech: p.req.speech } : {}),
           ...(p.req.clip ? { clip: p.req.clip } : {}),
+          ...(p.req.camera ? { camera: p.req.camera } : {}),
           seconds: p.fit.seconds,
           aspect: p.fit.aspect,
           seed: takesSeed(p.shape) ? randomInt(2 ** 31) : undefined,
@@ -1004,6 +1056,7 @@ async function stepTein(projectId: string, job: MakeJob, key: string) {
       end: r.end && (await upload(r.end)),
       // References don't go with a start frame there (teinInput), so they aren't sent up either.
       refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
+      camera: r.camera && { url: await teinUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
     });
     if (!job.once) job = updateJob(projectId, job, { once: randomUUID() });
     const remote = await teinSubmit(key, input, job.once!);
@@ -1020,6 +1073,68 @@ async function stepTein(projectId: string, job: MakeJob, key: string) {
   if (!job.charged || (s.usd !== undefined && s.usd !== job.usd)) job = updateJob(projectId, job, { charged: true, ...(s.usd !== undefined ? { usd: s.usd } : {}) });
   await finish(projectId, job, { url: s.url });
 }
+
+const exec = promisify(execFile);
+
+/** The most a file sent to Tein may weigh: its API carries about 6 MB in a request. */
+const TEIN_UPLOAD = 5.5 * 1024 * 1024;
+/** The fewest pixels Seedance takes in a reference video, and the frame rates it takes. */
+const CAMERA_PIXELS = 407_696;
+const CAMERA_FPS = { min: 24, max: 60 };
+
+/**
+ * The size to send a clip whose camera a take keeps: its own shape, no longer than 1280 on its long side and no
+ * smaller than Seedance takes, in even numbers.
+ */
+export function cameraSize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.max(Math.min(1, 1280 / Math.max(width, height)), Math.sqrt(CAMERA_PIXELS / (width * height)) * 1.01);
+  const even = (n: number) => Math.max(2, Math.round((n * scale) / 2) * 2);
+  return { width: even(width), height: even(height) };
+}
+
+/**
+ * The clip a take keeps the camera of, as a file to upload. A blockout is rendered first: the stretch of its cut, in
+ * the format the request settled on. Then it's made what Seedance takes as a reference video: H.264 in an MP4, 24 to 60
+ * frames a second, without sound, within its sizes, and small enough to send.
+ */
+async function cameraClip(projectId: string, project: Project, dir: string, job: MakeJob): Promise<string> {
+  const c = job.request.camera!;
+  const work = join(dir, ".cache", "camera");
+  mkdirSync(work, { recursive: true });
+  let src: string;
+  let from = c.from;
+  let to = c.to;
+  if ("cut" in c) {
+    src = join(work, `${job.id}-blockout.mp4`);
+    try {
+      await renderStretch(projectId, { cut: c.cut, format: c.format, range: { from: c.from, to: c.to }, out: src });
+    } catch (err) {
+      throw new FalError(`The blockout (cut "${c.cut}") couldn't be rendered: ${err instanceof Error ? err.message : String(err)}`, true);
+    }
+    [from, to] = [0, c.to - c.from];
+  } else {
+    const clip = project.assets.find((a) => a.id === c.asset);
+    if (!clip) throw new FalError("The clip this take was asked to follow isn't in the project any more", true);
+    src = assetPath(project, dir, clip);
+  }
+  const info = await probe(src);
+  if (info.kind !== "video" || !info.width || !info.height) throw new FalError("What this take was asked to follow isn't a clip that can be read", true);
+  const size = cameraSize(info.width, info.height);
+  const fps = Math.min(CAMERA_FPS.max, Math.max(CAMERA_FPS.min, Math.round(info.fps ?? 30)));
+  const file = join(work, `${job.id}.mp4`);
+  for (const crf of [20, 28, 34]) {
+    await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-an", "-vf", `scale=${size.width}:${size.height}:flags=lanczos,fps=${fps}`, "-c:v", "libx264", "-crf", String(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
+    if (statSync(file).size <= TEIN_UPLOAD) return file;
+  }
+  throw new FalError(`The clip to follow is ${(statSync(file).size / 1024 / 1024).toFixed(1)} MB even made small, more than Tein's API carries. A shorter stretch would do.`, true);
+}
+
+/** Renders a stretch of a cut to a file, without the sound pass (set by tests to stand in for the renderer). */
+let renderStretch = async (projectId: string, opts: { cut: string; format: string; range: { from: number; to: number }; out: string }): Promise<void> => {
+  const { renderProject } = await import("./render.ts");
+  await renderProject(projectId, { ...opts, quality: "original", master: false });
+};
+export const setRenderStretch = (fn: typeof renderStretch) => void (renderStretch = fn);
 
 /**
  * The stretch of the clip a take that copies movement follows, cut to a file to upload: the window driveWindow gives,
@@ -1359,7 +1474,8 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
   // One that lip-syncs comes back saying its line, which the cut's voice plays already (ComfyUI's takes are trimmed
   // silent); a file that won't read is left as it is.
   if (r.speech && !("file" in out)) await silence(file).catch(() => undefined);
-  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined].filter((x): x is string => !!x);
+  const followed = r.camera && "asset" in r.camera ? r.camera.asset : undefined;
+  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, followed, r.speech && "asset" in r.speech ? r.speech.asset : undefined].filter((x): x is string => !!x);
   return addAsset(projectId, file, {
     id: job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
     label: r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt,
@@ -1387,6 +1503,7 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
         ...(r.drive ? { drive: r.drive } : {}),
         ...(r.speech ? { speech: r.speech } : {}),
         ...(r.clip ? { clip: r.clip } : {}),
+        ...(r.camera ? { camera: r.camera } : {}),
         ...(job.comfy ? { workflow: `${job.endpoint}.${job.comfy.profile}` } : {}),
         ...(bars ? { letterbox: `removed ${bars.top + bars.bottom}px of bars` } : {}),
       },

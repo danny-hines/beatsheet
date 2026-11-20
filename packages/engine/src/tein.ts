@@ -54,9 +54,9 @@ async function call(key: string, path: string, init: RequestInit = {}): Promise<
   throw problem(body, res.status);
 }
 
-const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" };
+const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4" };
 
-/** Puts a picture in Tein's storage and gives its URL, for inputs like a start frame. */
+/** Puts a picture (or a short clip) in Tein's storage and gives its URL, for inputs like a start frame. */
 export async function teinUpload(key: string, file: string): Promise<string> {
   const form = new FormData();
   form.append("file", new Blob([readFileSync(file)], { type: TYPES[extname(file).toLowerCase()] ?? "application/octet-stream" }), basename(file));
@@ -80,10 +80,18 @@ export function teinInput(shape: string, model: string, ask: FalAsk): Record<str
       // references go only when there's no start frame. From a picture the clip keeps the picture's shape, and Tein
       // takes no other ratio then. Faces are kept (pass_faces) and Creative mode is off, both by leaving them unsaid.
       const refs = ask.start ? undefined : ask.refs;
-      const prompt = refs?.length ? `${ask.prompt} ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : ask.prompt;
+      const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
+      // A reference video is copied in everything it shows, so it's said what to take from it: the camera. A blockout's
+      // grey set and striped stand-ins are there to be replaced, which the model is told too, or it draws them.
+      const followed = !ask.camera
+        ? ""
+        : ask.camera.blockout
+          ? " The reference video is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result."
+          : " The reference video sets the camera: keep its move, its framing, its timing and where its cuts fall.";
       return {
         model,
-        prompt,
+        prompt: `${ask.prompt}${shown}${followed}`,
+        ...(ask.camera ? { reference_video: [ask.camera.url] } : {}),
         duration: whole(ask.seconds),
         resolution: ask.quality === "final" ? "1080p" : "480p",
         ratio: ask.start ? "adaptive" : (ask.aspect ?? "adaptive"),

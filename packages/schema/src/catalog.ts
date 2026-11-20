@@ -231,9 +231,10 @@ export const CATALOG: CatalogModel[] = [
     id: "seedance-2.5",
     label: "Seedance 2.5",
     by: "ByteDance",
-    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here on fal, where it won't draw real people; through Tein it costs less and does.",
+    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here on fal, where it won't draw real people; through Tein it costs less and does, and there it keeps the camera of a blockout it's given.",
     ops: ["video"],
-    takes: { start: true, end: true, refs: 30 },
+    // A clip to keep the camera of: 2 to 30 seconds (Tein's limits for a reference video).
+    takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 } },
     lengths: Array.from({ length: 27 }, (_, i) => i + 4),
     aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
     sound: true,
@@ -255,11 +256,15 @@ export const CATALOG: CatalogModel[] = [
       // inputs sent decide which. It keeps the real faces in what it's given (its pass_faces, on unless turned off),
       // which a selfie as a start frame and as a reference both came through with here. Tein's terms want each real
       // person's consent. Its 480p draft can be finished at 1080p by its job id, which beatsheet doesn't do yet.
+      // With a reference video (a blockout, for its camera) the same list has its own rate, $0.0809 a second at 480p
+      // and $0.4595 at 1080p ("Omni Reference · with reference video"), and Tein's billing page says what's billed: the
+      // video's seconds plus the take's, and no fewer than the take's plus two thirds of them. That's from the list and
+      // the page, not from a take made here yet. fal's reference-to-video isn't known to take a video.
       {
         via: "tein",
         shape: "seedance-2.5",
-        endpoints: { text: "seedance-2-5", start: "seedance-2-5", refs: "seedance-2-5" },
-        price: { perSecond: 0.1355, finalPerSecond: 0.7659 },
+        endpoints: { text: "seedance-2-5", start: "seedance-2-5", refs: "seedance-2-5", camera: "seedance-2-5" },
+        price: { perSecond: 0.1355, finalPerSecond: 0.7659, camera: { perSecond: 0.0809, finalPerSecond: 0.4595, least: 2 / 3 } },
         realPeople: true,
       },
     ],

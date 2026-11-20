@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   aspectOf,
+  billedWithClip,
   CATALOG,
   castOf,
   castPictures,
@@ -1017,5 +1018,53 @@ describe("what a clip is told", () => {
     expect(renameCast(f, "cat", "marmalade")).toBe(true);
     expect(f.cuts[0]!.shots[0]!.content).toMatchObject({ clipPrompt: "@marmalade jumps down" });
     expect(f.assets[0]!.provenance?.params?.prompt).toBe("@marmalade jumps down");
+  });
+});
+
+describe("keeping a clip's camera", () => {
+  const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
+  const tein: ServiceState = { label: "Tein", state: "ready" };
+  // A blockout: seven seconds of a cut, drawn vertical.
+  const camera = { cut: "blockout", format: "vertical", from: 0, to: 7 };
+  const ask = { op: "video" as const, prompt: "x", camera, seconds: 7, aspect: "9:16" };
+
+  it("runs on Seedance through Tein alone, as long as the clip, and is billed for the clip's seconds too", () => {
+    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, { fal, tein });
+    expect(rough).toMatchObject({ ok: true, route: "tein", endpoint: "seedance-2-5", seconds: 7, aspect: "9:16" });
+    expect(rough).not.toHaveProperty("also");
+    // 7 seconds of clip and 7 of take, at the rate for a take with a reference video.
+    expect(rough.ok && rough.usd).toBeCloseTo(14 * 0.0809, 3);
+    const final = fitModel(seedance, { ...ask, quality: "final", count: 2 }, { fal, tein });
+    expect(final.ok && final.usd).toBeCloseTo(2 * 14 * 0.4595, 3);
+    // Without a clip the same take costs its own seconds at the plain rate.
+    const plain = fitModel(seedance, { op: "video", prompt: "x", seconds: 7, aspect: "9:16", via: "tein" }, { fal, tein });
+    expect(plain.ok && plain.usd).toBeCloseTo(8 * 0.1355, 3);
+    expect(fitModel(seedance, ask, { fal })).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
+    expect(fitModel(seedance, { ...ask, via: "fal" }, { fal, tein })).toMatchObject({ ok: false, why: { kind: "fit" } });
+  });
+
+  it("is billed as Tein bills: the clip rounded up to a tenth plus the take, and never under the take and two thirds more", () => {
+    expect(billedWithClip(7, 7, 2 / 3)).toBe(14);
+    expect(billedWithClip(10, 12.04, 2 / 3)).toBe(22.1);
+    // Tein's own examples of the least it bills: 7 for a 4-second take, 17 for 10, 25 for 15, 50 for 30.
+    expect([billedWithClip(4, 2, 2 / 3), billedWithClip(10, 3, 2 / 3), billedWithClip(15, 2, 2 / 3), billedWithClip(30, 12, 2 / 3)]).toEqual([7, 17, 25, 50]);
+    expect(billedWithClip(5, 3)).toBe(8);
+  });
+
+  it("takes 2 to 30 seconds of clip and no start frame, and no other model keeps a camera", () => {
+    expect(fitModel(seedance, { ...ask, camera: { ...camera, to: 1.5 }, seconds: 1.5 }, { tein })).toMatchObject({ ok: false, why: { reason: "Follows 2s of clip at least; this is 1.5s" } });
+    expect(fitModel(seedance, { ...ask, camera: { ...camera, to: 40 }, seconds: 40 }, { tein })).toMatchObject({ ok: false, why: { fix: "split" } });
+    expect(fitModel(seedance, { ...ask, start: "board" }, { tein })).toMatchObject({ ok: false, why: { reason: expect.stringContaining("not from a start frame") } });
+    // A short blockout still gets the shortest take Seedance makes.
+    expect(fitModel(seedance, { ...ask, camera: { ...camera, to: 3 }, seconds: 3 }, { tein })).toMatchObject({ ok: true, seconds: 4 });
+    const choices = chooseModels(CATALOG, ask, { fal, tein });
+    expect(choices.auto?.model).toBe("seedance-2.5");
+    expect(choices.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't keep the camera of a clip it's given" } });
+  });
+
+  it("starts where the clip does, with anything it runs over at its end", () => {
+    expect(takeLead({ camera, seconds: 4, shotSeconds: 3 }, 4, () => undefined)).toBe(0);
+    // A take from a prompt alone has its spare either side.
+    expect(takeLead({ seconds: 4, shotSeconds: 3 }, 4, () => undefined)).toBe(0.5);
   });
 });

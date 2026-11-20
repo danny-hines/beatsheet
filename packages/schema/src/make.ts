@@ -17,8 +17,9 @@ export type MakeOp = (typeof MAKE_OPS)[number];
 /**
  * The shape of a request a service has its own endpoint for: a clip that copies movement from another is "drive"; a
  * picture made to say something (lip-synced to its sound) is "talk", and a clip whose mouths are changed to say it "dub".
+ * One that keeps the camera of another (a blockout's move, framing and cuts) is "camera".
  */
-export type RequestShape = "text" | "start" | "refs" | "drive" | "talk" | "dub";
+export type RequestShape = "text" | "start" | "refs" | "drive" | "talk" | "dub" | "camera";
 
 /** One place a model runs, and what it costs there. */
 export type ModelRoute = {
@@ -32,8 +33,11 @@ export type ModelRoute = {
    * In US dollars, from the service's own page. Estimates, not quotes. `finalPerSecond`: for a model that makes both,
    * a final's price, when finals are made larger than roughs (Wan 3.0's roughs at 480p, its finals at 1080p).
    * `minimum`: the least one take costs, for a service that bills a short take as a longer one.
+   * `camera`: for a take that follows a clip's camera, where the service has its own rate for that and bills the
+   * clip's seconds as well as the take's; `least` is the fewest seconds it bills, as a share of the take's on top of
+   * them, rounded up to a whole second (Tein: two thirds, so a 10-second take bills 17 at least).
    */
-  price: { perImage?: number; perSecond?: number; finalPerSecond?: number; minimum?: number };
+  price: { perImage?: number; perSecond?: number; finalPerSecond?: number; minimum?: number; camera?: { perSecond: number; finalPerSecond?: number; least?: number } };
   /** Whether what it makes here may be used commercially, when that isn't simply yes (see Commercial). */
   commercial?: Commercial;
   /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
@@ -70,9 +74,10 @@ export type CatalogModel = {
   /**
    * What it can be given besides a prompt: a picture to start from, one to end on, and how many references. `drive`:
    * it copies the movement of the people in a clip onto the people in the start picture, and needs both. `speech`: it
-   * lip-syncs to a voice, making the start picture talk or, with `clip`, changing the mouths in a clip.
+   * lip-syncs to a voice, making the start picture talk or, with `clip`, changing the mouths in a clip. `camera`: it
+   * keeps the camera of a clip it's given (the move, the framing, where the cuts fall), and how long a clip it takes.
    */
-  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean; speech?: boolean; clip?: boolean };
+  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean; speech?: boolean; clip?: boolean; camera?: { min: number; max: number } };
   /** For video: the lengths it makes, as a list or a range, in seconds. */
   lengths?: number[] | { min: number; max: number };
   /** The aspects it makes ("16:9"), or "any". When it starts from a picture, the picture's shape decides instead. */
@@ -107,6 +112,8 @@ export type MakeRequest = {
   speech?: Speech;
   /** For video that changes the mouths in a clip to say `speech`: the stretch of the clip. */
   clip?: Stretch;
+  /** For video that keeps another clip's camera: the stretch of a clip, or of a cut drawn as a blockout, to follow. */
+  camera?: Camera;
   /** The real people in it, by name: characters made from the person's own photos or clips (realPeople). */
   realPeople?: string[];
   /** How long it has to play, in seconds (the shot's length, or the stretch it follows). */
@@ -173,13 +180,23 @@ export type Fit = FitOk | { ok: false; model: string; label: string; why: Why };
  */
 export const HANDLE = 0.5;
 
-/** How much longer than the shot to make a take, in all. One that follows a clip or says a line has its spare either side. */
-const spareOf = (req: Pick<MakeRequest, "start" | "end" | "drive" | "speech">) => (req.drive || req.speech || !req.start ? 2 * HANDLE : req.end ? 0 : HANDLE);
+/**
+ * How much longer than the shot to make a take, in all. One that follows a clip or says a line has its spare either
+ * side. One that keeps a clip's camera has none: it runs as the clip does, cut for cut.
+ */
+const spareOf = (req: Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "camera">) => (req.camera ? 0 : req.drive || req.speech || !req.start ? 2 * HANDLE : req.end ? 0 : HANDLE);
 
 /** A stretch of a file, in seconds of the file. */
 export type Stretch = { asset: string; from: number; to: number };
 /** A stretch of a clip whose movement a take copies. */
 export type Drive = Stretch;
+/**
+ * A stretch of a cut, in seconds of the cut in one of its formats: a blockout, drawn there as a grey set, a stand-in
+ * for each person and the camera's move. `shots` are the ones it was asked by, when it was.
+ */
+export type CutStretch = { cut: string; format: string; from: number; to: number; shots?: string[] };
+/** What a take keeps the camera of: a stretch of a clip, or of a cut that's rendered to one when the take is made. */
+export type Camera = Stretch | CutStretch;
 
 /**
  * What a take says, as sound: the cut's voice lines as they're heard between two seconds of the cut (in its first
@@ -215,7 +232,7 @@ export function speechWindow(speech: Speech, clip: Stretch | undefined, seconds:
 }
 
 /** How a take was asked for, as far as where a shot starts in it goes. */
-type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "seconds"> & { shotSeconds?: number };
+type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "camera" | "seconds"> & { shotSeconds?: number };
 
 /**
  * Where a shot starts in a take made for it: one that follows a clip, or says what's heard, where the stretch asked for
@@ -225,6 +242,8 @@ type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "
 export function takeLead(r: Asked, duration: number | undefined, durationOf: (asset: string | undefined) => number | undefined): number {
   if (r.speech) return speechWindow(r.speech, r.clip, r.seconds ?? (r.clip ?? r.speech).to - (r.clip ?? r.speech).from, durationOf(r.clip?.asset ?? ("asset" in r.speech ? r.speech.asset : undefined))).lead;
   if (r.drive) return driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, durationOf(r.drive.asset)).lead;
+  // One that keeps a clip's camera starts where the clip does; anything it runs over is at its end.
+  if (r.camera) return 0;
   if (!duration || !r.shotSeconds) return 0;
   const spare = Math.max(0, duration - r.shotSeconds);
   return r.end ? spare : r.start ? 0 : Math.min(HANDLE, spare / 2);
@@ -258,8 +277,8 @@ const money = (usd: number) => `$${usd < 1 ? usd.toFixed(2) : usd.toFixed(2).rep
 const list = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}`);
 
 /** Which of a service's endpoints a request needs. */
-export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip">): RequestShape =>
-  req.speech ? (req.clip ? "dub" : "talk") : req.drive ? "drive" : req.refs?.length ? "refs" : req.start ? "start" : "text";
+export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip" | "camera">): RequestShape =>
+  req.speech ? (req.clip ? "dub" : "talk") : req.drive ? "drive" : req.camera ? "camera" : req.refs?.length ? "refs" : req.start ? "start" : "text";
 
 /** The length to ask for, or why it can't be made. */
 function lengthFor(model: CatalogModel, wanted: number | undefined, spare: number): { seconds: number } | { why: Why } {
@@ -294,10 +313,21 @@ function aspectFor(model: CatalogModel, wanted: string | undefined): { aspect?: 
  * What a request would cost on a route: per image, or per second of video (a final's own rate when it has one), at
  * least the route's least a take costs, times the takes.
  */
-function costOn(route: ModelRoute, op: MakeOp, seconds: number | undefined, count: number, quality?: Quality): number | undefined {
-  const perSecond = (quality === "final" ? route.price.finalPerSecond : undefined) ?? route.price.perSecond;
-  const each = op === "image" ? route.price.perImage : perSecond !== undefined && seconds !== undefined ? Math.max(route.price.minimum ?? 0, perSecond * seconds) : undefined;
+function costOn(route: ModelRoute, op: MakeOp, seconds: number | undefined, count: number, quality?: Quality, cameraSeconds?: number): number | undefined {
+  const rate = cameraSeconds !== undefined && route.price.camera ? route.price.camera : route.price;
+  const perSecond = (quality === "final" ? rate.finalPerSecond : undefined) ?? rate.perSecond;
+  const billed = seconds === undefined ? undefined : cameraSeconds !== undefined && route.price.camera ? billedWithClip(seconds, cameraSeconds, route.price.camera.least) : seconds;
+  const each = op === "image" ? route.price.perImage : perSecond !== undefined && billed !== undefined ? Math.max(route.price.minimum ?? 0, perSecond * billed) : undefined;
   return each === undefined ? undefined : Math.round(each * count * 1000) / 1000;
+}
+
+/**
+ * The seconds a service bills for a take that follows a clip, when it bills the clip too: the clip's (rounded up to a
+ * tenth) plus the take's, and never fewer than the take's plus `least` of them, rounded up to a whole second.
+ */
+export function billedWithClip(seconds: number, clipSeconds: number, least = 0): number {
+  const both = Math.ceil(clipSeconds * 10 - 1e-6) / 10 + seconds;
+  return Math.round(Math.max(both, seconds + Math.ceil(seconds * least - 1e-6)) * 10) / 10;
 }
 
 /**
@@ -324,6 +354,16 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (req.speech && !req.clip && !model.takes.start) return no({ kind: "fit", reason: "Changes the mouths in a clip: say which clip (the take the shot shows)" });
   if (req.speech && !req.clip && !req.start) return no({ kind: "fit", reason: "Needs a picture of who speaks: start from the shot's board" });
   if (req.clip && req.start) return no({ kind: "fit", reason: "Changes the mouths in a clip, so it doesn't start from a picture as well" });
+  const followed = req.camera ? req.camera.to - req.camera.from : undefined;
+  if (req.camera) {
+    const takes = model.takes.camera;
+    if (!takes) return no({ kind: "fit", reason: "Doesn't keep the camera of a clip it's given" });
+    if (req.drive || req.speech) return no({ kind: "fit", reason: "Keeps a clip's camera, so it doesn't copy movement or lip-sync as well" });
+    if (req.start) return no({ kind: "fit", reason: "Keeps a clip's camera from reference pictures, not from a start frame: give the picture as a reference" });
+    // Services allow a little either side of their limits (Tein: 0.05s).
+    if (followed! < takes.min - 0.05) return no({ kind: "fit", reason: `Follows ${seconds1(takes.min)} of clip at least; this is ${seconds1(followed!)}` });
+    if (followed! > takes.max + 0.05) return no({ kind: "fit", reason: `Follows up to ${seconds1(takes.max)} of clip; this is ${seconds1(followed!)}`, fix: "split" });
+  }
   if (req.start && !model.takes.start) return no({ kind: "fit", reason: "Doesn't start from a picture" });
   if (req.end && !req.start) return no({ kind: "fit", reason: "An end frame needs a start frame too", fix: "drop-end" });
   if (req.end && !model.takes.end) return no({ kind: "fit", reason: "Doesn't take an end frame", fix: "drop-end" });
@@ -363,6 +403,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
     drive: "a clip to follow",
     talk: "a picture to make talk",
     dub: "a clip to change the mouths in",
+    camera: "a clip whose camera to keep",
   };
   if (!there.length) return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${given[shape]}` });
   // A route can take less than the model does elsewhere (no end frame on your own card).
@@ -385,7 +426,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const unusable = (r: ModelRoute) => state(r).endpoints?.[r.endpoints[shape]!];
   const ready = routes
     .filter(({ r }) => state(r).state === "ready" && !unusable(r))
-    .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count, req.quality), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
+    .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count, req.quality, followed), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
     .sort((a, b) => (a.usd ?? Infinity) - (b.usd ?? Infinity));
   const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
   if (affordable.length) {

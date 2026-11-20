@@ -109,7 +109,20 @@ export async function falUpload(key: string, file: string): Promise<string> {
  * mouths in (`video`), and what it says (`audio`) are already URLs fal can fetch. A model that makes roughs and finals
  * both makes a final larger.
  */
-export type FalAsk = { prompt: string; quality?: Quality; seconds?: number; aspect?: string; seed?: number; start?: string; end?: string; refs?: string[]; video?: string; audio?: string };
+export type FalAsk = {
+  prompt: string;
+  quality?: Quality;
+  seconds?: number;
+  aspect?: string;
+  seed?: number;
+  start?: string;
+  end?: string;
+  refs?: string[];
+  video?: string;
+  audio?: string;
+  /** A clip whose camera the take keeps, and whether it's a blockout (a grey set and stand-ins, none of which should be seen). */
+  camera?: { url: string; blockout: boolean };
+};
 
 /** The prompt with a line saying which reference picture is which, in the model's own names for them ("Image 1", "@Image1"). */
 const withRefs = (ask: FalAsk, name: (n: number) => string) =>

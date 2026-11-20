@@ -627,6 +627,22 @@ const makeArgs = {
     .union([z.literal("take"), z.object({ asset: z.string(), from: z.number().min(0).optional(), to: z.number().optional() })])
     .optional()
     .describe('For lip-sync: change the mouths in a clip instead of making a still talk. "take" is the clip the shot shows, where the shot plays it (a rough with the wrong mouths, a take that copied movement); the new take replaces it'),
+  camera: z
+    .union([
+      z.object({
+        cut: z.string().describe("The cut the blockout is in"),
+        shots: z.array(z.string()).optional().describe("From the first of these shots to the last; default the whole cut"),
+      }),
+      z.object({
+        asset: z.string().describe("A clip whose camera to keep"),
+        from: z.number().min(0).optional().describe("The second of the clip to start at; default 0"),
+        to: z.number().optional().describe("The second to stop at; default the shot's length after from"),
+      }),
+    ])
+    .optional()
+    .describe(
+      "For video: keep another clip's camera (Seedance 2.5 through Tein). Usually a blockout: a cut whose coded shots draw a grey set, a striped stand-in for each person and the camera's move, 2 to 30 seconds of it. It's rendered when the take is made, in that cut's format closest to this one's shape, and the take keeps its move, framing, timing and cuts and is as long as it is. The model copies everything else in a reference video too, so the prompt says what each stand-in really is (by its colour), and describes the real place in words; the engine adds that no stand-in appears. Move the camera in every shot of a blockout and hold each 2 seconds or more. A picture given as start goes as a reference instead (the board, a photo of who's in it); there's no end frame. Tein bills the blockout's seconds as well as the take's, at a lower rate. Give it again for the final",
+    ),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
 };
@@ -646,6 +662,7 @@ type MakeToolArgs = {
   drive?: { asset: string; from?: number; to?: number } | null;
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
   clip?: "take" | { asset: string; from?: number; to?: number };
+  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number };
   seconds?: number;
   aspect?: string;
   count?: number;
@@ -703,7 +720,7 @@ server.registerTool(
     }
     const { req, choices } = makeChoices(id, asks[0]!);
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
     ];
     out.push(...absent);
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
