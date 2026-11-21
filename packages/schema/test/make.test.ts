@@ -1028,10 +1028,9 @@ describe("keeping a clip's camera", () => {
   const camera = { cut: "blockout", format: "vertical", from: 0, to: 7 };
   const ask = { op: "video" as const, prompt: "x", camera, seconds: 7, aspect: "9:16" };
 
-  it("runs on Seedance through Tein alone, as long as the clip, and is billed for the clip's seconds too", () => {
+  it("runs on Seedance, through Tein before fal, as long as the clip, and is billed for the clip's seconds too", () => {
     const rough = fitModel(seedance, { ...ask, refs: ["board"] }, { fal, tein });
-    expect(rough).toMatchObject({ ok: true, route: "tein", endpoint: "seedance-2-5", seconds: 7, aspect: "9:16" });
-    expect(rough).not.toHaveProperty("also");
+    expect(rough).toMatchObject({ ok: true, route: "tein", endpoint: "seedance-2-5", seconds: 7, aspect: "9:16", also: [{ route: "fal" }] });
     // 7 seconds of clip and 7 of take, at the rate for a take with a reference video.
     expect(rough.ok && rough.usd).toBeCloseTo(14 * 0.0809, 3);
     const final = fitModel(seedance, { ...ask, quality: "final", count: 2 }, { fal, tein });
@@ -1039,8 +1038,22 @@ describe("keeping a clip's camera", () => {
     // Without a clip the same take costs its own seconds at the plain rate.
     const plain = fitModel(seedance, { op: "video", prompt: "x", seconds: 7, aspect: "9:16", via: "tein" }, { fal, tein });
     expect(plain.ok && plain.usd).toBeCloseTo(8 * 0.1355, 3);
-    expect(fitModel(seedance, ask, { fal })).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
-    expect(fitModel(seedance, { ...ask, via: "fal" }, { fal, tein })).toMatchObject({ ok: false, why: { kind: "fit" } });
+    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein"] } });
+  });
+
+  it("runs through fal too, which bills the clip's seconds as well at its own lower rate, and draws no real people", () => {
+    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, { fal });
+    expect(rough).toMatchObject({ ok: true, route: "fal", endpoint: "bytedance/seedance-2.5/us/reference-to-video", seconds: 7, aspect: "9:16" });
+    // fal's rate with a reference video is its plain one times 0.0128/0.0214 a token (0.0140/0.0234 at 1080p), with no least.
+    expect(rough.ok && rough.usd).toBeCloseTo(14 * 0.2205 * (0.0128 / 0.0214), 2);
+    const final = fitModel(seedance, { ...ask, quality: "final", via: "fal" }, { fal, tein });
+    expect(final).toMatchObject({ ok: true, route: "fal" });
+    expect(final.ok && final.usd).toBeCloseTo(14 * 1.164 * (0.014 / 0.0234), 2);
+    expect(fitModel(seedance, { ...ask, camera: { ...camera, to: 2 }, seconds: 4 }, { fal })).toMatchObject({ ok: true, usd: Math.round(6 * 0.1319 * 1000) / 1000 });
+    // With someone from the person's own photos it runs through Tein alone.
+    expect(fitModel(seedance, { ...ask, realPeople: ["mara"] }, { fal, tein })).toMatchObject({ ok: true, route: "tein" });
+    expect(fitModel(seedance, { ...ask, realPeople: ["mara"] }, { fal, tein })).not.toHaveProperty("also");
+    expect(fitModel(seedance, { ...ask, realPeople: ["mara"] }, { fal })).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
   });
 
   it("is billed as Tein bills: the clip rounded up to a tenth plus the take, and never under the take and two thirds more", () => {

@@ -231,9 +231,9 @@ export const CATALOG: CatalogModel[] = [
     id: "seedance-2.5",
     label: "Seedance 2.5",
     by: "ByteDance",
-    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here on fal, where it won't draw real people; through Tein it costs less and does, and there it keeps the camera of a blockout it's given.",
+    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here on fal, where it won't draw real people; through Tein it costs less and does. It keeps the camera of a blockout it's given.",
     ops: ["video"],
-    // A clip to keep the camera of: 2 to 30 seconds (Tein's limits for a reference video).
+    // A clip to keep the camera of: 2 to 30 seconds (Tein's limits for a reference video; fal's are 1.8 to 30.2).
     takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 } },
     lengths: Array.from({ length: 27 }, (_, i) => i + 4),
     aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
@@ -244,12 +244,21 @@ export const CATALOG: CatalogModel[] = [
     // fal.ai/models/bytedance/seedance-2.5/us/image-to-video: about $0.22 a second at 480p, $1.16 at 1080p, sound or not.
     // Runway's API sells it for less ($0.68 a second at 1080p); its 480p draft can be finished at 1080p by its draft_id,
     // which beatsheet doesn't do yet.
+    // fal.ai/models/bytedance/seedance-2.5/us/reference-to-video (checked 20 Nov 2026) takes reference videos beside
+    // the pictures (video_urls, @Video1 in the prompt), and then bills the clip's seconds as well as the take's, the
+    // whole request at a lower rate per token: $0.0128 for 1,000 in place of $0.0214 at 480p, and $0.0140 in place of
+    // $0.0234 at 1080p, so about $0.132 and $0.696 a second. That's from its page, not from a take made here yet.
     routes: [
       {
         via: "fal",
         shape: "seedance-2.5",
-        endpoints: { text: "bytedance/seedance-2.5/us/text-to-video", start: "bytedance/seedance-2.5/us/image-to-video", refs: "bytedance/seedance-2.5/us/reference-to-video" },
-        price: { perSecond: 0.2205, finalPerSecond: 1.164 },
+        endpoints: {
+          text: "bytedance/seedance-2.5/us/text-to-video",
+          start: "bytedance/seedance-2.5/us/image-to-video",
+          refs: "bytedance/seedance-2.5/us/reference-to-video",
+          camera: "bytedance/seedance-2.5/us/reference-to-video",
+        },
+        price: { perSecond: 0.2205, finalPerSecond: 1.164, camera: { perSecond: 0.1319, finalPerSecond: 0.6964 } },
       },
       // api.tein.ai/v1/pricing/models?model=seedance-2-5 (Starter, checked 19 Nov 2026): $0.134 to $0.136 a second at
       // 480p and $0.765 to $0.766 at 1080p, by task; the dearest of each is used. One model id for every task: the
@@ -259,7 +268,7 @@ export const CATALOG: CatalogModel[] = [
       // With a reference video (a blockout, for its camera) the same list has its own rate, $0.0809 a second at 480p
       // and $0.4595 at 1080p ("Omni Reference · with reference video"), and Tein's billing page says what's billed: the
       // video's seconds plus the take's, and no fewer than the take's plus two thirds of them. That's from the list and
-      // the page, not from a take made here yet. fal's reference-to-video isn't known to take a video.
+      // the page, not from a take made here yet.
       {
         via: "tein",
         shape: "seedance-2.5",

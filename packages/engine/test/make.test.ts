@@ -416,7 +416,8 @@ describe("keeping a blockout's camera", () => {
     await board();
     blockout();
     const ask = { op: "video" as const, shot: "s2", prompt: "@cat, the orange stand-in, strolls down the alley", start: "board", camera: { cut: "blockout", shots: ["orbit"] } };
-    // Only Seedance keeps a camera, and only through Tein, so Auto goes there.
+    // Only Seedance keeps a camera, and Tein is the cheaper of its two routes, so Auto goes there. fal isn't offered
+    // beside it: the cat is from the person's own photos, which Seedance draws only through Tein.
     const { fit, jobs } = make.startMake(PROJECT, ask);
     expect(fit).toMatchObject({ model: "seedance-2.5", route: "tein", endpoint: "seedance-2-5", seconds: 4, aspect: "9:16" });
     expect(fit.also).toBeUndefined();
@@ -453,8 +454,9 @@ describe("keeping a blockout's camera", () => {
     const { req, choices } = make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final", camera: { cut: "blockout" } });
     expect(req).toMatchObject({ camera: { cut: "blockout", format: "vertical", from: 0, to: 7 }, seconds: 7 });
     expect(req.camera).not.toHaveProperty("shots");
-    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7 });
+    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7, also: [{ route: "fal" }] });
     expect(choices.auto!.usd).toBeCloseTo(14 * 0.4595, 3);
+    expect(choices.auto!.also![0]!.usd).toBeCloseTo(14 * 0.6964, 3);
     expect(choices.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't keep the camera of a clip it's given" } });
   });
 
@@ -475,13 +477,41 @@ describe("keeping a blockout's camera", () => {
     expect(take.provenance).toMatchObject({ refs: ["s2-take-2"], params: { camera: { asset: "s2-take-2", from: 1, to: 5 } } });
   });
 
-  it("says what's wrong before anything is sent: no such cut or shot, nothing connected that keeps a camera", () => {
+  it("goes through fal when Tein isn't connected: the clip as @Video1 beside the board, billed for its seconds too", async () => {
+    await board();
     blockout();
+    settings.services = {};
+    const before = seen.uploads;
+    // No one from the person's own photos is named, so fal will draw it.
+    const { fit, jobs } = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "The orange stand-in is a ginger cat strolling down the alley", start: "board", camera: { cut: "blockout", shots: ["orbit"] } });
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "fal", endpoint: "bytedance/seedance-2.5/us/reference-to-video", seconds: 4, aspect: "9:16" });
+    expect(fit.also).toBeUndefined();
+    expect(fit.usd).toBeCloseTo(8 * 0.1319, 3);
+    await make.driveJobs(PROJECT);
+
+    expect(rendered).toEqual([{ cut: "blockout", format: "vertical", range: { from: 0, to: 4 } }]);
+    expect(tein.uploads).toBe(0);
+    // The board, then the clip.
+    expect(seen.uploads).toBe(before + 2);
+    const sent = seen.submits.filter((s) => s.endpoint.includes("seedance"));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      endpoint: "bytedance/seedance-2.5/us/reference-to-video",
+      input: { duration: "4", resolution: "480p", aspect_ratio: "9:16", image_urls: [`${base}/out/uploaded-${before + 1}.jpg`], video_urls: [`${base}/out/uploaded-${before + 2}.jpg`] },
+    });
+    expect(sent[0]!.input).not.toHaveProperty("image_url");
+    expect(sent[0]!.input.prompt).toMatch(/@Image1 is a reference for who and what is in it\. @Video1 is a blockout: keep its camera exactly .* none of them appears in the result\.$/);
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.provenance?.job === jobs[0]!.id)!;
+    expect(take.provenance).toMatchObject({ provider: "fal", refs: ["s2-take"], params: { camera: { cut: "blockout", from: 0, to: 4 } } });
+    expect(shot("s2").content).toMatchObject({ kind: "generated", take: take.id, provider: "fal", model: "seedance-2.5" });
+  });
+
+  it("says what's wrong before anything is sent: no such cut or shot", () => {
+    blockout();
+    const uploads = seen.uploads;
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s1", camera: { cut: "previs" } })).toThrow('No cut "previs" to take the blockout from');
     expect(() => make.startMake(PROJECT, { op: "video", shot: "s1", camera: { cut: "blockout", shots: ["orbit", "crane"] } })).toThrow('No shot "crane" in cut "blockout" (9:16); it has orbit, push');
-    settings.services = {};
-    expect(() => make.startMake(PROJECT, { op: "video", shot: "s1", camera: { cut: "blockout" } })).toThrow(/Seedance 2\.5: Runs on Tein/);
-    expect(tein.uploads).toBe(0);
+    expect([tein.uploads, seen.uploads]).toEqual([0, uploads]);
     expect(rendered).toEqual([]);
   });
 

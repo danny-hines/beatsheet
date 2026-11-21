@@ -128,6 +128,18 @@ export type FalAsk = {
 const withRefs = (ask: FalAsk, name: (n: number) => string) =>
   ask.refs?.length ? `${ask.prompt} ${ask.refs.length === 1 ? `${name(1)} is a reference` : `${name(1)} to ${name(ask.refs.length)} are references`} for who and what is in it.` : ask.prompt;
 
+/**
+ * What's said of a clip whose camera a take keeps, called what the service calls it ("The reference video", "@Video1").
+ * A reference video is copied in everything it shows, so the model is told what to take from it: the camera. A
+ * blockout's grey set and striped stand-ins are there to be replaced, which it's told too, or it draws them.
+ */
+export const cameraLine = (camera: FalAsk["camera"], name: string) =>
+  !camera
+    ? ""
+    : camera.blockout
+      ? ` ${name} is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result.`
+      : ` ${name} sets the camera: keep its move, its framing, its timing and where its cuts fall.`;
+
 /** Whole seconds, for models that only make those. */
 const whole = (seconds: number | undefined) => Math.ceil((seconds ?? 5) - 1e-6);
 
@@ -205,12 +217,14 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
       };
     case "seedance-2.5":
       // Seedance 2.5: roughs at 480p, finals at 1080p, whole seconds as a string, with its own sound (the same price
-      // either way). References are @Image1, @Image2… to it.
+      // either way). References are @Image1, @Image2… to it, and a clip whose camera it keeps is @Video1 (on its
+      // reference-to-video endpoint, which takes clips of 1.8 to 30.2 seconds beside the pictures).
       return {
-        prompt: withRefs(ask, (n) => `@Image${n}`),
+        prompt: `${withRefs(ask, (n) => `@Image${n}`)}${cameraLine(ask.camera, "@Video1")}`,
         duration: String(whole(ask.seconds)),
         resolution: ask.quality === "final" ? "1080p" : "480p",
         ...(ask.refs?.length ? { image_urls: ask.refs } : {}),
+        ...(ask.camera ? { video_urls: [ask.camera.url] } : {}),
         ...(ask.start ? { image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
         ...(ask.end ? { end_image_url: ask.end } : {}),
       };

@@ -10,7 +10,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
-import { FalError, type FalAsk, type FalRequest } from "./fal.ts";
+import { cameraLine, FalError, type FalAsk, type FalRequest } from "./fal.ts";
 
 const API = process.env.BEATSHEET_TEIN ?? "https://api.tein.ai/v1";
 
@@ -81,13 +81,7 @@ export function teinInput(shape: string, model: string, ask: FalAsk): Record<str
       // takes no other ratio then. Faces are kept (pass_faces) and Creative mode is off, both by leaving them unsaid.
       const refs = ask.start ? undefined : ask.refs;
       const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
-      // A reference video is copied in everything it shows, so it's said what to take from it: the camera. A blockout's
-      // grey set and striped stand-ins are there to be replaced, which the model is told too, or it draws them.
-      const followed = !ask.camera
-        ? ""
-        : ask.camera.blockout
-          ? " The reference video is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result."
-          : " The reference video sets the camera: keep its move, its framing, its timing and where its cuts fall.";
+      const followed = cameraLine(ask.camera, "The reference video");
       return {
         model,
         prompt: `${ask.prompt}${shown}${followed}`,

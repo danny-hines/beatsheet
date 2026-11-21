@@ -1011,6 +1011,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       refs: r.refs && (await Promise.all(r.refs.map(uploadRef))),
       video: r.drive ? await falUpload(key, await driveClip(project, dir, job)) : r.clip && (await falUpload(key, await dubClip(project, dir, job))),
       audio: r.speech && (await falUpload(key, await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.wav`)))),
+      camera: r.camera && { url: await falUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
     });
     const remote = await falSubmit(key, job.endpoint, input);
     updateJob(projectId, job, { status: "running", remote });
@@ -1076,8 +1077,11 @@ async function stepTein(projectId: string, job: MakeJob, key: string) {
 
 const exec = promisify(execFile);
 
-/** The most a file sent to Tein may weigh: its API carries about 6 MB in a request. */
-const TEIN_UPLOAD = 5.5 * 1024 * 1024;
+/** The most a clip to follow may weigh: Tein's API carries about 6 MB in a request, and fal takes a reference video up to 200 MB. */
+const CAMERA_BYTES: Record<string, { most: number; said: string }> = {
+  tein: { most: 5.5 * 1024 * 1024, said: "Tein's API carries" },
+  fal: { most: 200 * 1024 * 1024, said: "fal takes" },
+};
 /** The fewest pixels Seedance takes in a reference video, and the frame rates it takes. */
 const CAMERA_PIXELS = 407_696;
 const CAMERA_FPS = { min: 24, max: 60 };
@@ -1122,11 +1126,12 @@ async function cameraClip(projectId: string, project: Project, dir: string, job:
   const size = cameraSize(info.width, info.height);
   const fps = Math.min(CAMERA_FPS.max, Math.max(CAMERA_FPS.min, Math.round(info.fps ?? 30)));
   const file = join(work, `${job.id}.mp4`);
+  const { most, said } = CAMERA_BYTES[job.route] ?? CAMERA_BYTES.tein!;
   for (const crf of [20, 28, 34]) {
     await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-an", "-vf", `scale=${size.width}:${size.height}:flags=lanczos,fps=${fps}`, "-c:v", "libx264", "-crf", String(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
-    if (statSync(file).size <= TEIN_UPLOAD) return file;
+    if (statSync(file).size <= most) return file;
   }
-  throw new FalError(`The clip to follow is ${(statSync(file).size / 1024 / 1024).toFixed(1)} MB even made small, more than Tein's API carries. A shorter stretch would do.`, true);
+  throw new FalError(`The clip to follow is ${(statSync(file).size / 1024 / 1024).toFixed(1)} MB even made small, more than ${said}. A shorter stretch would do.`, true);
 }
 
 /** Renders a stretch of a cut to a file, without the sound pass (set by tests to stand in for the renderer). */
