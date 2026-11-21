@@ -355,7 +355,8 @@ describe("roughs and finals", () => {
   it("makes a final from a prompt alone with a final that takes one", () => {
     const c = chooseModels(CATALOG, { op: "video", prompt: "the cat leaves", seconds: 3.2, quality: "final" }, services);
     expect(c.auto).toMatchObject({ model: "minimax-h3-max", seconds: 5, usd: 0.8 });
-    expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Nowhere runs Kling 3 Pro with only a prompt" } });
+    // Kling 3 Pro takes a prompt alone only through Runway, which isn't connected here: something to set up, not a misfit.
+    expect(c.setup.find((f) => f.model === "kling-3")).toMatchObject({ why: { kind: "connect", services: ["runway"] } });
   });
 
   it("makes a final from references with one that takes them, and says why the others can't", () => {
@@ -1097,7 +1098,22 @@ describe("keeping a clip's camera", () => {
     // Without a clip the same take costs its own seconds at the plain rate.
     const plain = fitModel(seedance, { op: "video", prompt: "x", seconds: 7, aspect: "9:16", via: "tein" }, { fal, tein });
     expect(plain.ok && plain.usd).toBeCloseTo(8 * 0.1355, 3);
-    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein"] } });
+    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein", "runway"] } });
+  });
+
+  it("is billed by Runway for the clip at half the take's rate, and never less than its least for a take", () => {
+    const runway = { runway: { label: "Runway", state: "ready" } } satisfies Record<string, ServiceState>;
+    // 7 seconds of take at $0.20 and 7 of clip at $0.10: $0.15 for each second of the two.
+    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, runway);
+    expect(rough).toMatchObject({ ok: true, route: "runway", endpoint: "seedance2_5", seconds: 7 });
+    expect(rough.ok && rough.usd).toBeCloseTo(7 * 0.2 + 7 * 0.1, 3);
+    const final = fitModel(seedance, { ...ask, quality: "final" }, runway);
+    expect(final.ok && final.usd).toBeCloseTo(7 * 0.68 + 7 * 0.34, 3);
+    // The shortest rough without a clip would be $0.80 by the second: its least.
+    expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 3, aspect: "9:16" }, runway)).toMatchObject({ ok: true, seconds: 4, usd: 0.8 });
+    expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 9, aspect: "9:16", quality: "final" }, runway)).toMatchObject({ ok: true, seconds: 10, usd: 6.8 });
+    // Whether it draws real people there isn't known, so it isn't offered for them.
+    expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, runway)).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
   });
 
   it("runs through fal too, which bills the clip's seconds as well at its own lower rate, and draws no real people", () => {

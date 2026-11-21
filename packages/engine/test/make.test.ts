@@ -20,7 +20,7 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein"].includes(id) ? "test-key" : undefined),
+    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein", "runway"].includes(id) ? "test-key" : undefined),
     readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" }, ...settings.services }, checks: {}, make: settings.make }),
   };
 });
@@ -71,6 +71,9 @@ type Seen = { submits: { endpoint: string; input: Record<string, unknown> }[]; u
 let seen: Seen;
 // And for Tein: uploads, the one endpoint (which gives the same job for the same idempotency key), and the job to follow.
 let tein: { submits: Record<string, unknown>[]; keys: string[]; uploads: number; jobs: Map<string, string> };
+// And for Runway: uploads (an address to send the file to, then the file), its endpoints that start a task, and the task to
+// follow. A task its moderation turns down fails, and is charged for.
+let runway: { submits: { path: string; body: Record<string, unknown> }[]; uploads: string[]; stored: number; tasks: Map<string, { still: boolean; moderated: boolean }>; cancelled: string[] };
 let refuse: string | undefined;
 let server: Server;
 let base = "";
@@ -129,6 +132,46 @@ beforeAll(async () => {
         }
         return send(404, { error: { code: "not_found", message: "Not found." } });
       }
+      // Where Runway says to send a file: its form fields first, then the file, and no key.
+      if (req.method === "POST" && url.startsWith("/runway-store/")) {
+        if (req.headers.authorization || !/name="key"[\s\S]*name="file"; filename="/.test(body)) return send(400, { error: "not the form that was asked for" });
+        runway.stored++;
+        return send(204, {});
+      }
+      if (url.startsWith("/runway/")) {
+        if (req.headers.authorization !== "Bearer test-key") return send(401, { error: "The API key is not valid." });
+        if (req.headers["x-runway-version"] !== "2024-11-06") return send(400, { error: "X-Runway-Version is required." });
+        if (req.method === "POST" && url === "/runway/uploads") {
+          const { filename, type } = JSON.parse(body) as { filename: string; type: string };
+          if (type !== "ephemeral") return send(400, { error: "Invalid upload type." });
+          runway.uploads.push(filename);
+          return send(200, { uploadUrl: `${base}/runway-store/${runway.uploads.length}`, fields: { key: `uploads/${runway.uploads.length}`, policy: "p" }, runwayUri: `runway://upload-${runway.uploads.length}` });
+        }
+        const start = url.match(/^\/runway\/(text_to_video|image_to_video|text_to_image)$/)?.[1];
+        if (req.method === "POST" && start) {
+          const input = JSON.parse(body) as Record<string, unknown>;
+          if (typeof input.duration === "number" && !Number.isInteger(input.duration)) return send(400, { error: "Validation of body failed", issues: [{ code: "invalid_type", path: ["duration"], message: "Expected integer, received float" }] });
+          runway.submits.push({ path: start, body: input });
+          const id = `task_${runway.submits.length}`;
+          runway.tasks.set(id, { still: start === "text_to_image", moderated: !!refuse && String(input.promptText).includes(refuse) });
+          return send(200, { id, estimatedCost: { credits: start === "text_to_image" ? 4 : 80 } });
+        }
+        const id = url.match(/^\/runway\/tasks\/([^/]+)$/)?.[1];
+        const task = id ? runway.tasks.get(id) : undefined;
+        if (id && task && req.method === "DELETE") {
+          runway.cancelled.push(id);
+          return send(204, {});
+        }
+        if (id && task) {
+          const n = (polls.get(id) ?? 0) + 1;
+          polls.set(id, n);
+          const made = { id, createdAt: "2026-11-21T00:00:00Z" };
+          if (n < 3) return send(200, n === 1 ? { ...made, status: "THROTTLED", estimatedCost: { credits: 80 } } : { ...made, status: "RUNNING", progress: 0.4, estimatedCost: { credits: 80 } });
+          if (task.moderated) return send(200, { ...made, status: "FAILED", failure: "The prompt was flagged.", failureCode: "SAFETY.INPUT.TEXT", cost: { credits: 80 } });
+          return send(200, { ...made, status: "SUCCEEDED", output: [`${base}/out/${id}.${task.still ? "jpg" : "mp4"}`], cost: { credits: task.still ? 4 : 64 } });
+        }
+        return send(404, { error: "Not found." });
+      }
       if (req.headers.authorization !== "Key test-key" && !url.startsWith("/out/") && !url.startsWith("/upload/")) return send(401, { detail: "no" });
       if (url.startsWith("/rest/storage/upload/initiate")) {
         seen.uploads++;
@@ -167,6 +210,7 @@ beforeAll(async () => {
   process.env.BEATSHEET_META = `${base}/direct/meta`;
   process.env.BEATSHEET_GEMINI = `${base}/gemini`;
   process.env.BEATSHEET_TEIN = `${base}/tein`;
+  process.env.BEATSHEET_RUNWAY = `${base}/runway`;
   make = await import("../src/make.ts");
   store = await import("../src/store.ts");
 });
@@ -181,6 +225,7 @@ const PROJECT = "cat";
 beforeEach(() => {
   seen = { submits: [], uploads: 0, direct: [] };
   tein = { submits: [], keys: [], uploads: 0, jobs: new Map() };
+  runway = { submits: [], uploads: [], stored: 0, tasks: new Map(), cancelled: [] };
   refuse = undefined;
   plans.ready = [];
   plans.asks = [];
@@ -403,6 +448,148 @@ describe("Seedance 2.5 through Tein", () => {
       reference_image: ["a", "b"],
     });
     expect(() => teinInput("kling", "kling-4", { prompt: "x" })).toThrow('no way to ask Tein for "kling" models yet');
+  });
+});
+
+describe("Runway as the provider", () => {
+  const connect = () => void (settings.services = { runway: { addedAt: "2026-11-21" } });
+
+  it("makes nothing there while another provider is in use, and a take once it's the video provider: the board sent up, the task followed, and what Runway charged kept", async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2" });
+    await make.driveJobs(PROJECT);
+    const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
+    // A key for it changes nothing by itself: fal, added first, is still the provider in use, and takes are made there.
+    connect();
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
+    expect(() => make.startMake(PROJECT, { ...ask, via: "runway" })).toThrow("Runs on Runway, which is connected but not your video provider");
+    const onFal = make.startMake(PROJECT, { op: "video", shot: "s1", model: "kling-4" });
+    expect(onFal.fit).toMatchObject({ route: "fal" });
+    await make.driveJobs(PROJECT);
+    expect(make.listJobs(PROJECT).find((j) => j.id === onFal.jobs[0]!.id)).toMatchObject({ status: "done", route: "fal" });
+    expect(runway).toMatchObject({ submits: [], uploads: [] });
+
+    provider({ video: "runway" });
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "runway", where: "Runway", endpoint: "seedance2_5", seconds: 4 });
+    expect(fit).not.toHaveProperty("also");
+    // Four seconds at 20¢ is the least Runway charges for a take.
+    expect(fit.usd).toBe(0.8);
+    await make.driveJobs(PROJECT);
+
+    // The board went to the address Runway gave for it, and the take is asked for in the board's shape (1080×1920).
+    expect(runway).toMatchObject({ uploads: [expect.stringMatching(/\.jpg$/)], stored: 1 });
+    expect(runway.submits).toEqual([
+      { path: "image_to_video", body: { model: "seedance2_5", promptImage: [{ uri: "runway://upload-1", position: "first" }], promptText: "A red kite climbs over the hill", ratio: "480:854", duration: 4 } },
+    ]);
+    // Nothing more went to fal: the board and the take made while it was in use.
+    expect(seen.submits).toHaveLength(2);
+    // 64 credits, at a cent each, in place of the estimate.
+    expect(make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)).toMatchObject({ status: "done", route: "runway", charged: true, usd: 0.64, remote: { id: "task_1" } });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    expect(take.provenance).toMatchObject({ source: "generated", provider: "runway", model: "seedance2_5", costUsd: 0.64, refs: ["s2-take"] });
+    expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "runway", model: "seedance-2.5" });
+  });
+
+  it("makes stills there once it's the stills provider, with the cast's pictures as references", async () => {
+    connect();
+    expect(make.makeChoices(PROJECT, { op: "image", shot: "s2" }).choices.auto).toMatchObject({ route: "fal" });
+    provider({ image: "runway" });
+    const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    expect(fit).toMatchObject({ model: "nano-banana-2.1", route: "runway", endpoint: "nano_banana_2.1", aspect: "16:9", usd: 0.04 });
+    await make.driveJobs(PROJECT);
+
+    expect(runway.uploads).toEqual(["cat.jpg"]);
+    expect(runway.submits).toEqual([{ path: "text_to_image", body: { model: "nano_banana_2.1", promptText: expect.stringMatching(/^A photographic reference sheet of the cat/), ratio: "1376:768", referenceImages: [{ uri: "runway://upload-1" }] } }]);
+    expect(seen.submits).toHaveLength(0);
+    expect(make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)).toMatchObject({ status: "done", route: "runway", charged: true, usd: 0.04 });
+    const sheet = store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-sheet")!;
+    expect(sheet.provenance).toMatchObject({ provider: "runway", model: "nano_banana_2.1", costUsd: 0.04, refs: ["cat-photo"] });
+    expect(readFileSync(sheet.path, "utf8")).toBe("a picture");
+    // Video is still made where it was.
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s1" }).choices.auto).toMatchObject({ route: "fal" });
+  });
+
+  it("keeps what a take its moderation turned down cost, and doesn't send it again when it's tried again", async () => {
+    connect();
+    provider({ video: "runway" });
+    refuse = "kite";
+    const [job] = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "A red kite climbs over the hill", model: "kling-4" }).jobs;
+    await make.driveJobs(PROJECT);
+    // From a prompt alone it's asked for the cut's shape, at a rough's size.
+    expect(runway.submits).toEqual([{ path: "text_to_video", body: { model: "kling_4", promptText: "A red kite climbs over the hill", ratio: "720:1280", duration: expect.any(Number) } }]);
+    const failed = { status: "failed", charged: true, usd: 0.8, error: "Runway's moderation turned down what it was asked or given, and charges for the take all the same: The prompt was flagged." };
+    expect(make.listJobs(PROJECT).find((j) => j.id === job!.id)).toMatchObject(failed);
+    // It counts toward what's been spent, though it failed.
+    expect(make.spentSince(job!.createdAt)).toBe(0.8);
+    expect(shot("s1").content.kind).toBe("placeholder");
+    refuse = undefined;
+    make.retryJobs(PROJECT, [job!.id]);
+    await make.driveJobs(PROJECT);
+    expect(runway.submits).toHaveLength(1);
+    expect(make.listJobs(PROJECT).find((j) => j.id === job!.id)).toMatchObject(failed);
+  });
+
+  it("says which field Runway didn't like, and stops a task that's asked to stop", async () => {
+    const { runwaySubmit, runwayStatus, runwayCancel } = await import("../src/runway.ts");
+    await expect(runwaySubmit("test-key", { path: "text_to_video", body: { model: "kling_4", promptText: "x", duration: 4.5 } })).rejects.toMatchObject({ message: "Validation of body failed; duration: Expected integer, received float", final: true });
+    await expect(runwaySubmit("wrong", { path: "text_to_video", body: {} })).rejects.toMatchObject({ message: expect.stringContaining("Runway refused the key"), final: true });
+    const { remote, usd } = await runwaySubmit("test-key", { path: "text_to_video", body: { model: "kling_4", promptText: "x", duration: 4 } });
+    expect(usd).toBe(0.8);
+    // Held back by the account's limit is waiting, like any other.
+    expect(await runwayStatus("test-key", remote)).toEqual({ state: "queued" });
+    expect(await runwayStatus("test-key", remote)).toEqual({ state: "running" });
+    expect(await runwayStatus("test-key", remote)).toEqual({ state: "done", url: `${base}/out/task_1.mp4`, usd: 0.64 });
+    await runwayCancel("test-key", remote);
+    expect(runway.cancelled).toEqual(["task_1"]);
+    await expect(runwayStatus("test-key", { ...remote, id: "nope" })).rejects.toMatchObject({ message: "Not found.", final: true });
+  });
+
+  it("asks each model for what it takes there", async () => {
+    const { runwayInput } = await import("../src/runway.ts");
+    const first = [{ uri: "u", position: "first" }];
+    const frames = [...first, { uri: "v", position: "last" }];
+    // Seedance: a final at 1080p in the picture's shape, an end frame with its start, and references only when nothing starts it.
+    expect(runwayInput("seedance2_5", "seedance2_5", { prompt: "x", quality: "final", seconds: 5.2, aspect: "3:4", start: "u", end: "v", refs: ["a"] })).toEqual({
+      path: "image_to_video",
+      body: { model: "seedance2_5", promptImage: frames, promptText: "x", ratio: "1248:1664", duration: 6 },
+    });
+    expect(runwayInput("seedance2_5", "seedance2_5", { prompt: "x", seconds: 4, aspect: "16:9", refs: ["a", "b"], camera: { url: "c", blockout: false } })).toEqual({
+      path: "text_to_video",
+      body: {
+        model: "seedance2_5",
+        promptText: "x The 2 reference pictures show who and what is in it. The reference video sets the camera: keep its move, its framing, its timing and where its cuts fall.",
+        ratio: "854:480",
+        duration: 4,
+        references: [{ uri: "a" }, { uri: "b" }],
+        referenceVideos: [{ type: "video", uri: "c" }],
+      },
+    });
+    // Kling 4.0 keeps a picture's shape and is told only the size; from a prompt, the size in the shape wanted.
+    expect(runwayInput("kling_4", "kling_4", { prompt: "x", quality: "final", seconds: 12, start: "u", end: "v", aspect: "9:16" }).body).toEqual({ model: "kling_4", promptImage: frames, promptText: "x", ratio: "auto_1080p", duration: 12 });
+    expect(runwayInput("kling_4", "kling_4", { prompt: "x", seconds: 3, aspect: "21:9" }).body).toEqual({ model: "kling_4", promptText: "x", ratio: "1460:624", duration: 3 });
+    expect(runwayInput("kling2.5_turbo_pro", "kling2.5_turbo_pro", { prompt: "x", seconds: 5, start: "u", aspect: "9:16" }).body).toEqual({ model: "kling2.5_turbo_pro", promptImage: first, promptText: "x", duration: 5 });
+    expect(runwayInput("kling2.5_turbo_pro", "kling2.5_turbo_pro", { prompt: "x", seconds: 10, aspect: "1:1" }).body).toEqual({ model: "kling2.5_turbo_pro", promptText: "x", duration: 10, ratio: "1440:1440" });
+    // Kling 3 Pro without its own sound, which is the cheaper rate.
+    expect(runwayInput("kling3.0", "kling3.0_pro", { prompt: "x", seconds: 7, start: "u" }).body).toEqual({ model: "kling3.0_pro", promptImage: first, promptText: "x", duration: 7, audio: false });
+    expect(runwayInput("wan3", "wan3", { prompt: "x", seconds: 5, start: "u", refs: ["a"] })).toEqual({ path: "image_to_video", body: { model: "wan3", promptImage: first, promptText: "x", ratio: "auto_480p", duration: 5, audio: true } });
+    expect(runwayInput("wan3", "wan3", { prompt: "x", quality: "final", seconds: 30, aspect: "4:3", refs: ["a"] }).body).toEqual({
+      model: "wan3",
+      promptText: "x The reference picture shows who and what is in it.",
+      ratio: "1648:1248",
+      duration: 30,
+      audio: true,
+      references: [{ uri: "a" }],
+    });
+    // MiniMax H3 at 768p, by shape: the nearest it makes to a 4:5 board is 3:4.
+    expect(runwayInput("hailuo3", "hailuo3", { prompt: "x", seconds: 5.5, start: "u", aspect: "4:5" }).body).toEqual({ model: "hailuo3", promptImage: first, promptText: "x", resolution: "768P", ratio: "3:4", duration: 6 });
+    // Gemini Omni Flash is wide or tall only, even from a square picture.
+    expect(runwayInput("gemini_omni_flash_1.1", "gemini_omni_flash_1.1", { prompt: "x", quality: "final", seconds: 8, start: "u", aspect: "4:5" }).body).toMatchObject({ ratio: "1080:1920", duration: 8 });
+    expect(runwayInput("gemini_omni_flash_1.1", "gemini_omni_flash_1.1", { prompt: "x", seconds: 3, aspect: "16:9" })).toEqual({ path: "text_to_video", body: { model: "gemini_omni_flash_1.1", promptText: "x", ratio: "640:360", duration: 3 } });
+    // Stills at each model's own 1K sizes; GPT Image at medium quality, as on its other routes.
+    expect(runwayInput("gemini_2.5_flash", "gemini_2.5_flash", { prompt: "x", aspect: "9:16" })).toEqual({ path: "text_to_image", body: { model: "gemini_2.5_flash", promptText: "x", ratio: "768:1344" } });
+    expect(runwayInput("muse_image", "muse_image", { prompt: "x", aspect: "4:5", refs: ["a"] }).body).toEqual({ model: "muse_image", promptText: "x", ratio: "1344:1792", referenceImages: [{ uri: "a" }], outputFormat: "jpeg" });
+    expect(runwayInput("gpt_image_2_6", "gpt_image_2_6_sunburst", { prompt: "x", aspect: "9:16" }).body).toEqual({ model: "gpt_image_2_6_sunburst", promptText: "x", ratio: "1088:1920", quality: "medium", outputFormat: "jpeg" });
+    expect(() => runwayInput("gen4.5", "gen4.5", { prompt: "x" })).toThrow('no way to ask Runway for "gen4.5" models yet');
   });
 });
 

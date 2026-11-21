@@ -4,6 +4,10 @@
  * each service's own model page and only estimates; check them again when adding or changing an entry. A route whose
  * takes aren't simply free to use commercially says so (`commercial`): fal marks every model here for commercial use,
  * so it's the models run on your own card, under their own licenses, that mostly do.
+ *
+ * Runway's routes are from docs.dev.runwayml.com (its model list, openapi.json and pricing page, read 21 November
+ * 2026): one id for a model whatever the request, and prices in credits of a cent each. None has made a take for real
+ * yet. Runway says what each take cost, which the take records in place of the estimate here.
  */
 import type { CatalogModel } from "./make.ts";
 
@@ -23,6 +27,8 @@ export const CATALOG: CatalogModel[] = [
     routes: [
       { via: "fal", shape: "nano-banana", endpoints: { text: "google/nano-banana-2.1", refs: "google/nano-banana-2.1/edit" }, price: { perImage: 0.04 } },
       { via: "gemini", shape: "gemini-image", endpoints: { text: "gemini-nano-banana-2.1", refs: "gemini-nano-banana-2.1" }, price: { perImage: 0.034 } },
+      // Runway: 4 credits at 1K.
+      { via: "runway", shape: "nano_banana_2.1", endpoints: { text: "nano_banana_2.1", refs: "nano_banana_2.1" }, price: { perImage: 0.04 } },
     ],
   },
   {
@@ -39,6 +45,8 @@ export const CATALOG: CatalogModel[] = [
     routes: [
       { via: "fal", shape: "nano-banana", endpoints: { text: "fal-ai/nano-banana", refs: "fal-ai/nano-banana/edit" }, price: { perImage: 0.0398 } },
       { via: "gemini", shape: "gemini-image", endpoints: { text: "gemini-2.5-flash-image", refs: "gemini-2.5-flash-image" }, price: { perImage: 0.039 } },
+      // Runway: 5 credits an image, and three references at most.
+      { via: "runway", shape: "gemini_2.5_flash", endpoints: { text: "gemini_2.5_flash", refs: "gemini_2.5_flash" }, price: { perImage: 0.05 }, takes: { refs: 3 } },
     ],
   },
   {
@@ -55,6 +63,8 @@ export const CATALOG: CatalogModel[] = [
     routes: [
       { via: "meta", shape: "images-api", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0.01 } },
       { via: "muse-code", shape: "plan", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0 } },
+      // Runway: 1 credit an image.
+      { via: "runway", shape: "muse_image", endpoints: { text: "muse_image", refs: "muse_image" }, price: { perImage: 0.01 } },
     ],
   },
   {
@@ -77,6 +87,15 @@ export const CATALOG: CatalogModel[] = [
       { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.6-flare", refs: "gpt-image-2.6-flare" }, price: { perImage: 0.04 } },
       { via: "chatgpt", shape: "plan", endpoints: { text: "gpt-image", refs: "gpt-image" }, price: { perImage: 0 } },
       { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.6/flare/text-to-image", refs: "openai/gpt-image-2.6/flare/edit" }, price: { perImage: 0.04 } },
+      // Runway bills GPT Image 2.6 by quality, size and shape: at medium and 1K, 9 credits square, 6 at 4:5 or 3:4, 5
+      // at 2:3, 4 at 9:16 or 16:9 and 3 at 21:9, plus 1 for each reference. 6¢ is the middle of that.
+      {
+        via: "runway",
+        shape: "gpt_image_2_6",
+        endpoints: { text: "gpt_image_2_6_flare", refs: "gpt_image_2_6_flare" },
+        price: { perImage: 0.06 },
+        note: "Priced by the picture's shape here, from 4¢ tall or wide to 9¢ square, and 1¢ more for each reference.",
+      },
     ],
   },
   {
@@ -93,6 +112,14 @@ export const CATALOG: CatalogModel[] = [
     routes: [
       { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.6-sunburst", refs: "gpt-image-2.6-sunburst" }, price: { perImage: 0.04 } },
       { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.6/sunburst/text-to-image", refs: "openai/gpt-image-2.6/sunburst/edit" }, price: { perImage: 0.04 } },
+      // Runway: the same table as Flare.
+      {
+        via: "runway",
+        shape: "gpt_image_2_6",
+        endpoints: { text: "gpt_image_2_6_sunburst", refs: "gpt_image_2_6_sunburst" },
+        price: { perImage: 0.06 },
+        note: "Priced by the picture's shape here, from 4¢ tall or wide to 9¢ square, and 1¢ more for each reference.",
+      },
     ],
   },
   {
@@ -185,6 +212,8 @@ export const CATALOG: CatalogModel[] = [
         endpoints: { text: "alibaba/wan-3.0/text-to-video", start: "alibaba/wan-3.0/image-to-video", refs: "alibaba/wan-3.0/reference-to-video" },
         price: { perSecond: 0.05, finalPerSecond: 0.2 },
       },
+      // Runway's wan3: 5 credits a second at 480p and 20 at 1080p, the same as fal.
+      { via: "runway", shape: "wan3", endpoints: { text: "wan3", start: "wan3", refs: "wan3" }, price: { perSecond: 0.05, finalPerSecond: 0.2 } },
     ],
   },
   {
@@ -207,6 +236,15 @@ export const CATALOG: CatalogModel[] = [
         shape: "minimax-h3",
         endpoints: { text: "minimax/h3/text-to-video", start: "minimax/h3/image-to-video", refs: "minimax/h3/reference-to-video" },
         price: { perSecond: 0.06 },
+      },
+      // Runway's hailuo3: 10 credits a second at 768p, and 2 for each picture it's given (a start or end frame, a
+      // reference), which the estimate leaves out.
+      {
+        via: "runway",
+        shape: "hailuo3",
+        endpoints: { text: "hailuo3", start: "hailuo3", refs: "hailuo3" },
+        price: { perSecond: 0.1 },
+        note: "Each picture it's given here (a start or end frame, a reference) adds 2¢, which the estimate leaves out.",
       },
       // The open weights (pruned INT8, with the NVFP4 text encoder) from a board, and an end frame if there is one:
       // 124 to 362 frames at 24 a second (comfy.ts). The MiniMax H3 Community License grants rights only outside the
@@ -243,6 +281,10 @@ export const CATALOG: CatalogModel[] = [
         endpoints: { text: "kling/v4/text-to-video", start: "kling/v4/image-to-video" },
         price: { perSecond: 0.157, finalPerSecond: 0.235 },
       },
+      // Runway's kling_4: 15.7 credits a second at 720p and 23.5 at 1080p, the same as fal (a fifth off until the end
+      // of November 2026, which the take's own cost will show). It takes reference pictures and clips there too, which
+      // beatsheet doesn't send yet.
+      { via: "runway", shape: "kling_4", endpoints: { text: "kling_4", start: "kling_4" }, price: { perSecond: 0.157, finalPerSecond: 0.235 } },
     ],
   },
   {
@@ -260,8 +302,7 @@ export const CATALOG: CatalogModel[] = [
     // fal measured a 10-second take at 278 seconds.
     wait: 240,
     // fal.ai/models/bytedance/seedance-2.5/us/image-to-video: about $0.22 a second at 480p, $1.16 at 1080p, sound or not.
-    // Runway's API sells it for less ($0.68 a second at 1080p); its 480p draft can be finished at 1080p by its draft_id,
-    // which beatsheet doesn't do yet.
+    // Its 480p draft can be finished at 1080p by its draft_id, which beatsheet doesn't do yet.
     // fal.ai/models/bytedance/seedance-2.5/us/reference-to-video (checked 20 Nov 2026) takes reference videos beside
     // the pictures (video_urls, @Video1 in the prompt), and then bills the clip's seconds as well as the take's, the
     // whole request at a lower rate per token: $0.0128 for 1,000 in place of $0.0214 at 480p, and $0.0140 in place of
@@ -295,6 +336,17 @@ export const CATALOG: CatalogModel[] = [
         realPeople: true,
         note: "Keeps the faces of real people from your own photos, which Seedance won't draw elsewhere; Tein's terms want each person's consent.",
       },
+      // Runway's seedance2_5: 20 credits a second of take at 480p and 68 at 1080p, 80 credits at least for a take.
+      // A clip it's given (a blockout, for its camera) is billed too, at half the rate: 10 and 34 credits a second of
+      // clip. A take that keeps a clip's camera is as long as the clip, so that's 15 and 51 for each second of the two
+      // together. Whether it draws real people there isn't said, so it's taken not to. Its 480p draft can be finished
+      // at 1080p by its task id (`draftTaskId`), which beatsheet doesn't do yet.
+      {
+        via: "runway",
+        shape: "seedance2_5",
+        endpoints: { text: "seedance2_5", start: "seedance2_5", refs: "seedance2_5", camera: "seedance2_5" },
+        price: { perSecond: 0.2, finalPerSecond: 0.68, minimum: 0.8, camera: { perSecond: 0.15, finalPerSecond: 0.51 } },
+      },
     ],
   },
   {
@@ -316,6 +368,13 @@ export const CATALOG: CatalogModel[] = [
         shape: "gemini-omni",
         endpoints: { text: "google/gemini-omni-flash/v1.1/text-to-video", start: "google/gemini-omni-flash/v1.1/image-to-video" },
         price: { perSecond: 0.03, finalPerSecond: 0.15 },
+      },
+      // Runway's gemini_omni_flash_1.1: 3.4 credits a second at 360p and 15 at 1080p, and 1 for a start frame.
+      {
+        via: "runway",
+        shape: "gemini_omni_flash_1.1",
+        endpoints: { text: "gemini_omni_flash_1.1", start: "gemini_omni_flash_1.1" },
+        price: { perSecond: 0.034, finalPerSecond: 0.15 },
       },
     ],
   },
@@ -370,7 +429,17 @@ export const CATALOG: CatalogModel[] = [
     aspects: ["16:9", "9:16", "1:1"],
     wait: 180,
     // fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video: $0.112 a second with its own sound off. Only from a picture.
-    routes: [{ via: "fal", shape: "kling-3", endpoints: { start: "fal-ai/kling-video/v3/pro/image-to-video" }, price: { perSecond: 0.112 } }],
+    routes: [
+      { via: "fal", shape: "kling-3", endpoints: { start: "fal-ai/kling-video/v3/pro/image-to-video" }, price: { perSecond: 0.112 } },
+      // Runway's kling3.0_pro: 12 credits a second with its own sound off, at 1080p. From a prompt alone there too.
+      {
+        via: "runway",
+        shape: "kling3.0",
+        endpoints: { text: "kling3.0_pro", start: "kling3.0_pro" },
+        price: { perSecond: 0.12 },
+        note: "Makes a take from a prompt alone here, as well as from a board.",
+      },
+    ],
   },
   {
     id: "kling-2.5-turbo",
@@ -391,6 +460,8 @@ export const CATALOG: CatalogModel[] = [
         endpoints: { text: "fal-ai/kling-video/v2.5-turbo/pro/text-to-video", start: "fal-ai/kling-video/v2.5-turbo/pro/image-to-video" },
         price: { perSecond: 0.07 },
       },
+      // Runway's kling2.5_turbo_pro: 12 credits a second.
+      { via: "runway", shape: "kling2.5_turbo_pro", endpoints: { text: "kling2.5_turbo_pro", start: "kling2.5_turbo_pro" }, price: { perSecond: 0.12 } },
     ],
   },
   {

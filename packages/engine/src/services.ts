@@ -100,13 +100,13 @@ export const SERVICES: Service[] = [
   {
     id: "runway",
     label: "Runway",
-    does: "Runway's own models and others' (Kling, Seedance) on one key. The key can be saved now; beatsheet can't make anything with it yet.",
-    // Nothing runs through Runway until it has routes in the catalog, so it unlocks nothing and isn't offered as a provider.
-    unlocks: [],
-    keyUrl: "https://dev.runwayml.com",
+    does: "Other makers' models on one key: video (Kling, Seedance, Wan, MiniMax H3, Gemini Omni) and images (Nano Banana, GPT Image, Muse Image). A take its moderation turns down is still charged.",
+    unlocks: ["video", "images"],
+    keyUrl: "https://dev.runway.com",
+    // The organization reads the account without starting anything. Its balance is in credits of a cent each.
     verify: (key) =>
       tryKey("https://api.dev.runwayml.com/v1/organization", { Authorization: `Bearer ${key}`, "X-Runway-Version": "2024-11-06" }, (b) =>
-        b.creditBalance !== undefined ? `${num(b.creditBalance)} credits` : "Key works",
+        typeof b.creditBalance === "number" ? `Key works · $${num(b.creditBalance / 100)} to spend` : "Key works",
       ),
   },
   {
@@ -131,7 +131,7 @@ export const SERVICES: Service[] = [
     id: "replicate",
     label: "Replicate",
     does: "Almost any public model on one key. The key can be saved now; beatsheet can't make anything with it yet.",
-    // As Runway: no routes in the catalog yet.
+    // Nothing runs through Replicate until it has routes in the catalog, so it unlocks nothing and isn't offered as a provider.
     unlocks: [],
     keyUrl: "https://replicate.com/account/api-tokens",
     verify: (key) => tryKey("https://api.replicate.com/v1/account", { Authorization: `Bearer ${key}` }, (b) => (b.username ? `Signed in as ${b.username}` : "Key works")),
