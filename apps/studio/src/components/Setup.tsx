@@ -4,7 +4,7 @@ import { AGENT_NAMES, AGENT_ORDER, CAPABILITY_LABELS, timeAgo, OS, WINDOWS } fro
 import { actions, useStore, type State } from "../store";
 import { Mark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
-import { MakeSection, useMakeSummary } from "./MakeSettings";
+import { MakeSection, ProvidersSetup, useMakeSummary } from "./MakeSettings";
 import { TranscribeSection, useTranscribeSummary } from "./TranscribeSettings";
 import { RestoreSection, useRestoreSummary } from "./RestoreSettings";
 
@@ -22,9 +22,10 @@ const ABOUT = {
   agent: "The agent edits your videos with you, on your own account. Make one the default; you can switch any time from the top bar.",
   mac: `Free and private: these run on your ${OS.computer}, and nothing leaves it.`,
   services: WINDOWS ? "Each key you add gives the agent more to work with. Keys are checked, then kept in Windows Credential Manager." : "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
+  providers: "For shots that are made rather than filmed. Choose the service you already use; cutting your own footage needs none.",
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
   abilities: "Everything the agent can do with what's set up now.",
-  make: "What making pictures and video may spend, and which models Auto tries first.",
+  make: "Which service makes your stills and which your video, what making may spend, and which models Auto tries first.",
   transcribe: "Turning what's said in a clip into words with their times: on this computer, or a service with your key.",
   restore: "Old footage at its best: voices cleaned of hiss and hum, and the picture steadier, sharper and smoother. On this computer, or a service with your key.",
 };
@@ -70,8 +71,12 @@ export function SetupScreen({ setup }: { setup: SetupInfo }) {
           <Step n={2} title={`On ${OS.here}`} note="optional" about={ABOUT.mac}>
             <LocalSection setup={setup} />
           </Step>
-          <Step n={3} title="Media services" note="optional" about={ABOUT.services}>
-            <ServicesSection services={setup.services} />
+          <Step n={3} title="Making stills and video" note="optional" about={ABOUT.providers}>
+            <ProvidersSetup />
+          </Step>
+          {/* The services that make neither (voices, music, sound); the ones above take their keys where they're chosen. */}
+          <Step n={4} title="Other services" note="optional" about={ABOUT.services}>
+            <ServicesSection services={setup.services.filter((s) => s.unlocks.length && !s.unlocks.some((c) => c === "images" || c === "video"))} />
           </Step>
           <section className="setup-summary">
             <h3>What your agent can do</h3>

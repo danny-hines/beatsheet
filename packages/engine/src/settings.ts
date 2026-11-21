@@ -42,6 +42,12 @@ export type Settings = {
   /** Making footage: the models Auto tries first for each kind of thing (catalog ids), and what the agent may spend in a turn before asking. */
   make?: {
     ranking?: Partial<Record<string, string[]>>;
+    /**
+     * The one service in use for stills and the one for video, of those connected (a key's service id, or a plan's:
+     * "fal", "chatgpt"). Models run there or on the person's own hardware and nowhere else, so nothing is spent on a
+     * service they didn't choose. Unset: the engine's guess (`providerInUse`), until they pick.
+     */
+    provider?: { image?: string; video?: string };
     turnBudgetUsd?: number;
     /** A hard limit on what making may spend in all, from `since` on, whoever asks: the person, the agent or a script. */
     limit?: { usd: number; since: string };

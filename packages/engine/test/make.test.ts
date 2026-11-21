@@ -15,7 +15,7 @@ process.env.BEATSHEET_MAKE_POLL_MS = "5";
 
 // Keys come from the Keychain, and a key there means the service is connected: fal, and the two that make stills in
 // one request, OpenAI and Meta. A test can connect more (Gemini), and set a spending limit.
-const settings = vi.hoisted(() => ({ make: undefined as undefined | { limit?: { usd: number; since: string } }, services: {} as Record<string, { addedAt: string }> }));
+const settings = vi.hoisted(() => ({ make: undefined as undefined | { limit?: { usd: number; since: string }; provider?: { image?: string; video?: string } }, services: {} as Record<string, { addedAt: string }> }));
 vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
@@ -24,6 +24,8 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
     readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" }, ...settings.services }, checks: {}, make: settings.make }),
   };
 });
+/** Chooses the service in use for stills or for video, as the person does in Settings → Making. */
+const provider = (p: { image?: string; video?: string }) => void (settings.make = { ...settings.make, provider: { ...settings.make?.provider, ...p } });
 // Plans (ChatGPT through Codex, Muse Code) aren't signed in unless a test says so, and make their picture without the CLI.
 const plans = vi.hoisted(() => ({ ready: [] as string[], asks: [] as { route: string; prompt: string; aspect?: string; refs?: string[] }[] }));
 vi.mock("../src/plans.ts", async (importOriginal) => {
@@ -183,6 +185,7 @@ beforeEach(() => {
   plans.ready = [];
   plans.asks = [];
   settings.services = {};
+  settings.make = undefined;
   polls.clear();
   const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
   rmSync(dir, { recursive: true, force: true });
@@ -301,13 +304,18 @@ describe("Seedance 2.5 through Tein", () => {
     await make.driveJobs(PROJECT);
   };
 
-  it("runs there when a Tein key is added, as the cheaper place: the board sent up, the job followed, and what Tein charged kept", async () => {
+  it("runs there once Tein is the video provider, not just connected: the board sent up, the job followed, and what Tein charged kept", async () => {
     await board();
     const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
     expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
+    // A key for the cheaper place changes nothing by itself: fal is still the provider in use.
     settings.services = { tein: { addedAt: "2026-11-19" } };
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
+    expect(() => make.startMake(PROJECT, { ...ask, via: "tein" })).toThrow("Runs on Tein, which is connected but not your video provider");
+    provider({ video: "tein" });
     const { fit, jobs } = make.startMake(PROJECT, ask);
-    expect(fit).toMatchObject({ model: "seedance-2.5", route: "tein", where: "Tein", endpoint: "seedance-2-5", also: [{ route: "fal" }] });
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "tein", where: "Tein", endpoint: "seedance-2-5" });
+    expect(fit).not.toHaveProperty("also");
     expect(fit.usd).toBeCloseTo(0.1355 * fit.seconds!, 3);
     await make.driveJobs(PROJECT);
 
@@ -330,6 +338,9 @@ describe("Seedance 2.5 through Tein", () => {
     expect(() => make.startMake(PROJECT, ask)).toThrow("Seedance 2.5 can't make this: With real people in it, runs only on Tein");
     settings.services = { tein: { addedAt: "2026-11-19" } };
     expect(() => make.startMake(PROJECT, { ...ask, via: "fal" })).toThrow("Won't draw real people on fal, and the cat is from your own photos; it does on Tein");
+    // Connected isn't in use: it says where it would run, and leaves switching to the person.
+    expect(() => make.startMake(PROJECT, ask)).toThrow("With real people in it, runs only on Tein, which is connected but not your video provider");
+    provider({ video: "tein" });
     const { fit } = make.startMake(PROJECT, ask);
     expect(fit).toMatchObject({ route: "tein" });
     expect(fit).not.toHaveProperty("also");
@@ -344,6 +355,7 @@ describe("Seedance 2.5 through Tein", () => {
   it("sends a request again under the same key after a stop, so it isn't made twice, and under a new one when it's tried again", async () => {
     await board();
     settings.services = { tein: { addedAt: "2026-11-19" } };
+    provider({ video: "tein" });
     const [job] = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" }).jobs;
     await make.driveJobs(PROJECT);
     // Pretend the process stopped after Tein took the request but before the job was saved with it.
@@ -406,6 +418,7 @@ describe("keeping a blockout's camera", () => {
     const move = (id: string, duration: number) => ({ id, track: "pic", duration, content: { kind: "coded" as const, component: "scenes/Blockout.tsx#Blockout" }, fidelity: "board" as const });
     store.updateFile(PROJECT, (d) => void d.cuts.push({ ...structuredClone(d.cuts[0]!), id: "blockout", name: "Blockout", shots: [move("orbit", 4), move("push", 3)] }));
     settings.services = { tein: { addedAt: "2026-11-19" } };
+    provider({ video: "tein" });
   };
   const board = async () => {
     make.startMake(PROJECT, { op: "image", shot: "s2" });
@@ -454,9 +467,14 @@ describe("keeping a blockout's camera", () => {
     const { req, choices } = make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final", camera: { cut: "blockout" } });
     expect(req).toMatchObject({ camera: { cut: "blockout", format: "vertical", from: 0, to: 7 }, seconds: 7 });
     expect(req.camera).not.toHaveProperty("shots");
-    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7, also: [{ route: "fal" }] });
+    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7 });
+    expect(choices.auto).not.toHaveProperty("also");
     expect(choices.auto!.usd).toBeCloseTo(14 * 0.4595, 3);
-    expect(choices.auto!.also![0]!.usd).toBeCloseTo(14 * 0.6964, 3);
+    // The same shot with fal as the video provider, at fal's rate.
+    provider({ video: "fal" });
+    const onFal = make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final", camera: { cut: "blockout" } }).choices.auto!;
+    expect(onFal).toMatchObject({ model: "seedance-2.5", route: "fal" });
+    expect(onFal.usd).toBeCloseTo(14 * 0.6964, 3);
     expect(choices.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't keep the camera of a clip it's given" } });
   });
 
@@ -949,6 +967,7 @@ describe("takes that finish together, and trying again", () => {
 
 describe("stills from services that answer in one request", () => {
   it("makes a board with GPT Image at the shot's shape, saves the picture, and counts what it actually cost", async () => {
+    provider({ image: "openai" });
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
     expect(fit).toMatchObject({ model: "gpt-image", route: "openai", endpoint: "gpt-image-2.6-flare", aspect: "9:16", usd: 0.04 });
     await make.driveJobs(PROJECT);
@@ -965,10 +984,12 @@ describe("stills from services that answer in one request", () => {
     expect(shot("s2")).toMatchObject({ fidelity: "board", content: { kind: "generated", take: "s2-take", provider: "openai" } });
   });
 
-  it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and with the key when asked", async () => {
+  it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and on the key once that's the provider", async () => {
     plans.ready = ["chatgpt"];
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.04 }, { route: "fal", usd: 0.04 }] });
+    // Until the person chooses, stills come from the plan they're signed in on: it costs nothing more.
+    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0 });
+    expect(fit).not.toHaveProperty("also");
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(plans.asks).toEqual([{ route: "chatgpt", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);
@@ -977,7 +998,9 @@ describe("stills from services that answer in one request", () => {
     expect(take.provenance).toMatchObject({ provider: "chatgpt", model: "gpt-image", costUsd: 0 });
     expect(take.path).toMatch(/\.png$/);
 
-    make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", via: "openai", count: 1 });
+    expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", via: "openai", count: 1 })).toThrow("Runs on OpenAI, which is connected but not your stills provider");
+    provider({ image: "openai" });
+    make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", count: 1 });
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(1);
     expect(make.listJobs(PROJECT)[1]).toMatchObject({ status: "done", route: "openai" });
@@ -1006,6 +1029,7 @@ describe("stills from services that answer in one request", () => {
     });
     const prompt = "@a, @b, @c, @d and @e at the table";
     expect(make.makeChoices(PROJECT, { op: "image", prompt }).req.refs).toEqual(["a-pic", "b-pic", "c-pic", "d-pic"]);
+    provider({ image: "meta" });
     const { jobs } = make.startMake(PROJECT, { op: "image", prompt, model: "muse-image", count: 1 });
     expect(jobs[0]!.request.refs).toEqual(["a-pic", "b-pic", "c-pic", "d-pic", "e-pic"]);
     expect(jobs[0]!.request.sent).toContain("Reference pictures, in order: A, B, C, D, E.");
@@ -1019,6 +1043,7 @@ describe("stills from services that answer in one request", () => {
       d.cast!.push({ id: "noir", name: "Film noir", kind: "style", about: "black and white", images: ["noir-pic"] });
       d.look = { ...(d.look ?? {}), style: "noir" };
     });
+    provider({ image: "meta" });
     const { jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", model: "muse-image", count: 1 });
     expect(jobs[0]!.request.refs).toEqual(["cat-photo", "noir-pic"]);
     expect(jobs[0]!.request.sent).toMatch(/The reference photos show the cat: keep .* exactly\. The last reference picture shows the style to draw it in, not who or what it is\.$/);
@@ -1027,6 +1052,7 @@ describe("stills from services that answer in one request", () => {
 
   it("makes Nano Banana on a Gemini key, with the pictures inline and the shape in imageConfig", async () => {
     settings.services = { gemini: { addedAt: "2026-10-29" } };
+    provider({ image: "gemini" });
     const { fit } = make.startMake(PROJECT, { op: "image", sheet: "cat", model: "nano-banana", count: 1 });
     expect(fit).toMatchObject({ route: "gemini", where: "Google Gemini", endpoint: "gemini-2.5-flash-image", usd: 0.039 });
     await make.driveJobs(PROJECT);
@@ -1045,6 +1071,7 @@ describe("stills from services that answer in one request", () => {
   });
 
   it("gives Muse Image the cast's pictures as data in JSON, and GPT Image as files in a form", async () => {
+    provider({ image: "meta" });
     make.startMake(PROJECT, { op: "image", sheet: "cat", model: "muse-image", count: 1 });
     await make.driveJobs(PROJECT);
     expect(seen.direct[0]!.url).toBe("/direct/meta/images/edits");
@@ -1053,6 +1080,7 @@ describe("stills from services that answer in one request", () => {
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", usd: 0.01 });
     expect(store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cat")!.sheet).toBe("cat-sheet");
 
+    provider({ image: "openai" });
     make.startMake(PROJECT, { op: "image", shot: "s2", prompt: "@cat strolls down @alley", model: "gpt-image" });
     await make.driveJobs(PROJECT);
     expect(seen.direct[1]!.url).toBe("/direct/openai/images/edits");
@@ -1063,6 +1091,7 @@ describe("stills from services that answer in one request", () => {
 
   it("says why when the service won't make it, and sends again after a hiccup", async () => {
     refuse = "alley";
+    provider({ image: "meta" });
     make.startMake(PROJECT, { op: "image", shot: "s2", model: "muse-image" });
     await make.driveJobs(PROJECT);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "failed", error: "Your request was rejected by the safety system." });
@@ -1079,6 +1108,7 @@ describe("stills from services that answer in one request", () => {
       return real(url, init);
     });
     refuse = undefined;
+    provider({ image: "meta" });
     make.startMake(PROJECT, { op: "image", shot: "s1", model: "muse-image" });
     await make.driveJobs(PROJECT);
     spy.mockRestore();
@@ -1087,6 +1117,7 @@ describe("stills from services that answer in one request", () => {
 
   it("can't pick up a still that was being made when the engine stopped, so it counts it and says so", async () => {
     const since = new Date().toISOString();
+    provider({ image: "openai" });
     const [job] = make.startMake(PROJECT, { op: "image", shot: "s1", model: "gpt-image" }).jobs;
     await make.driveJobs(PROJECT);
     // As if the engine had stopped while it waited for the answer: running, no picture, a dead process's lock.

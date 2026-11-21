@@ -56,7 +56,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { absentFrom, cancelJobs, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, providerInUse, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -688,15 +688,15 @@ const commercialLine = (c: Commercial | undefined) => (c ? ` ${commercialWords(c
 const fitLine = (f: Fit) => {
   const note = CATALOG.find((m) => m.id === f.model)?.note;
   if (!f.ok) return `- ${f.label} (${f.model}): ${f.why.reason}`;
-  const also = f.also?.length ? ` Also on ${f.also.map((x) => `${x.where} (via "${x.route}", ${costAt(x)}${x.commercial ? `, ${commercialWords(x.commercial)}` : ""})`).join(" and ")}.` : "";
-  return `- ${f.label} (${f.model}) on ${f.where} (via "${f.route}"): ${[f.seconds && `${f.seconds}s`, f.aspect, costAt(f), minutes(f.wait)].filter(Boolean).join(", ")}.${commercialLine(f.commercial)}${also} ${note ?? ""}`.trimEnd();
+  const also = f.also?.length ? ` Also on ${f.also.map((x) => `${x.where} (via "${x.route}", ${costAt(x)}${x.commercial ? `, ${commercialWords(x.commercial)}` : ""}${x.note ? `; ${x.note}` : ""})`).join(" and ")}.` : "";
+  return `- ${f.label} (${f.model}) on ${f.where} (via "${f.route}"): ${[f.seconds && `${f.seconds}s`, f.aspect, costAt(f), minutes(f.wait)].filter(Boolean).join(", ")}.${commercialLine(f.commercial)}${f.note ? ` ${f.note}` : ""}${also} ${note ?? ""}`.trimEnd();
 };
 
 server.registerTool(
   "list_models",
   {
     description:
-      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against the person's services: the ones ready to use with what each would cost and how long it takes (and when what it makes there isn't free to use commercially, under its license), the ones that need a key the person hasn't added, and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one unless you name another.",
+      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against the one service the person has chosen for stills or for video (and their own graphics card, which runs alongside it): the ones ready to use with what each would cost and how long it takes (and when what it makes there isn't free to use commercially, under its license), the ones that need something from the person (a key, or switching to another service they've connected: only they switch, so ask in hand_off rather than working around it), and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one unless you name another.",
     inputSchema: { ...makeArgs, count: z.number().int().min(1).max(4).optional().describe("How many takes, for the estimate (default 1)") },
   },
   async ({ project: id, ...args }) => {
@@ -723,8 +723,11 @@ server.registerTool(
       `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
     ];
     out.push(...absent);
+    const using = providerInUse(req.op);
+    const kind = req.op === "image" ? "Stills" : "Video";
+    out.push(using ? `${kind} ${req.op === "image" ? "are" : "is"} made on ${connectedStates()[using]!.label}, the person's choice in Settings → Making, and on their own graphics card where it's connected. Nothing is made on another service until they switch to it.` : `No service is connected for ${kind.toLowerCase()} yet.`);
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
-    if (choices.setup.length) out.push("Needs something the person has to set up (a key in Settings → Media services; ComfyUI in Settings → Making):", ...choices.setup.map(fitLine));
+    if (choices.setup.length) out.push("Needs something from the person (switching the service in use, or connecting ComfyUI, in Settings → Making; a key in Settings → Media services):", ...choices.setup.map(fitLine));
     if (choices.unfit.length) out.push("Can't make this:", ...choices.unfit.map(fitLine));
     return text(out.join("\n"));
   },
@@ -743,7 +746,7 @@ server.registerTool(
         .array(z.string())
         .optional()
         .describe("Several model ids from list_models instead of model: the same request made with each, count takes apiece, to compare (a cast member's sheets from two or three still models) and keep the best"),
-      via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one place (a plan like "chatgpt" or a key like "openai"); default the cheapest ready one'),
+      via: z.string().optional().describe('Where to make it, when list_models says a model runs in two places: the service in use, or "comfy" for the person\'s own graphics card (the default when it can make it, as it costs nothing). Another connected service isn\'t used until the person switches to it'),
       anyway: z.boolean().optional().describe("Make a clip that was held because a character it's about isn't in its frames: you've looked and they are there (an edit that didn't name them), or they aren't meant to be seen"),
     },
   },

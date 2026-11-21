@@ -1051,8 +1051,14 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-ranking ol { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
 .make-ranking li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 10px; align-items: baseline; }
 .make-ranking-move { white-space: nowrap; }
-.make-plans { margin: 4px 0 6px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
-.make-plans li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.make-providers h5 { margin: 6px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 600; }
+.make-providers ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.make-providers li { padding: 5px 8px; border: 1px solid transparent; border-radius: 8px; }
+.make-providers li.on { background: var(--panel); border-color: var(--line); }
+.make-providers label.check-row { cursor: pointer; }
+.make-provider-models { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.make-provider-status, .make-provider-key { margin: 2px 0 0 24px; }
+.make-provider-key { display: flex; flex-direction: column; gap: 4px; }
 
 /* Make mode: the composer, the board of takes (a row per request, what was made from a take nested under it) and the
    queue. It takes the middle of the window over, where the player and the timeline are in Edit. */

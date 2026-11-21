@@ -1,19 +1,20 @@
 /**
  * Settings → Making: the hard limit on what making may spend in all (the person's, the agent's and any script's
- * takes alike), what the agent may spend in a turn before it asks, the order Auto tries models in, the plans that
- * make stills without a key, and ComfyUI for the models that run on the person's own graphics card.
+ * takes alike), what the agent may spend in a turn before it asks, the one service in use for stills and the one for
+ * video, ComfyUI for the models that run on the person's own graphics card, and the order Auto tries models in.
  */
-import type { ComfyCheck, InstallStatus } from "@beatsheet/engine";
+import type { ComfyCheck, InstallStatus, ProviderRow } from "@beatsheet/engine";
 import { CATALOG, commercialWords, type MakeOp, type ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
-import { OS } from "../lib";
+import { OS, WINDOWS } from "../lib";
+import { actions } from "../store";
 
-type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; ranking?: Partial<Record<string, string[]>>; spent?: number; plans?: ({ id: string } & ServiceState)[] };
+type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; ranking?: Partial<Record<string, string[]>>; spent?: number; plans?: ({ id: string } & ServiceState)[]; providers?: Record<MakeOp, ProviderRow[]> };
 
-/** What each plan makes, and how to get it going. */
-const PLAN_NOTES: Record<string, { makes: string; setUp: string }> = {
-  chatgpt: { makes: "GPT Image stills, through Codex", setUp: "Sign in to Codex with ChatGPT (Settings → Agent) to use it." },
-  "muse-code": { makes: "Muse Image stills, through Muse Code", setUp: "Sign in to Muse Code on a subscription (Settings → Agent) to use it." },
+/** How to get each plan going. A still on a plan is one short turn of its agent, so it's slower than a key. */
+const PLAN_NOTES: Record<string, string> = {
+  chatgpt: "Sign in to Codex with ChatGPT (Settings → Agent) to use it.",
+  "muse-code": "Sign in to Muse Code on a subscription (Settings → Agent) to use it.",
 };
 
 async function save(change: Record<string, unknown>): Promise<MakeSettings> {
@@ -66,22 +67,7 @@ export function MakeSection() {
           <span>a turn before it asks you.</span>
         </div>
       </section>
-      {!!s.plans?.length && (
-        <section>
-          <h4>Your plans</h4>
-          <ul className="make-plans">
-            {s.plans.map((p) => (
-              <li key={p.id}>
-                <span>
-                  {p.label} <span className="dim small">· {PLAN_NOTES[p.id]?.makes}</span>
-                </span>
-                <span className={`small ${p.state === "ready" ? "" : "dim"}`}>{p.state === "ready" ? "Ready" : p.state === "failing" ? p.detail : PLAN_NOTES[p.id]?.setUp}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="dim small">A still made on a plan comes out of its allowance, not your money. Where you also have a key, the model picker offers both, and the plan is used unless you pick the key.</p>
-        </section>
-      )}
+      {s.providers && <ProvidersSection providers={s.providers} onChange={setS} />}
       <ComfySection />
       <section>
         <h4>What Auto tries first</h4>
@@ -89,6 +75,97 @@ export function MakeSection() {
         <Ranking op="video" label="Video" order={s.ranking?.video} onChange={(ids) => change({ ranking: { video: ids } })} />
         <p className="dim small">For video, Auto keeps to the quality asked for (roughs or finals) and goes down this list within it.</p>
       </section>
+    </div>
+  );
+}
+
+/**
+ * Where stills and video are made: one service for each, chosen from every one they could come from. A plan can be
+ * chosen once its agent is signed in; a service with a key asks for the key the first time. Nothing is made on a
+ * service that isn't chosen, however many are connected.
+ */
+export function ProvidersSection({ providers, onChange }: { providers: Record<MakeOp, ProviderRow[]>; onChange?: (s: MakeSettings) => void }) {
+  const choose = (op: MakeOp, id: string) => void save({ provider: { [op]: id } }).then(onChange);
+  return (
+    <section>
+      <h4>Where things are made</h4>
+      <p className="dim small">One service makes your stills and one your video: the ones you choose here. Nothing is made on another, or spent there, until you switch. Your own hardware runs alongside whichever you choose.</p>
+      <Providers label="Stills" op="image" rows={providers.image} choose={choose} />
+      <Providers label="Video" op="video" rows={providers.video} choose={choose} />
+    </section>
+  );
+}
+
+/** Loads the providers by itself, for the first-launch screen. */
+export function ProvidersSetup() {
+  const [s, setS] = useState<MakeSettings>();
+  useEffect(() => void fetch("/api/settings/make").then((r) => r.json() as Promise<MakeSettings>).then(setS), []);
+  return s?.providers ? <ProvidersSection providers={s.providers} onChange={setS} /> : <p className="dim small">Loading…</p>;
+}
+
+function Providers({ label, op, rows, choose }: { label: string; op: MakeOp; rows: ProviderRow[]; choose: (op: MakeOp, id: string) => void }) {
+  /** A service whose key is being added. */
+  const [adding, setAdding] = useState<string>();
+  return (
+    <div className="make-providers">
+      <h5>{label}</h5>
+      <ul>
+        {rows.map((r) => {
+          const connected = r.state !== "missing";
+          const status = r.state === "failing" ? r.detail : connected ? (r.kind === "plan" ? "Signed in · from its allowance, a picture at a time" : (r.detail ?? "Key saved")) : r.kind === "plan" ? PLAN_NOTES[r.id] : "";
+          return (
+            <li key={r.id} className={r.inUse ? "on" : ""}>
+              <label className="check-row">
+                <input type="radio" name={`provider-${op}`} checked={r.inUse} disabled={!connected && r.kind === "plan"} onChange={() => (connected ? choose(op, r.id) : setAdding(r.id))} />
+                <span>{r.label}</span>
+                <span className="pill">{r.kind === "plan" ? "Subscription" : "API key"}</span>
+                <span className="dim small make-provider-models" title={r.models.join(", ")}>
+                  {r.models.join(", ")}
+                </span>
+              </label>
+              {status && <div className={`small make-provider-status ${r.state === "failing" ? "warn" : "dim"}`}>{status}</div>}
+              {adding === r.id && !connected && <ProviderKey row={r} done={() => (setAdding(undefined), choose(op, r.id))} />}
+            </li>
+          );
+        })}
+      </ul>
+      {!rows.length && <p className="dim small">Nothing makes this yet.</p>}
+    </div>
+  );
+}
+
+/** A key for a service picked as a provider: checked, kept in the Keychain, and then the service is the one in use. */
+function ProviderKey({ row, done }: { row: ProviderRow; done: () => void }) {
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  const add = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const r = (await fetch(`/api/settings/service/${row.id}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key }) }).then((x) => x.json())) as { ok: boolean; detail: string };
+      if (!r.ok) return setError(r.detail);
+      await actions.loadSettings();
+      done();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="make-provider-key">
+      <div className="setup-service-key">
+        <input type="password" autoFocus placeholder={`Paste your ${row.label} API key`} value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && key.trim() && void add()} />
+        <button onClick={() => void add()} disabled={!key.trim() || busy}>
+          {busy ? "Checking…" : "Verify & use"}
+        </button>
+        {row.keyUrl && (
+          <a href={row.keyUrl} target="_blank" rel="noreferrer" className="small">
+            Get a key ↗
+          </a>
+        )}
+      </div>
+      <div className="dim small">Checked with a request that spends nothing, then kept {WINDOWS ? "in Credential Manager" : "in your Keychain"}.</div>
+      {error && <div className="warn small">{error}</div>}
     </div>
   );
 }

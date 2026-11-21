@@ -14,7 +14,7 @@ export * from "./events.ts";
 export { serveApp } from "./app-server.ts";
 export { ELEVEN_MODELS, type DesignPreview, type VoiceInfo, type VoicesInfo } from "./voices.ts";
 export { KOKORO_VOICES, kokoroReady, kokoroStatus, type KokoroStatus } from "./kokoro.ts";
-export type { MakeAsk, MakeJob } from "./make.ts";
+export type { MakeAsk, MakeJob, ProviderRow } from "./make.ts";
 export type { ModelSize, WhisperStatus } from "./whispercpp.ts";
 export type { ToolId, ToolStatus } from "./fixtools.ts";
 export type { ComfyCheck, InstallStatus } from "./comfy.ts";

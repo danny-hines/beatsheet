@@ -293,6 +293,7 @@ export const CATALOG: CatalogModel[] = [
         endpoints: { text: "seedance-2-5", start: "seedance-2-5", refs: "seedance-2-5", camera: "seedance-2-5" },
         price: { perSecond: 0.1355, finalPerSecond: 0.7659, camera: { perSecond: 0.0809, finalPerSecond: 0.4595, least: 2 / 3 } },
         realPeople: true,
+        note: "Keeps the faces of real people from your own photos, which Seedance won't draw elsewhere; Tein's terms want each person's consent.",
       },
     ],
   },

@@ -30,7 +30,7 @@ import { narrate } from "./narrate.ts";
 import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
-import { cancelJobs, driveJobs, estimate, listJobs, makeChoices, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -458,17 +458,23 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, saved);
     }
     // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, the order
-    // Auto tries models in, and the plans that make stills without a key.
+    // Auto tries models in, and the one service in use for stills and for video, of every one they could come from.
     const plans = () => {
       const states = planStates();
       return PLANS.map((p) => ({ id: p.id, ...states[p.id]! }));
     };
+    const providers = () => ({ image: providerRows("image"), video: providerRows("video") });
     if (id === "make" && req.method === "GET") {
       const make = readSettings().make ?? {};
-      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans() });
+      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans(), providers: providers() });
     }
     if (id === "make" && req.method === "POST") {
-      const change = body as unknown as { limit?: { usd: number; since?: string } | null; turnBudgetUsd?: number; ranking?: Record<string, string[]> };
+      const change = body as unknown as { limit?: { usd: number; since?: string } | null; turnBudgetUsd?: number; ranking?: Record<string, string[]>; provider?: { image?: string | null; video?: string | null } };
+      try {
+        for (const op of ["image", "video"] as const) if (change.provider?.[op] !== undefined) chooseProvider(op, change.provider[op]!);
+      } catch (err) {
+        return json(res, 400, { error: said(err) });
+      }
       const saved = updateSettings((s) => {
         const make = (s.make ??= {});
         if (change.limit === null) delete make.limit;
@@ -477,7 +483,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         if (change.ranking) make.ranking = { ...(make.ranking ?? {}), ...change.ranking };
       });
       const make = saved.make ?? {};
-      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans() });
+      return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans(), providers: providers() });
     }
     // ComfyUI, for the models that run on the person's own graphics card: connecting it (checked first, like a key),
     // checking it again, and what each workflow here would need from it.

@@ -38,8 +38,8 @@ export const pickOf = (value: string): { model?: string; via?: string } => {
   const [model, via] = value.split("@");
   return { model, ...(via ? { via } : {}) };
 };
-/** A ready model in each place it can run: itself (the cheapest), then the others. */
-const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, commercial: o.commercial, also: undefined }))];
+/** A ready model in each place it can run: on the person's own hardware, and on the service in use. */
+const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, commercial: o.commercial, note: o.note, also: undefined }))];
 /** The fit for a pick (Auto when there's none), or nothing when that model can't make this now. */
 export function fitOf(choices: Choices | undefined, value: string): FitOk | undefined {
   if (!choices || !value) return choices?.auto;
@@ -405,6 +405,9 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   );
 }
 
+/** A model that runs on a service the person has connected but isn't using for this: theirs to switch to. */
+const elsewhere = (f: Fit) => !f.ok && f.why.kind === "switch";
+
 /** Auto, the ready models with what each costs, then the ones that can't be used, grayed out with why. */
 export function ModelSelect({ choices, model, setModel }: { choices?: Choices; model: string; setModel: (m: string) => void }) {
   return (
@@ -413,23 +416,34 @@ export function ModelSelect({ choices, model, setModel }: { choices?: Choices; m
       {choices?.ready.flatMap((f) =>
         f.also?.length
           ? placesOf(f).map((x) => (
-              <option key={`${x.model}@${x.route}`} value={`${x.model}@${x.route}`} title={x.commercial?.why}>
+              <option key={`${x.model}@${x.route}`} value={`${x.model}@${x.route}`} title={[x.note, x.commercial?.why].filter(Boolean).join(" ") || undefined}>
                 {fitLabel(x, true)}
               </option>
             ))
           : [
-              <option key={f.model} value={f.model} title={f.commercial?.why}>
+              <option key={f.model} value={f.model} title={[f.note, f.commercial?.why].filter(Boolean).join(" ") || undefined}>
                 {fitLabel(f)}
               </option>,
             ],
       )}
-      {!!choices?.setup.length && (
-        <optgroup label="Needs a key, a connection or an install">
-          {choices.setup.map((f) => (
+      {!!choices?.setup.some(elsewhere) && (
+        <optgroup label="On a service you aren't using (Settings → Making)">
+          {choices.setup.filter(elsewhere).map((f) => (
             <option key={f.model} disabled>
               {fitLabel(f)}
             </option>
           ))}
+        </optgroup>
+      )}
+      {!!choices?.setup.some((f) => !elsewhere(f)) && (
+        <optgroup label="Needs a key, a connection or an install">
+          {choices.setup
+            .filter((f) => !elsewhere(f))
+            .map((f) => (
+              <option key={f.model} disabled>
+                {fitLabel(f)}
+              </option>
+            ))}
         </optgroup>
       )}
       {!!choices?.unfit.length && (
@@ -455,13 +469,19 @@ export function WhyNot({ choices: all, only }: { choices?: Choices; only?: (mode
   // ComfyUI to connect, or model files to fetch into it, are in Settings → Making; keys are in Media services.
   const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
   const comfy = choices.setup.some(onComfy);
-  const keys = choices.setup.some((f) => !onComfy(f));
+  const switching = choices.setup.some(elsewhere);
+  const keys = choices.setup.some((f) => !onComfy(f) && !elsewhere(f));
   return (
     <p className="dim small">
       {[...choices.unfit, ...choices.setup].map((f) => (!f.ok ? `${f.label}: ${f.why.reason}` : "")).join(". ")}.{" "}
       {keys && (
         <button className="link small" onClick={() => actions.setSettingsOpen(true, "services")}>
           Media services
+        </button>
+      )}{" "}
+      {switching && (
+        <button className="link small" onClick={() => actions.setSettingsOpen(true, "make")}>
+          Choose the service in use
         </button>
       )}{" "}
       {comfy && (
