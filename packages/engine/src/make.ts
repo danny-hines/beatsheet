@@ -92,6 +92,7 @@ import { DIRECT, directImage } from "./direct.ts";
 import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { teinCancel, teinInput, teinStatus, teinSubmit, teinUpload } from "./tein.ts";
+import { runwayCancel, runwayInput, runwayStatus, runwaySubmit, runwayUpload } from "./runway.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
 import { assetPath, cachePaths, cleanPath, mediaPath, projectDir } from "./paths.ts";
@@ -893,7 +894,7 @@ export async function cancelJobs(projectId: string, ids: string[]): Promise<Make
   const out: MakeJob[] = [];
   for (const job of jobs) {
     const key = keys.get(job.route);
-    if (job.remote && key) await (job.route === "tein" ? teinCancel : falCancel)(key, job.remote);
+    if (job.remote && key) await (job.route === "tein" ? teinCancel : job.route === "runway" ? runwayCancel : falCancel)(key, job.remote);
     if (job.comfy) await comfyCancel(job.comfy.url, job.comfy.id);
     out.push(saveJob(projectId, { ...job, status: "canceled" }));
   }
@@ -1056,6 +1057,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
   }
   if (DIRECT.includes(job.route) || plan) return stepDirect(projectId, job, key);
   if (job.route === "tein" && key) return stepTein(projectId, job, key);
+  if (job.route === "runway" && key) return stepRunway(projectId, job, key);
   if (job.route !== "fal" || !key) throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
   if (!job.remote) {
     const { project, dir } = loadProject(projectId, job.cut);
@@ -1145,12 +1147,67 @@ async function stepTein(projectId: string, job: MakeJob, key: string) {
   await finish(projectId, job, { url: s.url });
 }
 
+/**
+ * A job on Runway (runway.ts): its pictures sent up and the task started, then followed until it's done. Runway says
+ * the most a task may cost when it starts and what it did cost when it ends, which replace the estimate. A task its
+ * moderation turned down is charged all the same, so it's kept as paid for: trying it again asks after the same task,
+ * not for another.
+ */
+async function stepRunway(projectId: string, job: MakeJob, key: string) {
+  if (!job.remote) {
+    const { project, dir } = loadProject(projectId, job.cut);
+    const r = job.request;
+    const picture = (id: string) => {
+      const a = project.assets.find((x) => x.id === id);
+      if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      return a;
+    };
+    const upload = (id: string) => runwayUpload(key, assetPath(project, dir, picture(id)));
+    // A cast member's own photos go cut out, when that can be done here.
+    const uploadRef = async (id: string) => runwayUpload(key, await refFile(project, dir, picture(id).id, r.cast));
+    // A clip from a picture comes out the picture's shape. Where Runway wants a size said even so, it's the one
+    // nearest the picture's (the cut's, when the picture's isn't known), so little is cropped.
+    const first = r.start ? picture(r.start) : undefined;
+    const format = project.formats[0]!;
+    const shape = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
+    const input = runwayInput(job.shape, job.endpoint, {
+      prompt: r.sent ?? r.prompt,
+      quality: job.quality,
+      seconds: r.seconds,
+      aspect: r.aspect ?? shape,
+      start: r.start && (await upload(r.start)),
+      end: r.end && (await upload(r.end)),
+      // A clip's references don't go with a start frame there (runwayInput), so they aren't sent up either.
+      refs: job.op === "video" && r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
+      camera: r.camera && { url: await runwayUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+    });
+    const { remote, usd } = await runwaySubmit(key, input);
+    updateJob(projectId, job, { status: "running", remote, ...(usd !== undefined ? { usd } : {}) });
+    return;
+  }
+  const s = await runwayStatus(key, job.remote);
+  if (s.state !== "done") {
+    if (job.status !== "running" || job.position !== undefined) updateJob(projectId, job, { status: "running", position: undefined });
+    return;
+  }
+  // What it cost counts whether or not it made anything.
+  if (s.usd !== undefined && (s.usd > 0 || !s.error) && (!job.charged || s.usd !== job.usd)) job = updateJob(projectId, job, { charged: true, usd: s.usd });
+  if (s.error) throw new FalError(s.error, true);
+  if (!s.url) throw new FalError("Runway finished but didn't send a file", true);
+  if (!job.charged) job = updateJob(projectId, job, { charged: true });
+  await finish(projectId, job, { url: s.url });
+}
+
 const exec = promisify(execFile);
 
-/** The most a clip to follow may weigh: Tein's API carries about 6 MB in a request, and fal takes a reference video up to 200 MB. */
+/**
+ * The most a clip to follow may weigh: Tein's API carries about 6 MB in a request, and fal and Runway take a reference
+ * video up to 200 MB.
+ */
 const CAMERA_BYTES: Record<string, { most: number; said: string }> = {
   tein: { most: 5.5 * 1024 * 1024, said: "Tein's API carries" },
   fal: { most: 200 * 1024 * 1024, said: "fal takes" },
+  runway: { most: 200 * 1024 * 1024, said: "Runway takes" },
 };
 /** The fewest pixels Seedance takes in a reference video, and the frame rates it takes. */
 const CAMERA_PIXELS = 407_696;

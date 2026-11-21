@@ -141,7 +141,7 @@ export const cameraLine = (camera: FalAsk["camera"], name: string) =>
       : ` ${name} sets the camera: keep its move, its framing, its timing and where its cuts fall.`;
 
 /** Whole seconds, for models that only make those. */
-const whole = (seconds: number | undefined) => Math.ceil((seconds ?? 5) - 1e-6);
+export const whole = (seconds: number | undefined) => Math.ceil((seconds ?? 5) - 1e-6);
 
 /** Frames Wan makes for `seconds` at 16 a second: a whole number of fours plus one, between 17 and 161. */
 export const wanFrames = (seconds: number) => Math.min(161, Math.max(17, Math.ceil((seconds * 16 - 1) / 4) * 4 + 1));
