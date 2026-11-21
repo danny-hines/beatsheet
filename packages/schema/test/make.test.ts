@@ -356,7 +356,7 @@ describe("roughs and finals", () => {
     const c = chooseModels(CATALOG, { op: "video", prompt: "the cat leaves", seconds: 3.2, quality: "final" }, services);
     expect(c.auto).toMatchObject({ model: "minimax-h3-max", seconds: 5, usd: 0.8 });
     // Kling 3 Pro takes a prompt alone only through Runway, which isn't connected here: something to set up, not a misfit.
-    expect(c.setup.find((f) => f.model === "kling-3")).toMatchObject({ why: { kind: "connect", services: ["runway"] } });
+    expect(c.setup.find((f) => f.model === "kling-3")).toMatchObject({ why: { kind: "connect", services: ["runway", "higgsfield"] } });
   });
 
   it("makes a final from references with one that takes them, and says why the others can't", () => {
@@ -1098,7 +1098,7 @@ describe("keeping a clip's camera", () => {
     // Without a clip the same take costs its own seconds at the plain rate.
     const plain = fitModel(seedance, { op: "video", prompt: "x", seconds: 7, aspect: "9:16", via: "tein" }, { fal, tein });
     expect(plain.ok && plain.usd).toBeCloseTo(8 * 0.1355, 3);
-    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein", "runway"] } });
+    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein", "runway", "higgsfield"] } });
   });
 
   it("is billed by Runway for the clip at half the take's rate, and never less than its least for a take", () => {
@@ -1114,6 +1114,19 @@ describe("keeping a clip's camera", () => {
     expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 9, aspect: "9:16", quality: "final" }, runway)).toMatchObject({ ok: true, seconds: 10, usd: 6.8 });
     // Whether it draws real people there isn't known, so it isn't offered for them.
     expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, runway)).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
+  });
+
+  it("is billed by Higgsfield at its dearer rate for the take's seconds only, not the clip's", () => {
+    const higgsfield = { higgsfield: { label: "Higgsfield", state: "ready" } } satisfies Record<string, ServiceState>;
+    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, higgsfield);
+    expect(rough).toMatchObject({ ok: true, route: "higgsfield", endpoint: "bytedance/seedance-2.5/reference-to-video", seconds: 7 });
+    expect(rough.ok && rough.usd).toBeCloseTo(7 * 0.1387, 3);
+    const final = fitModel(seedance, { ...ask, quality: "final" }, higgsfield);
+    expect(final.ok && final.usd).toBeCloseTo(7 * 0.7858, 3);
+    // Without a clip, its plain rate, and no least for a take.
+    expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 3, aspect: "9:16" }, higgsfield)).toMatchObject({ ok: true, endpoint: "bytedance/seedance-2.5/text-to-video", seconds: 4, usd: 0.471 });
+    // Whether it draws real people there isn't known, so it isn't offered for them.
+    expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, higgsfield)).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
   });
 
   it("runs through fal too, which bills the clip's seconds as well at its own lower rate, and draws no real people", () => {

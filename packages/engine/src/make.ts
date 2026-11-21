@@ -93,6 +93,7 @@ import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
 import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
 import { teinCancel, teinInput, teinStatus, teinSubmit, teinUpload } from "./tein.ts";
 import { runwayCancel, runwayInput, runwayStatus, runwaySubmit, runwayUpload } from "./runway.ts";
+import { higgsfieldCancel, higgsfieldEstimate, higgsfieldInput, higgsfieldStatus, higgsfieldSubmit, higgsfieldUpload } from "./higgsfield.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
 import { assetPath, cachePaths, cleanPath, mediaPath, projectDir } from "./paths.ts";
@@ -904,7 +905,7 @@ export async function cancelJobs(projectId: string, ids: string[]): Promise<Make
   const out: MakeJob[] = [];
   for (const job of jobs) {
     const key = keys.get(job.route);
-    if (job.remote && key) await (job.route === "tein" ? teinCancel : job.route === "runway" ? runwayCancel : falCancel)(key, job.remote);
+    if (job.remote && key) await (job.route === "tein" ? teinCancel : job.route === "runway" ? runwayCancel : job.route === "higgsfield" ? higgsfieldCancel : falCancel)(key, job.remote);
     if (job.comfy) await comfyCancel(job.comfy.url, job.comfy.id);
     out.push(saveJob(projectId, { ...job, status: "canceled" }));
   }
@@ -1068,6 +1069,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
   if (DIRECT.includes(job.route) || plan) return stepDirect(projectId, job, key);
   if (job.route === "tein" && key) return stepTein(projectId, job, key);
   if (job.route === "runway" && key) return stepRunway(projectId, job, key);
+  if (job.route === "higgsfield" && key) return stepHiggsfield(projectId, job, key);
   if (job.route !== "fal" || !key) throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
   if (!job.remote) {
     const { project, dir } = loadProject(projectId, job.cut);
@@ -1208,16 +1210,66 @@ async function stepRunway(projectId: string, job: MakeJob, key: string) {
   await finish(projectId, job, { url: s.url });
 }
 
+/**
+ * A job on Higgsfield (higgsfield.ts): its pictures sent up and the job started under the job's own key (so sending it
+ * again after a dropped answer starts nothing new), then followed until it's done. A job there doesn't say what it
+ * cost, so what Higgsfield says the request will cost this account is asked as it's sent, and replaces the estimate.
+ * Nothing is charged for one that fails or that its moderation turns down.
+ */
+async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
+  if (!job.remote) {
+    const { project, dir } = loadProject(projectId, job.cut);
+    const r = job.request;
+    const picture = (id: string) => {
+      const a = project.assets.find((x) => x.id === id);
+      if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      return a;
+    };
+    const upload = (id: string) => higgsfieldUpload(key, assetPath(project, dir, picture(id)));
+    // A cast member's own photos go cut out, when that can be done here.
+    const uploadRef = async (id: string) => higgsfieldUpload(key, await refFile(project, dir, picture(id).id, r.cast));
+    const input = higgsfieldInput(job.shape, job.endpoint, {
+      prompt: r.sent ?? r.prompt,
+      quality: job.quality,
+      seconds: r.seconds,
+      aspect: r.aspect,
+      start: r.start && (await upload(r.start)),
+      end: r.end && (await upload(r.end)),
+      // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
+      refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
+      camera: r.camera && { url: await higgsfieldUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+      // The clip whose movement a take copies (Kling's motion control).
+      video: r.drive && (await higgsfieldUpload(key, await driveClip(project, dir, job))),
+    });
+    if (!job.once) job = updateJob(projectId, job, { once: randomUUID() });
+    const usd = await higgsfieldEstimate(key, input);
+    const remote = await higgsfieldSubmit(key, input, job.once!);
+    updateJob(projectId, job, { status: "running", remote, ...(usd !== undefined ? { usd } : {}) });
+    return;
+  }
+  const s = await higgsfieldStatus(key, job.remote);
+  if (s.state !== "done") {
+    if (job.status !== "running" || job.position !== undefined) updateJob(projectId, job, { status: "running", position: undefined });
+    return;
+  }
+  if (s.error) throw new FalError(s.error, true);
+  if (!s.url) throw new FalError("Higgsfield finished but didn't send a file", true);
+  if (!job.charged) job = updateJob(projectId, job, { charged: true });
+  await finish(projectId, job, { url: s.url });
+}
+
 const exec = promisify(execFile);
 
 /**
  * The most a clip to follow may weigh: Tein's API carries about 6 MB in a request, and fal and Runway take a reference
- * video up to 200 MB.
+ * video up to 200 MB (Higgsfield doesn't say, and is sent no more than that).
  */
 const CAMERA_BYTES: Record<string, { most: number; said: string }> = {
   tein: { most: 5.5 * 1024 * 1024, said: "Tein's API carries" },
   fal: { most: 200 * 1024 * 1024, said: "fal takes" },
   runway: { most: 200 * 1024 * 1024, said: "Runway takes" },
+  // Higgsfield's pages give no limit for a reference video; this is the most its other video inputs are said to take.
+  higgsfield: { most: 200 * 1024 * 1024, said: "beatsheet sends Higgsfield" },
 };
 /** The fewest pixels Seedance takes in a reference video, and the frame rates it takes. */
 const CAMERA_PIXELS = 407_696;

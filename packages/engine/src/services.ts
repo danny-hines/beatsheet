@@ -110,6 +110,20 @@ export const SERVICES: Service[] = [
       ),
   },
   {
+    id: "higgsfield",
+    label: "Higgsfield",
+    does: "Video from other makers' models on one prepaid balance (Kling, Seedance, Wan), and stills: GPT Image 2.5 and its own Soul 2. Its key is two parts; paste them as one, ID:SECRET.",
+    unlocks: ["video", "images"],
+    keyUrl: "https://open.higgsfield.ai/api-keys",
+    async verify(key) {
+      if (!/^[^:\s]+:\S+$/.test(key)) return { ok: false, detail: "Higgsfield's key is two parts. Paste them as one, the key ID then its secret with a colon between: ID:SECRET" };
+      // Nothing in its API says what's on the balance. Asking after a job that doesn't exist reads the key and starts
+      // nothing: a key that works is told there's no such job (404), one that doesn't is refused (401).
+      const check = await tryKey("https://api.higgsfield.ai/requests/00000000-0000-4000-8000-000000000000/status", { Authorization: `Key ${key}` }, () => "Key works");
+      return check.status === 404 ? { ok: true, detail: "Key works" } : check;
+    },
+  },
+  {
     id: "tein",
     label: "Tein",
     does: "Seedance 2.5 for less than elsewhere, and with real people in the shot (your own photos of them; Tein's terms want each person's consent).",

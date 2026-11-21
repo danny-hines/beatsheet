@@ -8,6 +8,14 @@
  * Runway's routes are from docs.dev.runwayml.com (its model list, openapi.json and pricing page, read 21 November
  * 2026): one id for a model whatever the request, and prices in credits of a cent each. None has made a take for real
  * yet. Runway says what each take cost, which the take records in place of the estimate here.
+ *
+ * Higgsfield's routes are from docs.higgsfield.ai and each model's page at dash.higgsfield.ai, with prices from
+ * open.higgsfield.ai/pricing (read 21 November 2026): a model's id is the address its requests go to, and prices are
+ * in dollars a second. None has made a take for real yet. Higgsfield says what a request will cost the account as it's
+ * sent, which the take records in place of the estimate here. Kling 4.0 has a page in its console but none in its
+ * docs, so it may not be open to every account. Its stills are GPT Image 2.5 (the version before the one here, which
+ * it sells as Marketing Studio Image) and its own Soul 2; Seedream 5 Pro, Kling Image 4.0 and the rest it sells aren't
+ * in the catalog.
  */
 import type { CatalogModel } from "./make.ts";
 
@@ -87,6 +95,17 @@ export const CATALOG: CatalogModel[] = [
       { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.6-flare", refs: "gpt-image-2.6-flare" }, price: { perImage: 0.04 } },
       { via: "chatgpt", shape: "plan", endpoints: { text: "gpt-image", refs: "gpt-image" }, price: { perImage: 0 } },
       { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.6/flare/text-to-image", refs: "openai/gpt-image-2.6/flare/edit" }, price: { perImage: 0.04 } },
+      // Higgsfield sells GPT Image 2.5 Flare as Marketing Studio Image, at OpenAI's token rates ($5 a million in, $8
+      // for pictures in, $30 out). Its pricing page has two figures only, 1.26¢ at 1K and low quality and 72¢ at 4K
+      // and max, and none for medium at 1K, which is what's asked for: 4¢ is the other routes' figure, standing in
+      // until Higgsfield quotes the request as it's sent.
+      {
+        via: "higgsfield",
+        shape: "gpt-image-2.5",
+        endpoints: { text: "marketing-studio/image/flare", refs: "marketing-studio/image/flare" },
+        price: { perImage: 0.04 },
+        note: "GPT Image 2.5 here, the version before this one. Priced by the token, with no price for a picture published: the take records what Higgsfield quoted for it.",
+      },
       // Runway bills GPT Image 2.6 by quality, size and shape: at medium and 1K, 9 credits square, 6 at 4:5 or 3:4, 5
       // at 2:3, 4 at 9:16 or 16:9 and 3 at 21:9, plus 1 for each reference. 6¢ is the middle of that.
       {
@@ -112,6 +131,14 @@ export const CATALOG: CatalogModel[] = [
     routes: [
       { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.6-sunburst", refs: "gpt-image-2.6-sunburst" }, price: { perImage: 0.04 } },
       { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.6/sunburst/text-to-image", refs: "openai/gpt-image-2.6/sunburst/edit" }, price: { perImage: 0.04 } },
+      // Higgsfield: GPT Image 2.5 Sunburst, on the same terms as its Flare.
+      {
+        via: "higgsfield",
+        shape: "gpt-image-2.5",
+        endpoints: { text: "marketing-studio/image/sunburst", refs: "marketing-studio/image/sunburst" },
+        price: { perImage: 0.04 },
+        note: "GPT Image 2.5 here, the version before this one. Priced by the token, with no price for a picture published: the take records what Higgsfield quoted for it.",
+      },
       // Runway: the same table as Flare.
       {
         via: "runway",
@@ -121,6 +148,19 @@ export const CATALOG: CatalogModel[] = [
         note: "Priced by the picture's shape here, from 4¢ tall or wide to 9¢ square, and 1¢ more for each reference.",
       },
     ],
+  },
+  {
+    id: "soul-2",
+    label: "Soul 2",
+    by: "Higgsfield",
+    note: "Higgsfield's own image model, for well under a cent a picture. From a prompt only: it takes no reference pictures (it keeps a person through a character trained on Higgsfield, which beatsheet doesn't set up), so a cast member isn't kept.",
+    ops: ["image"],
+    takes: {},
+    aspects: ["16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
+    // open.higgsfield.ai/pricing: $0.0032 an image at 720p and $0.0057 at 1080p, which is what's asked for. Its docs'
+    // example of a quote for this model shows $0.094, "to illustrate the format"; what Higgsfield quotes for a request
+    // is what the take records. Not compared with the others in blind votes, so it's after them.
+    routes: [{ via: "higgsfield", shape: "soul-2", endpoints: { text: "higgsfield-ai/soul/v2/standard" }, price: { perImage: 0.0057 } }],
   },
   {
     id: "flux3-klein",
@@ -214,6 +254,13 @@ export const CATALOG: CatalogModel[] = [
       },
       // Runway's wan3: 5 credits a second at 480p and 20 at 1080p, the same as fal.
       { via: "runway", shape: "wan3", endpoints: { text: "wan3", start: "wan3", refs: "wan3" }, price: { perSecond: 0.05, finalPerSecond: 0.2 } },
+      // Higgsfield: $0.0375 a second at 480p and $0.15 at 1080p, a quarter less than fal.
+      {
+        via: "higgsfield",
+        shape: "wan-3.0",
+        endpoints: { text: "alibaba/wan-3.0/text-to-video", start: "alibaba/wan-3.0/image-to-video", refs: "alibaba/wan-3.0/reference-to-video" },
+        price: { perSecond: 0.0375, finalPerSecond: 0.15 },
+      },
     ],
   },
   {
@@ -285,6 +332,14 @@ export const CATALOG: CatalogModel[] = [
       // of November 2026, which the take's own cost will show). It takes reference pictures and clips there too, which
       // beatsheet doesn't send yet.
       { via: "runway", shape: "kling_4", endpoints: { text: "kling_4", start: "kling_4" }, price: { perSecond: 0.157, finalPerSecond: 0.235 } },
+      // Higgsfield: $0.1257 a second at 720p and $0.1879 at 1080p, a fifth less than fal. It takes middle frames,
+      // references and clips there too, which beatsheet doesn't send yet.
+      {
+        via: "higgsfield",
+        shape: "kling-v4.0",
+        endpoints: { text: "kling-video/v4.0/text-to-video", start: "kling-video/v4.0/image-to-video" },
+        price: { perSecond: 0.1257, finalPerSecond: 0.1879 },
+      },
     ],
   },
   {
@@ -346,6 +401,21 @@ export const CATALOG: CatalogModel[] = [
         shape: "seedance2_5",
         endpoints: { text: "seedance2_5", start: "seedance2_5", refs: "seedance2_5", camera: "seedance2_5" },
         price: { perSecond: 0.2, finalPerSecond: 0.68, minimum: 0.8, camera: { perSecond: 0.15, finalPerSecond: 0.51 } },
+      },
+      // Higgsfield: $0.1177 a second at 480p and $0.6518 at 1080p, the least here for a rough. With a clip (a
+      // blockout, for its camera) the rate is $0.1387 and $0.7858, on the take's seconds only: "Input video duration
+      // is not added to the billed duration." Whether it draws real people there isn't said, so it's taken not to.
+      // Its 480p draft can be finished at 1080p there too (finalize-draft), which beatsheet doesn't do yet.
+      {
+        via: "higgsfield",
+        shape: "seedance-2.5",
+        endpoints: {
+          text: "bytedance/seedance-2.5/text-to-video",
+          start: "bytedance/seedance-2.5/image-to-video",
+          refs: "bytedance/seedance-2.5/reference-to-video",
+          camera: "bytedance/seedance-2.5/reference-to-video",
+        },
+        price: { perSecond: 0.1177, finalPerSecond: 0.6518, camera: { perSecond: 0.1387, finalPerSecond: 0.7858, takeOnly: true } },
       },
     ],
   },
@@ -439,6 +509,15 @@ export const CATALOG: CatalogModel[] = [
         price: { perSecond: 0.12 },
         note: "Makes a take from a prompt alone here, as well as from a board.",
       },
+      // Higgsfield's Kling 3.0 Pro: $0.0962 a second at 1080p. Its pricing page shows a dearer figure too ($0.1443)
+      // without saying what for; its own sound is asked off, as on the other routes.
+      {
+        via: "higgsfield",
+        shape: "kling-v3.0",
+        endpoints: { text: "kling-video/v3.0/pro/text-to-video", start: "kling-video/v3.0/pro/image-to-video" },
+        price: { perSecond: 0.0962 },
+        note: "Makes a take from a prompt alone here, as well as from a board.",
+      },
     ],
   },
   {
@@ -462,6 +541,15 @@ export const CATALOG: CatalogModel[] = [
       },
       // Runway's kling2.5_turbo_pro: 12 credits a second.
       { via: "runway", shape: "kling2.5_turbo_pro", endpoints: { text: "kling2.5_turbo_pro", start: "kling2.5_turbo_pro" }, price: { perSecond: 0.12 } },
+      // Higgsfield's Kling 2.5 Turbo Pro: $0.0525 a second. From words alone it has no field for the shape there, so
+      // only from a board, whose shape the take keeps.
+      {
+        via: "higgsfield",
+        shape: "kling-v2.5-turbo",
+        endpoints: { start: "kling-video/v2.5-turbo/pro/image-to-video" },
+        price: { perSecond: 0.0525 },
+        note: "Only from a board here: from a prompt alone it can't be asked for a shape.",
+      },
     ],
   },
   {
@@ -501,14 +589,18 @@ export const CATALOG: CatalogModel[] = [
     id: "kling-motion",
     label: "Kling Motion Control",
     by: "Kuaishou",
-    note: "Copies the movement in a clip onto the people in a board, on fal: no graphics card needed, up to 30 seconds.",
+    note: "Copies the movement in a clip onto the people in a board, on a service: no graphics card needed, up to 30 seconds.",
     ops: ["video"],
     takes: { start: true, drive: true },
     lengths: { min: 3, max: 30 },
     aspects: ["any"],
     wait: 300,
     // fal.ai/models/fal-ai/kling-video/v3/pro/motion-control: $0.168 a second, framed as the clip is.
-    routes: [{ via: "fal", shape: "kling-motion", endpoints: { drive: "fal-ai/kling-video/v3/pro/motion-control" }, price: { perSecond: 0.168 } }],
+    routes: [
+      { via: "fal", shape: "kling-motion", endpoints: { drive: "fal-ai/kling-video/v3/pro/motion-control" }, price: { perSecond: 0.168 } },
+      // Higgsfield's Kling 3.0 motion control, Pro: $0.1189 a second.
+      { via: "higgsfield", shape: "kling-motion-control", endpoints: { drive: "kling-video/v3/motion-control/pro" }, price: { perSecond: 0.1189 } },
+    ],
   },
 
   // ---- Lip sync: a board made to say a line ("talk"), or the mouths in a clip changed to say it ("dub"). What's said

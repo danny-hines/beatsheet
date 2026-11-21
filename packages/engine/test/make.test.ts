@@ -21,7 +21,7 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein", "runway"].includes(id) ? "test-key" : undefined),
+    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein", "runway", "higgsfield"].includes(id) ? "test-key" : undefined),
     readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" }, ...settings.services }, checks: {}, make: settings.make }),
   };
 });
@@ -75,6 +75,18 @@ let tein: { submits: Record<string, unknown>[]; keys: string[]; uploads: number;
 // And for Runway: uploads (an address to send the file to, then the file), its endpoints that start a task, and the task to
 // follow. A task its moderation turns down fails, and is charged for.
 let runway: { submits: { path: string; body: Record<string, unknown> }[]; uploads: string[]; stored: number; tasks: Map<string, { still: boolean; moderated: boolean }>; cancelled: string[] };
+// And for Higgsfield: where to PUT a file, what a request will cost, the model's own address that starts a job (once
+// for each key it's sent under), and the job to follow. A job its moderation turns down ends as "nsfw".
+let higgsfield: {
+  submits: { model: string; body: Record<string, unknown> }[];
+  keys: string[];
+  uploads: string[];
+  stored: number;
+  estimates: string[];
+  jobs: Map<string, string>;
+  made: Map<string, { moderated: boolean; still: boolean }>;
+  cancelled: string[];
+};
 let refuse: string | undefined;
 let server: Server;
 let base = "";
@@ -173,6 +185,66 @@ beforeAll(async () => {
         }
         return send(404, { error: "Not found." });
       }
+      // Where Higgsfield says to PUT a file: with the headers it gave, and no key.
+      if (req.method === "PUT" && url.startsWith("/higgsfield-store/")) {
+        if (req.headers.authorization || req.headers["x-amz-tagging"] !== "retention=temporary" || !body) return send(400, { detail: "not as asked" });
+        higgsfield.stored++;
+        return send(200, {});
+      }
+      if (url.startsWith("/higgsfield/")) {
+        if (req.headers.authorization !== "Key test-key") return send(401, { detail: "Invalid credentials" });
+        const path = url.slice("/higgsfield/".length);
+        if (req.method === "POST" && path === "files/generate-upload-url") {
+          const type = (JSON.parse(body) as { content_type: string }).content_type;
+          higgsfield.uploads.push(type);
+          const n = higgsfield.uploads.length;
+          return send(200, { public_url: `${base}/out/hf-upload-${n}.${type === "video/mp4" ? "mp4" : "jpg"}`, upload_url: `${base}/higgsfield-store/${n}`, content_type: type, upload_headers: { "Content-Type": type, "x-amz-tagging": "retention=temporary" } });
+        }
+        const followed = path.match(/^requests\/([^/]+)\/(status|cancel)$/);
+        if (followed) {
+          const id = followed[1]!;
+          const made = higgsfield.made.get(id);
+          if (!made) return send(404, { detail: "Request not found" });
+          if (followed[2] === "cancel") {
+            // Only while it waits.
+            if ((polls.get(id) ?? 0) > 1) return send(400, { detail: "Request has already started" });
+            higgsfield.cancelled.push(id);
+            return send(202, {});
+          }
+          const n = (polls.get(id) ?? 0) + 1;
+          polls.set(id, n);
+          const links = { request_id: id, status_url: `${base}/higgsfield/requests/${id}/status`, cancel_url: `${base}/higgsfield/requests/${id}/cancel` };
+          if (n < 3) return send(200, { ...links, status: n === 1 ? "queued" : "in_progress" });
+          if (made.moderated) return send(200, { ...links, status: "nsfw" });
+          if (made.still) return send(200, { status: "completed", request_id: id, expires_at: "2026-11-28T00:00:00Z", images: [{ url: `${base}/out/${id}.jpg` }] });
+          return send(200, { status: "completed", request_id: id, expires_at: "2026-11-28T00:00:00Z", video: { url: `${base}/out/${id}.mp4` } });
+        }
+        if (req.method === "POST") {
+          const estimate = path.startsWith("estimate/");
+          const model = estimate ? path.slice("estimate/".length) : path;
+          const input = JSON.parse(body) as Record<string, unknown>;
+          if (!/^(bytedance|kling-video|alibaba|marketing-studio|higgsfield-ai)\//.test(model)) return send(404, { detail: "Model not found" });
+          const still = /^(marketing-studio|higgsfield-ai)\//.test(model);
+          if (typeof input.duration === "number" && !Number.isInteger(input.duration)) return send(422, { detail: [{ type: "int_from_float", loc: ["body", "duration"], msg: "Input should be a valid integer" }] });
+          if (estimate) {
+            higgsfield.estimates.push(model);
+            return send(200, { usd: still ? "0.0212" : "0.4708" });
+          }
+          const key = String(req.headers["idempotency-key"] ?? "");
+          if (!key) return send(400, { detail: "This stand-in wants an Idempotency-Key" });
+          higgsfield.keys.push(key);
+          if (String(input.prompt).includes("broke")) return send(403, { detail: "Insufficient balance" });
+          if (!higgsfield.jobs.has(key)) {
+            higgsfield.submits.push({ model, body: input });
+            const id = `hf_${higgsfield.submits.length}`;
+            higgsfield.jobs.set(key, id);
+            higgsfield.made.set(id, { moderated: !!refuse && String(input.prompt).includes(refuse), still });
+          }
+          const id = higgsfield.jobs.get(key)!;
+          return send(200, { status: "queued", request_id: id, status_url: `${base}/higgsfield/requests/${id}/status`, cancel_url: `${base}/higgsfield/requests/${id}/cancel`, expires_after: 604800 });
+        }
+        return send(404, { detail: "Not Found" });
+      }
       if (req.headers.authorization !== "Key test-key" && !url.startsWith("/out/") && !url.startsWith("/upload/")) return send(401, { detail: "no" });
       if (url.startsWith("/rest/storage/upload/initiate")) {
         seen.uploads++;
@@ -213,6 +285,7 @@ beforeAll(async () => {
   process.env.BEATSHEET_GEMINI = `${base}/gemini`;
   process.env.BEATSHEET_TEIN = `${base}/tein`;
   process.env.BEATSHEET_RUNWAY = `${base}/runway`;
+  process.env.BEATSHEET_HIGGSFIELD = `${base}/higgsfield`;
   make = await import("../src/make.ts");
   store = await import("../src/store.ts");
 });
@@ -228,6 +301,7 @@ beforeEach(() => {
   seen = { submits: [], uploads: 0, direct: [] };
   tein = { submits: [], keys: [], uploads: 0, jobs: new Map() };
   runway = { submits: [], uploads: [], stored: 0, tasks: new Map(), cancelled: [] };
+  higgsfield = { submits: [], keys: [], uploads: [], stored: 0, estimates: [], jobs: new Map(), made: new Map(), cancelled: [] };
   refuse = undefined;
   plans.ready = [];
   plans.asks = [];
@@ -597,6 +671,180 @@ describe("Runway as the provider", () => {
     expect(runwayInput("muse_image", "muse_image", { prompt: "x", aspect: "4:5", refs: ["a"] }).body).toEqual({ model: "muse_image", promptText: "x", ratio: "1344:1792", referenceImages: [{ uri: "a" }], outputFormat: "jpeg" });
     expect(runwayInput("gpt_image_2_6", "gpt_image_2_6_sunburst", { prompt: "x", aspect: "9:16" }).body).toEqual({ model: "gpt_image_2_6_sunburst", promptText: "x", ratio: "1088:1920", quality: "medium", outputFormat: "jpeg" });
     expect(() => runwayInput("gen4.5", "gen4.5", { prompt: "x" })).toThrow('no way to ask Runway for "gen4.5" models yet');
+  });
+});
+
+describe("Higgsfield as the provider", () => {
+  const connect = () => void (settings.services = { higgsfield: { addedAt: "2026-11-21" } });
+  const job = (id: string) => make.listJobs(PROJECT).find((j) => j.id === id)!;
+
+  it("makes nothing there while another provider is in use, and a take once it's the video provider: the board put where Higgsfield says, the price it quotes kept, the job followed", async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2" });
+    await make.driveJobs(PROJECT);
+    const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
+    // A key for it changes nothing by itself: fal, added first, is still the provider in use.
+    connect();
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
+    expect(() => make.startMake(PROJECT, { ...ask, via: "higgsfield" })).toThrow("Runs on Higgsfield, which is connected but not your video provider");
+    expect(higgsfield).toMatchObject({ submits: [], uploads: [] });
+
+    provider({ video: "higgsfield" });
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    const model = "bytedance/seedance-2.5/image-to-video";
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "higgsfield", where: "Higgsfield", endpoint: model, seconds: 4 });
+    expect(fit).not.toHaveProperty("also");
+    // Four seconds at $0.1177.
+    expect(fit.usd).toBe(0.471);
+    await make.driveJobs(PROJECT);
+
+    // The board went to the address Higgsfield gave for it, and the take keeps the board's shape: none is asked for.
+    expect(higgsfield).toMatchObject({ uploads: ["image/jpeg"], stored: 1, estimates: [model] });
+    expect(higgsfield.submits).toEqual([{ model, body: { prompt: "A red kite climbs over the hill", image_url: `${base}/out/hf-upload-1.jpg`, duration: 4, resolution: "480p" } }]);
+    // Nothing more went to fal than the board made while it was in use.
+    expect(seen.submits).toHaveLength(1);
+    // What Higgsfield said the request would cost, in place of the estimate; sent under the job's own key.
+    const done = job(jobs[0]!.id);
+    expect(done).toMatchObject({ status: "done", route: "higgsfield", charged: true, usd: 0.4708, remote: { id: "hf_1" } });
+    expect(higgsfield.keys).toEqual([done.once]);
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    expect(take.provenance).toMatchObject({ source: "generated", provider: "higgsfield", model, costUsd: 0.4708, refs: ["s2-take"] });
+    expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "higgsfield", model: "seedance-2.5" });
+  });
+
+  it("charges nothing for a take its moderation turns down, and makes it afresh when it's tried again", async () => {
+    connect();
+    provider({ video: "higgsfield" });
+    refuse = "kite";
+    const [started] = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "A red kite climbs over the hill", model: "kling-4" }).jobs;
+    await make.driveJobs(PROJECT);
+    // From a prompt alone it's asked for the cut's shape, at a rough's size.
+    expect(higgsfield.submits).toEqual([{ model: "kling-video/v4.0/text-to-video", body: { prompt: "A red kite climbs over the hill", aspect_ratio: "9:16", duration: expect.any(Number), resolution: "720p" } }]);
+    const failed = job(started!.id);
+    expect(failed).toMatchObject({ status: "failed", error: "Higgsfield's moderation turned this down (what it was asked or given, or what it made). Nothing is charged for it." });
+    expect(failed.charged).toBeFalsy();
+    expect(make.spentSince(started!.createdAt)).toBe(0);
+    expect(shot("s1").content.kind).toBe("placeholder");
+    // Nothing was made or paid for, so trying again is a new request, under a new key.
+    refuse = undefined;
+    make.retryJobs(PROJECT, [started!.id]);
+    await make.driveJobs(PROJECT);
+    expect(higgsfield.submits).toHaveLength(2);
+    expect(new Set(higgsfield.keys).size).toBe(2);
+    expect(job(started!.id)).toMatchObject({ status: "done", charged: true, remote: { id: "hf_2" } });
+  });
+
+  it("makes stills there once it's the stills provider: GPT Image with the cast's pictures as references, and Soul 2 from words alone", async () => {
+    connect();
+    expect(make.makeChoices(PROJECT, { op: "image", shot: "s2" }).choices.auto).toMatchObject({ route: "fal" });
+    provider({ image: "higgsfield" });
+    const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
+    const flare = "marketing-studio/image/flare";
+    expect(fit).toMatchObject({ model: "gpt-image", route: "higgsfield", endpoint: flare, aspect: "16:9", usd: 0.04 });
+    await make.driveJobs(PROJECT);
+    expect(higgsfield.uploads).toEqual(["image/jpeg"]);
+    expect(higgsfield.submits).toEqual([
+      { model: flare, body: { prompt: expect.stringMatching(/^A photographic reference sheet of the cat/), quality: "medium", resolution: "1k", aspect_ratio: "16:9", image_urls: [`${base}/out/hf-upload-1.jpg`] } },
+    ]);
+    expect(seen.submits).toHaveLength(0);
+    // What Higgsfield quoted for the picture, in place of the stand-in price here.
+    expect(job(jobs[0]!.id)).toMatchObject({ status: "done", route: "higgsfield", charged: true, usd: 0.0212 });
+    const sheet = store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-sheet")!;
+    expect(sheet.provenance).toMatchObject({ provider: "higgsfield", model: flare, costUsd: 0.0212, refs: ["cat-photo"] });
+    expect(readFileSync(sheet.path, "utf8")).toBe("a picture");
+
+    // Soul 2 takes no pictures, so it isn't offered for a sheet made from one; from a prompt it is.
+    expect(() => make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1, model: "soul-2" })).toThrow("Soul 2 can't make this");
+    const soul = make.startMake(PROJECT, { op: "image", shot: "s1", prompt: "A wet alley at dusk", model: "soul-2" });
+    expect(soul.fit).toMatchObject({ model: "soul-2", route: "higgsfield", endpoint: "higgsfield-ai/soul/v2/standard", usd: 0.006 });
+    await make.driveJobs(PROJECT);
+    expect(higgsfield.submits[1]).toEqual({ model: "higgsfield-ai/soul/v2/standard", body: { prompt: "A wet alley at dusk", resolution: "1080p", aspect_ratio: "9:16", enhance_prompt: false } });
+    // Video is still made where it was.
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s1" }).choices.auto).toMatchObject({ route: "fal" });
+  });
+
+  it("starts nothing new when a request is sent again under the same key", async () => {
+    const { higgsfieldSubmit } = await import("../src/higgsfield.ts");
+    const ask = { model: "alibaba/wan-3.0/text-to-video", body: { prompt: "x", duration: 5 } };
+    const first = await higgsfieldSubmit("test-key", ask, "once-1");
+    expect(await higgsfieldSubmit("test-key", ask, "once-1")).toEqual(first);
+    expect(higgsfield.submits).toHaveLength(1);
+    expect((await higgsfieldSubmit("test-key", ask, "once-2")).id).toBe("hf_2");
+  });
+
+  it("says what Higgsfield didn't like, follows a job by the addresses it gave, and sends the key nowhere else", async () => {
+    const { higgsfieldSubmit, higgsfieldStatus, higgsfieldCancel, higgsfieldEstimate, higgsfieldUpload } = await import("../src/higgsfield.ts");
+    const wan = { model: "alibaba/wan-3.0/text-to-video", body: { prompt: "x", duration: 5 } };
+    await expect(higgsfieldSubmit("test-key", { ...wan, body: { prompt: "x", duration: 4.5 } }, "k1")).rejects.toMatchObject({ message: "duration: Input should be a valid integer", final: true });
+    await expect(higgsfieldSubmit("wrong", wan, "k2")).rejects.toMatchObject({ message: expect.stringContaining("Higgsfield refused the key"), final: true });
+    await expect(higgsfieldSubmit("test-key", { model: "veo/3", body: {} }, "k3")).rejects.toMatchObject({ message: "Higgsfield doesn't offer veo/3 to this account (Model not found)", final: true });
+    await expect(higgsfieldSubmit("test-key", { ...wan, body: { prompt: "broke" } }, "k4")).rejects.toMatchObject({ message: expect.stringContaining("its balance is too low"), final: true, funds: true });
+    // What it will cost comes as a string; not knowing is no error.
+    expect(await higgsfieldEstimate("test-key", wan)).toBe(0.4708);
+    expect(await higgsfieldEstimate("test-key", { model: "veo/3", body: {} })).toBeUndefined();
+
+    const remote = await higgsfieldSubmit("test-key", wan, "k5");
+    const at = `${base}/higgsfield/requests/hf_1`;
+    expect(remote).toEqual({ id: "hf_1", status: `${at}/status`, response: `${at}/status`, cancel: `${at}/cancel` });
+    expect(await higgsfieldStatus("test-key", remote)).toEqual({ state: "queued" });
+    // Still waiting: it can be dropped.
+    await higgsfieldCancel("test-key", remote);
+    expect(higgsfield.cancelled).toEqual(["hf_1"]);
+    expect(await higgsfieldStatus("test-key", remote)).toEqual({ state: "running" });
+    // Once it has started it can't, which is left as it is.
+    await higgsfieldCancel("test-key", remote);
+    expect(higgsfield.cancelled).toEqual(["hf_1"]);
+    expect(await higgsfieldStatus("test-key", remote)).toEqual({ state: "done", url: `${base}/out/hf_1.mp4` });
+    await expect(higgsfieldStatus("test-key", { ...remote, status: `${at.replace("/higgsfield/", "/elsewhere/")}/status` })).rejects.toMatchObject({ message: expect.stringContaining("isn't its own"), final: true });
+    await expect(higgsfieldStatus("test-key", { ...remote, status: `${base}/higgsfield/requests/nope/status` })).rejects.toMatchObject({ message: "Request not found", final: true });
+    await expect(higgsfieldUpload("test-key", "/nowhere/clip.mov")).rejects.toMatchObject({ message: expect.stringContaining("clip.mov is none of them"), final: true });
+  });
+
+  it("asks each model for what it takes there", async () => {
+    const { higgsfieldInput } = await import("../src/higgsfield.ts");
+    const seedance = (kind: string) => `bytedance/seedance-2.5/${kind}`;
+    // Seedance: a final at 1080p; an end frame with its start; a shape only when nothing starts it.
+    expect(higgsfieldInput("seedance-2.5", seedance("image-to-video"), { prompt: "x", quality: "final", seconds: 5.2, aspect: "3:4", start: "u", end: "v", refs: ["a"] })).toEqual({
+      model: seedance("image-to-video"),
+      body: { prompt: "x", image_url: "u", end_image_url: "v", duration: 6, resolution: "1080p" },
+    });
+    expect(higgsfieldInput("seedance-2.5", seedance("text-to-video"), { prompt: "x", seconds: 4, aspect: "21:9" }).body).toEqual({ prompt: "x", duration: 4, resolution: "480p", aspect_ratio: "21:9" });
+    // References, and a clip whose camera it keeps, on its reference endpoint.
+    expect(higgsfieldInput("seedance-2.5", seedance("reference-to-video"), { prompt: "x", seconds: 4, aspect: "16:9", refs: ["a", "b"], camera: { url: "c", blockout: false } }).body).toEqual({
+      prompt: "x The 2 reference pictures show who and what is in it. The reference video sets the camera: keep its move, its framing, its timing and where its cuts fall.",
+      duration: 4,
+      resolution: "480p",
+      aspect_ratio: "16:9",
+      image_urls: ["a", "b"],
+      video_urls: ["c"],
+    });
+    // A board the take would have started from goes as the one reference there.
+    expect(higgsfieldInput("seedance-2.5", seedance("reference-to-video"), { prompt: "x", seconds: 7, start: "u", camera: { url: "c", blockout: true } }).body).toMatchObject({ image_urls: ["u"], video_urls: ["c"], duration: 7 });
+    // Kling 4.0: roughs at 720p, finals at 1080p; from a picture, no shape.
+    expect(higgsfieldInput("kling-v4.0", "kling-video/v4.0/image-to-video", { prompt: "x", quality: "final", seconds: 12, start: "u", end: "v", aspect: "9:16" }).body).toEqual({ prompt: "x", image_url: "u", end_image_url: "v", duration: 12, resolution: "1080p" });
+    expect(higgsfieldInput("kling-v4.0", "kling-video/v4.0/text-to-video", { prompt: "x", seconds: 3, aspect: "21:9" }).body).toEqual({ prompt: "x", aspect_ratio: "21:9", duration: 3, resolution: "720p" });
+    // Kling 3 Pro without its own sound; its end frame has its own name there.
+    expect(higgsfieldInput("kling-v3.0", "kling-video/v3.0/pro/image-to-video", { prompt: "x", seconds: 7, start: "u", end: "v" }).body).toEqual({ prompt: "x", image_url: "u", last_image_url: "v", duration: 7, sound: "off" });
+    expect(higgsfieldInput("kling-v3.0", "kling-video/v3.0/pro/text-to-video", { prompt: "x", seconds: 5, aspect: "1:1" }).body).toEqual({ prompt: "x", aspect_ratio: "1:1", duration: 5, sound: "off" });
+    expect(higgsfieldInput("kling-v2.5-turbo", "kling-video/v2.5-turbo/pro/image-to-video", { prompt: "x", seconds: 10, start: "u", aspect: "9:16" }).body).toEqual({ prompt: "x", image_url: "u", duration: 10 });
+    // Wan 3.0: a seed when there is one; references only when nothing starts it.
+    expect(higgsfieldInput("wan-3.0", "alibaba/wan-3.0/image-to-video", { prompt: "x", seconds: 5, start: "u", refs: ["a"], seed: 7 }).body).toEqual({ prompt: "x", image_url: "u", duration: 5, resolution: "480p", seed: 7 });
+    expect(higgsfieldInput("wan-3.0", "alibaba/wan-3.0/reference-to-video", { prompt: "x", quality: "final", seconds: 30, aspect: "4:3", refs: ["a"] }).body).toEqual({
+      prompt: "x The reference picture shows who and what is in it.",
+      duration: 30,
+      resolution: "1080p",
+      aspect_ratio: "4:3",
+      image_urls: ["a"],
+    });
+    // Motion control: the board, the clip to move like, and not the clip's sound.
+    expect(higgsfieldInput("kling-motion-control", "kling-video/v3/motion-control/pro", { prompt: "x", start: "u", video: "m" }).body).toEqual({ prompt: "x", image_url: "u", video_url: "m", character_orientation: "video", keep_original_sound: "no" });
+    // Stills: GPT Image 2.5 at medium quality and 1K, in the nearest shape it makes; Soul 2 at 1080p, its prompt left as written.
+    expect(higgsfieldInput("gpt-image-2.5", "marketing-studio/image/sunburst", { prompt: "x", aspect: "4:5", refs: ["a", "b"] })).toEqual({
+      model: "marketing-studio/image/sunburst",
+      body: { prompt: "x", quality: "medium", resolution: "1k", aspect_ratio: "3:4", image_urls: ["a", "b"] },
+    });
+    expect(higgsfieldInput("gpt-image-2.5", "marketing-studio/image/flare", { prompt: "x" }).body).toEqual({ prompt: "x", quality: "medium", resolution: "1k" });
+    expect(higgsfieldInput("soul-2", "higgsfield-ai/soul/v2/standard", { prompt: "x", aspect: "21:9" }).body).toEqual({ prompt: "x", resolution: "1080p", aspect_ratio: "16:9", enhance_prompt: false });
+    expect(() => higgsfieldInput("soul", "higgsfield-ai/soul/standard", { prompt: "x" })).toThrow('no way to ask Higgsfield for "soul" models yet');
   });
 });
 

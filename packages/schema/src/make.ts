@@ -35,9 +35,10 @@ export type ModelRoute = {
    * `minimum`: the least one take costs, for a service that bills a short take as a longer one.
    * `camera`: for a take that follows a clip's camera, where the service has its own rate for that and bills the
    * clip's seconds as well as the take's; `least` is the fewest seconds it bills, as a share of the take's on top of
-   * them, rounded up to a whole second (Tein: two thirds, so a 10-second take bills 17 at least).
+   * them, rounded up to a whole second (Tein: two thirds, so a 10-second take bills 17 at least). `takeOnly`: the
+   * service has its own rate for such a take but bills only the take's seconds at it, not the clip's (Higgsfield).
    */
-  price: { perImage?: number; perSecond?: number; finalPerSecond?: number; minimum?: number; camera?: { perSecond: number; finalPerSecond?: number; least?: number } };
+  price: { perImage?: number; perSecond?: number; finalPerSecond?: number; minimum?: number; camera?: { perSecond: number; finalPerSecond?: number; least?: number; takeOnly?: boolean } };
   /** Whether what it makes here may be used commercially, when that isn't simply yes (see Commercial). */
   commercial?: Commercial;
   /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
@@ -328,7 +329,8 @@ function aspectFor(model: CatalogModel, wanted: string | undefined): { aspect?: 
 function costOn(route: ModelRoute, op: MakeOp, seconds: number | undefined, count: number, quality?: Quality, cameraSeconds?: number): number | undefined {
   const rate = cameraSeconds !== undefined && route.price.camera ? route.price.camera : route.price;
   const perSecond = (quality === "final" ? rate.finalPerSecond : undefined) ?? rate.perSecond;
-  const billed = seconds === undefined ? undefined : cameraSeconds !== undefined && route.price.camera ? billedWithClip(seconds, cameraSeconds, route.price.camera.least) : seconds;
+  const withClip = cameraSeconds !== undefined && route.price.camera && !route.price.camera.takeOnly;
+  const billed = seconds === undefined ? undefined : withClip ? billedWithClip(seconds, cameraSeconds!, route.price.camera!.least) : seconds;
   const each = op === "image" ? route.price.perImage : perSecond !== undefined && billed !== undefined ? Math.max(route.price.minimum ?? 0, perSecond * billed) : undefined;
   return each === undefined ? undefined : Math.round(each * count * 1000) / 1000;
 }
