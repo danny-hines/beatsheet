@@ -79,7 +79,7 @@ The research's recommendations, and where each stands (2 November 2026). The fal
 | Change | Model | Why | Done |
 |---|---|---|---|
 | Replace | Nano Banana (2.5 Flash Image) → Nano Banana 2.1 | Google shuts the old one down on 15 March 2027; arena.ai #36 → #5 at about the same price; 14 references, 9:16 and 21:9 | Added on fal and a Gemini key, ahead of the old one (Auto's still); the old one stays until March |
-| Upgrade | GPT Image → GPT Image 2.5 (Flare for boards, Sunburst for sheets, products and likeness) | #1–2 on all four image boards; 16 references; medium quality is 1.3¢ at 1024² | Already 2.5 Flare on an OpenAI key; now on fal too. Sunburst isn't offered |
+| Upgrade | GPT Image → GPT Image 2.5 (Flare for boards, Sunburst for sheets, products and likeness) | #1–2 on all four image boards; 16 references; medium quality is 1.3¢ at 1024² | On 2.6 since 21 November 2026, on an OpenAI key and on fal: Flare is GPT Image, Sunburst its own model (`gpt-image-sunburst`). 2.6 draws medium quality with about 3.3 times the tokens, so a 1024×1536 picture is about 3.4¢ out. Neither 2.6 flavour has made a take for real yet |
 | Keep | Muse Image | 1¢, AA #8: the rough-board model | |
 | Add | Wan 3.0 (480p rough, 1080p final, references) | First from text; real faces; 30 s; $0.25–1.00 per 5 s | Added (fal's prompt expansion left on) |
 | Add | Seedance 2.5 (draft, then complete by `draft_id`) | First from a still, for dialogue and bodies; made-up characters only; Runway's API is a cheaper second route | Added on fal, 480p roughs and 1080p finals made separately; finishing a draft and Runway aren't wired |

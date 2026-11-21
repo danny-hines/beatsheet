@@ -950,17 +950,17 @@ describe("takes that finish together, and trying again", () => {
 describe("stills from services that answer in one request", () => {
   it("makes a board with GPT Image at the shot's shape, saves the picture, and counts what it actually cost", async () => {
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    expect(fit).toMatchObject({ model: "gpt-image", route: "openai", endpoint: "gpt-image-2.5-flare", aspect: "9:16", usd: 0.03 });
+    expect(fit).toMatchObject({ model: "gpt-image", route: "openai", endpoint: "gpt-image-2.6-flare", aspect: "9:16", usd: 0.04 });
     await make.driveJobs(PROJECT);
 
     expect(seen.submits).toHaveLength(0);
     expect(seen.direct[0]!.url).toBe("/direct/openai/images/generations");
-    expect(JSON.parse(seen.direct[0]!.body)).toEqual({ model: "gpt-image-2.5-flare", prompt: "The cat strolls down the alley like it owns it", n: 1, size: "864x1536", output_format: "jpeg", quality: "medium", output_compression: 92 });
+    expect(JSON.parse(seen.direct[0]!.body)).toEqual({ model: "gpt-image-2.6-flare", prompt: "The cat strolls down the alley like it owns it", n: 1, size: "864x1536", output_format: "jpeg", quality: "medium", output_compression: 92 });
     const [job] = make.listJobs(PROJECT);
     // 50 words in at $5 a million, a picture of 1,000 tokens out at $30.
     expect(job).toMatchObject({ status: "done", charged: true, usd: 0.0303, asset: "s2-take" });
     const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
-    expect(take.provenance).toMatchObject({ provider: "openai", model: "gpt-image-2.5-flare", costUsd: 0.0303, params: { model: "gpt-image" } });
+    expect(take.provenance).toMatchObject({ provider: "openai", model: "gpt-image-2.6-flare", costUsd: 0.0303, params: { model: "gpt-image" } });
     expect(readFileSync(take.path, "utf8")).toBe("a made picture");
     expect(shot("s2")).toMatchObject({ fidelity: "board", content: { kind: "generated", take: "s2-take", provider: "openai" } });
   });
@@ -968,7 +968,7 @@ describe("stills from services that answer in one request", () => {
   it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and with the key when asked", async () => {
     plans.ready = ["chatgpt"];
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.03 }, { route: "fal", usd: 0.03 }] });
+    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", usd: 0.04 }, { route: "fal", usd: 0.04 }] });
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(plans.asks).toEqual([{ route: "chatgpt", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);
@@ -1101,7 +1101,7 @@ describe("stills from services that answer in one request", () => {
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "failed", charged: true, error: expect.stringMatching(/^The engine stopped while this was being made/) });
-    expect(make.spentSince(since)).toBeCloseTo(0.03, 3);
+    expect(make.spentSince(since)).toBeCloseTo(0.04, 3);
 
     // Trying again makes it again.
     make.retryJobs(PROJECT, [job!.id]);

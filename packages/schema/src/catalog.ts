@@ -68,13 +68,31 @@ export const CATALOG: CatalogModel[] = [
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 60,
     // developers.openai.com/api/docs/guides/image-generation: billed by the token ($5 a million in, $8 for pictures
-    // in, $30 out). At medium quality a 9:16 board from one picture cost 1.7¢; 3¢ leaves room for more pictures and
-    // wider shapes. The take records what it actually cost. Codex makes it on the person's ChatGPT plan instead,
-    // from its allowance rather than by the token. fal sells the same model by the token at the same rates.
+    // in, $30 out). This is 2.6's Flare, the quick flavour (4 November 2026). At medium quality 2.6 draws with about
+    // 3.3 times the tokens 2.5 did: fal's table has a 1024x1536 picture at 3.4¢ out, before the pictures and words
+    // given, so 4¢. The take records what it actually cost. Codex makes it on the person's ChatGPT plan instead, from
+    // its allowance rather than by the token, in whichever flavour the plan gives. fal sells the same model by the
+    // token at the same rates.
     routes: [
-      { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.5-flare", refs: "gpt-image-2.5-flare" }, price: { perImage: 0.03 } },
+      { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.6-flare", refs: "gpt-image-2.6-flare" }, price: { perImage: 0.04 } },
       { via: "chatgpt", shape: "plan", endpoints: { text: "gpt-image", refs: "gpt-image" }, price: { perImage: 0 } },
-      { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.5/flare/text-to-image", refs: "openai/gpt-image-2.5/flare/edit" }, price: { perImage: 0.03 } },
+      { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.6/flare/text-to-image", refs: "openai/gpt-image-2.6/flare/edit" }, price: { perImage: 0.04 } },
+    ],
+  },
+  {
+    id: "gpt-image-sunburst",
+    label: "GPT Image Sunburst",
+    by: "OpenAI",
+    note: "The careful GPT Image: for people and likeness, character sheets, products and lettering, and edits that must keep what's there.",
+    ops: ["image"],
+    takes: { refs: 10 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    wait: 60,
+    // gpt-image-2.6-sunburst: the same token rates as Flare on OpenAI's pricing page and on fal, so the same 4¢ at
+    // medium quality. Not on the ChatGPT plan, which picks its own flavour.
+    routes: [
+      { via: "openai", shape: "images-api", endpoints: { text: "gpt-image-2.6-sunburst", refs: "gpt-image-2.6-sunburst" }, price: { perImage: 0.04 } },
+      { via: "fal", shape: "gpt-image", endpoints: { text: "openai/gpt-image-2.6/sunburst/text-to-image", refs: "openai/gpt-image-2.6/sunburst/edit" }, price: { perImage: 0.04 } },
     ],
   },
   {

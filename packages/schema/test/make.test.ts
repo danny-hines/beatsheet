@@ -132,13 +132,13 @@ describe("whether a model can make a shot", () => {
     const gpt = CATALOG.find((m) => m.id === "gpt-image")!;
     const both = { openai: { label: "OpenAI", state: "ready" }, chatgpt: { label: "ChatGPT plan", state: "ready" } } satisfies Record<string, ServiceState>;
     // The plan costs nothing more, so it comes first; the key is the other choice.
-    expect(fitModel(gpt, { op: "image", prompt: "x", aspect: "9:16" }, both)).toMatchObject({ ok: true, route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", where: "OpenAI", usd: 0.03 }] });
-    expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).toMatchObject({ ok: true, route: "openai", endpoint: "gpt-image-2.5-flare", usd: 0.03 });
+    expect(fitModel(gpt, { op: "image", prompt: "x", aspect: "9:16" }, both)).toMatchObject({ ok: true, route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai", where: "OpenAI", usd: 0.04 }] });
+    expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).toMatchObject({ ok: true, route: "openai", endpoint: "gpt-image-2.6-flare", usd: 0.04 });
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "openai" }, both)).not.toHaveProperty("also");
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "chatgpt" }, { openai: both.openai })).toMatchObject({ ok: false, why: { kind: "connect", reason: "Runs on chatgpt" } });
     expect(fitModel(gpt, { op: "image", prompt: "x", via: "meta" }, both)).toMatchObject({ ok: false, why: { kind: "fit", reason: "GPT Image doesn't run on meta" } });
     // fal sells it too, for someone with only a fal key.
-    expect(fitModel(gpt, { op: "image", prompt: "x" }, { fal })).toMatchObject({ ok: true, route: "fal", endpoint: "openai/gpt-image-2.5/flare/text-to-image", usd: 0.03 });
+    expect(fitModel(gpt, { op: "image", prompt: "x" }, { fal })).toMatchObject({ ok: true, route: "fal", endpoint: "openai/gpt-image-2.6/flare/text-to-image", usd: 0.04 });
     // A plan whose image tool isn't on yet doesn't stop the key from making it.
     const muse = CATALOG.find((m) => m.id === "muse-image")!;
     const gated = { meta: { label: "Meta", state: "ready" }, "muse-code": { label: "Muse Code plan", state: "failing", detail: "not on yet" } } satisfies Record<string, ServiceState>;
