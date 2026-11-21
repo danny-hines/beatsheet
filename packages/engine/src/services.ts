@@ -6,7 +6,7 @@ import { findSamToken } from "./sam-cuda.ts";
 import { samReady } from "./sam.ts";
 import { deleteSecret, getSecret, readSettings, setSecret, updateSettings } from "./settings.ts";
 
-export type Capability = "images" | "video" | "music" | "voice" | "sfx" | "transcribe" | "stock" | "segment";
+export type Capability = "images" | "video" | "music" | "voice" | "sfx" | "transcribe" | "segment";
 export const CAPABILITY_LABELS: Record<Capability, string> = {
   images: "Generate images",
   video: "Generate video",
@@ -14,7 +14,6 @@ export const CAPABILITY_LABELS: Record<Capability, string> = {
   voice: "Voiceover",
   sfx: "Sound effects",
   transcribe: "Transcribe speech",
-  stock: "Stock footage",
   segment: "Cut out anything you describe",
 };
 
@@ -101,8 +100,9 @@ export const SERVICES: Service[] = [
   {
     id: "runway",
     label: "Runway",
-    does: "Video from text or an image (Gen-4.5, Aleph), video-to-video, and upscaling.",
-    unlocks: ["video", "images"],
+    does: "Runway's own models and others' (Kling, Seedance) on one key. The key can be saved now; beatsheet can't make anything with it yet.",
+    // Nothing runs through Runway until it has routes in the catalog, so it unlocks nothing and isn't offered as a provider.
+    unlocks: [],
     keyUrl: "https://dev.runwayml.com",
     verify: (key) =>
       tryKey("https://api.dev.runwayml.com/v1/organization", { Authorization: `Bearer ${key}`, "X-Runway-Version": "2024-11-06" }, (b) =>
@@ -130,22 +130,11 @@ export const SERVICES: Service[] = [
   {
     id: "replicate",
     label: "Replicate",
-    does: "Run almost any public model: video, images, upscaling, background removal.",
-    unlocks: ["video", "images"],
+    does: "Almost any public model on one key. The key can be saved now; beatsheet can't make anything with it yet.",
+    // As Runway: no routes in the catalog yet.
+    unlocks: [],
     keyUrl: "https://replicate.com/account/api-tokens",
     verify: (key) => tryKey("https://api.replicate.com/v1/account", { Authorization: `Bearer ${key}` }, (b) => (b.username ? `Signed in as ${b.username}` : "Key works")),
-  },
-  {
-    id: "pexels",
-    label: "Pexels",
-    does: "Free stock video and photos to fill gaps in your footage.",
-    unlocks: ["stock"],
-    keyUrl: "https://www.pexels.com/api/",
-    verify: (key) =>
-      tryKey("https://api.pexels.com/v1/videos/popular?per_page=1", { Authorization: key }, (_b, res) => {
-        const left = res.headers.get("x-ratelimit-remaining");
-        return left ? `Key works · ${Number(left).toLocaleString("en-US")} requests left this month` : "Key works";
-      }),
   },
 ];
 

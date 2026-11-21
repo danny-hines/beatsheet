@@ -157,7 +157,6 @@ export const CAPABILITY_LABELS = {
   voice: "Voiceover",
   sfx: "Sound effects",
   transcribe: "Transcribe speech",
-  stock: "Stock footage",
   segment: "Cut out anything you describe",
 } as const;
 
