@@ -7,7 +7,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type FixerJob, type Rect, type RestoreSteps } from "@beatsheet/schema";
+import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type Rect, type RestoreSteps } from "@beatsheet/schema";
 import { createHash } from "node:crypto";
 import { makeFrames, makePeaks } from "./media.ts";
 import { cancelInstall, checkComfy, COMFY_DEFAULT, comfyUrl, connectComfy, disconnectComfy, installModels, installStatus, OWN_WORKFLOWS, recheckComfy } from "./comfy.ts";
@@ -34,7 +34,7 @@ import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices,
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
-import { cloneVoice, designVoice, listVoices, previewFile, removeVoice, saveDesignedVoice, saveSample, setVoiceSettings } from "./voices.ts";
+import { listVoices, previewFile, setVoiceSettings } from "./voices.ts";
 import { cutOut, findSubjects, joinSubjects, trackSubject, visionStatus, type CutOutOptions } from "./subjects.ts";
 import { addFootage, addSong, ensureCached, importFolder, lookAgain, scanFolder } from "./ingest.ts";
 import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, sourceRoot } from "./paths.ts";
@@ -66,22 +66,6 @@ const json = (res: ServerResponse, status: number, body: unknown) => {
   res.setHeader("content-type", "application/json");
   res.end(JSON.stringify(body));
 };
-
-/** A request's body as bytes (a recording of the person's voice for cloning, say), up to `limit`. */
-const readBytes = (req: IncomingMessage, limit = 100 * 2 ** 20) =>
-  new Promise<Buffer>((ok, fail) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (c: Buffer) => {
-      size += c.length;
-      if (size > limit) {
-        req.destroy();
-        fail(new Error("That's too big to send"));
-      } else chunks.push(c);
-    });
-    req.on("end", () => ok(Buffer.concat(chunks)));
-    req.on("error", fail);
-  });
 
 const readBody = (req: IncomingMessage) =>
   new Promise<string>((ok, fail) => {
@@ -377,22 +361,21 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, samStatus());
     }
     // Kokoro on this Mac, installed and removed like SAM 3.
-    // Transcribing: Whisper on this computer (its install, sized for this machine), the order Auto tries transcribers
-    // in, and the size of Whisper's model.
+    // Transcribing: Whisper on this computer (its install, sized for this machine), what each transcriber can do
+    // here, and the size of Whisper's model.
     if (id === "transcribe" && req.method === "GET") {
       const t = readSettings().transcribe ?? {};
-      return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), ranking: t.ranking ?? [], whisperModel: t.whisperModel });
+      return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), whisperModel: t.whisperModel });
     }
     if (id === "transcribe" && req.method === "POST") {
-      const change = body as unknown as { ranking?: string[]; whisperModel?: ModelSize | null };
+      const change = body as unknown as { whisperModel?: ModelSize | null };
       updateSettings((s) => {
         const t = (s.transcribe ??= {});
-        if (change.ranking) t.ranking = change.ranking;
         if (change.whisperModel === null) delete t.whisperModel;
         else if (change.whisperModel && change.whisperModel in MODELS) t.whisperModel = change.whisperModel;
       });
       const t = readSettings().transcribe ?? {};
-      return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), ranking: t.ranking ?? [], whisperModel: t.whisperModel });
+      return json(res, 200, { whisper: await whisperStatus(), states: await transcriberStates(), whisperModel: t.whisperModel });
     }
     if (id === "whisper" && action === "install" && req.method === "POST") return json(res, 202, await installWhisper((body as { model?: ModelSize }).model));
     if (id === "whisper" && action === "speakers" && req.method === "POST") return json(res, 202, await installWhisperSpeakers());
@@ -404,17 +387,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       removeWhisper();
       return json(res, 200, await whisperStatus());
     }
-    // Restoring: the programs that clean sound and restore picture here, and the order Auto tries fixers in for each job.
-    if (id === "restore" && (req.method === "GET" || req.method === "POST")) {
-      if (req.method === "POST") {
-        const change = body as unknown as { ranking?: Partial<Record<FixerJob, string[]>> };
-        updateSettings((s) => {
-          const r = (s.restore ??= {});
-          if (change.ranking) r.ranking = { ...r.ranking, ...change.ranking };
-        });
-      }
+    // Restoring: the programs that clean sound and restore picture here, and what each fixer can do here.
+    if (id === "restore" && req.method === "GET") {
       const { fixerStates } = await import("./clean.ts");
-      return json(res, 200, { tools: Object.fromEntries(TOOLS.map((t) => [t, toolStatus(t)])), states: await fixerStates(), ranking: readSettings().restore?.ranking ?? {} });
+      return json(res, 200, { tools: Object.fromEntries(TOOLS.map((t) => [t, toolStatus(t)])), states: await fixerStates() });
     }
     if (id === "fix" && action && (TOOLS as string[]).includes(action)) {
       const tool = action as ToolId;
@@ -457,8 +433,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       await agentStudio().chromeChanged();
       return json(res, 200, saved);
     }
-    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, the order
-    // Auto tries models in, and the one service in use for stills and for video, of every one they could come from.
+    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, and the one
+    // service in use for stills and for video, of every one they could come from.
     const plans = () => {
       const states = planStates();
       return PLANS.map((p) => ({ id: p.id, ...states[p.id]! }));
@@ -469,7 +445,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans(), providers: providers() });
     }
     if (id === "make" && req.method === "POST") {
-      const change = body as unknown as { limit?: { usd: number; since?: string } | null; turnBudgetUsd?: number; ranking?: Record<string, string[]>; provider?: { image?: string | null; video?: string | null } };
+      const change = body as unknown as { limit?: { usd: number; since?: string } | null; turnBudgetUsd?: number; provider?: { image?: string | null; video?: string | null } };
       try {
         for (const op of ["image", "video"] as const) if (change.provider?.[op] !== undefined) chooseProvider(op, change.provider[op]!);
       } catch (err) {
@@ -480,7 +456,6 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         if (change.limit === null) delete make.limit;
         else if (change.limit && change.limit.usd > 0) make.limit = { usd: change.limit.usd, since: change.limit.since ?? make.limit?.since ?? new Date().toISOString() };
         if (change.turnBudgetUsd !== undefined && change.turnBudgetUsd >= 0) make.turnBudgetUsd = change.turnBudgetUsd;
-        if (change.ranking) make.ranking = { ...(make.ranking ?? {}), ...change.ranking };
       });
       const make = saved.make ?? {};
       return json(res, 200, { ...make, turnBudgetUsd: turnBudget(), spent: make.limit ? spentSince(make.limit.since) : undefined, plans: plans(), providers: providers() });
@@ -912,30 +887,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return sendFile(req, res, await previewFile(voice));
     }
     if (id === "settings" && req.method === "POST") {
-      const body = JSON.parse((await readBody(req)) || "{}") as { default?: string | null; model?: string };
+      const body = JSON.parse((await readBody(req)) || "{}") as { default?: string | null };
       setVoiceSettings(body);
-      return json(res, 200, { ok: true });
-    }
-    if (id === "design" && !action && req.method === "POST") {
-      const body = JSON.parse((await readBody(req)) || "{}") as { description?: string; text?: string };
-      if (!body.description?.trim()) return json(res, 400, { error: "Describe the voice first" });
-      return json(res, 200, await designVoice(body.description, body.text));
-    }
-    if (id === "design" && action === "save" && req.method === "POST") {
-      const body = JSON.parse((await readBody(req)) || "{}") as { generatedId?: string; name?: string; description?: string };
-      if (!body.generatedId || !body.name?.trim()) return json(res, 400, { error: "Name the voice first" });
-      return json(res, 200, await saveDesignedVoice(body.generatedId, body.name, body.description ?? body.name));
-    }
-    // A recording of the person reading, sent as it is; it waits for the clone and goes once that's made.
-    if (id === "samples" && req.method === "POST") return json(res, 200, saveSample(await readBytes(req), String(req.headers["content-type"] ?? "audio/webm")));
-    if (id === "clone" && req.method === "POST") {
-      const body = JSON.parse((await readBody(req)) || "{}") as { name?: string; samples?: string[]; files?: string[]; description?: string; removeNoise?: boolean; consent?: boolean };
-      if (!body.consent) return json(res, 400, { error: "Only clone your own voice, or one you have permission to use" });
-      if (!body.name?.trim()) return json(res, 400, { error: "Name the voice first" });
-      return json(res, 200, await cloneVoice(body.name, body));
-    }
-    if (id && req.method === "DELETE") {
-      await removeVoice(id);
       return json(res, 200, { ok: true });
     }
   }

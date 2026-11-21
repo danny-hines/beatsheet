@@ -33,15 +33,14 @@ export type Settings = {
    * signed in to: a Google Photos album, a dashboard. The extension asks before acting on each site.
    */
   chrome?: boolean;
-  /** Narration: the voice cuts read with unless they pick their own, and the ElevenLabs model. */
+  /** Narration: the voice cuts read with unless they pick their own. (`model`: an ElevenLabs model picked before Settings stopped offering the choice; still used.) */
   voice?: { default?: string; model?: string };
   /** Set once the first-launch setup is finished. */
   setupDone?: boolean;
   /** On Windows: a Hugging Face token (in Credential Manager) that can download Meta's SAM 3.1, and whose it is. */
   huggingface?: { name?: string; addedAt: string };
-  /** Making footage: the models Auto tries first for each kind of thing (catalog ids), and what the agent may spend in a turn before asking. */
+  /** Making footage: the service in use for stills and for video, and what the agent may spend in a turn before asking. */
   make?: {
-    ranking?: Partial<Record<string, string[]>>;
     /**
      * The one service in use for stills and the one for video, of those connected (a key's service id, or a plan's:
      * "fal", "chatgpt"). Models run there or on the person's own hardware and nowhere else, so nothing is spent on a
@@ -52,10 +51,8 @@ export type Settings = {
     /** A hard limit on what making may spend in all, from `since` on, whoever asks: the person, the agent or a script. */
     limit?: { usd: number; since: string };
   };
-  /** Transcribing what's said: the order Auto tries transcribers in (ids in TRANSCRIBERS), and the size of Whisper's model here. */
-  transcribe?: { ranking?: string[]; whisperModel?: "fast" | "good" | "best" };
-  /** Cleaning sound and restoring picture: the order Auto tries fixers in for each job (ids in FIXERS). */
-  restore?: { ranking?: Partial<Record<"clean" | "upscale" | "frames", string[]>> };
+  /** Transcribing what's said: the size of Whisper's model here. */
+  transcribe?: { whisperModel?: "fast" | "good" | "best" };
   /**
    * ComfyUI on this computer or the network, for the models that run on the person's own graphics card (comfy.ts), and
    * what checking it last said: what it runs on, and what each workflow ("scail2-animation.fast") would be missing there.

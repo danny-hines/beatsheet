@@ -50,7 +50,7 @@ export async function transcriberStates(): Promise<Record<string, TranscriberSta
 
 /** The transcribers for a clip of this length, Auto first, in the person's order when they've set one. */
 export async function transcribeChoices(seconds: number | undefined, speakers = false) {
-  return chooseTranscriber(await transcriberStates(), { seconds, speakers }, readSettings().transcribe?.ranking ?? []);
+  return chooseTranscriber(await transcriberStates(), { seconds, speakers });
 }
 
 export const transcriptFile = (projectId: string, assetId: string) => join(projectDir(projectId), "transcripts", `${assetId}.json`);

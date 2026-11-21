@@ -1,15 +1,15 @@
 /**
  * Settings → Making: the hard limit on what making may spend in all (the person's, the agent's and any script's
  * takes alike), what the agent may spend in a turn before it asks, the one service in use for stills and the one for
- * video, ComfyUI for the models that run on the person's own graphics card, and the order Auto tries models in.
+ * video, and ComfyUI for the models that run on the person's own graphics card.
  */
 import type { ComfyCheck, InstallStatus, ProviderRow } from "@beatsheet/engine";
-import { CATALOG, commercialWords, type MakeOp, type ServiceState } from "@beatsheet/schema";
+import type { MakeOp, ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS, WINDOWS } from "../lib";
 import { actions } from "../store";
 
-type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; ranking?: Partial<Record<string, string[]>>; spent?: number; plans?: ({ id: string } & ServiceState)[]; providers?: Record<MakeOp, ProviderRow[]> };
+type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; spent?: number; plans?: ({ id: string } & ServiceState)[]; providers?: Record<MakeOp, ProviderRow[]> };
 
 /** How to get each plan going. A still on a plan is one short turn of its agent, so it's slower than a key. */
 const PLAN_NOTES: Record<string, string> = {
@@ -69,12 +69,6 @@ export function MakeSection() {
       </section>
       {s.providers && <ProvidersSection providers={s.providers} onChange={setS} />}
       <ComfySection />
-      <section>
-        <h4>What Auto tries first</h4>
-        <Ranking op="image" label="Stills" order={s.ranking?.image} onChange={(ids) => change({ ranking: { image: ids } })} />
-        <Ranking op="video" label="Video" order={s.ranking?.video} onChange={(ids) => change({ ranking: { video: ids } })} />
-        <p className="dim small">For video, Auto keeps to the quality asked for (roughs or finals) and goes down this list within it.</p>
-      </section>
     </div>
   );
 }
@@ -116,7 +110,8 @@ function Providers({ label, op, rows, choose }: { label: string; op: MakeOp; row
           return (
             <li key={r.id} className={r.inUse ? "on" : ""}>
               <label className="check-row">
-                <input type="radio" name={`provider-${op}`} checked={r.inUse} disabled={!connected && r.kind === "plan"} onChange={() => (connected ? choose(op, r.id) : setAdding(r.id))} />
+                {/* On click, not change: clicking the one beatsheet guessed keeps it as the person's choice. */}
+                <input type="radio" name={`provider-${op}`} checked={r.inUse} disabled={!connected && r.kind === "plan"} readOnly onClick={() => (connected ? choose(op, r.id) : setAdding(r.id))} />
                 <span>{r.label}</span>
                 <span className="pill">{r.kind === "plan" ? "Subscription" : "API key"}</span>
                 <span className="dim small make-provider-models" title={r.models.join(", ")}>
@@ -360,52 +355,4 @@ function Money({ value, onCommit }: { value: number; onCommit: (usd: number) => 
     else setText(String(value));
   };
   return <input className="money" type="number" min={0} step={1} value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === "Enter" && commit()} aria-label="Dollars" />;
-}
-
-/** The models that make one kind of thing, in the order Auto tries them; each moves up or down. */
-function Ranking({ op, label, order, onChange }: { op: MakeOp; label: string; order?: string[]; onChange: (ids: string[]) => void }) {
-  const models = CATALOG.filter((m) => m.ops.includes(op));
-  const rank = (id: string) => {
-    const i = order?.indexOf(id) ?? -1;
-    return i === -1 ? 1000 + models.findIndex((m) => m.id === id) : i;
-  };
-  const sorted = [...models].sort((a, b) => rank(a.id) - rank(b.id));
-  const move = (i: number, by: number) => {
-    const ids = sorted.map((m) => m.id);
-    [ids[i], ids[i + by]] = [ids[i + by]!, ids[i]!];
-    onChange(ids);
-  };
-  return (
-    <div className="make-ranking">
-      <span className="dim small">{label}</span>
-      <ol>
-        {sorted.map((m, i) => (
-          <li key={m.id}>
-            <span>
-              {m.label}
-              {m.tier && <span className="dim small"> · {m.tier === "final" ? "finals" : "roughs"}</span>}
-              {m.routes
-                .filter((r) => r.commercial)
-                .map((r) => (
-                  <span key={r.via} className="dim small" title={r.commercial!.why}>
-                    {" "}
-                    · {commercialWords(r.commercial!)}
-                    {m.routes.length > 1 ? (r.via === "comfy" ? " on your own card" : ` on ${r.via}`) : ""}
-                  </span>
-                ))}
-            </span>
-            <span className="dim small">{m.note}</span>
-            <span className="make-ranking-move">
-              <button className="link small" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Try ${m.label} sooner`}>
-                ↑
-              </button>
-              <button className="link small" disabled={i === sorted.length - 1} onClick={() => move(i, 1)} aria-label={`Try ${m.label} later`}>
-                ↓
-              </button>
-            </span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
 }

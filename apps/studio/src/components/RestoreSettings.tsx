@@ -1,14 +1,14 @@
 /**
  * Settings → Restoring: the programs that clean sound and restore picture on this computer (DeepFilterNet for voices,
- * Real-ESRGAN for upscaling, RIFE for frames in between), each installed, checked and timed here, and the order Auto
- * tries cleaners and upscalers in. With no order set, Auto keeps the one here first when this machine is quick at it.
+ * Real-ESRGAN for upscaling, RIFE for frames in between), each installed, checked and timed here, and what each
+ * cleaner and upscaler can do here. The one here comes first when this machine is quick at it.
  */
 import type { ToolId, ToolStatus } from "@beatsheet/engine";
 import { FIXERS, type FixerJob, type FixerState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
 
-type Info = { tools: Record<ToolId, ToolStatus>; states: Record<string, FixerState>; ranking: Partial<Record<FixerJob, string[]>> };
+type Info = { tools: Record<ToolId, ToolStatus>; states: Record<string, FixerState> };
 
 const mb = (bytes?: number) => (bytes === undefined ? "" : bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
 
@@ -36,24 +36,20 @@ export function RestoreSection() {
   useEffect(() => void load().then(setInfo), []);
   if (!info) return <p className="dim small">Loading…</p>;
   const refresh = () => void load().then(setInfo);
-  const save = async (ranking: Partial<Record<FixerJob, string[]>>) => {
-    const res = await fetch("/api/settings/restore", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ranking }) });
-    setInfo((await res.json()) as Info);
-  };
   return (
     <div className="make-settings">
       {(["deepfilter", "realesrgan", "rife"] as const).map((id) => (
         <ToolCard key={id} s={info.tools[id]} onChange={refresh} />
       ))}
       <section>
-        <h4>Cleaning voices: what Auto tries first</h4>
-        <Order does="clean" info={info} onChange={(ids) => void save({ clean: ids })} />
+        <h4>What cleans voices</h4>
+        <Available does="clean" info={info} />
       </section>
       <section>
-        <h4>Upscaling: what Auto tries first</h4>
-        <Order does="upscale" info={info} onChange={(ids) => void save({ upscale: ids })} />
+        <h4>What upscales</h4>
+        <Available does="upscale" info={info} />
         <p className="dim small">
-          Without an order of your own, Auto uses what's on {OS.here} when it's quick enough, and a service with your key when {OS.here} would take far longer than the footage plays.
+          beatsheet uses what's on {OS.here} when it's quick enough, and a service with your key when {OS.here} would take far longer than the footage plays. You can pick another when you restore a clip.
         </p>
       </section>
     </div>
@@ -132,20 +128,8 @@ function ToolCard({ s, onChange }: { s: ToolStatus; onChange: () => void }) {
   );
 }
 
-/** The fixers for one job in the order Auto tries them, each saying whether it can be used here; each moves up or down. */
-function Order({ does, info, onChange }: { does: FixerJob; info: Info; onChange: (ids: string[]) => void }) {
-  const fixers = FIXERS.filter((f) => f.does === does);
-  const ranking = info.ranking[does] ?? [];
-  const rank = (id: string) => {
-    const i = ranking.indexOf(id);
-    return i === -1 ? 1000 + fixers.findIndex((t) => t.id === id) : i;
-  };
-  const sorted = [...fixers].sort((a, b) => rank(a.id) - rank(b.id));
-  const move = (i: number, by: number) => {
-    const ids = sorted.map((t) => t.id);
-    [ids[i], ids[i + by]] = [ids[i + by]!, ids[i]!];
-    onChange(ids);
-  };
+/** The fixers for one job, each saying whether it can be used here and what it costs. */
+function Available({ does, info }: { does: FixerJob; info: Info }) {
   const state = (id: string) => {
     const s = info.states[id];
     if (!s) return "";
@@ -155,8 +139,8 @@ function Order({ does, info, onChange }: { does: FixerJob; info: Info; onChange:
   const price = (f: (typeof FIXERS)[number]) => (f.perMinute ? ` · ${Math.round(f.perMinute * 100)}¢ a minute` : f.perMegapixel ? " · about $2 a minute of 240p at 4×" : " · free");
   return (
     <div className="make-ranking">
-      <ol>
-        {sorted.map((t, i) => (
+      <ul>
+        {FIXERS.filter((f) => f.does === does).map((t) => (
           <li key={t.id}>
             <span>
               {t.label}
@@ -167,22 +151,9 @@ function Order({ does, info, onChange }: { does: FixerJob; info: Info; onChange:
               </span>
             </span>
             <span className={`small ${info.states[t.id]?.state === "ready" ? "" : "dim"}`}>{state(t.id)}</span>
-            <span className="make-ranking-move">
-              <button className="link small" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Try ${t.label} sooner`}>
-                ↑
-              </button>
-              <button className="link small" disabled={i === sorted.length - 1} onClick={() => move(i, 1)} aria-label={`Try ${t.label} later`}>
-                ↓
-              </button>
-            </span>
           </li>
         ))}
-      </ol>
-      {ranking.length > 0 && (
-        <button className="link small" onClick={() => onChange([])}>
-          Let Auto decide by how quick {OS.here} is
-        </button>
-      )}
+      </ul>
     </div>
   );
 }

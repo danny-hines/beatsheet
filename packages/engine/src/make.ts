@@ -692,7 +692,7 @@ export function absentFrom(projectId: string, asks: MakeAsk[]): { shot?: string;
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
 export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest; choices: Choices } {
   const req = requestFor(projectId, ask);
-  return { req, choices: chooseModels(CATALOG, req, serviceStates(req.op), readSettings().make?.ranking?.[req.op] ?? []) };
+  return { req, choices: chooseModels(CATALOG, req, serviceStates(req.op)) };
 }
 
 /** What the agent's jobs (and the services its tools used) have cost so far in its current turn (nothing when it isn't the agent's turn). */

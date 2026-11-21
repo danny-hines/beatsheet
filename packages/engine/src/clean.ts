@@ -44,7 +44,7 @@ export async function fixerStates(): Promise<Record<string, FixerState>> {
 
 /** The fixers for one job on a clip, Auto first, in the person's order when they've set one. */
 export async function fixChoices(does: FixerJob, ask: FixAsk) {
-  return chooseFixer(does, await fixerStates(), ask, readSettings().restore?.ranking?.[does] ?? []);
+  return chooseFixer(does, await fixerStates(), ask);
 }
 
 /** The fixer asked for, else Auto's pick; or why nothing can do it. */

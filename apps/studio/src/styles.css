@@ -910,27 +910,8 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .voice-row-use { opacity: 0; }
 .voice-row:hover .voice-row-use, .voice-row-use:focus-visible { opacity: 1; }
 .voice-row-tag { white-space: nowrap; }
-.voice-row-x { background: none; border: none; color: var(--dim); padding: 2px 6px; opacity: 0; }
-.voice-row:hover .voice-row-x, .voice-sample:hover .voice-row-x { opacity: 1; }
-.voice-remove { display: flex; gap: 4px; }
 .voice-more { align-self: flex-start; margin: 4px 0 0 40px; }
 .setup-service h5 { margin: 8px 0 2px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 600; }
-.voice-make { display: flex; gap: 6px; }
-.voice-panel { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line-2); border-radius: 9px; background: #14161a; }
-.voice-panel label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 12px; }
-.voice-panel label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); }
-.voice-panel textarea, .voice-panel input:not([type]) { color: var(--text); font-size: 13px; background: #0e0f12; border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 8px; }
-.voice-panel .row { gap: 8px; }
-.voice-panel input.grow { flex: 1; min-width: 160px; }
-.voice-panel p { margin: 0; }
-.voice-takes { display: flex; flex-direction: column; gap: 4px; }
-.voice-take { flex-direction: row !important; align-items: center; gap: 8px !important; padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; color: var(--text) !important; cursor: pointer; }
-.voice-take.on { border-color: var(--accent); }
-.voice-passage { margin: 0; padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--panel-2); border-radius: 0 8px 8px 0; font-size: 14px; line-height: 1.6; max-height: 150px; overflow: auto; }
-.voice-meter { width: 140px; }
-.voice-samples { display: flex; flex-direction: column; gap: 2px; }
-.voice-sample { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-radius: 6px; }
-.voice-sample:hover { background: var(--panel-2); }
 .narration { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
 .narration h4 { margin: 0; }
 .narration p { margin: 0; }
@@ -1048,14 +1029,15 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-settings input.money { width: 72px; flex: none; }
 .make-row input.seconds { width: 64px; flex: none; }
 .make-row select:first-child { flex: 1; min-width: 0; }
-.make-ranking ol { margin: 4px 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; }
-.make-ranking li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 10px; align-items: baseline; }
-.make-ranking-move { white-space: nowrap; }
+.make-ranking ul { margin: 4px 0 8px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.make-ranking li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .make-providers h5 { margin: 6px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 600; }
-.make-providers ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.make-providers ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.make-providers li { min-width: 0; overflow: hidden; }
 .make-providers li { padding: 5px 8px; border: 1px solid transparent; border-radius: 8px; }
 .make-providers li.on { background: var(--panel); border-color: var(--line); }
-.make-providers label.check-row { cursor: pointer; }
+.make-providers label.check-row { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.make-providers label.check-row > span { white-space: nowrap; }
 .make-provider-models { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 .make-provider-status, .make-provider-key { margin: 2px 0 0 24px; }
 .make-provider-key { display: flex; flex-direction: column; gap: 4px; }

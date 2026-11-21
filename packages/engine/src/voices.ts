@@ -1,6 +1,6 @@
 /**
- * Voices for narration, from whatever this Mac has: ElevenLabs with a key (its library, voices designed from a
- * description, the person's own cloned voice), Kokoro once it's installed in Settings, and always the Mac's own voices
+ * Voices for narration, from whatever this Mac has: ElevenLabs with a key (its library, and the voices the person has
+ * designed or cloned on elevenlabs.io, which is where they're made), Kokoro once it's installed in Settings, and always the Mac's own voices
  * (on Windows, Windows' own). Voice ids carry their provider: `elevenlabs:<voice id>`, `kokoro:af_heart`,
  * `mac:com.apple.voice.premium.en-US.Zoe`, `windows:Microsoft Zira Desktop`.
  *
@@ -9,9 +9,9 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, extname, join } from "node:path";
+import { join } from "node:path";
 import { voiceProvider, type Word } from "@beatsheet/schema";
 import { KOKORO_VOICES, kokoroReady, kokoroSpeak, kokoroStatus, type KokoroStatus } from "./kokoro.ts";
 import { swiftHelper, windowsHelper } from "./native.ts";
@@ -28,17 +28,13 @@ export type VoiceInfo = {
   language?: string;
   /** How natural it sounds, for the Mac's voices: basic (compact), good (enhanced), best (premium). */
   quality?: "basic" | "good" | "best";
-  /** One of the person's own ElevenLabs voices. */
+  /** One of the person's own ElevenLabs voices, made on elevenlabs.io. */
   own?: "cloned" | "designed";
   /** A sample to play without making one. */
   previewUrl?: string;
 };
 
-export const ELEVEN_MODELS = [
-  { id: "eleven_v4", label: "Eleven v4: the most natural" },
-  { id: "eleven_multilingual_v2", label: "Multilingual v2: steady, 29 languages" },
-  { id: "eleven_flash_v2_5", label: "Flash v2.5: quick, half the credits" },
-];
+/** ElevenLabs' most natural model; a voice or plan that can't use it is read with the steady one (see elevenSpeak). */
 const DEFAULT_MODEL = "eleven_v4";
 
 export type VoicesInfo = {
@@ -47,8 +43,6 @@ export type VoicesInfo = {
   default?: string;
   /** What narration uses when a cut hasn't picked a voice: the default, or the best voice available. */
   fallback?: string;
-  model: string;
-  models: typeof ELEVEN_MODELS;
   elevenlabs: { configured: boolean; error?: string };
   kokoro: KokoroStatus;
   /** This computer's own voices: the Mac's, or on Windows, Windows'. */
@@ -177,6 +171,7 @@ function elevenInfo(v: ElevenVoice): VoiceInfo {
   };
 }
 
+// A model picked in Settings before the picker went is still the one used, so nobody's narration changes under them.
 const elevenModel = () => readSettings().voice?.model ?? DEFAULT_MODEL;
 
 // ---- Listing and choosing
@@ -208,8 +203,6 @@ export async function listVoices(): Promise<VoicesInfo> {
     voices,
     default: settings.voice?.default,
     fallback: pickFrom(voices, settings.voice?.default, mac.language),
-    model: elevenModel(),
-    models: ELEVEN_MODELS,
     elevenlabs: { configured, error: elevenError },
     kokoro: kokoroStatus(),
     mac,
@@ -245,11 +238,10 @@ export async function resolveVoice(wanted?: string): Promise<string> {
   return info.fallback;
 }
 
-export function setVoiceSettings(patch: { default?: string | null; model?: string }) {
+export function setVoiceSettings(patch: { default?: string | null }) {
   updateSettings((s) => {
     s.voice ??= {};
     if (patch.default !== undefined) s.voice.default = patch.default ?? undefined;
-    if (patch.model) s.voice.model = patch.model;
   });
 }
 
@@ -389,88 +381,4 @@ export async function previewFile(voice: string): Promise<string> {
     }
   }
   return (await speak(voice, SAMPLE, base)).file;
-}
-
-// ---- Making voices (ElevenLabs)
-
-export type DesignPreview = { generatedId: string; audio: string; duration: number };
-
-/** Three takes on a voice described in words; keep one with saveDesignedVoice. */
-export async function designVoice(description: string, text?: string): Promise<{ previews: DesignPreview[]; text: string }> {
-  const sample = text?.trim();
-  const res = await eleven("/v1/text-to-voice/design?output_format=mp3_44100_128", {
-    method: "POST",
-    // The sample must be 100 to 1000 characters; anything shorter, ElevenLabs writes one to suit the voice.
-    body: JSON.stringify({ voice_description: description.trim(), model_id: "eleven_ttv_v3", ...(sample && sample.length >= 100 ? { text: sample.slice(0, 1000) } : { auto_generate_text: true }) }),
-    timeout: 180_000,
-  });
-  const r = (await res.json()) as { previews: { audio_base_64: string; generated_voice_id: string; media_type?: string; duration_secs?: number }[]; text: string };
-  return {
-    text: r.text,
-    previews: r.previews.map((p) => ({ generatedId: p.generated_voice_id, audio: `data:${p.media_type ?? "audio/mpeg"};base64,${p.audio_base_64}`, duration: p.duration_secs ?? 0 })),
-  };
-}
-
-export async function saveDesignedVoice(generatedId: string, name: string, description: string): Promise<VoiceInfo> {
-  const res = await eleven("/v1/text-to-voice", { method: "POST", body: JSON.stringify({ voice_name: name.trim(), voice_description: description.trim(), generated_voice_id: generatedId }) });
-  const v = (await res.json()) as ElevenVoice;
-  elevenCache = undefined;
-  return elevenInfo({ ...v, name: v.name ?? name, category: "generated" });
-}
-
-/** Recordings of the person's voice, kept only until they're cloned. */
-const SAMPLES = join(VOICES_DIR, "samples");
-const AUDIO_TYPES: Record<string, string> = { "audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".m4a", "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav", "video/webm": ".webm", "video/mp4": ".m4a" };
-
-export function saveSample(data: Buffer, type: string): { id: string; bytes: number } {
-  mkdirSync(SAMPLES, { recursive: true });
-  // Anything left from an earlier try that wasn't cloned goes after a day.
-  for (const f of readdirSync(SAMPLES)) if (Date.now() - statSync(join(SAMPLES, f)).mtimeMs > 86_400_000) rmSync(join(SAMPLES, f), { force: true });
-  const id = `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  writeFileSync(join(SAMPLES, id + (AUDIO_TYPES[type.split(";")[0]!.trim()] ?? ".webm")), data);
-  return { id, bytes: data.length };
-}
-
-const sampleFile = (id: string) => (/^s[a-z0-9]+$/.test(id) ? readdirSync(SAMPLES).find((f) => f.startsWith(`${id}.`)) : undefined);
-
-/**
- * The person's own voice, cloned from recordings (Instant Voice Cloning: a minute or two of clear speech is plenty).
- * `samples` are recordings saved with saveSample, or audio files on this Mac. Recordings are deleted once it's made.
- */
-export async function cloneVoice(name: string, opts: { samples?: string[]; files?: string[]; description?: string; removeNoise?: boolean }): Promise<VoiceInfo> {
-  const form = new FormData();
-  form.set("name", name.trim());
-  if (opts.description?.trim()) form.set("description", opts.description.trim());
-  if (opts.removeNoise) form.set("remove_background_noise", "true");
-  const recorded = (opts.samples ?? []).map((id) => {
-    const f = existsSync(SAMPLES) ? sampleFile(id) : undefined;
-    if (!f) throw new Error("A recording for the clone has gone missing; record it again.");
-    return join(SAMPLES, f);
-  });
-  const files = [...recorded, ...(opts.files ?? [])];
-  if (!files.length) throw new Error("Record yourself or choose a recording first.");
-  for (const f of files) {
-    if (!existsSync(f)) throw new Error(`No file at ${f}`);
-    form.append("files", new Blob([readFileSync(f)]), basename(f) || `sample${extname(f)}`);
-  }
-  let r: { voice_id: string; requires_verification?: boolean };
-  try {
-    r = (await (await eleven("/v1/voices/add", { method: "POST", body: form, timeout: 180_000 })).json()) as typeof r;
-  } finally {
-    // The person's recordings aren't kept, whether or not it worked (trying again sends them again).
-    for (const f of recorded) rmSync(f, { force: true });
-  }
-  elevenCache = undefined;
-  return { id: `elevenlabs:${r.voice_id}`, provider: "elevenlabs", name: name.trim(), own: "cloned", detail: r.requires_verification ? "Needs verifying on elevenlabs.io before it can be used" : "Your voice" };
-}
-
-/** Deletes one of the person's own ElevenLabs voices (never a library voice). */
-export async function removeVoice(voice: string) {
-  if (voiceProvider(voice) !== "elevenlabs") throw new Error("Only your own ElevenLabs voices can be removed here");
-  const id = voice.slice("elevenlabs:".length);
-  const v = (await elevenVoices()).find((x) => x.voice_id === id);
-  if (!v || !elevenInfo(v).own) throw new Error("That isn't one of your own voices");
-  await eleven(`/v1/voices/${encodeURIComponent(id)}`, { method: "DELETE" });
-  elevenCache = undefined;
-  if (readSettings().voice?.default === voice) setVoiceSettings({ default: null });
 }

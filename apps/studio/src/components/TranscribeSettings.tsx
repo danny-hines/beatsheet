@@ -1,14 +1,14 @@
 /**
  * Settings → Transcription: Whisper on this computer (installed for what this machine has: its graphics card, Apple
- * silicon, or the processor with a smaller model) and the order Auto tries transcribers in. With no order set, Auto
- * keeps Whisper here first when this machine is quick at it, and sends the audio to a service when it's slow.
+ * silicon, or the processor with a smaller model) and what each transcriber can do here. Whisper here comes first
+ * when this machine is quick at it, and the audio goes to a service when it's slow.
  */
 import type { ModelSize, WhisperStatus } from "@beatsheet/engine";
 import { TRANSCRIBERS, type TranscriberState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
 
-type Info = { whisper: WhisperStatus; states: Record<string, TranscriberState>; ranking: string[]; whisperModel?: ModelSize };
+type Info = { whisper: WhisperStatus; states: Record<string, TranscriberState>; whisperModel?: ModelSize };
 
 const mb = (bytes?: number) => (bytes === undefined ? "" : bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`);
 const SIZES: { id: ModelSize; label: string; bytes: number; note: string }[] = [
@@ -42,11 +42,11 @@ export function TranscribeSection() {
     <div className="make-settings">
       <WhisperCard info={info} onChange={() => void load().then(setInfo)} setModel={(m) => void save({ whisperModel: m })} />
       <section>
-        <h4>What Auto tries first</h4>
-        <Order info={info} onChange={(ranking) => void save({ ranking })} />
+        <h4>What transcribes</h4>
+        <Available info={info} />
         <p className="dim small">
-          Without an order of your own, Auto uses Whisper here when {OS.here} is quick at it, a service with your key when it's slow, and Whisper here anyway when there's no key. Asking for who's
-          speaking leaves only the ones that can tell.
+          beatsheet uses Whisper here when {OS.here} is quick at it, a service with your key when it's slow, and Whisper here anyway when there's no key. Asking for who's speaking leaves only the
+          ones that can tell. You can pick another for a clip when you transcribe it.
         </p>
       </section>
     </div>
@@ -165,18 +165,8 @@ function WhisperCard({ info, onChange, setModel }: { info: Info; onChange: () =>
   );
 }
 
-/** The transcribers in the order Auto tries them, each saying whether it can be used here; each moves up or down. */
-function Order({ info, onChange }: { info: Info; onChange: (ids: string[]) => void }) {
-  const rank = (id: string) => {
-    const i = info.ranking.indexOf(id);
-    return i === -1 ? 1000 + TRANSCRIBERS.findIndex((t) => t.id === id) : i;
-  };
-  const sorted = [...TRANSCRIBERS].sort((a, b) => rank(a.id) - rank(b.id));
-  const move = (i: number, by: number) => {
-    const ids = sorted.map((t) => t.id);
-    [ids[i], ids[i + by]] = [ids[i + by]!, ids[i]!];
-    onChange(ids);
-  };
+/** Every transcriber, each saying whether it can be used here, what it costs and whether it tells speakers apart. */
+function Available({ info }: { info: Info }) {
   const state = (id: string) => {
     const s = info.states[id];
     if (!s) return "";
@@ -185,8 +175,8 @@ function Order({ info, onChange }: { info: Info; onChange: (ids: string[]) => vo
   };
   return (
     <div className="make-ranking">
-      <ol>
-        {sorted.map((t, i) => (
+      <ul>
+        {TRANSCRIBERS.map((t) => (
           <li key={t.id}>
             <span>
               {t.label}
@@ -198,22 +188,9 @@ function Order({ info, onChange }: { info: Info; onChange: (ids: string[]) => vo
               </span>
             </span>
             <span className={`small ${info.states[t.id]?.state === "ready" ? "" : "dim"}`}>{state(t.id)}</span>
-            <span className="make-ranking-move">
-              <button className="link small" disabled={i === 0} onClick={() => move(i, -1)} aria-label={`Try ${t.label} sooner`}>
-                ↑
-              </button>
-              <button className="link small" disabled={i === sorted.length - 1} onClick={() => move(i, 1)} aria-label={`Try ${t.label} later`}>
-                ↓
-              </button>
-            </span>
           </li>
         ))}
-      </ol>
-      {info.ranking.length > 0 && (
-        <button className="link small" onClick={() => onChange([])}>
-          Let Auto decide by how quick {OS.here} is
-        </button>
-      )}
+      </ul>
     </div>
   );
 }

@@ -25,7 +25,7 @@ const ABOUT = {
   providers: "For shots that are made rather than filmed. Choose the service you already use; cutting your own footage needs none.",
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
   abilities: "Everything the agent can do with what's set up now.",
-  make: "Which service makes your stills and which your video, what making may spend, and which models Auto tries first.",
+  make: "Which service makes your stills and which your video, and what making may spend.",
   transcribe: "Turning what's said in a clip into words with their times: on this computer, or a service with your key.",
   restore: "Old footage at its best: voices cleaned of hiss and hum, and the picture steadier, sharper and smoother. On this computer, or a service with your key.",
 };
@@ -42,7 +42,7 @@ function useAgentList() {
 const agentReady = (setup: SetupInfo) => !!setup.settings.agent && !!setup.settings.checks[setup.settings.agent.id]?.ok;
 
 /**
- * First launch: a screen of its own, one step at a time. An agent is required (installed, signed in, picked as the
+ * First launch: a screen of its own, in two steps. An agent is required (installed, signed in, picked as the
  * default); the rest is optional and can wait for Settings.
  */
 export function SetupScreen({ setup }: { setup: SetupInfo }) {
@@ -68,15 +68,9 @@ export function SetupScreen({ setup }: { setup: SetupInfo }) {
           <Step n={1} done={ready} title="Connect an agent" note="required" about={ABOUT.agent}>
             <AgentSection list={list} setup={setup} />
           </Step>
-          <Step n={2} title={`On ${OS.here}`} note="optional" about={ABOUT.mac}>
-            <LocalSection setup={setup} />
-          </Step>
-          <Step n={3} title="Making stills and video" note="optional" about={ABOUT.providers}>
+          {/* Two steps and no more: what runs on this computer, voices and the other services wait in Settings. */}
+          <Step n={2} title="Making stills and video" note="optional" about={ABOUT.providers}>
             <ProvidersSetup />
-          </Step>
-          {/* The services that make neither (voices, music, sound); the ones above take their keys where they're chosen. */}
-          <Step n={4} title="Other services" note="optional" about={ABOUT.services}>
-            <ServicesSection services={setup.services.filter((s) => s.unlocks.length && !s.unlocks.some((c) => c === "images" || c === "video"))} />
           </Step>
           <section className="setup-summary">
             <h3>What your agent can do</h3>

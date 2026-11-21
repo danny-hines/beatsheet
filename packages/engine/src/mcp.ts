@@ -1015,7 +1015,7 @@ server.registerTool(
       .map((x) => `- ${x.id} · ${x.name}${x.own ? ` (their own, ${x.own})` : ""}${x.detail ? ` · ${x.detail}` : ""}${x.quality ? ` · ${x.quality} quality` : ""}${x.id === v.default ? " · DEFAULT" : ""}`);
     const notes = [
       v.default ? `The person's default: ${v.default}.` : v.fallback ? `No default picked; narration uses ${v.fallback} unless you name another.` : "No voice is available.",
-      v.elevenlabs.configured ? (v.elevenlabs.error ? `ElevenLabs: ${v.elevenlabs.error}` : `ElevenLabs model: ${v.model}.`) : "No ElevenLabs key (the person can add one in Settings).",
+      v.elevenlabs.configured ? (v.elevenlabs.error ? `ElevenLabs: ${v.elevenlabs.error}` : "") : "No ElevenLabs key (the person can add one in Settings).",
       v.kokoro.state === "ready" ? "" : "Kokoro isn't installed (Settings → Voices).",
     ].filter(Boolean);
     return text(`${notes.join(" ")}\n${rows.join("\n")}`);
