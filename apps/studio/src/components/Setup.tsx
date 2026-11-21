@@ -374,6 +374,8 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
   const stored = useStore((s) => s.setup?.settings.checks[info.id]);
   const [checking, setChecking] = useState(false);
   const [install, setInstall] = useState<InstallJob | null>(null);
+  /** Which of the two the job in `install` is. */
+  const [updating, setUpdating] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [model, setModel] = useState(defaultModel ?? info.models?.find((m) => m.default)?.id ?? info.models?.[0]?.id);
   // The models arrive after the card does; start on the default one.
@@ -383,6 +385,8 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
   const post = (path: string, body: unknown) => fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
   const check = async () => {
+    // An install or update that stopped with an error has said its piece.
+    setInstall((j) => (j?.status === "running" ? j : null));
     setChecking(true);
     try {
       await post("/api/agent/check", { agent: info.id }).then((r) => r.json() as Promise<AgentCheck>);
@@ -398,15 +402,19 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
     if (info.installed && !stored) void check();
   }, [info.installed]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const runInstall = async () => {
-    let job = (await post("/api/agent/install", { agent: info.id }).then((r) => r.json())) as InstallJob;
+  /** Installs the CLI, or with "update" runs its own updater; either way the card follows the job's last lines. */
+  const runInstall = async (what: "install" | "update" = "install") => {
+    setUpdating(what === "update");
+    let job = (await post(`/api/agent/${what}`, { agent: info.id }).then((r) => r.json())) as InstallJob;
     setInstall(job);
     while (job.status === "running") {
       await new Promise((r) => setTimeout(r, 1000));
       job = (await fetch(`/api/jobs/${job.id}`).then((r) => r.json())) as InstallJob;
       setInstall(job);
     }
-    // The job checks the agent when it finishes; pick up the result and its models.
+    // A new version can bring a new default model: unless the person has chosen one, the card goes to it.
+    if (what === "update" && !defaultModel) setModel(undefined);
+    // An install checks the agent when it finishes; pick up the result, the models and the version.
     await Promise.all([actions.loadSettings(), actions.loadAgentList()]);
     if (job.status === "done") setInstall(null);
   };
@@ -423,16 +431,32 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
 
   const ok = info.installed && stored?.ok;
   const signedOut = info.installed && stored && !stored.ok && stored.detail === "Not signed in";
+  // Checking is a quiet link beside what the last check found, so the row below never holds more than the model and one
+  // button, and every card lays out the same. It steps aside when the card's button is the thing to do (install, sign in).
+  const canCheck = !checking && install?.status !== "running" && !(!info.installed && info.installCommand) && !(signedOut && !signingIn);
   return (
     <div className={`setup-agent ${info.id} ${ok ? "ok" : ""} ${isDefault ? "chosen" : ""}`}>
       <div className="setup-agent-head">
         <strong>{AGENT_NAMES[info.id]}</strong>
         {isDefault && <span className="model-tag">Default</span>}
+        <span className="spacer" />
+        {/* The version installed; when there's a later one, the way to it instead. */}
+        {info.latest && install?.status !== "running" ? (
+          <button className="link small" onClick={() => void runInstall("update")} title={`${info.version} is installed. Runs ${info.label}'s own updater.`}>
+            Update to {info.latest}
+          </button>
+        ) : (
+          info.version && (
+            <span className="dim small" title="The version installed">
+              {info.version}
+            </span>
+          )
+        )}
       </div>
       <div className="small setup-status">
         {install ? (
           <>
-            <span className={install.status === "error" ? "warn" : "dim"}>{install.status === "error" ? install.error : "Installing…"}</span>
+            <span className={install.status === "error" ? "warn" : "dim"}>{install.status === "error" ? install.error : updating ? "Updating…" : "Installing…"}</span>
             <pre className="setup-log">{install.log.slice(-4).join("\n")}</pre>
           </>
         ) : !info.installed ? (
@@ -449,10 +473,22 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
           </span>
         ) : stored ? (
           <>
-            <span className={stored.ok ? "good" : "warn"}>{stored.ok ? "✓" : "✕"}</span> {stored.detail} <span className="dim">· {timeAgo(stored.at)}</span>
+            <span className={stored.ok ? "good" : "warn"}>{stored.ok ? "✓" : "✕"}</span>{" "}
+            {/* A detail saved before checks kept theirs to a line can be a CLI's whole output; the card shows its start. */}
+            <span title={stored.detail.length > 160 ? stored.detail.slice(0, 2000) : undefined}>{stored.detail.length > 160 ? `${stored.detail.slice(0, 159)}…` : stored.detail}</span>{" "}
+            <span className="dim">· {timeAgo(stored.at)}</span>
           </>
         ) : (
           <span className="dim">Not checked yet</span>
+        )}
+        {canCheck && (
+          <>
+            {" "}
+            <span className="dim">·</span>
+            <button className="link" onClick={() => void check()}>
+              {stored ? "Check again" : "Check now"}
+            </button>
+          </>
         )}
       </div>
       <div className="setup-agent-actions">
@@ -478,14 +514,13 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
           <button className="primary" onClick={() => void runInstall()} disabled={install?.status === "running"} title={info.installCommand}>
             {install?.status === "running" ? "Installing…" : install?.status === "error" ? "Try again" : "Install"}
           </button>
-        ) : signedOut && !signingIn ? (
-          <button className="primary" onClick={() => void signIn()} title={info.signInCommand ? `Opens ${OS.terminal} running ${info.signInCommand}` : "Opens Google's sign-in in your browser"}>
-            Sign in
-          </button>
         ) : (
-          <button onClick={() => void check()} disabled={checking || install?.status === "running"}>
-            Check again
-          </button>
+          signedOut &&
+          !signingIn && (
+            <button className="primary" onClick={() => void signIn()} title={info.signInCommand ? `Opens ${OS.terminal} running ${info.signInCommand}` : "Opens Google's sign-in in your browser"}>
+              Sign in
+            </button>
+          )
         )}
         {ok && !isDefault && (
           <button className="primary" onClick={() => void makeDefault(info.id, model)}>

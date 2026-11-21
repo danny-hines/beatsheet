@@ -61,6 +61,12 @@ export type AgentModel = { id: string; label: string; hint?: string; default?: b
 /** Whether the CLI can actually work: installed and signed in. `detail` says who it's signed in as, or what to do. */
 export type AgentCheck = { ok: boolean; detail: string };
 
+/** A check's detail is a line on the agent's card: whatever a CLI printed, its first line and no more than fits. */
+export const brief = (detail: string, most = 160) => {
+  const line = detail.trim().split("\n")[0]!.trim();
+  return line.length > most ? `${line.slice(0, most - 1).trimEnd()}…` : line;
+};
+
 export const offView = (): AgentView => ({ status: "off", items: [], approvals: [] });
 export const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 

@@ -17,8 +17,11 @@ import { AgentAdapter, message, planName, readStudioMessage, signedIn, studioSes
 /** Claude Code keeps each workspace's transcripts in a folder named after its path. */
 const TRANSCRIPTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", REPO.replace(/[^a-zA-Z0-9]/g, "-"));
 
+const PICKS = "Whatever your Claude Code settings pick";
+/** The models when Claude Code can't say which it offers (an older CLI); otherwise the list is its own. */
 const MODELS: AgentModel[] = [
-  { id: "default", label: "Default", hint: "Whatever your Claude Code settings pick", default: true },
+  { id: "default", label: "Default", hint: PICKS, default: true },
+  { id: "claude-fable-5-2", label: "Claude Fable 5.2" },
   { id: "claude-opus-5-5", label: "Claude Opus 5.5" },
   { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
   { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
@@ -86,6 +89,81 @@ export function permissionArgs(autonomy: "ask" | "free" = "ask", chrome = false,
   ];
 }
 
+/** A model as Claude Code lists it: the name to ask for it by ("opus"), the model that is, and what to call it. */
+type ListedModel = { value?: string; resolvedModel?: string; displayName?: string; description?: string };
+
+/**
+ * Claude Code's own list of models as the studio's. A model goes by its full id rather than the CLI's short name for it
+ * ("opus"), so a choice saved earlier still matches, and one the CLI lists under two names appears once. "default"
+ * stays the CLI's own pick, and says which model that is today.
+ */
+export function modelsFrom(listed: ListedModel[]): AgentModel[] {
+  const models: AgentModel[] = [];
+  for (const m of listed) {
+    const id = m.value === "default" ? "default" : (m.resolvedModel ?? m.value);
+    if (!id || models.some((x) => x.id === id)) continue;
+    if (id !== "default") models.push({ id, label: m.displayName ? `Claude ${m.displayName}` : id });
+    else {
+      const now = listed.find((x) => x.value !== "default" && x.resolvedModel === m.resolvedModel)?.displayName;
+      models.push({ id, label: "Default", hint: now ? `${PICKS} (${now} today)` : PICKS, default: true });
+    }
+  }
+  return models;
+}
+
+/**
+ * Asks the CLI which models it offers. It says in its answer to `initialize`, before it's sent anything to do, so no
+ * model is called and nothing is spent.
+ */
+function listModels(claude: string, env: NodeJS.ProcessEnv): Promise<ListedModel[]> {
+  return new Promise((resolve, reject) => {
+    const child = spawnCli(claude, ["-p", "--input-format=stream-json", "--output-format=stream-json", "--verbose", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["pipe", "pipe", "ignore"] });
+    const end = (settle: () => void) => (clearTimeout(timer), child.kill(), settle());
+    const timer = setTimeout(() => end(() => reject(new Error("Claude Code didn't list its models in time"))), 30_000);
+    child.on("error", (err) => end(() => reject(err)));
+    child.on("close", () => end(() => reject(new Error("Claude Code closed before listing its models"))));
+    child.stdin!.on("error", () => undefined);
+    let buffer = "";
+    child.stdout!.on("data", (d) => {
+      buffer += d;
+      for (let i; (i = buffer.indexOf("\n")) >= 0; buffer = buffer.slice(i + 1)) {
+        let line: { type?: string; response?: { response?: { models?: ListedModel[] } } };
+        try {
+          line = JSON.parse(buffer.slice(0, i)) as typeof line;
+        } catch {
+          continue;
+        }
+        if (line.type !== "control_response") continue;
+        const models = line.response?.response?.models;
+        end(() => (Array.isArray(models) ? resolve(models) : reject(new Error("Claude Code didn't list any models"))));
+      }
+    });
+    child.stdin!.write(JSON.stringify({ type: "control_request", request_id: "beatsheet-models", request: { subtype: "initialize" } }) + "\n");
+  });
+}
+
+/**
+ * The CLI's answer to the one-word check. The answer is on stdout; what it says on stderr is kept apart (a warning
+ * there can hold JSON of its own, which read together with the answer made a good answer unreadable) and is only what's
+ * shown when there's no answer at all.
+ */
+export function checkAnswer(stdout: string, stderr: string): { ok: true } | { ok: false; detail: string } {
+  const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
+  let r: { is_error?: boolean; result?: string } | undefined;
+  for (const line of lines(stdout).reverse()) {
+    try {
+      const j = JSON.parse(line) as typeof r | null;
+      if (j && typeof j === "object" && ("result" in j || "is_error" in j)) r = j;
+    } catch {
+      // Not the answer: something the CLI printed around it.
+    }
+    if (r) break;
+  }
+  if (!r) return { ok: false, detail: lines(stderr).pop() ?? lines(stdout).pop() ?? "Claude Code couldn't answer" };
+  if (r.is_error) return { ok: false, detail: /login|log in|sign in|api key|auth/i.test(r.result ?? "") ? "Not signed in" : r.result || "Claude Code couldn't answer" };
+  return { ok: true };
+}
+
 /** What reads keys out of Windows Credential Manager. */
 const WINDOWS_KEY_READERS = ["beatsheet-credentials", "CredRead", "CredEnumerate", "PasswordVault", "Get-StoredCredential", "vaultcmd"];
 
@@ -131,7 +209,10 @@ export class ClaudeAdapter extends AgentAdapter {
   private controlSeq = 0;
 
   async models() {
-    return MODELS;
+    const claude = await findCli("claude");
+    if (!claude) return MODELS;
+    const models = await listModels(claude, await cliEnv()).then(modelsFrom, () => []);
+    return models.length ? models : MODELS;
   }
 
   /**
@@ -143,22 +224,18 @@ export class ClaudeAdapter extends AgentAdapter {
     if (!claude) return { ok: false, detail: "Not installed" };
     const env = await cliEnv();
     const onPlan = plan(claude, env);
-    const out = await new Promise<string>((resolve, reject) => {
+    const said = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawnCli(claude, ["-p", "Reply with just the word OK.", "--output-format", "json", "--max-turns", "1", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
-      let text = "";
-      child.stdout!.on("data", (d) => (text += d));
-      child.stderr!.on("data", (d) => (text += d));
+      let stdout = "";
+      let stderr = "";
+      child.stdout!.on("data", (d) => (stdout += d));
+      child.stderr!.on("data", (d) => (stderr += d));
       const timer = setTimeout(() => child.kill(), 90_000);
       child.on("error", reject);
-      child.on("close", () => (clearTimeout(timer), resolve(text)));
+      child.on("close", () => (clearTimeout(timer), resolve({ stdout, stderr })));
     });
-    try {
-      const r = JSON.parse(out.slice(out.indexOf("{"))) as { is_error?: boolean; result?: string };
-      if (r.is_error) return { ok: false, detail: /login|log in|sign in|api key|auth/i.test(r.result ?? "") ? "Not signed in" : (r.result ?? "Claude Code couldn't answer") };
-      return { ok: true, detail: signedIn(await onPlan) };
-    } catch {
-      return { ok: false, detail: out.trim().split("\n").pop() || "Claude Code couldn't answer" };
-    }
+    const answer = checkAnswer(said.stdout, said.stderr);
+    return answer.ok ? { ok: true, detail: signedIn(await onPlan) } : answer;
   }
 
   async sessions(): Promise<AgentSessionSummary[]> {

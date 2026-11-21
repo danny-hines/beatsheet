@@ -9,17 +9,28 @@ import { loadFile } from "../store.ts";
 import { agentsTurn, currentTurn, yourTurn } from "../turns.ts";
 import { AntigravityAdapter } from "./antigravity.ts";
 import { ClaudeAdapter } from "./claude.ts";
-import { findCli, installCli, openSignIn, SETUP } from "./cli.ts";
+import { cliVersions, findCli, installCli, openSignIn, SETUP, updateCli } from "./cli.ts";
 import { CodexAdapter } from "./codex.ts";
 import { MuseAdapter } from "./muse.ts";
-import { AGENT_LABELS, message, offView, touchesKeys, type AgentAdapter, type AgentChange, type AgentCheck, type AgentId, type AgentModel, type AgentSessionSummary, type AgentView } from "./session.ts";
+import { AGENT_LABELS, brief, message, offView, touchesKeys, type AgentAdapter, type AgentChange, type AgentCheck, type AgentId, type AgentModel, type AgentSessionSummary, type AgentView } from "./session.ts";
 
 export * from "./session.ts";
 export { uuid7 } from "./rpc.ts";
 
 export const AGENT_IDS: AgentId[] = ["muse", "codex", "claude", "antigravity"];
 /** An agent CLI: whether it's here, how to get it working, and its models once it is. */
-export type AgentInfo = { id: AgentId; label: string; installed: boolean; installCommand?: string; signInCommand: string; models?: AgentModel[]; error?: string };
+export type AgentInfo = {
+  id: AgentId;
+  label: string;
+  installed: boolean;
+  installCommand?: string;
+  signInCommand: string;
+  models?: AgentModel[];
+  error?: string;
+  /** The CLI's version, and a later one when beatsheet can update it to that. */
+  version?: string;
+  latest?: string;
+};
 
 const make = (id: AgentId): AgentAdapter =>
   id === "muse" ? new MuseAdapter() : id === "codex" ? new CodexAdapter() : id === "antigravity" ? new AntigravityAdapter() : new ClaudeAdapter();
@@ -31,6 +42,10 @@ export class AgentStudio extends EventEmitter {
   private current?: AgentAdapter;
   /** Each CLI's models, asked once: the answer, or the asking still under way. */
   private models = new Map<AgentId, Promise<AgentModel[]>>();
+  /** Each CLI's version and whether there's a later one, likewise. */
+  private versions = new Map<AgentId, Promise<{ version?: string; latest?: string }>>();
+  /** A version an update didn't reach (the CLI's own channel is behind npm's): not offered again. */
+  private unreached = new Map<AgentId, string>();
 
   get view(): AgentView {
     return this.current?.view ?? offView();
@@ -189,6 +204,11 @@ export class AgentStudio extends EventEmitter {
       AGENT_IDS.map(async (id) => {
         const info: AgentInfo = { id, label: AGENT_LABELS[id], installed: !!(await findCli(id)), installCommand: SETUP[id].install, signInCommand: SETUP[id].signIn };
         if (!info.installed) return info;
+        let versions = this.versions.get(id);
+        if (!versions) this.versions.set(id, (versions = cliVersions(id).catch(() => ({}))));
+        const v = await (quick ? Promise.race([versions, new Promise<undefined>((r) => setTimeout(r, 250))]) : versions);
+        info.version = v?.version;
+        info.latest = v?.latest && v.latest !== this.unreached.get(id) ? v.latest : undefined;
         let asking = this.models.get(id);
         if (!asking) {
           const started = this.adapter(id).models();
@@ -210,16 +230,42 @@ export class AgentStudio extends EventEmitter {
   /** Installed and signed in? Runs the CLI, so it takes a few seconds. */
   async check(id: AgentId): Promise<AgentCheck> {
     if (!(await findCli(id))) return { ok: false, detail: "Not installed" };
+    // Checking again looks again at everything: unless a session is open on it, the CLI is started afresh, and its
+    // models and version are asked for anew (Muse Code's list, for one, is read when its server starts).
+    if (this.current?.id !== id || this.view.status === "off") {
+      this.adapters.get(id)?.stop();
+      this.models.delete(id);
+      this.versions.delete(id);
+    }
     try {
-      return await this.adapter(id).check();
+      const check = await this.adapter(id).check();
+      return { ...check, detail: brief(check.detail) };
     } catch (err) {
-      return { ok: false, detail: message(err) };
+      return { ok: false, detail: brief(message(err)) };
     }
   }
 
   install(id: AgentId, onLine: (line: string) => void) {
     this.models.delete(id);
+    this.versions.delete(id);
     return installCli(id, onLine);
+  }
+
+  /**
+   * Updates a CLI with its own updater. Its models are asked for again afterwards, from the new version; a session
+   * that's open on it has to be let go first, since it's running the version being replaced.
+   */
+  async update(id: AgentId, onLine: (line: string) => void) {
+    if (this.current?.id === id && this.view.status !== "off") throw new Error(`${AGENT_LABELS[id]} has a session open. Stop it from the top bar, then update.`);
+    const offered = (await this.versions.get(id))?.latest;
+    this.adapters.get(id)?.stop();
+    await updateCli(id, onLine);
+    this.models.delete(id);
+    const now = cliVersions(id).catch(() => ({}));
+    this.versions.set(id, now);
+    const after: { version?: string; latest?: string } = await now;
+    if (after.latest && after.latest === offered) this.unreached.set(id, after.latest);
+    onLine(after.version ? `${AGENT_LABELS[id]} is on ${after.version}` : "Updated");
   }
 
   signIn(id: AgentId) {

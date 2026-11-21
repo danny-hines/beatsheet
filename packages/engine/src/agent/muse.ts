@@ -87,6 +87,18 @@ const modelLabel = (id: string) =>
     .map((w) => w[0]!.toUpperCase() + w.slice(1))
     .join(" ");
 
+/** A model as Muse Code lists it. */
+type ListedModel = { modelId: string; isDefault?: boolean };
+
+/**
+ * Muse Code's list of models as the studio's. The list can be empty (Muse Code 1.4.25's is, though its sessions start
+ * on a model all the same), and then the one choice is to leave the pick to Muse Code.
+ */
+export function modelsFrom(listed: ListedModel[]): AgentModel[] {
+  if (!listed.length) return [{ id: "default", label: "Default", hint: "Whichever model Muse Code picks", default: true }];
+  return listed.map((m) => ({ id: m.modelId, label: modelLabel(m.modelId), default: m.isDefault }));
+}
+
 /**
  * Tools a session gets beyond beatsheet's own (which come from the workspace's .mcp.json): with "Use my Chrome" on,
  * Chrome DevTools MCP attached to the person's running Chrome. Optional, so a Chrome that isn't set up for it doesn't
@@ -154,8 +166,8 @@ export class MuseAdapter extends AgentAdapter {
 
   async models(): Promise<AgentModel[]> {
     const rpc = await this.host();
-    const r = await rpc.request<{ models: { modelId: string; isDefault?: boolean; releaseDate?: string }[] }>("model/list", {});
-    return r.models.map((m) => ({ id: m.modelId, label: modelLabel(m.modelId), default: m.isDefault }));
+    const r = await rpc.request<{ models?: ListedModel[] }>("model/list", {});
+    return modelsFrom(r.models ?? []);
   }
 
   async check(): Promise<AgentCheck> {
@@ -193,12 +205,14 @@ export class MuseAdapter extends AgentAdapter {
   }
 
   async start(opts: { model?: string; project?: string; cut?: string }) {
-    this.replace({ status: "starting", project: opts.project, cut: opts.cut, model: opts.model });
+    // "default" leaves the pick to Muse Code, which says in its answer which model that was.
+    const model = opts.model === "default" ? undefined : opts.model;
+    this.replace({ status: "starting", project: opts.project, cut: opts.cut, model });
     try {
       const rpc = await this.host();
-      const r = await rpc.request<{ session: { sessionId: string; name?: string; modelId?: string | null } }>("session/start", { commandId: uuid7(), modelId: opts.model, workspaceRoot: REPO, config: sessionConfig() });
+      const r = await rpc.request<{ session: { sessionId: string; name?: string; modelId?: string | null } }>("session/start", { commandId: uuid7(), modelId: model, workspaceRoot: REPO, config: sessionConfig() });
       this.named = !!r.session.name;
-      this.set({ status: "idle", sessionId: r.session.sessionId, name: r.session.name, model: r.session.modelId ?? opts.model });
+      this.set({ status: "idle", sessionId: r.session.sessionId, name: r.session.name, model: r.session.modelId ?? model });
     } catch (err) {
       this.fail(err);
     }

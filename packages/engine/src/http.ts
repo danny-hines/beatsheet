@@ -499,7 +499,12 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     }
     if (req.method === "POST") {
       const body = JSON.parse((await readBody(req)) || "{}") as { agent?: AgentId; model?: string; project?: string; cut?: string; session?: string; text?: string; approvalId?: string; choiceId?: string; then?: string };
-      if (["start", "resume", "check", "install", "signin"].includes(id ?? "") && !AGENT_IDS.includes(body.agent!)) return json(res, 400, { error: "Which agent?" });
+      if (["start", "resume", "check", "install", "update", "signin"].includes(id ?? "") && !AGENT_IDS.includes(body.agent!)) return json(res, 400, { error: "Which agent?" });
+      // Updating runs the CLI's own updater, followed the same way as an install.
+      if (id === "update") {
+        const which = body.agent!;
+        return json(res, 202, startJob("install", "", (j) => agent.update(which, (line) => j.log.push(line))));
+      }
       // Installing runs the CLI's official installer; the page follows the job's log, then checks the agent.
       if (id === "install") {
         const which = body.agent!;

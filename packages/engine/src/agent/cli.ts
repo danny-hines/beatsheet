@@ -39,6 +39,62 @@ export const SETUP: Record<CliName, { install?: string; signIn: string }> = WIND
       antigravity: { install: "Downloads Google's Antigravity ACP server (about 130 MB) from dl.google.com", signIn: "" },
     };
 
+/**
+ * The CLIs that update themselves when told to, and the npm package whose latest version says there's something to
+ * update to. Muse Code updates itself whenever it's opened, and Antigravity's server is beatsheet's own download.
+ */
+export const UPDATES: Partial<Record<CliName, { args: string[]; package: string }>> = {
+  codex: { args: ["update"], package: "@openai/codex" },
+  claude: { args: ["update"], package: "@anthropic-ai/claude-code" },
+};
+
+/** The version in what a CLI prints for --version ("codex-cli 0.164.0", "2.1.311 (Claude Code)"). */
+export const versionIn = (text: string) => /\d+\.\d+\.\d+/.exec(text)?.[0];
+
+/** Whether version `a` is later than `b`, by its numbers. */
+export function newer(a: string, b: string): boolean {
+  const [x, y] = [a, b].map((v) => v.split(".").map((n) => parseInt(n, 10) || 0));
+  for (let i = 0; i < 3; i++) if ((x![i] ?? 0) !== (y![i] ?? 0)) return (x![i] ?? 0) > (y![i] ?? 0);
+  return false;
+}
+
+/** What npm says a package's latest version is, asked at most every six hours. Not knowing is fine: nothing is offered. */
+const latest = new Map<string, { at: number; version?: string }>();
+async function latestVersion(pkg: string): Promise<string | undefined> {
+  const hit = latest.get(pkg);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.version;
+  let version: string | undefined;
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${pkg}/latest`, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) version = versionIn(String(((await res.json()) as { version?: unknown }).version ?? ""));
+  } catch {
+    // offline, or npm is slow
+  }
+  // A lookup that failed is tried again in a few minutes rather than hours.
+  latest.set(pkg, { at: version ? Date.now() : Date.now() - 6 * 3600_000 + 5 * 60_000, version });
+  return version;
+}
+
+/** The version of a CLI that's installed, and a later one when it can be updated to it from here. */
+export async function cliVersions(name: CliName): Promise<{ version?: string; latest?: string }> {
+  if (name === "antigravity") return {};
+  const cli = await findCli(name);
+  if (!cli) return {};
+  const env = await cliEnv();
+  const said = await new Promise<string>((resolve) => {
+    const child = spawnCli(cli, ["--version"], { cwd: REPO, env, stdio: ["ignore", "pipe", "ignore"] });
+    let text = "";
+    child.stdout!.on("data", (d) => (text += d));
+    const timer = setTimeout(() => child.kill(), 15_000);
+    child.on("error", () => resolve(""));
+    child.on("close", () => (clearTimeout(timer), resolve(text)));
+  });
+  const version = versionIn(said);
+  const update = UPDATES[name];
+  const published = version && update ? await latestVersion(update.package) : undefined;
+  return { version, latest: published && newer(published, version!) ? published : undefined };
+}
+
 const found = new Map<CliName, { at: number; path: string | null }>();
 /** Look again next time, e.g. right after installing. */
 export const forgetCli = (name: CliName) => found.delete(name);
@@ -146,23 +202,38 @@ export async function installCli(name: CliName, onLine: (line: string) => void):
   onLine(`$ ${command}`);
   const env = await cliEnv();
   const shell = WINDOWS ? powershell(command) : { command: "/bin/zsh", args: ["-lc", command] };
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(shell.command, shell.args, { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  await followed(spawn(shell.command, shell.args, { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true }), onLine, "The installer");
+  forgetCli(name);
+}
+
+/** Runs the CLI's own updater, a line of its output at a time. */
+export async function updateCli(name: CliName, onLine: (line: string) => void): Promise<void> {
+  const update = UPDATES[name];
+  const cli = await findCli(name);
+  if (!update || !cli) throw new Error(`beatsheet can't update ${name} for you`);
+  onLine(`$ ${name} ${update.args.join(" ")}`);
+  await followed(spawnCli(cli, update.args, { cwd: REPO, env: await cliEnv(), stdio: ["ignore", "pipe", "pipe"] }), onLine, "The updater");
+  forgetCli(name);
+}
+
+/** Waits for an installer or updater to finish, passing on each line it prints (colours and cursor moves taken out). */
+function followed(child: ReturnType<typeof spawn>, onLine: (line: string) => void, what: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     let rest = "";
     const take = (d: Buffer) => {
       const lines = (rest + d.toString()).split(/\r?\n|\r/);
       rest = lines.pop() ?? "";
-      for (const l of lines) if (l.trim()) onLine(l);
+      // eslint-disable-next-line no-control-regex
+      for (const l of lines.map((x) => x.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, ""))) if (l.trim()) onLine(l);
     };
-    child.stdout.on("data", take);
-    child.stderr.on("data", take);
+    child.stdout!.on("data", take);
+    child.stderr!.on("data", take);
     child.on("error", reject);
     child.on("close", (code) => {
       if (rest.trim()) onLine(rest);
-      code === 0 ? resolve() : reject(new Error(`The installer stopped with an error (exit ${code})`));
+      code === 0 ? resolve() : reject(new Error(`${what} stopped with an error (exit ${code})`));
     });
   });
-  forgetCli(name);
 }
 
 /** Opens Terminal (on Windows, a console window) running the CLI's sign-in, in the beatsheet folder. */
