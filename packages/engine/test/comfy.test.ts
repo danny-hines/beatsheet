@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION, STAGE_IDS, type Asset, type ProjectFile } from "@beatsheet/schema";
+import { keepLoopTurning } from "./standin.ts";
 
 // The engine reads where projects live (and settings) when its modules load, so they're imported after this is set.
 const root = mkdtempSync(join(tmpdir(), "beatsheet-comfy-"));
@@ -90,6 +91,7 @@ type Seen = { uploads: string[]; prompts: { prompt: Record<string, { class_type:
 let seen: Seen;
 let missing: Set<string>;
 let forget = false;
+let hold = false;
 let elsewhere = false;
 let server: Server;
 let base = "";
@@ -156,7 +158,8 @@ beforeAll(async () => {
         }
         const n = polls.get(id)! + 1;
         polls.set(id, n);
-        return send(200, { id, status: n === 1 ? "pending" : n === 2 ? "in_progress" : "completed" });
+        // A long render: it's still under way however often it's asked.
+        return send(200, { id, status: n === 1 ? "pending" : n === 2 || hold ? "in_progress" : "completed" });
       }
       if (url === "/queue") return send(200, { queue_running: [], queue_pending: [...polls.keys()].map((id, i) => [i + 1, id]) });
       const history = url.match(/^\/history\/([^/]+)$/);
@@ -170,6 +173,7 @@ beforeAll(async () => {
       send(404, { error: `nothing at ${url}` });
     });
   });
+  keepLoopTurning();
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   make = await import("../src/make.ts");
@@ -187,6 +191,7 @@ beforeEach(() => {
   seen = { uploads: [], prompts: [], cancels: [] };
   missing = new Set();
   forget = false;
+  hold = false;
   elsewhere = false;
   polls.clear();
   fetched.length = 0;
@@ -300,6 +305,8 @@ describe("copying movement from a clip on ComfyUI", () => {
   });
 
   it("stops a job in ComfyUI when it's canceled", async () => {
+    // One that takes a while, so it can't finish by itself before it's stopped.
+    hold = true;
     const { jobs } = make.startMake(PROJECT, { op: "video", shot: "duel", start: "board", drive: { asset: "fight", from: 2, to: 4 }, count: 1 });
     // Sent, but not yet finished.
     let job = make.listJobs(PROJECT)[0]!;

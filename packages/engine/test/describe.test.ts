@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION, STAGE_IDS, type ProjectFile } from "@beatsheet/schema";
+import { keepLoopTurning } from "./standin.ts";
 
 // Where projects live is read when the engine loads, so it's imported after this is set.
 const root = mkdtempSync(join(tmpdir(), "beatsheet-describe-"));
@@ -31,6 +32,7 @@ beforeAll(async () => {
       res.end(JSON.stringify(answers.shift() ?? {}));
     });
   });
+  keepLoopTurning();
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   process.env.BEATSHEET_GEMINI = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   ({ describeCast } = await import("../src/describe.ts"));

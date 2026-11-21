@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { SCHEMA_VERSION, STAGE_IDS, type ProjectFile } from "@beatsheet/schema";
+import { keepLoopTurning } from "./standin.ts";
 
 // Where projects live (and settings) is read when the engine's modules load, so they're imported after this is set.
 const root = mkdtempSync(join(tmpdir(), "beatsheet-transcribe-"));
@@ -82,6 +83,7 @@ beforeAll(async () => {
       res.end("{}");
     });
   });
+  keepLoopTurning();
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   process.env.BEATSHEET_ELEVENLABS = `${base}/eleven`;

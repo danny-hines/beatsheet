@@ -185,8 +185,18 @@ export const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "run
 const jobsDir = (projectId: string) => join(projectDir(projectId), "jobs");
 const jobFile = (projectId: string, id: string) => join(jobsDir(projectId), `${id}.json`);
 const lockFile = (projectId: string, id: string) => join(jobsDir(projectId), `${id}.lock`);
-const newId = (prefix: string) => `${prefix}${Date.now().toString(36)}${randomInt(36 ** 3).toString(36).padStart(3, "0")}`;
+let lastId = { ms: 0, n: 0 };
+/**
+ * An id that sorts after the ones made before it here: the time, then three characters that start somewhere random
+ * (another process may be making ids in the same millisecond) and count up for as long as the millisecond lasts.
+ */
+const newId = (prefix: string) => {
+  const ms = Date.now();
+  lastId = { ms, n: ms === lastId.ms ? lastId.n + 1 : randomInt(36 ** 3 - 1000) };
+  return `${prefix}${ms.toString(36)}${lastId.n.toString(36).padStart(3, "0")}`;
+};
 
+/** A project's jobs, oldest first. Those asked for together were made at the same moment, and keep the order of their ids. */
 export function listJobs(projectId: string): MakeJob[] {
   const dir = jobsDir(projectId);
   if (!existsSync(dir)) return [];
@@ -199,7 +209,7 @@ export function listJobs(projectId: string): MakeJob[] {
         return [];
       }
     })
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 function readJob(projectId: string, id: string): MakeJob | undefined {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renameCast, SCHEMA_VERSION, STAGE_IDS, type Asset, type ProjectFile } from "@beatsheet/schema";
+import { keepLoopTurning } from "./standin.ts";
 
 // The engine reads where projects live (and settings) when its modules load, so they're imported after this is set.
 const root = mkdtempSync(join(tmpdir(), "beatsheet-make-"));
@@ -202,6 +203,7 @@ beforeAll(async () => {
       send(404, { detail: `nothing at ${url}` });
     });
   });
+  keepLoopTurning();
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   process.env.BEATSHEET_FAL_QUEUE = `${base}/queue`;
@@ -283,9 +285,14 @@ describe("making takes for a shot", () => {
     const s = shot("s2");
     expect(s.fidelity).toBe("board");
     expect(s.content).toMatchObject({ kind: "generated", take: "s2-take", takes: ["s2-take", "s2-take-2"], model: "nano-banana-2.1", provider: "fal" });
-    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
-    expect(take.provenance).toMatchObject({ source: "generated", provider: "fal", model: "google/nano-banana-2.1", seed: 7, op: "image", job: jobs[0]!.id, costUsd: 0.04 });
+    const assets = store.loadProject(PROJECT).project.assets;
+    const take = assets.find((a) => a.id === "s2-take")!;
+    expect(take.provenance).toMatchObject({ source: "generated", provider: "fal", model: "google/nano-banana-2.1", seed: 7, op: "image", costUsd: 0.04 });
     expect(readFileSync(take.path, "utf8")).toBe("a picture");
+    // The two are made side by side, so either can come back first and be the one shown; each is its own job's.
+    expect(["s2-take", "s2-take-2"].map((id) => assets.find((a) => a.id === id)!.provenance!.job).sort()).toEqual(jobs.map((j) => j.id).sort());
+    // Asked for together, they're listed in the order they were asked for.
+    expect(make.listJobs(PROJECT).map((j) => j.id)).toEqual(jobs.map((j) => j.id));
   });
 
   it("animates a board: uploads it, asks for the next length over the shot's, and the shot opens on it", async () => {
