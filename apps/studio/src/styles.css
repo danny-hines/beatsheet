@@ -131,6 +131,10 @@ p { margin: 4px 0; }
 .project-name { font-family: var(--f-label); font-weight: 600; font-size: var(--t-4); letter-spacing: 0.02em; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .segmented { display: flex; }
 .segmented button { border-radius: 0; margin-left: -1px; }
+/* Neighbours share one rule between them; the chosen one's goes on top, so it's outlined on every side. */
+.segmented button.on, .segmented button:hover:not(:disabled), .segmented button:focus-visible { position: relative; }
+.segmented button:hover:not(:disabled) { z-index: 1; }
+.segmented button.on, .segmented button:focus-visible { z-index: 2; }
 .segmented button:first-child { border-radius: var(--r-1) 0 0 var(--r-1); }
 .segmented button:last-child { border-radius: 0 var(--r-1) var(--r-1) 0; }
 
