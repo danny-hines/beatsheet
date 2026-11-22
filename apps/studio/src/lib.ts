@@ -312,7 +312,7 @@ export function toolCallWords(item: AgentItem): { title: string; detail?: string
   return { title: own ? capital(own) : item.server ? `${item.server} · ${tool.replace(/_/g, " ")}` : capital(tool.replace(/_/g, " ")), detail };
 }
 
-/** What the hosted agent is up to, for the top bar: "editing july-4", "thinking", "ready". */
+/** What the hosted agent is up to, for the head of the Agent tab: "editing july-4", "thinking", "ready". */
 export function sessionActivity(view: AgentView): string {
   if (view.status === "starting") return "starting";
   if (view.status === "error") return "stopped";

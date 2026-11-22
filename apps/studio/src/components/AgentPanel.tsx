@@ -1,15 +1,14 @@
 import type { AgentApproval, AgentItem } from "@beatsheet/engine";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { AGENT_NAMES, modelName, sessionActivity, toolCallWords } from "../lib";
+import { AGENT_NAMES, toolCallWords } from "../lib";
 import { actions, useProject, useStore } from "../store";
-import { AgentChooser } from "./AgentMenu";
+import { AgentChooser, AgentHead, TerminalSessions } from "./AgentMenu";
 import { AttachedNotes } from "./NoteEditor";
 import { answer, TurnCard, useTurn } from "./Turn";
 
 /** The Agent tab: the session the studio hosts, live. Its messages, what it's doing, what it needs approved, and a box to talk to it. */
 export function AgentPanel() {
   const view = useStore((s) => s.agent);
-  const list = useStore((s) => s.agentList);
   const projectId = useStore((s) => s.projectId);
   const projects = useStore((s) => s.list);
   const cutId = useStore((s) => s.cutId);
@@ -56,16 +55,9 @@ export function AgentPanel() {
   if (!view.sessionId && view.status !== "starting") return <NoSession error={view.error} />;
 
   const running = view.status === "running";
-  const model = modelName(list, view.agent, view.model);
   return (
     <div className={`agent-chat ${view.agent ?? ""}`}>
-      <div className="agent-head">
-        <span className={`dot ${running || view.status === "starting" ? "pending" : view.status === "error" ? "idle" : "on"}`} />
-        <strong>{view.agent ? AGENT_NAMES[view.agent] : "Agent"}</strong>
-        {model && <span className="model-tag">{model}</span>}
-        <span className="spacer" />
-        <span className="dim small">{sessionActivity(view)}</span>
-      </div>
+      <AgentHead session />
       <Transcript items={view.items} running={running} starting={view.status === "starting"} heardAt={view.heardAt} agent={(view.agent && AGENT_NAMES[view.agent]) || "The agent"} />
       {view.approvals.length > 0 && (
         <div className="agent-approvals">
@@ -81,31 +73,22 @@ export function AgentPanel() {
   );
 }
 
-/** No session yet: who'll pick up (the default agent), with the full choice of agent, model and earlier sessions one click away. */
+/** No session yet: who'll pick up (the default agent, in the head, whose menu has every agent, model and earlier session), or the full choice when there's no default. */
 function NoSession({ error, note }: { error?: string; note?: string }) {
   const preferred = useStore((s) => s.setup?.settings.agent);
-  const list = useStore((s) => s.agentList);
-  // Open by default only when there's no default agent (settings may arrive after the first render).
-  const [toggled, setChoosing] = useState<boolean | undefined>();
-  const choosing = toggled ?? !preferred;
-  const model = preferred && (modelName(list, preferred.id, preferred.model) ?? list?.find((a) => a.id === preferred.id)?.models?.find((m) => m.default)?.label);
   return (
     <div className="agent-chat">
+      {preferred && <AgentHead session={false} />}
       <div className="agent-empty">
         {error && <p className="warn small">{error}</p>}
-        {preferred && (
-          <p className={`agent-default ${preferred.id}`}>
-            <span className="dot idle" /> <strong>{AGENT_NAMES[preferred.id]}</strong>
-            {model && <span className="model-tag">{model}</span>}
-            <span className="spacer" />
-            <button className="link" onClick={() => setChoosing(!choosing)}>
-              {choosing ? "Hide" : "Change"}
-            </button>
-          </p>
-        )}
         <p className="dim small">{preferred ? "Picks up as soon as you send something. Nothing is running yet." : "Choose an agent to work with."}</p>
         {note && <p className="dim small">{note}</p>}
-        {choosing && <AgentChooser />}
+        {!preferred && (
+          <>
+            <TerminalSessions />
+            <AgentChooser />
+          </>
+        )}
       </div>
       <span className="spacer" />
       <TurnCard />

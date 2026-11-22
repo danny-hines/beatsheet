@@ -12,7 +12,7 @@ import {
   type Timeline,
 } from "@beatsheet/schema";
 import { useMemo, useState } from "react";
-import { AGENT_NAMES, assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, runJob, selectionForTarget, shotSummary, targetFromSelection, WINDOWS, pathParts } from "../lib";
+import { assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, runJob, selectionForTarget, shotSummary, targetFromSelection, WINDOWS, pathParts } from "../lib";
 import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
 import { AgentPanel } from "./AgentPanel";
 import { AssetView } from "./AssetView";
@@ -36,10 +36,8 @@ export function SidePanel() {
   return (
     <>
       <div className="tabs">
-        <button className={`agent-tab ${side === "agent" ? "on" : ""}`} onClick={() => actions.setSide("agent")}>
-          <span className={`dot ${!here ? "idle" : agent.status === "running" || agent.status === "starting" ? "pending" : agent.status === "idle" ? "on" : "idle"}`} />{" "}
-          {here && agent.agent && agent.status !== "off" ? AGENT_NAMES[agent.agent] : "Agent"}
-          {asks > 0 && <span className="count">{asks}</span>}
+        <button className={side === "agent" ? "on" : ""} onClick={() => actions.setSide("agent")}>
+          Agent {asks > 0 && <span className="count">{asks}</span>}
         </button>
         <button className={side === "notes" ? "on" : ""} onClick={() => actions.setSide("notes")}>
           Notes {pending > 0 && <span className="count">{pending}</span>}

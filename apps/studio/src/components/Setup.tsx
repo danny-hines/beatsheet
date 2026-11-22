@@ -19,7 +19,7 @@ const localAbility = (setup: SetupInfo, x: string) => !!setup.vision?.ok && (!WI
 const samName = (sam?: SamStatus) => (sam?.model === "sam3.1" ? "SAM 3.1" : "SAM 3");
 
 const ABOUT = {
-  agent: "The agent edits your videos with you, on your own account. Make one the default; you can switch any time from the top bar.",
+  agent: "The agent edits your videos with you, on your own account. Make one the default; you can switch any time from the Agent tab.",
   mac: `Finding and following the people in your footage, and cutting people and things out of it. Free and private: these run on your ${OS.computer}, and nothing leaves it.`,
   services: WINDOWS ? "Each key you add gives the agent more to work with. Keys are checked, then kept in Windows Credential Manager." : "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
   providers: "For shots that are made rather than filmed. Choose the service you already use; cutting your own footage needs none.",

@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
 import { actions, useProject, useStore, useTimeline } from "../store";
-import { AgentMenu } from "./AgentMenu";
 import { CutMenu } from "./Cuts";
 import { BriefDialog, ExportDialog } from "./Dialogs";
 import { TurnLine } from "./Turn";
 import { keys } from "../lib";
 
 /**
- * The top bar: back to the projects, which project and cut, whose turn it is (the one thing to look at), then the agent, the format, and
+ * The top bar: back to the projects, which project and cut, whose turn it is (the one thing to look at), then the format, and
  * the few things you do yourself: read the brief, export, undo.
  */
 export function TopBar() {
@@ -62,7 +61,6 @@ export function TopBar() {
           ))}
         </div>
       )}
-      <AgentMenu />
       <button onClick={() => setDialog("brief")} title="What the project is for, and what this cut is">
         Brief
       </button>

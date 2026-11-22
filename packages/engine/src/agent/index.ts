@@ -256,7 +256,7 @@ export class AgentStudio extends EventEmitter {
    * that's open on it has to be let go first, since it's running the version being replaced.
    */
   async update(id: AgentId, onLine: (line: string) => void) {
-    if (this.current?.id === id && this.view.status !== "off") throw new Error(`${AGENT_LABELS[id]} has a session open. Stop it from the top bar, then update.`);
+    if (this.current?.id === id && this.view.status !== "off") throw new Error(`${AGENT_LABELS[id]} has a session open. Disconnect it in the Agent tab, then update.`);
     const offered = (await this.versions.get(id))?.latest;
     this.adapters.get(id)?.stop();
     await updateCli(id, onLine);

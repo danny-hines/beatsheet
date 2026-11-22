@@ -15,20 +15,17 @@ function useNow(ms: number) {
   return now;
 }
 
-/** Connect an agent: the session the studio hosts and what it's doing, a new one on a chosen agent and model, or an earlier one resumed. */
-export function AgentMenu() {
+/**
+ * The head of the Agent tab, and the one place to change who's in it: the agent and model, and what the session is doing. It opens
+ * the menu: disconnect, the sessions running in a terminal, a new session on a chosen agent and model, or an earlier one resumed.
+ * Without a session here (`session` false) it shows the default agent, the one that picks up when the person sends something.
+ */
+export function AgentHead({ session }: { session: boolean }) {
   const view = useStore((s) => s.agent);
   const list = useStore((s) => s.agentList);
-  const presence = useStore((s) => s.agents);
+  const preferred = useStore((s) => s.setup?.settings.agent);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const projectId = useStore((s) => s.projectId);
-  const projects = useStore((s) => s.list);
-  const cutId = useStore((s) => s.cutId);
-  const cuts = useStore((s) => s.doc?.cuts);
-  // Sessions running in a terminal also load beatsheet's tools; list the ones on this project, apart from the one hosted here.
-  const elsewhere = presence.filter((a) => !a.hosted && !(a.museSession && a.museSession === view.sessionId) && (!a.activity?.project || a.activity.project === projectId));
-  const now = useNow(open && elsewhere.length ? 1000 : 0);
 
   useEffect(() => {
     if (!open) return;
@@ -43,69 +40,61 @@ export function AgentMenu() {
     };
   }, [open]);
 
-  const hosted = !!view.agent && view.status !== "off";
-  // A session belongs to the project and cut it was started on; one elsewhere isn't this cut's agent.
-  const otherCut = hosted && view.project === projectId && !!view.cut && view.cut !== cutId;
-  const away = (hosted && !!view.project && view.project !== projectId) || otherCut;
-  const awayTitle = otherCut ? `"${cuts?.find((c) => c.id === view.cut)?.name ?? view.cut}"` : (projects.find((p) => p.id === view.project)?.title ?? view.project);
-  const name = view.agent ? AGENT_NAMES[view.agent] : "Agent";
-  const model = modelName(list, view.agent, view.model);
+  const id = session ? view.agent : preferred?.id;
+  const model = session
+    ? modelName(list, view.agent, view.model)
+    : preferred && (modelName(list, preferred.id, preferred.model) ?? list?.find((a) => a.id === preferred.id)?.models?.find((m) => m.default)?.label);
+  const dot = !session ? "idle" : view.status === "running" || view.status === "starting" ? "pending" : view.status === "error" ? "idle" : "on";
   return (
-    <div className="agent-menu" ref={ref}>
-      <button className={`agent-button ${view.agent ?? ""} ${hosted ? "connected" : ""}`} onClick={() => setOpen(!open)}>
-        <span className={`dot ${view.status === "running" || view.status === "starting" ? "pending" : hosted && view.status !== "error" ? "on" : "idle"}`} />
-        {view.status === "starting" ? (
-          `Starting ${name}…`
-        ) : hosted ? (
-          <>
-            {name}
-            {model && <span className="model-tag">{model}</span>}
-            <span className="dim small activity">{away ? `on ${awayTitle}` : sessionActivity(view)}</span>
-          </>
-        ) : (
-          "Connect agent"
-        )}
+    <div className={`agent-head ${id ?? ""}`} ref={ref}>
+      <button className="agent-head-button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)} title="Change the agent or model, or resume an earlier session">
+        <span className={`dot ${dot}`} />
+        <strong>{id ? AGENT_NAMES[id] : "Agent"}</strong>
+        {model && <span className="model-tag">{model}</span>}
         <span className="caret">▾</span>
+        <span className="spacer" />
+        {session && <span className="dim small activity">{sessionActivity(view)}</span>}
       </button>
       {open && (
         <div className="agent-panel">
-          {hosted && (
-            <section>
-              <h4>In the studio{away ? `, on ${awayTitle}` : ""}</h4>
-              <div className="agent-row">
-                <div>
-                  <span className={`dot ${view.status === "running" ? "pending" : view.status === "error" ? "idle" : "on"}`} /> <strong>{name}</strong>{" "}
-                  {model && <span className="model-tag">{model}</span>} {view.name && <span className="dim small">{view.name}</span>}
-                </div>
-                <div className="small">{view.error ? <span className="warn">{view.error}</span> : sessionActivity(view)}</div>
-                <div className="agent-start">
-                  <button
-                    onClick={() => {
-                      if (otherCut) actions.setCut(view.cut!);
-                      else if (away && view.project) location.hash = view.project;
-                      actions.setSide("agent");
-                      setOpen(false);
-                    }}
-                  >
-                    {away ? `Go to ${awayTitle}` : "Open chat"}
-                  </button>
-                  <button onClick={() => void actions.agentCommand("stop")}>Disconnect</button>
-                </div>
-              </div>
-            </section>
+          {session && (
+            <div className="agent-session">
+              <span className="dim small">{view.name ?? "This session"}</span>
+              <span className="spacer" />
+              <button
+                onClick={() => {
+                  void actions.agentCommand("stop");
+                  setOpen(false);
+                }}
+              >
+                Disconnect
+              </button>
+            </div>
           )}
-          {elsewhere.length > 0 && (
-            <section>
-              <h4>In a terminal</h4>
-              {elsewhere.map((a) => (
-                <TerminalRow key={a.pid} a={a} now={now} model={a.kind === "other" ? a.model : modelName(list, a.kind, a.model)} />
-              ))}
-            </section>
-          )}
+          <TerminalSessions />
           <AgentChooser onChosen={() => setOpen(false)} />
         </div>
       )}
     </div>
+  );
+}
+
+/** Sessions running in a terminal also load beatsheet's tools: the ones on this project, apart from the one hosted here. */
+export function TerminalSessions() {
+  const view = useStore((s) => s.agent);
+  const list = useStore((s) => s.agentList);
+  const presence = useStore((s) => s.agents);
+  const projectId = useStore((s) => s.projectId);
+  const elsewhere = presence.filter((a) => !a.hosted && !(a.museSession && a.museSession === view.sessionId) && (!a.activity?.project || a.activity.project === projectId));
+  const now = useNow(elsewhere.length ? 1000 : 0);
+  if (!elsewhere.length) return null;
+  return (
+    <section>
+      <h4>In a terminal</h4>
+      {elsewhere.map((a) => (
+        <TerminalRow key={a.pid} a={a} now={now} model={a.kind === "other" ? a.model : modelName(list, a.kind, a.model)} />
+      ))}
+    </section>
   );
 }
 

@@ -427,16 +427,14 @@ pre.job-log { background: #0e0f12; border: 1px solid var(--line); border-radius:
 .new-cut-modes .np-route.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--panel-2)); }
 
 /* ---- Agent menu ------------------------------------------------------------------------------------------------ */
-.agent-menu { position: relative; }
-.agent-button { display: flex; align-items: center; gap: 7px; max-width: 360px; white-space: nowrap; overflow: hidden; }
-.agent-button .activity { overflow: hidden; text-overflow: ellipsis; }
-.agent-button .caret { color: var(--dim); font-size: 10px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a505b; display: inline-block; flex: none; }
 .dot.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
 .dot.pending { background: var(--accent); animation: blink 1s infinite; }
 @keyframes blink { 50% { opacity: 0.3; } }
-.agent-panel { position: absolute; right: 0; top: calc(100% + 6px); width: 380px; background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px 14px; z-index: 40; box-shadow: 0 12px 40px #0009; }
+/* Opens under the Agent tab's head, over the conversation, and never taller than the tab. */
+.agent-panel { position: absolute; left: 8px; right: 8px; top: 44px; max-height: calc(100% - 52px); overflow: auto; background: var(--panel); border: 1px solid var(--line-2); border-radius: 10px; padding: 12px 14px; z-index: 40; box-shadow: 0 12px 40px #0009; }
 .agent-panel h4 { margin-top: 4px; }
+.agent-session { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; }
 .agent-row { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 3px; }
 .agent-start { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
 .agent-name { width: 96px; font-weight: 600; }
@@ -453,7 +451,6 @@ pre.job-log { background: #0e0f12; border: 1px solid var(--line); border-radius:
 .claude { --agent: #d97757; --agent-bg: #2a1a14; --agent-line: #6a3a2a; }
 .antigravity { --agent: #9b72cb; --agent-bg: #1f1a2b; --agent-line: #4a3b66; }
 .dot.idle { background: var(--agent); box-shadow: 0 0 6px var(--agent); }
-.agent-button:not(.connected) { border-color: var(--agent-line); }
 .model-tag { font-size: 11px; background: var(--agent-bg); color: var(--text); border: 1px solid var(--agent-line); border-radius: 9px; padding: 0 7px; margin-left: 2px; }
 .agent-pick { display: flex; gap: 4px; margin: 2px 0 10px; }
 .agent-pick button { flex: 1; font-size: 12px; padding: 5px 6px; }
@@ -466,13 +463,15 @@ pre.job-log { background: #0e0f12; border: 1px solid var(--line); border-radius:
 .resume-prompt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; font-size: 12px; }
 
 /* ---- Agent tab ---------------------------------------------------------------------------------------------------- */
-.agent-tab { display: flex; align-items: center; justify-content: center; gap: 6px; }
 .side-body.agent { overflow: hidden; display: flex; flex-direction: column; }
 .agent-empty { padding: 16px 14px; overflow: auto; }
 .agent-empty h3 { margin: 0 0 6px; }
-.agent-chat { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.agent-head { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
-.agent-head .dim { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.agent-chat { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.agent-head { border-bottom: 1px solid var(--line); }
+.agent-head-button { display: flex; align-items: center; gap: 7px; width: 100%; height: 40px; padding: 0 14px; border: none; border-radius: 0; background: none; text-align: left; white-space: nowrap; }
+.agent-head-button:hover, .agent-head-button[aria-expanded="true"] { background: var(--panel-2); }
+.agent-head-button .caret { color: var(--dim); font-size: 10px; }
+.agent-head-button .activity { overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
 .agent-transcript { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .agent-transcript > * { min-width: 0; }
 .agent-user { align-self: flex-end; max-width: 88%; overflow-wrap: anywhere; background: var(--agent-bg); border: 1px solid var(--agent-line); color: var(--text); padding: 7px 10px; border-radius: 10px 10px 3px 10px; white-space: pre-wrap; }
@@ -627,7 +626,6 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 .turn-actions button { white-space: nowrap; }
 /* The answer button stays in reach while the options scroll. */
 .turn-card .turn-actions { position: sticky; bottom: -10px; margin: 0 -12px -10px; padding: 8px 12px 10px; background: #1f1a0e; border-top: 1px solid #3a3220; }
-.agent-default { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; }
 .agent-chat > .spacer { flex: 1; }
 .library-foot { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .library-foot.big { border-top: none; padding: 16px 8px; }
@@ -693,7 +691,7 @@ button.big { padding: 8px 18px; font-size: 14px; border-radius: 8px; }
 /* ---- In the Mac app ----------------------------------------------------------------------------------------------- */
 /* The window has no title bar: the top bar is where you drag it, with room for the window buttons. */
 html.desktop .topbar { padding-left: 84px; -webkit-app-region: drag; }
-html.desktop .topbar button, html.desktop .topbar select, html.desktop .topbar .agent-panel, html.desktop .topbar a { -webkit-app-region: no-drag; }
+html.desktop .topbar button, html.desktop .topbar select, html.desktop .topbar a { -webkit-app-region: no-drag; }
 /* Anything you type in or pick from that opens inside the bar (the cut menu, its rename box, any dialog) isn't part of the handle. */
 html.desktop .topbar input, html.desktop .topbar textarea, html.desktop .topbar label, html.desktop .topbar .cut-panel, html.desktop .topbar .modal-back, html.desktop .modal-back, html.desktop .viewer { -webkit-app-region: no-drag; }
 html.desktop .home-bar { height: 38px; -webkit-app-region: drag; }
