@@ -11,6 +11,7 @@ import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { TextField } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
+import { Icon } from "./Icon";
 
 const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 export const money = (usd?: number) => (usd === undefined ? "" : `~$${usd.toFixed(2)}`);
@@ -532,7 +533,7 @@ function Take({
     <span className="take-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <button className={`take ${on ? "on" : ""}`} style={{ aspectRatio: aspect }} onClick={onPick} title={on ? `${id}: the one the shot shows` : `${id}: show this one`}>
         {video && hover ? <video src={proxyUrl(projectId, id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} />}
-        {video && <span className="badge">{final ? "Final" : "▶"} {duration ? `${duration.toFixed(1)}s` : ""}</span>}
+        {video && <span className="badge">{final ? "Final" : <Icon name="play" size={10} />} {duration ? `${duration.toFixed(1)}s` : ""}</span>}
       </button>
       <button className="enlarge" onClick={onEnlarge} title="See it large, to zoom in" aria-label="See it large">
         <EnlargeIcon />

@@ -14,6 +14,7 @@ import { Viewer } from "./Viewer";
 import { CharacterSteps, isOwnPhoto, Picture, PICTURE_DRAG } from "./CastSteps";
 import { PopMenu, TextField } from "./ui";
 import { VoicePicker } from "./Voices";
+import { Icon } from "./Icon";
 
 type Kind = CastMember["kind"];
 const KINDS: [Kind, string][] = [
@@ -598,7 +599,7 @@ function CastPanel({ id }: { id: string }) {
                     </button>
                     <span className="dim"> · {speakerLabel(h.speaker)}</span>
                     <button className="link danger small" onClick={() => edit((x) => void (x.heard = x.heard!.filter((y) => !(y.asset === h.asset && y.speaker === h.speaker))))} title="That isn't them">
-                      ×
+                      <Icon name="close" size={12} />
                     </button>
                   </li>
                 );

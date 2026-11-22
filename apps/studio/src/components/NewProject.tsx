@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { desktop, pickPath, pathParts } from "../lib";
 import { actions, getState, useStore } from "../store";
 import { keptReferences, ReferencesField } from "./References";
+import { Icon } from "./Icon";
 
 type Job = { id: string; status: "running" | "done" | "error"; progress: number; log: string[]; error?: string; project: string; output?: string };
 type Scan = { ok: boolean; videos: number; photos: number };
@@ -177,7 +178,7 @@ export function NewProjectDialog() {
               <input value={goal} placeholder="A short reel of the trip to share with family" onChange={(e) => setGoal(e.target.value)} />
             </label>
             <button className="link np-more" onClick={() => setMore(!more)}>
-              {more ? "▾ Less" : "▸ More: audience, references, format, length, song"}
+              <Icon name={more ? "down" : "right"} size={10} /> {more ? "Less" : "More: audience, references, format, length, song"}
             </button>
             {more && (
               <>
@@ -230,7 +231,7 @@ export function NewProjectDialog() {
         <div className="modal-actions">
           {route && (
             <button className="link" onClick={() => setRoute(null)}>
-              ← Back
+              <Icon name="back" size={12} /> Back
             </button>
           )}
           <span className="spacer" />

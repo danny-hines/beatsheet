@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { AGENT_NAMES, keys } from "../lib";
 import { actions, useStore } from "../store";
 import { answer } from "./Turn";
+import { Icon } from "./Icon";
 
 /** The cut on screen and the project's other cuts: switch between them, rename or delete one, or make a new one. */
 export function CutMenu() {
@@ -35,7 +36,7 @@ export function CutMenu() {
       <button className="cut-button" onClick={() => setOpen(!open)} title="Cuts: versions of this video, each with its own length, formats, music and shots">
         <span className="cut-button-name">{current.name}</span>
         {doc.cuts.length > 1 && <span className="dim small">{doc.cuts.length} cuts</span>}
-        <span className="caret">▾</span>
+        <Icon name="down" size={10} className="caret" />
       </button>
       {open && (
         <div className="cut-panel">
@@ -102,7 +103,7 @@ function CutRow({ c, on, only, onPick }: { c: Cut; on: boolean; only: boolean; o
         />
       ) : (
         <button className="cut-row-main" onClick={onPick} title={c.spec.purpose ?? c.origin?.note}>
-          <span className="cut-check">{on ? "✓" : ""}</span>
+          <span className="cut-check">{on && <Icon name="check" size={14} />}</span>
           <span className="cut-row-text">
             <span className="cut-row-name">{c.name}</span>
             <span className="dim small">{facts}</span>
@@ -112,11 +113,11 @@ function CutRow({ c, on, only, onPick }: { c: Cut; on: boolean; only: boolean; o
       {name === undefined && (
         <span className="cut-row-actions">
           <button className="icon" title="Rename" aria-label={`Rename ${c.name}`} onClick={() => setName(c.name)}>
-            ✎
+            <Icon name="pencil" size={14} />
           </button>
           {!only && (
             <button className="icon" title="Delete this cut" aria-label={`Delete ${c.name}`} onClick={remove}>
-              ×
+              <Icon name="close" size={14} />
             </button>
           )}
         </span>

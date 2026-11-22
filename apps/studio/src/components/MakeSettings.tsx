@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { OS, WINDOWS } from "../lib";
 import { ServiceMark } from "./ui";
 import { actions } from "../store";
+import { Icon } from "./Icon";
 
 type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; spent?: number; plans?: ({ id: string } & ServiceState)[]; providers?: Record<MakeOp, ProviderRow[]> };
 
@@ -157,7 +158,7 @@ function ProviderKey({ row, done }: { row: ProviderRow; done: () => void }) {
         </button>
         {row.keyUrl && (
           <a href={row.keyUrl} target="_blank" rel="noreferrer" className="small">
-            Get a key ↗
+            Get a key <Icon name="external" size={12} />
           </a>
         )}
       </div>
@@ -282,7 +283,7 @@ function ComfySection() {
         <p className="small">
           {c.check.ok ? (
             <>
-              <span className="good">✓</span> {c.check.detail}
+              <span className="good"><Icon name="check" size={12} /></span> {c.check.detail}
             </>
           ) : (
             <span className="warn">{c.check.detail}</span>
@@ -334,7 +335,7 @@ function ComfySection() {
             <span key={repo}>
               {i > 0 && " and "}
               <a href={`https://huggingface.co/${repo}`} target="_blank" rel="noreferrer">
-                {repo} ↗
+                {repo} <Icon name="external" size={12} />
               </a>
             </span>
           ))}{" "}

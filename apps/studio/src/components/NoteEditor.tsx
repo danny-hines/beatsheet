@@ -1,6 +1,7 @@
 import { describeTarget } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
 import { actions, useProject, useStore } from "../store";
+import { Icon } from "./Icon";
 
 /**
  * The note editor, wherever a note is started: a shot, a stretch of the timeline, a clip in the media panel, a region
@@ -76,7 +77,7 @@ export function AttachedNotes() {
             <span className="attached-text">{n.text}</span>
           </button>
           <button className="attached-x" onClick={() => actions.removeNote(n.id)} title="Remove this note">
-            ✕
+            <Icon name="close" size={12} />
           </button>
         </span>
       ))}

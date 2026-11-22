@@ -8,6 +8,7 @@ import { TRANSCRIBERS, type TranscriberState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
 import { ServiceMark } from "./ui";
+import { Icon } from "./Icon";
 
 type Info = { whisper: WhisperStatus; states: Record<string, TranscriberState>; whisperModel?: ModelSize };
 
@@ -149,12 +150,12 @@ function WhisperCard({ info, onChange, setModel }: { info: Info; onChange: () =>
       )}
       {ready && (
         <div className="small">
-          <span className="good">✓</span> {s.detail} <span className="dim">· {mb(s.ready?.bytes)} on disk</span>
+          <span className="good"><Icon name="check" size={12} /></span> {s.detail} <span className="dim">· {mb(s.ready?.bytes)} on disk</span>
         </div>
       )}
       {ready && s.speakers.state === "ready" && (
         <div className="small">
-          <span className="good">✓</span> Tells speakers apart too, on {OS.here}
+          <span className="good"><Icon name="check" size={12} /></span> Tells speakers apart too, on {OS.here}
         </div>
       )}
       {ready && s.speakers.state === "missing" && (

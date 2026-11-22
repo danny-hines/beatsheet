@@ -12,6 +12,7 @@ import { actions, setState, useProject, useStore, useTimeline } from "../store";
 import { AssetMenu } from "./Cast";
 import { useMakeSummary } from "./MakeSettings";
 import { cost, fitOf, money, ModelSelect, pickOf, useChoices, WhyNot } from "./Takes";
+import { Icon } from "./Icon";
 
 const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 /** Whether a job's cost counts: what was asked for, unless it failed or was stopped before the service made it. */
@@ -533,7 +534,7 @@ function Card({ job, use, retry }: { job: MakeJob; use: (d: Partial<Draft>) => v
       title={`${a.label ?? a.id}${a.provenance?.costUsd !== undefined ? ` · $${a.provenance.costUsd.toFixed(3)}` : ""}`}
     >
       {video && hover ? <video src={proxyUrl(projectId, a.id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, a.id)} alt="" onError={hideBroken} />}
-      {video && <span className="badge">{final ? "Final" : "▶"} {a.duration ? `${a.duration.toFixed(1)}s` : ""}</span>}
+      {video && <span className="badge">{final ? "Final" : <Icon name="play" size={10} />} {a.duration ? `${a.duration.toFixed(1)}s` : ""}</span>}
       <div className="card-actions" onClick={(e) => e.stopPropagation()}>
         {!video && (
           <button onClick={() => use({ op: "video", start: a.id, prompt: job.request.prompt, shot: job.shot, model: "", count: 1 })} title="Make a clip that starts from this still">

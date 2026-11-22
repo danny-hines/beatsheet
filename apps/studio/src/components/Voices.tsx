@@ -3,6 +3,7 @@ import { voiceProvider } from "@beatsheet/schema";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { OS, WINDOWS } from "../lib";
 import { actions } from "../store";
+import { Icon } from "./Icon";
 
 // ---- The voices on hand, shared by Settings and the cut's narration
 
@@ -100,7 +101,7 @@ export function PlayButton({ id, src, title }: { id: string; src: string; title?
   const now = usePlaying();
   return (
     <button className={`icon play ${now === id ? "on" : ""}`} onClick={() => playSample(id, src)} title={now === id ? "Stop" : (title ?? "Listen")} aria-label={now === id ? "Stop" : "Listen"}>
-      {now === id ? "■" : "▶"}
+      <Icon name={now === id ? "stop" : "play"} size={10} />
     </button>
   );
 }
@@ -162,7 +163,7 @@ function VoiceRow({ v, current }: { v: VoiceInfo; current?: string }) {
         {v.detail && <span className="dim small">{v.detail}</span>}
       </span>
       {chosen ? (
-        <span className="small good voice-row-tag">✓ Narration</span>
+        <span className="small good voice-row-tag"><Icon name="check" size={12} /> Narration</span>
       ) : (
         <button className="voice-row-use small" onClick={() => void setDefaultVoice(v.id)}>
           Use for narration
@@ -214,7 +215,7 @@ function ElevenLabsCard({ info, voices, onAddKey }: { info: VoicesInfo; voices: 
         <strong>ElevenLabs</strong>
         <span className="spacer" />
         <a href="https://elevenlabs.io/app/voice-lab" target="_blank" rel="noreferrer" className="small" title="Design a voice from a description or clone your own there; it shows up here">
-          Make a voice on ElevenLabs ↗
+          Make a voice on ElevenLabs <Icon name="external" size={12} />
         </a>
       </div>
       {info.elevenlabs.error && <div className="warn small">{info.elevenlabs.error}</div>}
@@ -303,7 +304,7 @@ function KokoroCard({ status: initial, voices, current }: { status?: KokoroStatu
             : "An open voice model that reads far more naturally than the Mac's own voices, with a dozen English voices. It runs on your Mac: no key, no cost, nothing leaves it. Installs into beatsheet's own folder, about 1.5 GB."}
         </div>
       )}
-      {ready && <div className="small"><span className="good">✓</span> {status.detail} <span className="dim">· {gb(status.bytes)} on disk</span></div>}
+      {ready && <div className="small"><span className="good"><Icon name="check" size={12} /></span> {status.detail} <span className="dim">· {gb(status.bytes)} on disk</span></div>}
       {installing && (
         <div className="sam-install">
           <div className="small">{status.stage}…</div>

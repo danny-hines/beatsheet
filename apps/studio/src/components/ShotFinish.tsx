@@ -6,6 +6,7 @@
 import { addKeyAt, BLENDS, formatTime, KEY_DEFAULTS, keyed, keyValue, removeKey, setKey, type Keyed, type Layout, type Shot } from "@beatsheet/schema";
 import { actions, useProject, useStore, useTimeline } from "../store";
 import { GradeControls } from "./GradeControls";
+import { Icon } from "./Icon";
 
 const ROWS: { prop: Keyed; label: string; min: number; max: number; step: number }[] = [
   { prop: "scale", label: "Scale", min: 0.1, max: 4, step: 0.01 },
@@ -60,7 +61,7 @@ export function ShotKeys({ shot }: { shot: Shot }) {
               step={row.step}
               value={v}
               onChange={(e) => edit((s) => setKey(s, row.prop, t, Number(e.target.value), near))}
-              title={has ? "Sets it here (a key at the playhead)" : "Sets it for the whole shot; ◆ to key it"}
+              title={has ? "Sets it here (a key at the playhead)" : "Sets it for the whole shot; the diamond keys it"}
             />
             <span className="mono small">{row.prop === "rotate" ? `${Math.round(v)}°` : v.toFixed(2)}</span>
             <button
@@ -69,7 +70,7 @@ export function ShotKeys({ shot }: { shot: Shot }) {
               onClick={() => edit((s) => (here ? removeKey(s, t, row.prop, near) : addKeyAt(s, t, [row.prop], KEY_DEFAULTS, near)))}
               title={here ? "Take the key here out" : "A key here: it can change from this moment"}
             >
-              ◆
+              <Icon name={here ? "moment" : "key"} size={12} />
             </button>
           </div>
         );

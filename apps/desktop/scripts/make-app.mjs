@@ -48,7 +48,7 @@ set("CFBundleIdentifier", "dev.beatsheet.studio");
 set("NSCameraUsageDescription", "beatsheet records from your camera when you choose Record → Camera.");
 set("NSMicrophoneUsageDescription", "beatsheet records your voice for voiceovers and screen recordings, and to clone your voice for narration.");
 
-// The icon: beat bars on a warm square (icon.mjs).
+// The icon: the bar-and-beat b (icon.mjs).
 console.log("Drawing the icon…");
 const iconset = join(desktop, "release", "beatsheet.iconset");
 rmSync(iconset, { recursive: true, force: true });

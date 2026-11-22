@@ -7,6 +7,7 @@ import { CleanSound, RestoreClip, useCleanSound } from "./Restore";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { PopMenu, Stars, TextField } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
+import { Icon } from "./Icon";
 
 const boxStyle = (r: Rect) => ({ left: `${r.x * 100}%`, top: `${r.y * 100}%`, width: `${r.w * 100}%`, height: `${r.h * 100}%` });
 
@@ -114,7 +115,7 @@ export function AssetView({ a }: { a: Asset }) {
     <div className="inspector asset-view">
       {(isVideo || a.kind === "image") && (
         <div className="clip-player">
-          <div className={`clip-frame ${a.cutout ? "checker" : ""}`} style={{ aspectRatio: Math.max(aspect, 1), background: a.cutout ? undefined : a.color ?? "#111" }}>
+          <div className={`clip-frame ${a.cutout ? "checker" : ""}`} style={{ aspectRatio: Math.max(aspect, 1), background: a.cutout ? undefined : a.color ?? "var(--well)" }}>
             <div
               ref={media}
               className={`clip-media ${boxing ? "boxing" : ""} ${isVideo ? "" : "still"}`}
@@ -155,7 +156,7 @@ export function AssetView({ a }: { a: Asset }) {
               )}
               <SubjectBoxes a={a} t={isVideo ? t : 0} hover={hover} />
               {(drawing?.r ?? drawn) && <div className="subject-box drawing" style={boxStyle((drawing?.r ?? drawn)!)} />}
-              {isVideo && !playing && !boxing && <span className="clip-play">▶</span>}
+              {isVideo && !playing && !boxing && <span className="clip-play"><Icon name="play" size={18} /></span>}
             </div>
             {!boxing && (
               <button
@@ -177,7 +178,7 @@ export function AssetView({ a }: { a: Asset }) {
               <Scrubber a={a} t={t} duration={duration} moments={moments} onSeek={seek} projectId={projectId} source={source} />
               <div className="clip-bar">
                 <button className="icon" onClick={toggle} title="Play / pause this clip">
-                  {playing ? "❚❚" : "▶"}
+                  <Icon name={playing ? "pause" : "play"} size={12} />
                 </button>
                 <span className="mono small">
                   {formatTime(t)} <span className="dim">/ {formatTime(duration)}</span>
@@ -190,7 +191,7 @@ export function AssetView({ a }: { a: Asset }) {
                   Out
                 </button>
                 <button className="link small" onClick={() => setMarking(t)} title="Mark a moment worth landing on a beat">
-                  ◆ Mark {formatTime(t)}
+                  <Icon name="moment" size={10} /> Mark {formatTime(t)}
                 </button>
               </div>
               <div className="clip-bar">
@@ -312,14 +313,14 @@ export function AssetView({ a }: { a: Asset }) {
                       title={synced ?? "Remove"}
                       onClick={() => editAsset((x) => void (x.moments = x.moments!.filter((y) => y.id !== m.id)))}
                     >
-                      ✕
+                      <Icon name="close" size={12} />
                     </button>
                   </li>
                 );
               })}
             </ul>
           ) : (
-            marking === null && <p className="dim small">None yet. Play it and press ◆ Mark at a jump, a laugh, a burst.</p>
+            marking === null && <p className="dim small">None yet. Play it and press Mark at a jump, a laugh, a burst.</p>
           )}
         </>
       )}
@@ -716,7 +717,7 @@ function TagEditor({ tags, onChange }: { tags: string[]; onChange: (tags: string
         <span key={tag} className="chip tag">
           {tag}
           <button className="link" onClick={() => onChange(tags.filter((x) => x !== tag))} title={`Remove ${tag}`}>
-            ✕
+            <Icon name="close" size={10} />
           </button>
         </span>
       ))}

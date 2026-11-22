@@ -8,6 +8,7 @@ import { FIXERS, type FixerJob, type FixerState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
 import { ServiceMark } from "./ui";
+import { Icon } from "./Icon";
 
 type Info = { tools: Record<ToolId, ToolStatus>; states: Record<string, FixerState> };
 
@@ -122,7 +123,7 @@ function ToolCard({ s, onChange }: { s: ToolStatus; onChange: () => void }) {
       {s.state === "missing" && <div className="dim small">After installing, it times itself on a few seconds of test footage, so Auto knows how quick {OS.here} is at it.</div>}
       {ready && (
         <div className="small">
-          <span className="good">✓</span> {s.detail} <span className="dim">· {mb(s.ready?.bytes)} on disk</span>
+          <span className="good"><Icon name="check" size={12} /></span> {s.detail} <span className="dim">· {mb(s.ready?.bytes)} on disk</span>
           {s.ready?.cpu && <span className="dim"> · no graphics card it could use, so it's slow here</span>}
         </div>
       )}

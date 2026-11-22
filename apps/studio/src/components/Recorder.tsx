@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { desktop, type EngineJob, WINDOWS } from "../lib";
 import { allow, captureError, cleanAudio, clock, RECORD_WORDS, stopStream, useDevices, useLevel, useTake, type RecordKind } from "../record";
 import { actions, getState } from "../store";
+import { Icon, type IconName } from "./Icon";
 
 const KINDS: RecordKind[] = ["screen", "camera", "voice"];
-const ICONS: Record<RecordKind, string> = { screen: "▭", camera: "◉", voice: "🎙" };
+const ICONS: Record<RecordKind, IconName> = { screen: "screen", camera: "camera", voice: "mic" };
 
 /** Record ▾ beside Add footage: the screen, a camera or the microphone. */
 export function RecordMenu({ onPick, big }: { onPick: (kind: RecordKind) => void; big?: boolean }) {
@@ -24,7 +25,7 @@ export function RecordMenu({ onPick, big }: { onPick: (kind: RecordKind) => void
   return (
     <div className="record-menu" ref={ref}>
       <button className={`record-button ${big ? "big" : ""}`} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Record your screen, a camera or your voice">
-        <span className="rec-dot" /> Record <span className="caret">▾</span>
+        <span className="rec-dot" /> Record <Icon name="down" size={10} className="caret" />
       </button>
       {open && (
         <div className="record-panel" role="menu">
@@ -37,7 +38,7 @@ export function RecordMenu({ onPick, big }: { onPick: (kind: RecordKind) => void
                 onPick(k);
               }}
             >
-              <span className="record-icon">{ICONS[k]}</span>
+              <span className="record-icon"><Icon name={ICONS[k]} /></span>
               <span className="record-text">
                 <strong>{RECORD_WORDS[k].short}</strong>
                 <span className="dim small">{RECORD_WORDS[k].about}</span>
@@ -221,7 +222,7 @@ export function RecorderDialog({ kind, onClose }: { kind: RecordKind; onClose: (
             </span>
           )}
           <button className="icon" onClick={close} disabled={phase === "recording" || phase === "saving"} title="Close (Esc)" aria-label="Close">
-            ✕
+            <Icon name="close" />
           </button>
         </div>
 
@@ -323,7 +324,7 @@ export function RecorderDialog({ kind, onClose }: { kind: RecordKind; onClose: (
               <span className="spacer" />
               {take.state === "paused" ? <button onClick={take.resume}>Resume</button> : <button onClick={take.pause}>Pause</button>}
               <button className="primary" onClick={() => void stop()}>
-                ■ Stop
+                <Icon name="stop" size={12} /> Stop
               </button>
             </>
           )}

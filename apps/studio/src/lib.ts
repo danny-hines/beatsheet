@@ -36,11 +36,11 @@ export const hideBroken = (e: { currentTarget: HTMLImageElement }) => {
 /** A colour that stands in for a shot's picture until real thumbnails exist. */
 export function shotSwatch(shot: Shot, assets: Map<string, Asset>): string {
   const c = shot.content;
-  if (c.kind === "clip") return assets.get(c.asset)?.color ?? "#4f6f80";
-  if (c.kind === "generated") return (c.take && assets.get(c.take)?.color) || "#8a6d2c";
+  if (c.kind === "clip") return assets.get(c.asset)?.color ?? "#4f7c90";
+  if (c.kind === "generated") return (c.take && assets.get(c.take)?.color) || "#b08326";
   if (c.kind === "coded") return hueFrom(shot.id);
-  if (c.kind === "text") return "#333";
-  return "#2a2d33";
+  if (c.kind === "text") return "#b0633a";
+  return "#423e37";
 }
 
 function hueFrom(id: string): string {

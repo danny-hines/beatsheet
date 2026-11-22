@@ -1,22 +1,16 @@
-// beatsheet's icon: beat bars on a warm square, drawn here so there's nothing to download. The Mac's app build makes
-// an .icns of it; on Windows the build makes an .ico, and the window shows a PNG of it.
+// beatsheet's icon: a lowercase b made of a bar line and a beat, on a ruled baseline, drawn here so there's nothing to
+// download. The studio draws the same mark (Mark in apps/studio/src/components/ui.tsx) with the same colours
+// (--panel, --line-2, --text and --accent in its styles.css). The Mac's app build makes an .icns of it; on Windows the
+// build makes an .ico, and the window shows a PNG of it.
 import { writeFileSync } from "node:fs";
 import sharp from "sharp";
 
 export const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2a2210"/><stop offset="1" stop-color="#121317"/></linearGradient></defs>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#g)"/>
-  <rect x="64" y="64" width="896" height="896" rx="200" fill="none" stroke="#f2b544" stroke-opacity="0.35" stroke-width="8"/>
-  ${[0.35, 0.6, 0.85, 0.5, 0.95, 0.65, 0.4]
-    .map((h, i) => {
-      const w = 64;
-      const gap = 40;
-      const x = 512 - (7 * w + 6 * gap) / 2 + i * (w + gap);
-      const height = 520 * h;
-      return `<rect x="${x}" y="${512 + 40 - height / 2}" width="${w}" height="${height}" rx="32" fill="${i === 4 ? "#f2b544" : "#e6e8ec"}" fill-opacity="${i === 4 ? 1 : 0.85}"/>`;
-    })
-    .join("\n  ")}
-  <circle cx="512" cy="${512 + 40 + 300}" r="18" fill="#f2b544"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="#191816"/>
+  <rect x="68" y="68" width="888" height="888" rx="196" fill="none" stroke="#423e37" stroke-width="8"/>
+  <path d="M192 888h640" stroke="#423e37" stroke-width="12"/>
+  <rect x="304" y="208" width="112" height="608" fill="#ede8dd"/>
+  <circle cx="608" cy="640" r="176" fill="#ffcb3d"/>
 </svg>`;
 
 /** A PNG of the icon, `size` pixels square. */

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, desktop, hideBroken, pickPath, posterUrl, timeAgo, OS, keys, WINDOWS } from "../lib";
 import { actions, useStore, type ProjectSummary } from "../store";
 import { Mark, PopMenu } from "./ui";
+import { Icon } from "./Icon";
 
 /**
  * Where the app opens: start a project (from a folder, picked or dropped anywhere on the window, or from scratch),
@@ -46,10 +47,12 @@ export function Home() {
         <div className="home-page">
           <header className="home-head">
             <Mark />
-            <h1>beatsheet</h1>
+            <h1 className="wordmark" aria-label="beatsheet">
+              beat<i />sheet
+            </h1>
             <span className="spacer" />
             <button className="icon" onClick={() => actions.setSettingsOpen(true)} title={`Settings: agents, models and media services (${keys("⌘,")})`}>
-              ⚙
+              <Icon name="tune" />
             </button>
           </header>
 
@@ -170,11 +173,7 @@ function ProjectCard({ p, now, onMenu }: { p: ProjectSummary; now: number; onMen
             onMenu(r.right, r.bottom + 4);
           }}
         >
-          <svg viewBox="0 0 16 16" aria-hidden>
-            <circle cx="3.5" cy="8" r="1.4" />
-            <circle cx="8" cy="8" r="1.4" />
-            <circle cx="12.5" cy="8" r="1.4" />
-          </svg>
+          <Icon name="more" />
         </button>
       )}
     </div>
@@ -292,21 +291,6 @@ function useNow() {
   return now;
 }
 
-const FolderIcon = () => (
-  <svg className="home-icon" viewBox="0 0 24 24" aria-hidden>
-    <path
-      d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.6l2 2.2h7.4A2.5 2.5 0 0 1 21 9.7v7.8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinejoin="round"
-    />
-  </svg>
-);
+const FolderIcon = () => <Icon name="folder" size={48} className="home-icon" />;
 
-const PlusIcon = () => (
-  <svg className="home-icon" viewBox="0 0 24 24" aria-hidden>
-    <rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" strokeWidth="1.6" />
-    <path d="M12 8v8M8 12h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-  </svg>
-);
+const PlusIcon = () => <Icon name="new" size={48} className="home-icon" />;

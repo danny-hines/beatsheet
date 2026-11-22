@@ -11,6 +11,7 @@ import { useProject } from "../store";
 import { madeWith, modelLabel } from "./Takes";
 import { PopMenu, TextField } from "./ui";
 import { Viewer } from "./Viewer";
+import { Icon } from "./Icon";
 
 type Variant = NonNullable<CastMember["variants"]>[number];
 type Made = "portrait" | "sheet";
@@ -452,7 +453,7 @@ function Step({ n, done, title, note, children }: { n: number; done: boolean; ti
   return (
     <section className="cast-step">
       <div className="cast-step-head">
-        <span className={`cast-step-n ${done ? "done" : ""}`}>{done ? "✓" : n}</span>
+        <span className={`cast-step-n ${done ? "done" : ""}`}>{done ? <Icon name="check" size={10} /> : n}</span>
         <span className="cast-step-title">{title}</span>
         <span className="dim small">{note}</span>
       </div>
@@ -500,12 +501,12 @@ export function Picture({
       </button>
       {tick && (
         <button className={`cast-pic-tick ${tick.on ? "on" : ""}`} onClick={tick.toggle} title={tick.on ? "Used: click to leave it out" : "Not used: click to use it"} aria-label={tick.on ? "Leave it out" : "Use it"} aria-pressed={tick.on}>
-          {tick.on ? "✓" : ""}
+          {tick.on && <Icon name="check" size={12} />}
         </button>
       )}
       {onRemove && (
         <button className="cast-pic-remove" onClick={onRemove} title="Take this picture out" aria-label="Take this picture out">
-          ×
+          <Icon name="close" size={12} />
         </button>
       )}
     </span>

@@ -7,6 +7,7 @@ import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
 import { MakeSection, ProvidersSetup, useMakeSummary } from "./MakeSettings";
 import { TranscribeSection, useTranscribeSummary } from "./TranscribeSettings";
 import { RestoreSection, useRestoreSummary } from "./RestoreSettings";
+import { Icon, type IconName } from "./Icon";
 
 type SetupInfo = NonNullable<State["setup"]>;
 
@@ -82,7 +83,7 @@ export function SetupScreen({ setup }: { setup: SetupInfo }) {
         <div className="setup-page">
           {ready && chosen ? (
             <span className="small">
-              <span className="good">✓</span> {AGENT_NAMES[chosen.id]}
+              <span className="good"><Icon name="check" size={12} /></span> {AGENT_NAMES[chosen.id]}
               {model ? ` (${model})` : ""} is your agent. <span className="dim">You can change this and add the rest in Settings.</span>
             </span>
           ) : (
@@ -102,7 +103,7 @@ function Step({ n, done, title, note, about, children }: { n: number; done?: boo
   return (
     <section className="setup-step">
       <div className="setup-step-head">
-        <span className={`step-n ${done ? "done" : note === "required" ? "req" : ""}`}>{done ? "✓" : n}</span>
+        <span className={`step-n ${done ? "done" : note === "required" ? "req" : ""}`}>{done ? <Icon name="check" size={12} /> : n}</span>
         <h3>{title}</h3>
         <span className="dim small">{note}</span>
       </div>
@@ -113,15 +114,15 @@ function Step({ n, done, title, note, about, children }: { n: number; done?: boo
 }
 
 const PANES = [
-  { id: "agent", label: "Agent" },
-  { id: "mac", label: "People and cut-outs" },
-  { id: "voices", label: "Voices" },
-  { id: "services", label: "Media services" },
-  { id: "make", label: "Making" },
-  { id: "transcribe", label: "Transcription" },
-  { id: "restore", label: "Restoring" },
-  { id: "abilities", label: "What it can do" },
-] as const;
+  { id: "agent", label: "Agent", icon: "talk" },
+  { id: "mac", label: "People and cut-outs", icon: "person" },
+  { id: "voices", label: "Voices", icon: "mic" },
+  { id: "services", label: "Media services", icon: "service" },
+  { id: "make", label: "Making", icon: "picture" },
+  { id: "transcribe", label: "Transcription", icon: "words" },
+  { id: "restore", label: "Restoring", icon: "restore" },
+  { id: "abilities", label: "What it can do", icon: "checked" },
+] as const satisfies readonly { id: string; label: string; icon: IconName }[];
 type Pane = (typeof PANES)[number]["id"];
 
 /** Settings, after first launch: a dialog over the editor, one pane at a time. Every change saves as it's made. */
@@ -165,8 +166,11 @@ export function SettingsDialog() {
           <h2>Settings</h2>
           {PANES.map((p) => (
             <button key={p.id} className={pane === p.id ? "on" : ""} onClick={() => setPane(p.id)}>
-              {p.label}
-              <span className="dim small">{status[p.id]}</span>
+              <Icon name={p.icon} />
+              <span>
+                {p.label}
+                <span className="dim small">{status[p.id]}</span>
+              </span>
             </button>
           ))}
         </nav>
@@ -177,7 +181,7 @@ export function SettingsDialog() {
               <p className="dim small">{ABOUT[pane]}</p>
             </div>
             <button className="icon" onClick={close} title="Close (Esc)" aria-label="Close">
-              ✕
+              <Icon name="close" />
             </button>
           </div>
           <div className="settings-pane-body">
@@ -267,7 +271,7 @@ function Autonomy({ level }: { level: "ask" | "free" }) {
         {options.map((o) => (
           <button key={o.id} type="button" className={`np-route ${level === o.id ? "on" : ""}`} onClick={() => level !== o.id && void set(o.id)}>
             <strong>
-              {level === o.id ? "● " : "○ "}
+              <Icon name={level === o.id ? "radio-on" : "radio-off"} size={14} />{" "}
               {o.title}
             </strong>
             <span className="dim small">{o.about}</span>
@@ -323,7 +327,7 @@ function LocalSection({ setup }: { setup: SetupInfo }) {
           <span className="pill">Find and follow people</span>
           {(!WINDOWS || setup.sam?.state === "ready") && <span className="pill">Cut people out</span>}
           <span className="spacer" />
-          <span className="small">{setup.vision?.ok ? <span className="good">✓ Built in</span> : <span className="warn">{setup.vision?.detail}</span>}</span>
+          <span className="small">{setup.vision?.ok ? <span className="good"><Icon name="check" size={12} /> Built in</span> : <span className="warn">{setup.vision?.detail}</span>}</span>
         </div>
         {WINDOWS && setup.vision?.ok && <div className="dim small">{setup.vision.detail}</div>}
       </div>
@@ -479,7 +483,7 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
           </span>
         ) : stored ? (
           <>
-            <span className={stored.ok ? "good" : "warn"}>{stored.ok ? "✓" : "✕"}</span>{" "}
+            <span className={stored.ok ? "good" : "warn"}><Icon name={stored.ok ? "check" : "close"} size={12} /></span>{" "}
             {/* A detail saved before checks kept theirs to a line can be a CLI's whole output; the card shows its start. */}
             <span title={stored.detail.length > 160 ? stored.detail.slice(0, 2000) : undefined}>{stored.detail.length > 160 ? `${stored.detail.slice(0, 159)}…` : stored.detail}</span>{" "}
             <span className="dim">· {timeAgo(stored.at)}</span>
@@ -573,13 +577,13 @@ function ServiceRow({ service }: { service: ServiceInfo }) {
         <strong>{service.label}</strong>
         <span className="spacer" />
         <a href={service.keyUrl} target="_blank" rel="noreferrer" className="small">
-          Get a key ↗
+          Get a key <Icon name="external" size={12} />
         </a>
       </div>
       <div className="dim small">{service.does}</div>
       {service.configured ? (
         <div className="setup-service-key small">
-          <span className="good">✓</span> {service.detail ?? "Key saved"} <span className="dim">· {WINDOWS ? "in Credential Manager" : "in your Keychain"}</span>
+          <span className="good"><Icon name="check" size={12} /></span> {service.detail ?? "Key saved"} <span className="dim">· {WINDOWS ? "in Credential Manager" : "in your Keychain"}</span>
           <span className="spacer" />
           <button onClick={() => void remove()}>Remove</button>
         </div>
@@ -691,8 +695,8 @@ function SamCard({ status: initial }: { status?: SamStatus }) {
       {status.state === "token" && (
         <>
           <div className="small">
-            Meta shares SAM 3.1 with people who ask. <a href={status.links?.access} target="_blank" rel="noreferrer">Ask for access ↗</a> (signed in to Hugging Face; it&apos;s
-            usually a few minutes), then <a href={status.links?.token} target="_blank" rel="noreferrer">make a token ↗</a> (Read is enough) and paste it here. It&apos;s kept in
+            Meta shares SAM 3.1 with people who ask. <a href={status.links?.access} target="_blank" rel="noreferrer">Ask for access <Icon name="external" size={12} /></a> (signed in to Hugging Face; it&apos;s
+            usually a few minutes), then <a href={status.links?.token} target="_blank" rel="noreferrer">make a token <Icon name="external" size={12} /></a> (Read is enough) and paste it here. It&apos;s kept in
             Credential Manager.
           </div>
           <div className="setup-service-key">
@@ -705,7 +709,7 @@ function SamCard({ status: initial }: { status?: SamStatus }) {
       )}
       {ready && (
         <div className="small">
-          <span className="good">✓</span> {status.detail} <span className="dim">· {gb(status.bytes)} on disk</span>
+          <span className="good"><Icon name="check" size={12} /></span> {status.detail} <span className="dim">· {gb(status.bytes)} on disk</span>
         </div>
       )}
       {installing && (

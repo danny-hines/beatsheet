@@ -6,6 +6,7 @@ import { actions, getState, useProject, useStore } from "../store";
 import { RecorderDialog, RecordMenu } from "./Recorder";
 import { answer } from "./Turn";
 import { AssetMenu, CastList } from "./Cast";
+import { Icon } from "./Icon";
 
 type Filter = "all" | "keepers" | "unrated" | "used" | "rejected";
 const FILTERS: [Filter, string][] = [
@@ -325,19 +326,22 @@ function AssetRow({
         e.dataTransfer.effectAllowed = "copy";
       }}
     >
-      <span className={`asset-row-thumb ${a.cutout ? "checker" : ""}`} style={{ background: a.cutout ? undefined : a.color ?? "#2a2e36" }}>
+      <span className={`asset-row-thumb ${a.cutout ? "checker" : ""}`} style={{ background: a.cutout ? undefined : a.color ?? "var(--raised)" }}>
         {(a.kind === "video" || a.kind === "image") && <img src={a.cutout && a.kind === "image" ? `/media/${projectId}/asset/${a.id}/image` : posterUrl(projectId, a.id)} loading="lazy" alt="" onError={hideBroken} />}
-        {a.kind === "music" && <span className="asset-row-note">♪</span>}
-        {(a.kind === "audio" || a.kind === "voice") && <span className="asset-row-note">🎙</span>}
+        {a.kind === "music" && <span className="asset-row-note"><Icon name="music" size={18} /></span>}
+        {(a.kind === "audio" || a.kind === "voice") && <span className="asset-row-note"><Icon name="mic" size={18} /></span>}
         {a.duration !== undefined && a.kind !== "image" && <span className="asset-row-dur">{formatTime(a.duration).replace(/^0:/, "").replace(/\.\d+$/, "")}</span>}
       </span>
       <span className="asset-row-body">
         <span className={`asset-row-label ${generic ? "dim" : ""}`}>{a.kind === "music" && a.grid ? `${a.label ?? a.id} · ${Math.round(a.grid.bpm)} BPM` : (a.label ?? a.id)}</span>
         <span className="asset-row-meta small">
-          {a.rating && a.rating > 0 ? <span className="asset-row-stars">{"★".repeat(a.rating)}</span> : a.rating === -1 ? <span className="warn">rejected</span> : null}
+          {a.rating && a.rating > 0 ? <span className="asset-row-stars">{Array.from({ length: a.rating }, (_, i) => (
+            <Icon key={i} name="star" size={10} />
+          ))}</span> : a.rating === -1 ? <span className="warn">rejected</span> : null}
           {a.moments?.length ? (
             <span className="asset-row-moments" title={a.moments.map((m) => m.label).join(" · ")}>
-              ◆{a.moments.length}
+              <Icon name="moment" size={8} />
+              {a.moments.length}
             </span>
           ) : null}
           {a.tags
@@ -360,7 +364,7 @@ function AssetRow({
           actions.noteOn({ kind: "asset", asset: a.id }, { x: r.right + 160, y: r.top - 20 });
         }}
       >
-        ✎
+        <Icon name="pencil" size={12} />
       </span>
     </button>
   );

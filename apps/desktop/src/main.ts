@@ -43,7 +43,7 @@ async function openWindow() {
     minWidth: 1100,
     minHeight: 680,
     title: "beatsheet",
-    backgroundColor: "#121317",
+    backgroundColor: "#121110",
     ...(WINDOWS ? windowsFrame() : { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 14, y: 17 } }),
     webPreferences: { preload: join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });

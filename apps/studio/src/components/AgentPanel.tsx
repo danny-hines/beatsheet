@@ -5,6 +5,7 @@ import { actions, useProject, useStore } from "../store";
 import { AgentChooser, AgentHead, TerminalSessions } from "./AgentMenu";
 import { AttachedNotes } from "./NoteEditor";
 import { answer, TurnCard, useTurn } from "./Turn";
+import { Icon } from "./Icon";
 
 /** The Agent tab: the session the studio hosts, live. Its messages, what it's doing, what it needs approved, and a box to talk to it. */
 export function AgentPanel() {
@@ -212,7 +213,7 @@ function ToolCall({ item, took }: { item: AgentItem; took?: string }) {
 }
 
 const StatusIcon = ({ status }: { status: AgentItem["status"] }) =>
-  status === "running" ? <span className="spin" /> : <span className={`agent-tick ${status}`}>{status === "done" ? "✓" : "✕"}</span>;
+  status === "running" ? <span className="spin" /> : <span className={`agent-tick ${status}`}><Icon name={status === "done" ? "check" : "close"} size={12} /></span>;
 
 /**
  * Something the agent wants to do that needs an OK. A long command shows its first lines (all of it on request), and

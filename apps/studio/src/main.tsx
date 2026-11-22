@@ -2,6 +2,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { reportError } from "./lib";
+// beatsheet's three faces, bundled so the Mac and Windows apps look the same offline (--f-ui, --f-label, --mono).
+import "@fontsource/archivo/400.css";
+import "@fontsource/archivo/500.css";
+import "@fontsource/archivo/600.css";
+import "@fontsource/archivo/700.css";
+import "@fontsource/archivo-narrow/500.css";
+import "@fontsource/archivo-narrow/600.css";
+import "@fontsource/archivo-narrow/700.css";
+import "@fontsource/ibm-plex-mono/400.css";
+import "@fontsource/ibm-plex-mono/500.css";
 import "./styles.css";
 
 // The local server only acts on requests that carry this header, which a web page on another site can't add.

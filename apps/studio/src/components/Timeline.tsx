@@ -5,11 +5,11 @@ import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selec
 import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 import { Strip, Wave } from "./TrackMedia";
 import { Mixer } from "./Mixer";
+import { Icon, type IconName } from "./Icon";
 
 const PAD = 48;
 const RULER_H = 22;
 const H = { voice: 46, music: 46, picture: 58, overlay: 28, text: 28, audio: 28, sfx: 28, notes: 22 } as const;
-const SECTION_COLORS = ["#5b4a8f", "#3f6f8f", "#8f5b3f", "#3f8f6b", "#8f3f5e", "#6b8f3f"];
 
 /** What a drag on the timeline is doing: moving a cut (an edge), moving a shot, or slipping the footage under it. */
 type Drag =
@@ -250,7 +250,7 @@ export function Timeline() {
       <div className="tl-toolbar">
         <span className="tl-title">Timeline</span>
         <button className="tl-tool" onClick={splitHere} title={`Split at the playhead (${keys("⌘B")} or S)`}>
-          ✂ Split
+          <Icon name="split" size={12} /> Split
         </button>
         <button className="tl-tool" onClick={() => deleteSelected(false)} title={`Delete the selection; the shot before holds on (${keys("⌫")}). ${keys("⇧⌫")} closes the gap.`}>
           Delete
@@ -262,13 +262,13 @@ export function Timeline() {
         <span className="spacer" />
         {marked && (
           <button className="link small" onClick={() => setState({ marks: {} })} title="Clear the in and out marks">
-            {marks.in !== undefined ? formatTime(marks.in) : "…"} → {marks.out !== undefined ? formatTime(marks.out) : "…"} ✕
+            {marks.in !== undefined ? formatTime(marks.in) : "…"} → {marks.out !== undefined ? formatTime(marks.out) : "…"} <Icon name="close" size={10} />
           </button>
         )}
         <Mixer />
-        <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out">−</button>
+        <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out" aria-label="Zoom out"><Icon name="minus" size={12} /></button>
         <button onClick={() => setState({ zoom: 0 })}>Fit</button>
-        <button onClick={() => actions.setZoom(z * 1.5)} title="Zoom in">+</button>
+        <button onClick={() => actions.setZoom(z * 1.5)} title="Zoom in" aria-label="Zoom in"><Icon name="add" size={12} /></button>
       </div>
       <div className="tl-body">
         <div className="tl-labels">
@@ -320,7 +320,7 @@ export function Timeline() {
                   <div
                     key={s.id}
                     className="section-band"
-                    style={{ left: x(s.start), width: x(s.end) - x(s.start), background: SECTION_COLORS[i % SECTION_COLORS.length] }}
+                    style={{ left: x(s.start), width: x(s.end) - x(s.start) }}
                     title={`${s.label} ${formatTime(s.start)} · right-click for a note`}
                     onContextMenu={noteMenu({ kind: "section", section: s.id })}
                   >
@@ -568,28 +568,31 @@ function Playhead({ z }: { z: number }) {
   return <div ref={ref} className="playhead" style={{ left: t * z }} />;
 }
 
+const BADGES = new Set<string>(["lock", "cutout", "effect", "follow", "look", "entrance"]);
+const isIcon = (mark: string): mark is IconName => BADGES.has(mark);
+
 /** Small marks on a shot block for what's layered on it: effects, a crop that follows someone, a look, an entrance. */
 function ShotBadges({ shot, format, assets }: { shot: Shot; format: string; assets: Map<string, Asset> }) {
   const c = shot.content;
-  const marks: [string, string][] = [];
-  if (shot.locked) marks.push(["🔒", "Locked"]);
+  const marks: [IconName | string, string][] = [];
+  if (shot.locked) marks.push(["lock", "Locked"]);
   if (c.kind === "clip") {
     const a = assets.get(c.asset);
     const who = (id: string) => a?.subjects?.find((s) => s.id === id)?.label ?? id;
-    if (a?.cutout) marks.push(["✂", "A cut-out"]);
-    if (c.effects?.length) marks.push(["◍", c.effects.map((e) => `${e.kind === "label" ? `Name tag "${e.text}"` : e.kind === "blur" ? "Blur" : "Spotlight"} on ${who(e.subject)}`).join("\n")]);
+    if (a?.cutout) marks.push(["cutout", "A cut-out"]);
+    if (c.effects?.length) marks.push(["effect", c.effects.map((e) => `${e.kind === "label" ? `Name tag "${e.text}"` : e.kind === "blur" ? "Blur" : "Spotlight"} on ${who(e.subject)}`).join("\n")]);
     const follow = c.reframe?.[format]?.follow;
-    if (follow) marks.push(["⤧", `Keeps ${who(follow)} in frame`]);
-    if (c.look) marks.push(["◐", `Look: ${c.look}`]);
+    if (follow) marks.push(["follow", `Keeps ${who(follow)} in frame`]);
+    if (c.look) marks.push(["look", `Look: ${c.look}`]);
     if (c.speed && c.speed !== 1) marks.push([`${c.speed}×`, `Plays at ${c.speed}× speed`]);
   }
-  if (shot.transition?.kind) marks.push(["↗", `Comes in: ${shot.transition.kind}`]);
+  if (shot.transition?.kind) marks.push(["entrance", `Comes in: ${shot.transition.kind}`]);
   if (!marks.length) return null;
   return (
     <span className="shot-badges">
-      {marks.map(([glyph, title]) => (
-        <span key={glyph} title={title}>
-          {glyph}
+      {marks.map(([mark, title]) => (
+        <span key={mark} title={title}>
+          {isIcon(mark) ? <Icon name={mark} size={11} /> : mark}
         </span>
       ))}
     </span>

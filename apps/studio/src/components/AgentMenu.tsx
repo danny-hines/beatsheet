@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, timeAgo, OS } from "../lib";
 import { ServiceMark } from "./ui";
 import { actions, useStore } from "../store";
+import { Icon } from "./Icon";
 
 /** Re-renders every `ms` so "12s ago" stays true. */
 function useNow(ms: number) {
@@ -51,7 +52,7 @@ export function AgentHead({ session }: { session: boolean }) {
         <span className={`dot ${dot}`} />
         <strong>{id ? AGENT_NAMES[id] : "Agent"}</strong>
         {model && <span className="model-tag">{model}</span>}
-        <span className="caret">▾</span>
+        <Icon name="down" size={10} className="caret" />
         <span className="spacer" />
         {session && <span className="dim small activity">{sessionActivity(view)}</span>}
       </button>

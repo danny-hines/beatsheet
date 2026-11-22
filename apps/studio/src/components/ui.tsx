@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { FIDELITY_LABEL } from "../lib";
 import { initial, markFile } from "../marks";
 import { useProject, useStore } from "../store";
+import { Icon } from "./Icon";
 
 export function AnchorChip({ anchor, fallback }: { anchor?: Anchor; fallback?: string }) {
   const project = useProject();
@@ -13,7 +14,7 @@ export function AnchorChip({ anchor, fallback }: { anchor?: Anchor; fallback?: s
     <span className={`chip chip-${anchor.kind}`} title={Number.isFinite(t) ? formatTime(t) : "does not resolve"}>
       <span className="chip-kind">{anchor.kind}</span>
       {describeAnchor(anchor, project)}
-      {!Number.isFinite(t) && <span className="chip-bad"> ⚠</span>}
+      {!Number.isFinite(t) && <span className="chip-bad"><Icon name="warn" size={12} /></span>}
     </span>
   );
 }
@@ -32,11 +33,11 @@ export function Stars({ rating, onChange }: { rating?: number; onChange?: (r: nu
     <span className="stars" onClick={(e) => e.stopPropagation()}>
       {[1, 2, 3, 4, 5].map((n) => (
         <button key={n} className={`star ${r >= n ? "on" : ""}`} onClick={() => onChange?.(r === n ? 0 : n)} disabled={!onChange} title={`${n} star${n > 1 ? "s" : ""}`}>
-          ★
+          <Icon name="star" size={14} />
         </button>
       ))}
       <button className={`reject ${r === -1 ? "on" : ""}`} onClick={() => onChange?.(r === -1 ? 0 : -1)} disabled={!onChange} title="Reject">
-        ✕
+        <Icon name="close" size={14} />
       </button>
     </span>
   );
@@ -175,22 +176,14 @@ export function MarksNote() {
   );
 }
 
-/** beatsheet's mark: beat bars on a warm square, as on the app icon. */
+/** beatsheet's mark: a lowercase b made of a bar line and a beat, on a ruled baseline. The app icon draws the same one (apps/desktop/scripts/icon.mjs). */
 export function Mark() {
-  const bars = [0.35, 0.6, 0.85, 0.5, 0.95, 0.65, 0.4];
   return (
-    <svg className="mark" viewBox="0 0 1024 1024" aria-hidden>
-      <defs>
-        <linearGradient id="mark-g" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#2a2210" />
-          <stop offset="1" stopColor="#121317" />
-        </linearGradient>
-      </defs>
-      <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#mark-g)" stroke="#f2b544" strokeOpacity="0.35" strokeWidth="8" />
-      {bars.map((h, i) => (
-        <rect key={i} x={512 - (7 * 64 + 6 * 40) / 2 + i * 104} y={552 - (520 * h) / 2} width="64" height={520 * h} rx="32" fill={i === 4 ? "#f2b544" : "#e6e8ec"} fillOpacity={i === 4 ? 1 : 0.85} />
-      ))}
-      <circle cx="512" cy="852" r="18" fill="#f2b544" />
+    <svg className="mark" viewBox="0 0 64 64" aria-hidden>
+      <rect x="4" y="4" width="56" height="56" rx="12" style={{ fill: "var(--panel)", stroke: "var(--line-2)" }} />
+      <path d="M12 55.5h40" style={{ stroke: "var(--line-2)" }} />
+      <rect x="19" y="13" width="7" height="38" style={{ fill: "var(--text)" }} />
+      <circle cx="38" cy="40" r="11" style={{ fill: "var(--accent)" }} />
     </svg>
   );
 }

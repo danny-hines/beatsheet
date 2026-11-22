@@ -1,5 +1,6 @@
 import type { Reference } from "@beatsheet/schema";
 import { pickPath } from "../lib";
+import { Icon } from "./Icon";
 
 const KINDS: { kind: Reference["kind"]; label: string; value: string; note: string }[] = [
   { kind: "url", label: "Link", value: "https://…", note: "What it's for, e.g. match its pacing and titles" },
@@ -33,7 +34,7 @@ export function ReferencesField({ value, onChange }: { value: Reference[]; onCha
               <input value={r.value} placeholder={k.value} onChange={(e) => set(i, { value: e.target.value })} />
               {(r.kind === "folder" || r.kind === "file") && <button onClick={() => void pickPath(r.kind as "folder" | "file").then((p) => p && set(i, { value: p }))}>Choose…</button>}
               <button className="link" onClick={() => onChange(value.filter((_, j) => j !== i))} title="Remove">
-                ✕
+                <Icon name="close" size={12} />
               </button>
             </div>
             {r.kind !== "note" && (

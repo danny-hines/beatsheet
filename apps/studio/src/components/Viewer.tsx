@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { imageUrl, proxyUrl } from "../lib";
+import { Icon } from "./Icon";
 
 /** `src` is the file to show when it isn't the asset `id` itself (a picture the agent made in the project's folder). */
 export type ViewerItem = { id: string; video?: boolean; caption?: string; src?: string };
@@ -139,10 +140,10 @@ export function Viewer({
         {items.length > 1 && (
           <>
             <button className="viewer-step prev" onClick={() => go(-1)} title="The one before (←)" aria-label="The one before">
-              ‹
+              <Icon name="back" size={24} />
             </button>
             <button className="viewer-step next" onClick={() => go(1)} title="The next one (→)" aria-label="The next one">
-              ›
+              <Icon name="forward" size={24} />
             </button>
           </>
         )}
@@ -157,16 +158,16 @@ export function Viewer({
         <span className="spacer" />
         {actions?.(item, index)}
         <button onClick={() => zoomTo(view.scale / STEP)} disabled={view.scale === 1} title="Zoom out (−)" aria-label="Zoom out">
-          −
+          <Icon name="minus" size={12} />
         </button>
         <button className="viewer-zoom" onClick={() => zoomTo(1)} title="Fit to the window (0); the wheel or a double-click zooms where the pointer is" aria-label="Fit">
           {view.scale === 1 ? "Fit" : `${view.scale.toFixed(1)}×`}
         </button>
         <button onClick={() => zoomTo(view.scale * STEP)} disabled={view.scale >= MOST} title="Zoom in (+)" aria-label="Zoom in">
-          +
+          <Icon name="add" size={12} />
         </button>
         <button onClick={onClose} title="Close (Esc)" aria-label="Close">
-          ×
+          <Icon name="close" size={12} />
         </button>
       </div>
     </div>,
@@ -177,8 +178,6 @@ export function Viewer({
 /** Two arrows pointing out: see it large. */
 export function EnlargeIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-      <path d="M7 1h4v4M11 1 7 5M5 11H1V7M1 11l4-4" />
-    </svg>
+    <Icon name="enlarge" size={12} />
   );
 }

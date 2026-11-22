@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { KIND_LABEL, noteHere, noteTime, pictureTrack, reportError, shotsAt } from "../lib";
 import { actions, getState, registerPlayer, setState, useProject, useStore, useTimeline } from "../store";
 import { FidelityPill } from "./ui";
+import { Icon } from "./Icon";
 
 type Rect = { x: number; y: number; w: number; h: number };
 
@@ -263,11 +264,11 @@ export function Transport() {
   const nextCut = cuts.find((c) => c > playhead + 0.01);
   return (
     <div className="transport">
-      <button onClick={() => prevCut !== undefined && actions.seek(prevCut)} title="Previous cut (↑)">⏮</button>
-      <button onClick={() => actions.seek(playhead - 1 / fps)} title="Back one frame (←)">◀︎</button>
-      <button className="play" onClick={actions.togglePlay} title="Play / pause (space)">{playing ? "❚❚" : "▶"}</button>
-      <button onClick={() => actions.seek(playhead + 1 / fps)} title="Forward one frame (→)">▶︎</button>
-      <button onClick={() => nextCut !== undefined && actions.seek(nextCut)} title="Next cut (↓)">⏭</button>
+      <button onClick={() => prevCut !== undefined && actions.seek(prevCut)} title="Previous cut (↑)"><Icon name="cut-back" /></button>
+      <button onClick={() => actions.seek(playhead - 1 / fps)} title="Back one frame (←)"><Icon name="step-back" /></button>
+      <button className="play" onClick={actions.togglePlay} title="Play / pause (space)"><Icon name={playing ? "pause" : "play"} /></button>
+      <button onClick={() => actions.seek(playhead + 1 / fps)} title="Forward one frame (→)"><Icon name="step-forward" /></button>
+      <button onClick={() => nextCut !== undefined && actions.seek(nextCut)} title="Next cut (↓)"><Icon name="cut-forward" /></button>
       <span className="tc">
         {formatTime(playhead)} <span className="dim">/ {formatTime(tl.duration)}</span>
       </span>
@@ -278,7 +279,7 @@ export function Transport() {
         </span>
       )}
       <button className="note-here" onClick={noteHere} title="Note the selection or the shot under the playhead (N). Drag on the frame to note part of it.">
-        ✎ Note
+        <Icon name="pencil" /> Note
       </button>
     </div>
   );
@@ -305,7 +306,7 @@ function PreviewMenu({ onReload }: { onReload: () => void }) {
   return (
     <div className={`preview-menu ${open ? "open" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
       <button className="preview-menu-button" title="Preview options" onClick={() => setOpen(!open)}>
-        ⋯
+        <Icon name="more" />
       </button>
       {open && (
         <div className="preview-menu-list">

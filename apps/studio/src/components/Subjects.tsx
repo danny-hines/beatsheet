@@ -4,8 +4,9 @@ import { runJob } from "../lib";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { MotionSelect } from "./Designed";
 import { TextField } from "./ui";
+import { Icon, type IconName } from "./Icon";
 
-const KIND_GLYPH: Record<SubjectTrack["kind"], string> = { face: "☺", person: "♟", object: "◎" };
+const KIND_GLYPH: Record<SubjectTrack["kind"], IconName> = { face: "face", person: "person", object: "object" };
 
 const span = (s: SubjectTrack) => {
   const a = s.samples[0]?.[0] ?? 0, b = s.samples[s.samples.length - 1]?.[0] ?? 0;
@@ -143,7 +144,7 @@ export function SubjectTools({
             return (
               <li key={s.id} className={hover === s.id ? "hot" : ""} onMouseEnter={() => setHover(s.id)} onMouseLeave={() => setHover(null)}>
                 <span className={`glyph k-${s.kind}`} title={s.kind}>
-                  {KIND_GLYPH[s.kind]}
+                  <Icon name={KIND_GLYPH[s.kind]} size={14} />
                 </span>
                 <TextField value={s.label} onCommit={(v) => v.trim() && rename(s.id, v.trim())} />
                 {isVideo && (
@@ -163,7 +164,7 @@ export function SubjectTools({
                     title="The same person or thing, seen again later: join them into one"
                     onChange={(e) => e.target.value && void join(e.target.value, s.id)}
                   >
-                    <option value="">⇄ Same as…</option>
+                    <option value="">Same as…</option>
                     {subjects
                       .filter((o) => o.id !== s.id && o.kind === s.kind)
                       .map((o) => (
@@ -183,7 +184,7 @@ export function SubjectTools({
                   ))}
                 </select>
                 <button className="link danger small" disabled={used.length > 0} title={used.length ? `Used by ${used.join(", ")}` : "Remove"} onClick={() => remove(s.id)}>
-                  ✕
+                  <Icon name="close" size={12} />
                 </button>
               </li>
             );
@@ -407,7 +408,7 @@ export function ShotLook({ shot }: { shot: Shot }) {
                   )}
                   <span className="spacer" />
                   <button className="link danger small" onClick={() => editShot((s) => framed(s.content) && void (s.content.effects = s.content.effects!.filter((_, j) => j !== i)))}>
-                    ✕
+                    <Icon name="close" size={12} />
                   </button>
                 </div>
               ))}

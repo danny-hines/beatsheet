@@ -16,6 +16,7 @@ import { clearMarks, copySelected, deleteSelected, duplicate, mark, nudge, paste
 import { desktop, isTyping, noteHere, pictureTrack, WINDOWS } from "./lib";
 import { angleKey } from "./multicam";
 import { actions, getState, hasPlayer, setState, timelineFor, useStore } from "./store";
+import { Icon } from "./components/Icon";
 
 export function App() {
   const project = useStore((s) => s.project);
@@ -91,7 +92,7 @@ export function App() {
       <div className="fatal">
         <h2>This project file doesn't validate</h2>
         <pre>{loadError.join("\n")}</pre>
-        <button onClick={() => void actions.goHome()}>‹ All projects</button>
+        <button onClick={() => void actions.goHome()}><Icon name="back" size={12} /> All projects</button>
       </div>
     );
   }

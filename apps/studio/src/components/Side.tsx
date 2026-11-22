@@ -25,6 +25,7 @@ import { cutToTalkers } from "../multicam";
 import { ShotFrame, ShotGrade, ShotKeys } from "./ShotFinish";
 import { CastView } from "./Cast";
 import { AnchorChip, Empty, TextField } from "./ui";
+import { Icon } from "./Icon";
 
 export function SidePanel() {
   const side = useStore((s) => s.side);
@@ -428,7 +429,7 @@ function Notes() {
   return (
     <div className="notes">
       <p className="dim small notes-how">
-        Note anything: press N for what's selected, right-click a shot, {WINDOWS ? "Shift-drag" : "⇧-drag"} along the ruler for a stretch, draw on the frame, or ✎ a clip in Media. Notes go with your next message to the agent.
+        Note anything: press N for what's selected, right-click a shot, {WINDOWS ? "Shift-drag" : "⇧-drag"} along the ruler for a stretch, draw on the frame, or the pencil on a clip in Media. Notes go with your next message to the agent.
       </p>
       <div className="note-groups">
         {groups.map(([title, list]) =>
@@ -474,7 +475,7 @@ function NoteCard({ n, compact }: { n: Note; compact?: boolean }) {
         {t !== undefined && <span className="mono dim small">{formatTime(t)}</span>}
         {fmt && <span className="dim small">{fmt}</span>}
         {n.author === "reviewer" && <span className="pill" title="Left on a shared review">{n.by ?? "A reviewer"}</span>}
-        {n.region && <span className="dim small" title="Points at part of the frame">▣</span>}
+        {n.region && <span className="dim small" title="Points at part of the frame"><Icon name="region" size={12} /></span>}
         <span className="spacer" />
         {!compact && <span className={`status st-${n.status}`}>{STATUS_LABEL[n.status]}</span>}
       </div>

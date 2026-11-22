@@ -4,6 +4,7 @@ import { CutMenu } from "./Cuts";
 import { BriefDialog, ExportDialog } from "./Dialogs";
 import { TurnLine } from "./Turn";
 import { keys } from "../lib";
+import { Icon } from "./Icon";
 
 /**
  * The top bar: back to the projects, which project and cut, whose turn it is (the one thing to look at), then the format, and
@@ -28,9 +29,7 @@ export function TopBar() {
   return (
     <header className="topbar">
       <button className="icon home-back" onClick={() => void actions.goHome()} title={`All projects (${keys("⇧⌘O")})`} aria-label="All projects">
-        <svg viewBox="0 0 16 16" aria-hidden>
-          <path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
+        <Icon name="back" />
       </button>
       <span className="project-name" title={title}>
         {title}
@@ -49,7 +48,7 @@ export function TopBar() {
       <span className="spacer" />
       {tl.diagnostics.length > 0 && (
         <span className="warn small" title={tl.diagnostics.map((d) => `${d.where}: ${d.message}`).join("\n")}>
-          ⚠ {tl.diagnostics.length}
+          <Icon name="warn" size={14} /> {tl.diagnostics.length}
         </span>
       )}
       {p.formats.length > 1 && (
@@ -68,13 +67,13 @@ export function TopBar() {
         Export
       </button>
       <button className="icon" onClick={actions.undo} disabled={!canUndo} title={`Undo (${keys("⌘Z")})`}>
-        ↶
+        <Icon name="undo" />
       </button>
       <button className="icon" onClick={actions.redo} disabled={!canRedo} title={`Redo (${keys("⇧⌘Z")})`}>
-        ↷
+        <Icon name="redo" />
       </button>
       <button className="icon" onClick={() => actions.setSettingsOpen(true)} title="Settings: agents, models and media services">
-        ⚙
+        <Icon name="tune" />
       </button>
       <span className={`save save-${save}`} title={saveError ?? (save === "saved" ? "Saved" : undefined)} />
       {dialog === "brief" && <BriefDialog onClose={() => setDialog(null)} />}
