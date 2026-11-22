@@ -2,7 +2,7 @@ import { anchorForTime, describeAnchor, formatTime, frozen, moveShot, noteShots,
 import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { deleteSelected, putSource, splitHere } from "../editing";
 import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotsTarget, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
-import { actions, setState, useProject, useStore, useTimeline, type Selection } from "../store";
+import { actions, getState, setState, useProject, useStore, useTimeline, type Selection } from "../store";
 import { Strip, Wave } from "./TrackMedia";
 import { Mixer } from "./Mixer";
 import { Icon, type IconName } from "./Icon";
@@ -47,6 +47,24 @@ export function Timeline() {
   }, []);
   const z = zoom || Math.max(4, (viewW - PAD) / duration);
   const width = duration * z + PAD;
+  // Zooming keeps the moment at the middle of the view where it is: note it before the scale changes,
+  // then scroll back to it once the new width is laid out (before the browser clamps the old offset).
+  const centreOn = useRef<number | null>(null);
+  const zoomTo = (next: number) => {
+    const sc = scroller.current;
+    if (sc) centreOn.current = (sc.scrollLeft + sc.clientWidth / 2) / z;
+    const before = getState().zoom;
+    if (next) actions.setZoom(next);
+    else setState({ zoom: 0 });
+    // Already at the limit: nothing re-renders, so don't leave the centre waiting for a later change.
+    if (getState().zoom === before) centreOn.current = null;
+  };
+  useLayoutEffect(() => {
+    const sc = scroller.current;
+    const t = centreOn.current;
+    centreOn.current = null;
+    if (sc && t !== null) sc.scrollLeft = Math.max(0, t * z - sc.clientWidth / 2);
+  }, [z]);
   const x = (t: number) => t * z;
   const assets = useMemo(() => assetMap(project), [project]);
   const shotById = useMemo(() => new Map(project.shots.map((s) => [s.id, s])), [project]);
@@ -266,9 +284,9 @@ export function Timeline() {
           </button>
         )}
         <Mixer />
-        <button onClick={() => actions.setZoom(z / 1.5)} title="Zoom out" aria-label="Zoom out"><Icon name="minus" size={12} /></button>
-        <button onClick={() => setState({ zoom: 0 })}>Fit</button>
-        <button onClick={() => actions.setZoom(z * 1.5)} title="Zoom in" aria-label="Zoom in"><Icon name="add" size={12} /></button>
+        <button onClick={() => zoomTo(z / 1.5)} title="Zoom out" aria-label="Zoom out"><Icon name="minus" size={12} /></button>
+        <button onClick={() => zoomTo(0)}>Fit</button>
+        <button onClick={() => zoomTo(z * 1.5)} title="Zoom in" aria-label="Zoom in"><Icon name="add" size={12} /></button>
       </div>
       <div className="tl-body">
         <div className="tl-labels">
