@@ -35,6 +35,7 @@ export function TopBar() {
         {title}
       </span>
       <CutMenu />
+      <CutBack />
       <div className="segmented mode-switch" role="tablist" aria-label="Mode">
         <button role="tab" aria-selected={mode === "edit"} className={mode === "edit" ? "on" : ""} onClick={() => actions.setMode("edit")} title="Put the cut together">
           Edit
@@ -79,5 +80,19 @@ export function TopBar() {
       {dialog === "brief" && <BriefDialog onClose={() => setDialog(null)} />}
       {dialog === "export" && <ExportDialog onClose={() => setDialog(null)} />}
     </header>
+  );
+}
+
+/** After a link took the person to another cut (a blockout, a hand-off's option, the agent's cut): the way back. */
+function CutBack() {
+  const back = useStore((s) => s.back);
+  const cutId = useStore((s) => s.cutId);
+  const name = useStore((s) => (s.back ? s.doc?.cuts.find((c) => c.id === s.back!.cutId)?.name : undefined));
+  if (!back || !name || back.cutId === cutId) return null;
+  return (
+    <button className="cut-back" onClick={actions.goBack} title={`Back to "${name}"${back.mode === "make" ? " in Make" : ""}, where you were`}>
+      <Icon name="back" size={12} />
+      <span className="cut-back-name">Back to {name}</span>
+    </button>
   );
 }

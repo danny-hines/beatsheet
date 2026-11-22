@@ -427,7 +427,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
                 <button
                   className="link small"
                   onClick={() => {
-                    actions.setCut(blockout.cut);
+                    actions.visitCut(blockout.cut);
                     actions.setMode("edit");
                   }}
                   title="Open the blockout as a cut, to scrub it frame by frame and leave notes on it"

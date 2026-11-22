@@ -58,6 +58,11 @@ export type State = {
   makePage: "shots" | "cast" | "made";
   /** Make's panel on the right (the agent and notes) folded away, to give what's being made the room. */
   makeWide: boolean;
+  /**
+   * Where the person was before a link took them to another cut (a blockout's "Open it", a hand-off's "Watch it", the
+   * agent's cut): the top bar offers the way back. Picking a cut from the cut menu forgets it.
+   */
+  back?: { cutId: string; mode: "edit" | "make"; makePage: "shots" | "cast" | "made"; selection?: Selection; playhead: number };
   /** The cut on screen together with the shared material; what views and edits work on. Always `cutView(doc, cutId)`. */
   project?: Project;
   /** Version of the file the open project came from; saves are refused if the file moved on. */
@@ -364,6 +369,7 @@ export const actions = {
       zoom: 0,
       mode,
       makePage: "shots",
+      back: undefined,
     });
     showCut(id, cutId);
     pickUpCut(id, cutId);
@@ -390,6 +396,7 @@ export const actions = {
       playing: false,
       playhead: 0,
       noteDraft: undefined,
+      back: undefined,
     });
     history.replaceState(null, "", location.pathname + location.search);
     await actions.loadList();
@@ -421,14 +428,32 @@ export const actions = {
   setMakeWide(makeWide: boolean) {
     setState({ makeWide });
   },
-  /** Shows another cut of the open project. */
+  /** Shows another cut of the open project, chosen from the cut menu: there's no way back to offer. */
   setCut(cutId: string) {
     const { doc, projectId } = state;
     if (!doc || !projectId || cutId === state.cutId) return;
     player?.pause();
-    setState(showDoc(doc, { cutId, selection: undefined, also: [], marks: {}, playhead: 0, playing: false, zoom: 0 }));
+    setState(showDoc(doc, { cutId, selection: undefined, also: [], marks: {}, playhead: 0, playing: false, zoom: 0, back: undefined }));
     showCut(projectId, state.cutId!);
     pickUpCut(projectId, state.cutId!);
+  },
+  /** Follows a link to another cut, remembering where the person was so the top bar can take them back. */
+  visitCut(cutId: string) {
+    const { cutId: from, mode, makePage, selection, playhead } = state;
+    if (!from || cutId === from) return;
+    actions.setCut(cutId);
+    if (state.cutId === cutId) setState({ back: { cutId: from, mode, makePage, selection, playhead } });
+  },
+  /** Back to the cut a link came from: the same mode, page, selection and moment. */
+  goBack() {
+    const b = state.back;
+    if (!b || !state.doc?.cuts.some((c) => c.id === b.cutId)) return setState({ back: undefined });
+    actions.setCut(b.cutId);
+    actions.setMode(b.mode);
+    setState({ makePage: b.makePage, selection: b.selection, also: [], playhead: b.playhead });
+    // The preview holds the other cut's player until it re-renders (seeking that one past its end puts the playhead
+    // back to 0), so the player is moved once this cut's is on screen.
+    requestAnimationFrame(() => actions.seek(b.playhead));
   },
   /** Opens the note editor about `target` near (x, y), or on an existing note to change its text. */
   noteOn(target: NoteTarget, pos: { x: number; y: number }, extra: { id?: string; at?: number; region?: Note["region"]; text?: string } = {}) {

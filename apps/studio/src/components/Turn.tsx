@@ -45,7 +45,7 @@ export function TurnLine() {
     <button
       className={`turn-line ${t.who}`}
       onClick={() => {
-        if (t.elsewhere) actions.setCut(t.elsewhere.id);
+        if (t.elsewhere) actions.visitCut(t.elsewhere.id);
         actions.setSide("agent");
       }}
       title={t.who === "you" ? "Your move" : "The agent is working; nothing is needed from you"}
@@ -103,7 +103,7 @@ export function TurnCard() {
         <span>
           "{t.elsewhere.name}" {waiting}.
         </span>
-        <button className="link small" onClick={() => actions.setCut(t.elsewhere!.id)}>
+        <button className="link small" onClick={() => actions.visitCut(t.elsewhere!.id)}>
           Go to it
         </button>
       </div>
@@ -364,7 +364,7 @@ function Options({ options, picked, onPick }: { options: Option[]; picked: strin
                 className="link small"
                 onClick={(e) => {
                   e.stopPropagation();
-                  actions.setCut(o.cut!);
+                  actions.visitCut(o.cut!);
                 }}
               >
                 Watch it

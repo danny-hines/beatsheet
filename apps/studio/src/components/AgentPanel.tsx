@@ -43,7 +43,7 @@ export function AgentPanel() {
           <h3>Agent</h3>
           <p className="dim">
             {name} is working on the cut <strong>{other?.name ?? view.cut}</strong>.{" "}
-            <button className="link" onClick={() => actions.setCut(view.cut!)}>
+            <button className="link" onClick={() => actions.visitCut(view.cut!)}>
               Go to it
             </button>
           </p>

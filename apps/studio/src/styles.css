@@ -487,6 +487,9 @@ pre.job-log { background: var(--well); border: 1px solid var(--line); border-rad
 .cut-button { display: flex; align-items: center; gap: 8px; max-width: 300px; white-space: nowrap; }
 .cut-button-name { overflow: hidden; text-overflow: ellipsis; }
 .cut-button .caret { color: var(--dim); font-size: var(--t-1); }
+.cut-back { display: inline-flex; align-items: center; gap: 4px; max-width: 260px; white-space: nowrap; color: var(--dim); }
+.cut-back:hover { color: var(--text); }
+.cut-back-name { overflow: hidden; text-overflow: ellipsis; }
 .cut-panel { position: absolute; left: 0; top: calc(100% + 6px); width: 340px; display: flex; flex-direction: column; gap: 2px; padding: 8px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-3); z-index: 40; box-shadow: var(--shadow); }
 .cut-panel > p { margin: 0 4px 4px; line-height: 1.45; }
 .cut-row { display: flex; align-items: center; border-radius: var(--r-2); }

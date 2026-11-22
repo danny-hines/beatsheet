@@ -365,7 +365,7 @@ export function AssetView({ a }: { a: Asset }) {
           {elsewhere.map((c, i) => (
             <span key={c.id}>
               {i > 0 && ", "}
-              <button className="link small" onClick={() => actions.setCut(c.id)}>
+              <button className="link small" onClick={() => actions.visitCut(c.id)}>
                 {c.name}
               </button>
             </span>
