@@ -1050,7 +1050,8 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 
 /* A shot's takes: a strip of them (the one showing outlined, clips playing on hover), then making more. */
 .takes { display: flex; flex-direction: column; gap: 8px; }
-.takes h4 { margin-bottom: 0; }
+.takes h4 { margin-bottom: 0; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.takes h4 .link { font-family: var(--f-ui); text-transform: none; letter-spacing: 0; font-weight: 400; }
 .take-strip { display: flex; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
 .take { position: relative; flex: none; height: 96px; padding: 0; border: 2px solid transparent; border-radius: var(--r-2); overflow: hidden; background: var(--raised); }
 .take.on { border-color: var(--accent); }
@@ -1146,31 +1147,24 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-provider-status, .make-provider-key { margin: 2px 0 0 48px; }
 .make-provider-key { display: flex; flex-direction: column; gap: 4px; }
 
-/* Make mode: the composer, the board of takes (a row per request, what was made from a take nested under it) and the
-   queue. It takes the middle of the window over, where the player and the timeline are in Edit. */
+/* Make mode takes the middle of the window over, where the player and the timeline are in Edit. Its pages and the
+   composer are at the end of this file; here are the Made page's rows of takes (a row per request, what was made from a
+   take nested under it) and the queue. */
 .app.make { grid-template-areas: "top top top" "lib main side" "lib main side"; }
 .mode-switch button { padding: 2px 12px; }
 .make-view { grid-area: main; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.make-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; display: flex; flex-direction: column; gap: 12px; }
-.make-composer { display: flex; flex-direction: column; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-2); padding: 12px 12px; }
-.make-composer .make-row { flex-wrap: wrap; }
 .restore-form { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
 .restore-form .make-row { flex-wrap: wrap; }
-.make-prompt { width: 100%; resize: vertical; font-size: var(--t-4); line-height: 1.45; }
 .cast-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .cast-chips .chip { cursor: pointer; font-family: var(--mono); font-size: var(--t-2); }
 .cast-chips .chip.on { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
-.make-composer .seconds { display: inline-flex; align-items: center; gap: 2px; }
-.make-composer .seconds input { width: 54px; }
-.start-frame img { height: 44px; border-radius: var(--r-1); }
-.board-empty { padding: 32px; text-align: center; }
 .make-board { display: flex; flex-direction: column; gap: 16px; }
 .batch { display: flex; flex-direction: column; gap: 4px; }
 .batch-head { display: flex; align-items: baseline; gap: 8px; }
 .batch-prompt { margin: 0; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .batch-cards { display: flex; flex-wrap: wrap; gap: 8px; }
 .batch-children { margin-left: 12px; padding-left: 12px; border-left: 2px solid var(--line-2); display: flex; flex-direction: column; gap: 12px; }
-.make-card { position: relative; height: 168px; max-width: 320px; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; background: var(--well); cursor: pointer; flex: none; }
+.make-card { position: relative; height: 200px; max-width: 420px; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; background: var(--well); cursor: pointer; flex: none; }
 .make-card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .make-card img, .make-card video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .make-card .badge { position: absolute; left: 4px; top: 4px; font-size: var(--t-1); padding: 0 4px; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); }
@@ -1263,3 +1257,187 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .share-link input { flex: 1; min-width: 220px; }
 .share-link p { flex-basis: 100%; margin: 0; }
 .rendered img { max-width: 100%; border-radius: var(--r-2); }
+
+/* Make's own pages, in the middle of the window: Shots (the cut as cards), Cast & sets, and Made; a shot, a cast member
+   or a take opened large over them; and the composer docked at the foot. `.make-scroll` is the container the pages
+   lay themselves out against, so they fold to one column when the side panels leave little room. */
+.app.make.wide { grid-template-columns: 264px minmax(0, 1fr) 0; }
+.app.make.wide > .side { display: none; }
+.tabs .tab-fold { flex: none; padding: 12px 12px 8px; }
+.make-nav { display: flex; align-items: center; gap: 8px; padding: 0 20px; min-height: 40px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.make-tabs { display: flex; align-self: stretch; gap: 4px; }
+.make-tabs button { display: inline-flex; align-items: center; gap: 8px; border: none; border-radius: 0; background: none; padding: 4px 12px 0; color: var(--dim); border-bottom: 2px solid transparent; font-family: var(--f-label); font-size: var(--t-2); font-weight: 600; text-transform: uppercase; letter-spacing: var(--track); white-space: nowrap; }
+.make-tabs button.on { color: var(--text); border-bottom-color: var(--accent); background: none; }
+.make-tabs .n, .filter-chips .n { font-family: var(--mono); font-size: var(--t-1); font-weight: 400; letter-spacing: 0; color: var(--dim); }
+.make-nav .dots, .shot-going .dots { width: 18px; height: 5px; background: radial-gradient(circle, var(--accent) 2px, transparent 2.5px) 0 0 / 6px 5px repeat-x; animation: blink 1.2s infinite; }
+.make-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px 24px; container-type: inline-size; }
+.make-page { display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 1400px; margin: 0 auto; }
+.page-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 28px; }
+.page-head h2 { font-size: var(--t-5); margin-right: 4px; }
+.page-head .back { display: inline-flex; align-items: center; gap: 4px; margin-right: 4px; }
+.stage-counts { display: inline-flex; align-items: center; gap: 12px; }
+.make-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 520px; margin: 10vh auto 0; text-align: center; }
+.make-empty h2 { font-size: var(--t-5); }
+.make-empty p { margin: 0; line-height: 1.5; }
+.make-pass { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-2); }
+.make-pass p { margin: 0; }
+.make-pass .make-row { flex-wrap: wrap; }
+
+/* Shots: a card a shot, in the cut's order. The frame is the take the cut shows, or for a shot with none, what it's to be. */
+.shot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 20px 12px; }
+.shot-card { display: flex; flex-direction: column; gap: 8px; padding: 0; border: none; background: none; text-align: left; }
+.shot-frame { position: relative; display: block; width: 100%; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; background: var(--well); }
+.shot-frame img, .shot-frame video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shot-card:hover .shot-frame, .shot-card:focus-visible .shot-frame { border-color: var(--dim); }
+.shot-card.over .shot-frame { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.shot-frame.idea { border-style: dashed; background: none; }
+.shot-idea { position: absolute; inset: 0; padding: 32px 12px 24px; color: var(--dim); line-height: 1.4; overflow: hidden; }
+.shot-n, .shot-len, .shot-going { position: absolute; padding: 0 4px; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); font-family: var(--mono); font-size: var(--t-2); }
+.shot-n { left: 4px; top: 4px; }
+.shot-len { right: 4px; bottom: 4px; }
+.shot-going { left: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 4px; font-family: var(--f-ui); }
+.shot-frame .pill { position: absolute; right: 4px; top: 4px; }
+.shot-frame.idea .shot-n { background: var(--raised); color: var(--dim); }
+.shot-card-body { display: flex; flex-direction: column; gap: 2px; padding: 0 2px; min-width: 0; }
+.shot-card-label { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shot-card-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.4; }
+
+/* One shot: the take being looked at, large; its takes in a tray under it; making more beside it. */
+.shot-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 20px; align-items: start; }
+.shot-stage-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.shot-stage-col > p { margin: 4px 0 0; }
+.stage { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; max-height: min(62vh, 760px); border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; background: var(--well); }
+.stage img, .stage video { width: 100%; height: 100%; object-fit: contain; display: block; }
+.stage img { cursor: zoom-in; }
+.stage.empty { border-style: dashed; background: none; }
+.stage-idea { max-width: 560px; padding: 24px; text-align: center; }
+.stage-idea p { margin: 0 0 8px; font-size: var(--t-4); line-height: 1.5; }
+.stage-idea p.small { font-size: var(--t-2); }
+.stage-bar { display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.in-cut { display: inline-flex; align-items: center; gap: 4px; color: var(--good); }
+.take-tray { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; }
+.tray-take { position: relative; flex: none; height: 96px; padding: 0; border: 2px solid transparent; border-radius: var(--r-2); overflow: hidden; background: var(--raised); opacity: 0.72; }
+.tray-take:hover, .tray-take.looking { opacity: 1; }
+.tray-take.looking { border-color: var(--text); }
+.tray-take img, .tray-take video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tray-take .badge { position: absolute; left: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; font-size: var(--t-1); border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); }
+.tray-in { position: absolute; right: 4px; top: 4px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--good); color: var(--bg); }
+.tray-take.pending { display: grid; place-items: center; padding: 0 12px; opacity: 1; border: 1px dashed var(--line-2); color: var(--dim); font-size: var(--t-1); animation: take-pulse 1.4s ease-in-out infinite; }
+.shot-make-col { border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel); }
+.shot-make-col .takes h4 { margin-top: 0; }
+
+/* Cast & sets: a card each by kind, then one across the page with its steps two abreast and its pictures large. */
+.cast-section h4 { margin: 0 0 8px; }
+.cast-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 12px; }
+.cast-card { display: flex; flex-direction: column; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; background: var(--panel); text-align: left; }
+.cast-card-pic { display: grid; place-items: center; aspect-ratio: 4 / 3; background: var(--well); overflow: hidden; }
+.cast-card-pic img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 24%; display: block; }
+.cast-card-letter { font-family: var(--f-label); font-size: var(--t-display); color: var(--line-2); }
+.cast-card-body { display: flex; flex-direction: column; gap: 2px; padding: 8px; min-width: 0; }
+.cast-card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-page .cast-view { padding: 0; gap: 12px; }
+.cast-page .cast-view > input { max-width: 480px; font-family: var(--f-label); font-size: var(--t-5); font-weight: 600; }
+.cast-page .look { padding: 16px; gap: 12px; }
+.cast-page .cast-steps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; align-items: start; }
+.cast-page .cast-steps > .cast-gets, .cast-page .cast-steps > details { grid-column: 1 / -1; }
+.cast-page .cast-step { gap: 8px; padding: 12px 0 8px; }
+.cast-page .take-strip { flex-wrap: wrap; gap: 8px; }
+.cast-page .cast-pic .take, .cast-page .cast-pic .take.pending { height: 128px; }
+.cast-page .cast-pic.chosen .take { height: 264px; }
+.cast-page .slots { grid-template-columns: repeat(3, minmax(0, 240px)); gap: 8px; }
+.cast-page .slot .cast-pic .take { height: 100%; }
+.cast-page .take-strip.kept { min-height: 136px; }
+.cast-page .cast-view textarea { min-height: 64px; }
+.cast-page .cast-view > .cast-fold { max-width: 720px; }
+
+/* A file opened in Make: the picture large on the left, staying put while what's known about it scrolls beside it. */
+.asked { padding-left: 12px; border-left: 2px solid var(--line-2); }
+.asked p { margin: 0; max-width: 820px; line-height: 1.5; }
+.asked p + p { margin-top: 4px; }
+.asset-page .asset-view { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 0 20px; align-items: start; padding: 0; }
+.asset-page .asset-view > * { grid-column: 2; margin-bottom: 8px; }
+.asset-page .asset-view > .clip-player { grid-column: 1; grid-row: 1 / span 60; position: sticky; top: 0; margin-bottom: 0; }
+.asset-page .asset-view:not(:has(> .clip-player)) { display: flex; max-width: 560px; }
+.asset-page .clip-frame { max-height: min(62vh, 760px); }
+.asset-page .asset-notes { padding: 0; max-width: 560px; }
+@container (max-width: 760px) {
+  .shot-cols, .asset-page .asset-view, .cast-page .cast-steps { grid-template-columns: minmax(0, 1fr); }
+  .asset-page .asset-view > *, .asset-page .asset-view > .clip-player { grid-column: 1; grid-row: auto; position: static; margin-bottom: 8px; }
+}
+
+/* The composer, docked at the foot of Make: the prompt, what's attached, and a bar of what kind, how many, which model and what for. */
+.make-composer { align-self: center; flex: none; display: flex; align-items: stretch; gap: 12px; width: min(960px, calc(100% - 40px)); margin: 0 0 12px; padding: 12px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-3); box-shadow: var(--shadow); }
+.make-composer:focus-within { border-color: var(--dim); }
+.make-composer.over { border-color: var(--accent); background: var(--accent-bg); }
+.make-composer p { margin: 0; }
+.composer-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.composer-top { display: flex; align-items: flex-start; gap: 12px; }
+.composer-go { flex: none; align-self: flex-end; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 124px; padding: 4px 16px; border-radius: var(--r-2); }
+.composer-go-cost { font-family: var(--mono); font-size: var(--t-2); font-weight: 400; }
+.make-prompt { flex: 1; min-width: 0; resize: none; border: none; background: none; padding: 0 4px; font-size: var(--t-4); line-height: 1.45; }
+.make-prompt:focus { outline: none; }
+.composer-start { position: relative; flex: none; height: 64px; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; }
+.composer-start img { height: 100%; display: block; }
+.composer-start-word { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 4px; font-size: var(--t-1); background: var(--scrim); color: var(--on-scrim); white-space: nowrap; }
+.composer-start button { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 16px; height: 16px; padding: 0; border: none; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); }
+.cast-chips { align-items: center; }
+.composer-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.composer-bar .seconds { display: inline-flex; align-items: center; gap: 2px; }
+.composer-bar .seconds input { width: 52px; }
+.composer-for { max-width: 150px; }
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line-2); border-radius: var(--r-1); }
+.stepper button { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: none; }
+.stepper span { min-width: 16px; text-align: center; font-family: var(--mono); font-size: var(--t-2); }
+.filter-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.filter-chips button { padding: 2px 8px; font-size: var(--t-2); }
+
+/* Which model: a button that says the one chosen and its cost, and the list it opens, the ones that can't be used last, each with why. */
+.model-pick { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 340px; text-align: left; }
+.composer-bar .model-pick { max-width: 280px; }
+.make-row .model-pick { flex: 1; }
+.model-pick.open { border-color: var(--dim); }
+.model-pick-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-pick-cost { flex: 1; color: var(--dim); font-size: var(--t-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-pick .ic { flex: none; color: var(--dim); }
+.model-menu { position: fixed; z-index: 60; display: flex; flex-direction: column; max-height: min(64vh, 560px); overflow-y: auto; padding: 4px; background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-3); box-shadow: var(--shadow); }
+.model-menu h5 { display: flex; align-items: center; gap: 8px; margin: 12px 8px 4px; color: var(--dim); }
+.model-menu h5 button { text-transform: none; letter-spacing: 0; font-family: var(--f-ui); font-weight: 400; }
+.model-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: baseline; padding: 4px 8px; border: none; border-radius: var(--r-2); background: none; text-align: left; }
+button.model-row:hover, button.model-row:focus-visible { background: var(--raised); outline: none; }
+button.model-row.on { background: var(--accent-bg); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.model-row-name { font-weight: 600; }
+.model-row-name .dim { font-weight: 400; }
+.model-row-cost { font-family: var(--mono); font-size: var(--t-2); color: var(--dim); white-space: nowrap; }
+.model-row-note { grid-column: 1 / -1; color: var(--dim); font-size: var(--t-2); line-height: 1.4; }
+.model-row.off .model-row-name { font-weight: 400; color: var(--dim); }
+.takes .make-row { flex-wrap: wrap; }
+.takes .make-row .model-pick { flex: 1 1 100%; max-width: none; }
+
+/* A blockout a take would keep the camera of: picked in the make form (which of its shots, as chips), played small
+   there in Inspect, and in Make beside the take, the two side by side on the shot's page. */
+.camera-pick { display: flex; flex-direction: column; gap: 4px; }
+.camera-pick p { margin: 0; }
+.camera-shots .chip { cursor: pointer; }
+.camera-shots .chip.on { border-color: var(--accent); background: var(--accent-bg); color: var(--accent); }
+.camera-preview { display: flex; align-items: center; justify-content: center; max-height: 240px; border-radius: var(--r-2); overflow: hidden; background: var(--black); }
+.blockout-none { padding: 16px; text-align: center; }
+.stage-pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; align-items: start; }
+/* The take over its blockout, each short enough that both are on screen; side by side once there's the width for it. */
+.stage-pair.two .stage { max-height: 34vh; }
+.stage.blockout { background: var(--black); }
+.stage-tag { position: absolute; left: 4px; top: 4px; z-index: 1; padding: 0 4px; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); font-size: var(--t-2); pointer-events: none; }
+@container (min-width: 1240px) {
+  .stage-pair.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stage-pair.two .stage { max-height: min(62vh, 760px); }
+}
+.stage-bar { flex-wrap: wrap; }
+.stage-bar button, .in-cut { white-space: nowrap; }
+
+/* What a take was made from: the pictures it was given, each named for its part, and the words it was told. */
+.given { display: flex; flex-direction: column; gap: 4px; }
+.given-pics { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.given-pic { position: relative; height: 64px; min-width: 72px; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-2); overflow: hidden; background: var(--well); }
+.given-pic img { height: 100%; display: block; }
+.given-pic span { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 4px; font-size: var(--t-1); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--scrim); color: var(--on-scrim); }
+.given-told > summary { cursor: pointer; color: var(--dim); }
+.given-told p { margin: 4px 0 0; max-width: 820px; line-height: 1.5; white-space: pre-wrap; }

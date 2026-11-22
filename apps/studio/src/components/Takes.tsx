@@ -4,11 +4,12 @@
  * against this shot and the services set up, and the ones that can't make it say why rather than being hidden. The
  * button says what a batch will cost.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { aspectOf, cameraOfTake, CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
+import { blockoutCuts, BlockoutPlayer, useBlockout, type BlockoutPick } from "./Blockout";
 import { TextField } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
 import { Icon } from "./Icon";
@@ -33,7 +34,7 @@ export const fitLabel = (f: Fit, where = false) => {
   return [f.label, place, !(place && f.usd === 0) && cost(f), wait(f.wait), f.commercial && commercialWords(f.commercial)].filter(Boolean).join(" · ");
 };
 
-/** A model picked in ModelSelect, and where it runs when there's a choice: "gpt-image@chatgpt". */
+/** A model picked in ModelPicker, and where it runs when there's a choice: "gpt-image@chatgpt". */
 export const pickOf = (value: string): { model?: string; via?: string } => {
   if (!value) return {};
   const [model, via] = value.split("@");
@@ -141,7 +142,20 @@ export function useChoices(query: Record<string, string | number | undefined>) {
   return { choices, problem, absent };
 }
 
-export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
+/** Makes a take the one a shot shows (trimmed to the shot's length, when that's known). */
+export const pickTake = (shotId: string, id: string, length?: number) =>
+  actions.edit((d) => {
+    const s = d.shots.find((x) => x.id === shotId)!;
+    const take = d.assets.find((a) => a.id === id);
+    if (s.content.kind === "generated" && take) s.content = showTake(s.content, take, d.assets, length);
+  });
+
+/**
+ * A shot's takes and the making of more. In Make the shot's own page shows the takes large, so there it's only the
+ * making (`strip` false): the prompt, what kind of take, the model and the button. The page also plays the blockout
+ * a take would keep the camera of, large beside the take, so it's told which one is picked (`onCamera`).
+ */
+export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; seconds?: number; strip?: boolean; onCamera?: (pick: BlockoutPick | undefined) => void }) {
   const projectId = useStore((s) => s.projectId)!;
   const cutId = useStore((s) => s.cutId);
   const p = useProject();
@@ -154,7 +168,9 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const board = showing?.kind === "image" ? showing.id : c.kind === "generated" ? c.start : undefined;
   const format = p.formats[0]!;
 
-  const [op, setOp] = useState<MakeOp>(board ? "video" : "image");
+  // The camera its takes kept: what the shot says, or for a shot that doesn't, what the take it shows was asked to keep.
+  const lastCamera = c.kind === "generated" ? (c.camera ?? cameraOfTake(showing)) : undefined;
+  const [op, setOp] = useState<MakeOp>(board || lastCamera ? "video" : "image");
   // A still is told what's in the frame and a clip what moves. A clip has the still's words until it has its own.
   const prompt = c.kind === "placeholder" ? c.description : ((op === "video" ? c.clipPrompt : undefined) ?? c.prompt);
   const stillsWords = op === "video" && showing?.kind === "image" && c.kind === "generated" && !c.clipPrompt;
@@ -180,18 +196,29 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
     return (theirs.length ? theirs : all).map((l) => ({ ...l, voiced: !!voiced.find((v) => v.id === l.id)?.file }));
   }, [p, shot.id, named.map((u) => u.id).join()]); // eslint-disable-line react-hooks/exhaustive-deps
   const [say, setSay] = useState(c.kind === "generated" && !!c.speech);
+  // A clip can keep the camera of a blockout (another cut that draws the move): the one its takes kept, until changed.
+  const doc = useStore((s) => s.doc);
+  const blockouts = useMemo(() => blockoutCuts(doc, cutId), [doc, cutId]);
+  const [cam, setCam] = useState(lastCamera);
   const [dub, setDub] = useState(showing?.kind === "video");
   const speaking = op === "video" && say && heard.length > 0;
   const changing = speaking && dub && showing?.kind === "video";
   const start = op === "video" && fromBoard && !changing ? board : undefined;
   // The frame its clips ended on, which a new one ends on too; one that copies movement or says a line doesn't take one.
-  const endFrame = start && !speaking && !follow && c.kind === "generated" ? c.end : undefined;
+  const keeping = op === "video" && !speaking && !follow ? cam : undefined;
+  const blockout = keeping && "cut" in keeping ? keeping : undefined;
+  const shape = aspectOf(format.width, format.height);
+  const stretch = useBlockout(blockout, shape);
+  useEffect(() => onCamera?.(blockout), [blockout?.cut, blockout?.shots?.join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const endFrame = start && !speaking && !follow && !keeping && c.kind === "generated" ? c.end : undefined;
   const end = endFrame && toEnd ? endFrame : undefined;
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
   const drive = op === "video" ? (follow && !speaking ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
   const lipsync = op === "video" ? (speaking ? { speech: "lines", ...(changing ? { clip: "take" } : {}) } : { speech: "none" }) : {};
+  // The stretch of a clip a take keeps the camera of is the shot's own (the agent set it); the form picks blockouts.
+  const camera = op === "video" ? (keeping ? ("cut" in keeping ? { camera: keeping.cut, cameraShots: keeping.shots?.join(",") } : {}) : { camera: "none" }) : {};
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
-  const { choices, problem, absent } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, end: op === "video" ? (end ?? "none") : undefined, quality: op === "video" ? quality : undefined, ...drive, ...lipsync });
+  const { choices, problem, absent } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, end: op === "video" ? (end ?? "none") : undefined, quality: op === "video" ? quality : undefined, ...drive, ...lipsync, ...camera });
   // Another take comes from the model that made the one showing (or the last of its kind), until another is picked.
   const model = picked ?? pickOfTake(choices, [showing, ...[...shown].reverse()].find((a) => a?.kind === op));
   const chosen = fitOf(choices, model);
@@ -202,12 +229,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
   const style = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
   const unknown = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
 
-  const pick = (id: string) =>
-    actions.edit((d) => {
-      const s = d.shots.find((x) => x.id === shot.id)!;
-      const take = d.assets.find((a) => a.id === id);
-      if (s.content.kind === "generated" && take) s.content = showTake(s.content, take, d.assets, length);
-    });
+  const pick = (id: string) => pickTake(shot.id, id, length);
   const editPrompt = (v: string) =>
     actions.edit((d) => {
       const s = d.shots.find((x) => x.id === shot.id)!;
@@ -221,8 +243,15 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
 
   return (
     <div className="takes">
-      <h4>Takes</h4>
-      {takes.length + going.length > 0 ? (
+      <h4>
+        {strip ? "Takes" : takes.length ? "Make more" : "Make a take"}
+        {strip && (
+          <button className="link small" onClick={() => actions.setMode("make")} title="This shot in Make: its takes large, side by side">
+            Open in Make
+          </button>
+        )}
+      </h4>
+      {!strip ? null : takes.length + going.length > 0 ? (
         <div className="take-strip">
           {shown.map((a, i) => (
             <Take
@@ -247,7 +276,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
       ) : (
         <p className="dim small">No takes yet. Make a few stills to settle the shot, then a clip from the one you like.</p>
       )}
-      {large !== undefined && (
+      {strip && large !== undefined && (
         <Viewer
           projectId={projectId}
           items={shown.map((a) => ({ id: a.id, video: a.kind === "video", caption: [a.id, madeWith(a) && `made with ${madeWith(a)}`].filter(Boolean).join(" · ") }))}
@@ -298,12 +327,12 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
             </option>
           ))}
         </select>
-        <ModelSelect choices={choices} model={model} setModel={setModel} />
+        <ModelPicker choices={choices} model={model} setModel={setModel} />
       </div>
       {op === "video" && board && !changing && (
         <label className="check-row small">
           <input type="checkbox" checked={fromBoard} onChange={(e) => setFromBoard(e.target.checked)} />
-          Start from the chosen still
+          {keeping ? "Give it the chosen still, as a reference" : "Start from the chosen still"}
         </label>
       )}
       {endFrame && (
@@ -321,6 +350,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
               onChange={(e) => {
                 setSay(e.target.checked);
                 if (e.target.checked) setFollow(undefined);
+                if (e.target.checked) setCam(undefined);
               }}
             />
             Say the lines heard here
@@ -350,6 +380,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
               onChange={(e) => {
                 setFollow(e.target.checked ? { asset: clips[0]!.id, from: 0 } : undefined);
                 if (e.target.checked) setSay(false);
+                if (e.target.checked) setCam(undefined);
               }}
             />
             Copy the movement in a clip
@@ -371,7 +402,78 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
           )}
         </>
       )}
-      <WhyNot choices={choices} only={speaking ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.speech : follow ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive : undefined} />
+      {op === "video" && (blockouts.length > 0 || !!cam) && !speaking && !follow && (
+        <>
+          <label className="check-row small" title="The take keeps the camera of a blockout: its move, its framing, its timing and where its cuts fall. A blockout is another cut that draws them: a grey set, a stand-in for each person, and the camera's move">
+            <input type="checkbox" checked={!!cam} onChange={(e) => setCam(e.target.checked ? { cut: blockouts[0]!.id } : undefined)} />
+            Keep a blockout's camera
+          </label>
+          {cam && "asset" in cam && (
+            <p className="dim small">
+              The camera of {p.assets.find((a) => a.id === cam.asset)?.label ?? cam.asset}, from {cam.from}s{cam.to !== undefined ? ` to ${cam.to}s` : ""}.
+            </p>
+          )}
+          {blockout && (
+            <div className="camera-pick">
+              <div className="make-row small">
+                <select value={blockout.cut} onChange={(e) => setCam({ cut: e.target.value })} aria-label="The blockout">
+                  {!blockouts.some((x) => x.id === blockout.cut) && <option value={blockout.cut}>{blockout.cut} (gone)</option>}
+                  {blockouts.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="link small"
+                  onClick={() => {
+                    actions.setCut(blockout.cut);
+                    actions.setMode("edit");
+                  }}
+                  title="Open the blockout as a cut, to scrub it frame by frame and leave notes on it"
+                >
+                  Open it
+                </button>
+              </div>
+              {stretch && stretch.shots.length > 1 && (
+                <div className="chips camera-shots" role="group" aria-label="Which of its shots">
+                  <button className={`chip ${blockout.shots?.length ? "" : "on"}`} onClick={() => setCam({ cut: blockout.cut })}>
+                    All of it
+                  </button>
+                  {stretch.shots.map((s) => {
+                    const on = !!blockout.shots?.includes(s.id);
+                    // Kept in the cut's order, whichever was ticked first.
+                    const next = stretch.shots.map((x) => x.id).filter((id) => (id === s.id ? !on : blockout.shots?.includes(id)));
+                    return (
+                      <button key={s.id} className={`chip ${on ? "on" : ""}`} onClick={() => setCam({ cut: blockout.cut, ...(next.length ? { shots: next } : {}) })} title="From the first shot ticked to the last">
+                        {s.label ?? s.id}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {strip && (
+                <div className="camera-preview" style={{ aspectRatio: stretch ? `${stretch.format.width} / ${stretch.format.height}` : "16 / 9" }}>
+                  <BlockoutPlayer pick={blockout} aspect={shape} />
+                </div>
+              )}
+              {stretch && (
+                <p className="dim small">
+                  {round2(stretch.to - stretch.from)}s of it, drawn {stretch.format.label}: the take is exactly that long{length && Math.abs(stretch.to - stretch.from - length) > 0.05 ? ` (the shot plays ${length}s)` : ""}, and the blockout's seconds are billed too. The model copies
+                  everything it's shown, so the prompt says what each stand-in really is, by its colour, and describes the real place.
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {!strip && op === "video" && !blockouts.length && !cam && (
+        <p className="dim small">To direct the camera (an orbit, a push in, a cut on a beat), ask the agent for a blockout of this shot: a cut that draws the move, which a take then keeps.</p>
+      )}
+      <WhyNot
+        choices={choices}
+        only={speaking ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.speech : follow ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive : keeping ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.camera : undefined}
+      />
       {op === "video" && absent.length > 0 && (
         <p className="warn small">
           {absent.join(", ")} {absent.length === 1 ? "isn't" : "aren't"} in this clip's frames, going by what they were made with. Clips get no cast pictures, so the model would make them up. Give it a frame with them in it.
@@ -388,7 +490,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
               shot: shot.id,
               prompt,
               count,
-              ...(op === "video" ? { quality, end: end ?? null, drive: speaking ? null : (follow ?? null), speech: speaking ? {} : null, ...(changing ? { clip: "take" as const } : {}) } : {}),
+              ...(op === "video" ? { quality, end: end ?? null, drive: speaking ? null : (follow ?? null), camera: keeping ?? null, speech: speaking ? {} : null, ...(changing ? { clip: "take" as const } : {}) } : {}),
               ...pickOf(model),
               ...(start ? { start } : {}),
               ...(length ? { seconds: length } : {}),
@@ -398,7 +500,7 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
           Make {count} {what}
           {chosen?.usd !== undefined ? ` · ${cost(chosen)}` : ""}
         </button>
-        {going.length > 0 && <span className="dim small">{going.length} on the way</span>}
+        {strip && going.length > 0 && <span className="dim small">{going.length} on the way</span>}
       </div>
       {(error || problem) && <p className="warn small">{error || problem}</p>}
       {failed && !error && <Failed job={failed} what="A take" retry={(j) => void retry(j)} />}
@@ -409,54 +511,119 @@ export function Takes({ shot, seconds }: { shot: Shot; seconds?: number }) {
 /** A model that runs on a service the person has connected but isn't using for this: theirs to switch to. */
 const elsewhere = (f: Fit) => !f.ok && f.why.kind === "switch";
 
-/** Auto, the ready models with what each costs, then the ones that can't be used, grayed out with why. */
-export function ModelSelect({ choices, model, setModel }: { choices?: Choices; model: string; setModel: (m: string) => void }) {
+/** How long a take is likely to be, said beside its cost. */
+const about = (f: { usd?: number; route?: string; wait?: number }) => [cost(f), wait(f.wait)].filter(Boolean).join(" · ");
+
+/**
+ * Which model makes it: a button that says the one chosen and what it costs, and a list that opens from it. Auto and
+ * the ready models come first, each with where it runs, its cost and how long it takes; then the ones that can't be
+ * used now, each with why, and where to go to change that.
+ */
+export function ModelPicker({ choices, model, setModel }: { choices?: Choices; model: string; setModel: (m: string) => void }) {
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState<{ left: number; top?: number; bottom?: number; width: number }>();
+  const close = useCallback(() => setAt(undefined), []);
+  useEffect(() => {
+    if (!at) return;
+    const outside = (e: Event) => !panel.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node) && close();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("pointerdown", outside, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", outside, true);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("resize", close);
+    };
+  }, [at, close]);
+  // Opens toward whichever side of the button has the room: up from the composer at the foot of the window.
+  const open = () => {
+    const r = button.current!.getBoundingClientRect();
+    const width = Math.min(400, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    setAt(r.top > window.innerHeight / 2 ? { left, bottom: window.innerHeight - r.top + 4, width } : { left, top: r.bottom + 4, width });
+  };
+  const chosen = fitOf(choices, model);
+  const pick = (value: string) => {
+    setModel(value);
+    close();
+  };
+  const settings = (pane: string, text: string) => (
+    <button
+      className="link small"
+      onClick={() => {
+        close();
+        actions.setSettingsOpen(true, pane);
+      }}
+    >
+      {text}
+    </button>
+  );
+  const row = (f: FitOk, value: string, where: boolean) => (
+    <button key={value} role="menuitemradio" aria-checked={model === value} className={`model-row ${model === value ? "on" : ""}`} onClick={() => pick(value)}>
+      <span className="model-row-name">
+        {f.label}
+        {where && <span className="dim"> · {f.where}</span>}
+      </span>
+      <span className="model-row-cost">{about(f)}</span>
+      {(f.note || f.commercial) && <span className="model-row-note">{[f.commercial && commercialWords(f.commercial), f.note].filter(Boolean).join(". ")}</span>}
+    </button>
+  );
+  const off = (f: Fit) =>
+    f.ok ? null : (
+      <div key={f.model} className="model-row off">
+        <span className="model-row-name">{f.label}</span>
+        <span className="model-row-note">{f.why.reason}</span>
+      </div>
+    );
+  const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
+  const idle = choices?.setup.filter(elsewhere) ?? [];
+  const setup = choices?.setup.filter((f) => !elsewhere(f)) ?? [];
   return (
-    <select value={model} onChange={(e) => setModel(e.target.value)} title="Which model makes it" aria-label="Model">
-      <option value="">{choices?.auto ? `Auto (${fitLabel(choices.auto)})` : "Auto"}</option>
-      {choices?.ready.flatMap((f) =>
-        f.also?.length
-          ? placesOf(f).map((x) => (
-              <option key={`${x.model}@${x.route}`} value={`${x.model}@${x.route}`} title={[x.note, x.commercial?.why].filter(Boolean).join(" ") || undefined}>
-                {fitLabel(x, true)}
-              </option>
-            ))
-          : [
-              <option key={f.model} value={f.model} title={[f.note, f.commercial?.why].filter(Boolean).join(" ") || undefined}>
-                {fitLabel(f)}
-              </option>,
-            ],
+    <>
+      <button ref={button} className={`model-pick ${at ? "open" : ""}`} onClick={() => (at ? close() : open())} aria-haspopup="menu" aria-expanded={!!at} title="Which model makes it">
+        <span className="model-pick-name">{model ? (chosen?.label ?? modelLabel(pickOf(model).model ?? model)) : chosen ? `Auto · ${chosen.label}` : "Auto"}</span>
+        {chosen && <span className="model-pick-cost">{[(model ? !!pickOf(model).via : !!chosen.also?.length) && chosen.where, about(chosen)].filter(Boolean).join(" · ")}</span>}
+        <Icon name="down" size={10} />
+      </button>
+      {at && (
+        <div ref={panel} className="model-menu" role="menu" style={at}>
+          <button role="menuitemradio" aria-checked={!model} className={`model-row ${model ? "" : "on"}`} onClick={() => pick("")}>
+            <span className="model-row-name">Auto</span>
+            <span className="model-row-cost">{choices?.auto ? about(choices.auto) : ""}</span>
+            <span className="model-row-note">{choices?.auto ? `The first one ready, in your order: ${choices.auto.label} on ${choices.auto.where}` : "Nothing can make this now"}</span>
+          </button>
+          {!!choices?.ready.length && <h5>Ready</h5>}
+          {choices?.ready.flatMap((f) => (f.also?.length ? placesOf(f).map((x) => row(x, `${x.model}@${x.route}`, true)) : [row(f, f.model, false)]))}
+          {idle.length > 0 && (
+            <>
+              <h5>
+                On a service you aren't using <span className="spacer" />
+                {settings("make", "Choose the service")}
+              </h5>
+              {idle.map(off)}
+            </>
+          )}
+          {setup.length > 0 && (
+            <>
+              <h5>
+                Needs a key, a connection or an install <span className="spacer" />
+                {setup.some((f) => !onComfy(f)) && settings("services", "Media services")}
+                {setup.some(onComfy) && settings("make", "ComfyUI")}
+              </h5>
+              {setup.map(off)}
+            </>
+          )}
+          {!!choices?.unfit.length && (
+            <>
+              <h5>Can't make this</h5>
+              {choices.unfit.map(off)}
+            </>
+          )}
+        </div>
       )}
-      {!!choices?.setup.some(elsewhere) && (
-        <optgroup label="On a service you aren't using (Settings → Making)">
-          {choices.setup.filter(elsewhere).map((f) => (
-            <option key={f.model} disabled>
-              {fitLabel(f)}
-            </option>
-          ))}
-        </optgroup>
-      )}
-      {!!choices?.setup.some((f) => !elsewhere(f)) && (
-        <optgroup label="Needs a key, a connection or an install">
-          {choices.setup
-            .filter((f) => !elsewhere(f))
-            .map((f) => (
-              <option key={f.model} disabled>
-                {fitLabel(f)}
-              </option>
-            ))}
-        </optgroup>
-      )}
-      {!!choices?.unfit.length && (
-        <optgroup label="Can't make this">
-          {choices.unfit.map((f) => (
-            <option key={f.model} disabled>
-              {fitLabel(f)}
-            </option>
-          ))}
-        </optgroup>
-      )}
-    </select>
+    </>
   );
 }
 

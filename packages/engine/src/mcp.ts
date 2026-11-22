@@ -639,9 +639,10 @@ const makeArgs = {
         to: z.number().optional().describe("The second to stop at; default the shot's length after from"),
       }),
     ])
+    .nullable()
     .optional()
     .describe(
-      "For video: keep another clip's camera (Seedance 2.5, through Tein or fal; Auto takes the cheaper one that's connected, and only Tein draws real people). Usually a blockout: a cut whose coded shots draw a grey set, a striped stand-in for each person and the camera's move, 2 to 30 seconds of it. It's rendered when the take is made, in that cut's format closest to this one's shape, and the take keeps its move, framing, timing and cuts and is as long as it is. The model copies everything else in a reference video too, so the prompt says what each stand-in really is (by its colour), and describes the real place in words; the engine adds that no stand-in appears. Move the camera in every shot of a blockout and hold each 2 seconds or more. A picture given as start goes as a reference instead (the board, a photo of who's in it); there's no end frame. Both bill the blockout's seconds as well as the take's, at a lower rate. Give it again for the final",
+      "For video: keep another clip's camera (Seedance 2.5, through Tein or fal; Auto takes the cheaper one that's connected, and only Tein draws real people). Usually a blockout: a cut whose coded shots draw a grey set, a striped stand-in for each person and the camera's move, 2 to 30 seconds of it. It's rendered when the take is made, in that cut's format closest to this one's shape, and the take keeps its move, framing, timing and cuts and is as long as it is. The model copies everything else in a reference video too, so the prompt says what each stand-in really is (by its colour), and describes the real place in words; the engine adds that no stand-in appears. Move the camera in every shot of a blockout and hold each 2 seconds or more. A picture given as start goes as a reference instead (the board, a photo of who's in it); there's no end frame. Both bill the blockout's seconds as well as the take's, at a lower rate. Before the first take from a blockout, hand off a review of the blockout cut, so the person watches the move before it's paid for. A generated shot whose takes kept a camera keeps it again (its next rough, its final) unless this is null",
     ),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
@@ -662,7 +663,7 @@ type MakeToolArgs = {
   drive?: { asset: string; from?: number; to?: number } | null;
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
   clip?: "take" | { asset: string; from?: number; to?: number };
-  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number };
+  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number } | null;
   seconds?: number;
   aspect?: string;
   count?: number;

@@ -12,6 +12,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { extname, join } from "node:path";
 import {
   aspectOf,
+  blockoutStretch,
+  cameraOfTake,
+  cameraOnShot,
   CATALOG,
   castOf,
   castPictures,
@@ -363,9 +366,10 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
    * For a clip that keeps another's camera (its move, its framing, where its cuts fall): a blockout, as a stretch of a
    * cut (all of it, or from the first of `shots` to the last), or a stretch of a clip, from a second of it (default 0)
    * to another (default the shot's length later). The take is as long as the stretch. A picture to start from goes as
-   * a reference instead, and there's no end frame.
+   * a reference instead, and there's no end frame. Without it, a generated shot whose takes kept a camera keeps it again
+   * (unless this take copies movement or lip-syncs instead); null for none.
    */
-  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number };
+  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number } | null;
   model?: string;
 };
 
@@ -485,9 +489,15 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const uses = castOf(prompt, project.cast, [...(ask.cast ?? []), ...shotCast, ...(!member && lookStyle ? [lookStyle] : [])]);
   const start = ask.start === "board" ? boardOf(project, shot) : ask.start;
   if (ask.start === "board" && !start) throw new Error(`Shot "${ask.shot}" has no board yet: make stills for it first`);
-  const drive = ask.op === "video" ? driveFor(project, ask.drive === undefined && shot?.content.kind === "generated" ? shot.content.drive : ask.drive, needs?.seconds) : undefined;
+  // A take asked to keep a camera doesn't also copy the movement the shot's takes copied before.
+  const drive = ask.op === "video" ? driveFor(project, ask.drive === undefined && shot?.content.kind === "generated" && !ask.camera ? shot.content.drive : ask.drive, needs?.seconds) : undefined;
   const clip = ask.op === "video" ? clipFor(project, shot, ask.clip, needs?.seconds) : undefined;
-  const camera = ask.op === "video" && ask.camera ? cameraFor(projectId, project, ask.camera, needs?.seconds, ask.aspect) : undefined;
+  // The camera the shot's takes kept is kept again, unless this one is asked to follow or say something instead.
+  // A shot from before shots kept it says nothing, so the take it shows is asked what it kept.
+  const shown = shot?.content.kind === "generated" ? shot.content : undefined;
+  const lastCamera = shown && !ask.drive && !ask.speech && !ask.clip ? (shown.camera ?? cameraOfTake(project.assets.find((a) => a.id === shown.take))) : undefined;
+  const keeps = ask.camera === undefined ? lastCamera : ask.camera;
+  const camera = ask.op === "video" && keeps ? cameraFor(projectId, project, keeps, needs?.seconds, ask.aspect) : undefined;
   const said = ask.speech !== undefined ? ask.speech : shot?.content.kind === "generated" && shot.content.speech ? shot.content.speech : clip ? {} : undefined;
   const speech =
     ask.op === "video" && said
@@ -604,20 +614,8 @@ function cameraFor(projectId: string, project: Project, ask: NonNullable<MakeAsk
     throw new Error(`No cut "${ask.cut}" to take the blockout from`);
   }
   if (blockout.cut.id !== ask.cut) throw new Error(`No cut "${ask.cut}" to take the blockout from`);
-  const wanted = aspect ?? aspectOf(project.formats[0]!.width, project.formats[0]!.height);
-  const [w, h] = wanted.split(":").map(Number);
-  const off = (f: { width: number; height: number }) => Math.abs(Math.log(f.width / f.height / (w! / h!)));
-  const format = blockout.formats.reduce((best, f) => (off(f) < off(best) ? f : best));
-  const tl = resolveTimeline(blockout, format.id);
-  let from = 0;
-  let to = tl.duration;
-  if (ask.shots?.length) {
-    const spans = ask.shots.map((id) => tl.shots.find((s) => s.id === id));
-    const missing = ask.shots.filter((_, i) => !spans[i]);
-    if (missing.length) throw new Error(`No shot ${missing.map((id) => `"${id}"`).join(", ")} in cut "${ask.cut}" (${format.label}); it has ${tl.shots.map((s) => s.id).join(", ")}`);
-    from = Math.min(...spans.map((s) => s!.start));
-    to = Math.max(...spans.map((s) => s!.end));
-  }
+  const { format, from, to, missing, has } = blockoutStretch(blockout, ask.shots, aspect ?? aspectOf(project.formats[0]!.width, project.formats[0]!.height));
+  if (missing.length) throw new Error(`No shot ${missing.map((id) => `"${id}"`).join(", ")} in cut "${ask.cut}" (${format.label}); it has ${has.join(", ")}`);
   if (!(to - from >= 0.1)) throw new Error(`Nothing to follow in cut "${ask.cut}"${ask.shots?.length ? ` across ${ask.shots.join(", ")}` : ""}`);
   return { cut: ask.cut, format: format.id, from: r3(from), to: r3(to), ...(ask.shots?.length ? { shots: ask.shots } : {}) };
 }
@@ -1752,7 +1750,7 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
         const spare = takeLead(r, asset.kind === "video" ? asset.duration : undefined, (id) => p.assets.find((a) => a.id === id)?.duration);
         // What it was made from: the clip's own board and movement, for one whose mouths were changed.
         const made = dubbed ? g : r;
-        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, speech: _p, ...rest } = g;
+        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, camera: kept, speech: _p, ...rest } = g;
         Object.assign(rest, {
           take: asset.id,
           ...(asset.kind === "video" ? { clipPrompt: r.prompt } : { prompt: r.prompt }),
@@ -1762,6 +1760,8 @@ function attach(projectId: string, job: MakeJob, asset: Asset) {
           ...(made.end ? { end: made.end } : {}),
           ...(made.refs?.length ? { refs: made.refs } : {}),
           ...(made.drive ? { drive: made.drive } : {}),
+          // The camera this take kept; one with its mouths changed is still the clip that kept one.
+          ...(dubbed ? (kept ? { camera: kept } : {}) : r.camera ? { camera: cameraOnShot(r.camera) } : {}),
           ...(r.speech ? { speech: speechOnShot(r.speech) } : {}),
           ...(spare > 0 ? { in: Math.round(spare * 1000) / 1000 } : {}),
         });

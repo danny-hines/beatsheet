@@ -902,6 +902,20 @@ describe("keeping a blockout's camera", () => {
     expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "tein", model: "seedance-2.5" });
     expect(shot("s2").content).not.toHaveProperty("in");
     expect(shot("s2").content).not.toHaveProperty("start");
+
+    // The shot keeps what it followed, so its next take (a final, say) follows the blockout again without being told;
+    // null says not to, and one that copies movement instead doesn't keep the camera as well.
+    expect(shot("s2").content).toMatchObject({ camera: { cut: "blockout", shots: ["orbit"] } });
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s2", quality: "final" }).req).toMatchObject({ camera: { cut: "blockout", format: "vertical", from: 0, to: 4, shots: ["orbit"] }, seconds: 4 });
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s2", camera: null }).req).not.toHaveProperty("camera");
+    // A shot that doesn't say (its take landed through an engine from before shots kept it) is read from the take it shows.
+    store.updateProject(PROJECT, (p) => {
+      const c = p.shots.find((s) => s.id === "s2")!.content;
+      if (c.kind === "generated") delete c.camera;
+    });
+    expect(shot("s2").content).not.toHaveProperty("camera");
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s2" }).req).toMatchObject({ camera: { cut: "blockout", from: 0, to: 4, shots: ["orbit"] } });
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s2", start: "s2-take", drive: { asset: "s2-take-2", from: 0, to: 3 } }).req).not.toHaveProperty("camera");
   });
 
   it("follows the whole cut when no shots are named, and a final is priced at the 1080p rate for one", () => {

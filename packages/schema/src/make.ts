@@ -5,7 +5,7 @@
  */
 import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
-import type { Asset, CastMember, CastProposal, Project, ProjectFile, ShotContent } from "./types.ts";
+import type { Asset, CastMember, CastProposal, Format, Project, ProjectFile, ShotContent } from "./types.ts";
 
 /**
  * What can be asked for. Lip sync is video with speech (MakeRequest.speech). More join as they're wired up: extend,
@@ -210,6 +210,24 @@ export type Drive = Stretch;
 export type CutStretch = { cut: string; format: string; from: number; to: number; shots?: string[] };
 /** What a take keeps the camera of: a stretch of a clip, or of a cut that's rendered to one when the take is made. */
 export type Camera = Stretch | CutStretch;
+
+/**
+ * The stretch of a blockout a take follows: all of the cut, or from the first of `shots` to the last, in whichever of
+ * the cut's formats is closest in shape to what's being made (`aspect`, like "9:16"), so a vertical take follows the
+ * blockout drawn vertical. `missing` are shots asked for that the cut doesn't have in that format, and `has` the ones
+ * it does. The studio shows this stretch before a take is made, and the engine renders the same one.
+ */
+export function blockoutStretch(blockout: Project, shots: string[] | undefined, aspect: string): { format: Format; from: number; to: number; missing: string[]; has: string[] } {
+  const [w, h] = aspect.split(":").map(Number);
+  const off = (f: { width: number; height: number }) => Math.abs(Math.log(f.width / f.height / ((w || 16) / (h || 9))));
+  const format = blockout.formats.reduce((best, f) => (off(f) < off(best) ? f : best));
+  const tl = resolveTimeline(blockout, format.id);
+  const has = tl.shots.map((s) => s.id);
+  if (!shots?.length) return { format, from: 0, to: tl.duration, missing: [], has };
+  const spans = shots.flatMap((id) => tl.shots.find((s) => s.id === id) ?? []);
+  const missing = shots.filter((id) => !has.includes(id));
+  return { format, from: spans.length ? Math.min(...spans.map((s) => s.start)) : 0, to: spans.length ? Math.max(...spans.map((s) => s.end)) : 0, missing, has };
+}
 
 /**
  * What a take says, as sound: the cut's voice lines as they're heard between two seconds of the cut (in its first
@@ -930,6 +948,15 @@ export function shotNeeds(project: Project, shotId: string, op?: MakeOp): { seco
 
 type Generated = Extract<ShotContent, { kind: "generated" }>;
 
+/** What a take kept the camera of, as a shot keeps it: the blockout by its cut and shots (found again as the cut is then), or the stretch of a clip. */
+export const cameraOnShot = (c: Camera): NonNullable<Generated["camera"]> => ("cut" in c ? { cut: c.cut, ...(c.shots?.length ? { shots: c.shots } : {}) } : { asset: c.asset, from: c.from, to: c.to });
+
+/** What a take kept the camera of, from how it was asked for, as a shot keeps it; nothing for a take that kept none. */
+export const cameraOfTake = (take: Asset | undefined): NonNullable<Generated["camera"]> | undefined => {
+  const kept = (take?.provenance?.params as { camera?: Camera } | undefined)?.camera;
+  return kept ? cameraOnShot(kept) : undefined;
+};
+
 /** What a take says, as a shot keeps it: lines to find again where the shot plays, or a stretch of a file's sound. */
 export const speechOnShot = (s: Speech): NonNullable<Generated["speech"]> => ("lines" in s ? { lines: s.lines } : { asset: s.asset, from: s.from, to: s.to });
 
@@ -946,15 +973,18 @@ export function showTake(c: Generated, take: Asset, assets: Asset[], seconds?: n
   if (take.kind !== "video") delete next.in;
   if (asked.prompt === undefined) return next;
   if (take.kind !== "video") return { ...next, prompt: asked.prompt };
-  const { start, end, drive, speech: _said, in: _in, ...rest } = next;
+  const { start, end, drive, camera, speech: _said, in: _in, ...rest } = next;
   const lead = takeLead({ ...asked, shotSeconds: seconds ?? asked.shotSeconds }, take.duration, (id) => assets.find((a) => a.id === id)?.duration);
   const from = asked.clip ? { start, end, drive } : asked;
+  // What a take with its mouths changed was made from kept a camera, if the clip it changed did.
+  const kept = asked.clip ? camera : asked.camera && cameraOnShot(asked.camera);
   return {
     ...rest,
     clipPrompt: asked.prompt,
     ...(from.start ? { start: from.start } : {}),
     ...(from.end ? { end: from.end } : {}),
     ...(from.drive ? { drive: from.drive } : {}),
+    ...(kept ? { camera: kept } : {}),
     ...(asked.speech ? { speech: speechOnShot(asked.speech) } : {}),
     ...(lead > 0 ? { in: Math.round(lead * 1000) / 1000 } : {}),
   };

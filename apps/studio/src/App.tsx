@@ -26,6 +26,7 @@ export function App() {
   const setup = useStore((s) => s.setup);
   const settingsLoaded = useStore((s) => s.settingsLoaded);
   const mode = useStore((s) => s.mode);
+  const makeWide = useStore((s) => s.makeWide);
 
   useEffect(() => {
     // The app opens on the list of projects; a link to one (#project, #project/cut or #project/cut/make, as after a
@@ -116,10 +117,11 @@ export function App() {
     );
   }
   // Media on the left, the cut in the middle, the agent and notes on the right. Making stills and clips takes the
-  // middle over: what to make, what's been made, and what's on the way.
+  // middle over: the shots to make, the cast, what's been made, and whichever of them is open (with the right-hand
+  // panel folded away when that needs the room).
   if (mode === "make") {
     return (
-      <div className="app make">
+      <div className={`app make ${makeWide ? "wide" : ""}`}>
         <TopBar />
         <Library />
         <MakeView />

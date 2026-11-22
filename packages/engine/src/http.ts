@@ -584,6 +584,9 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // speechFrom to speechTo), or "none"; and clip "take" to change the mouths in the clip the shot shows.
     const says = q.get("speech");
     const lines = q.get("lines")?.split(",").filter(Boolean);
+    // The blockout a take keeps the camera of: camera (a cut's id, or "none" for none) and cameraShots (its shots, from the first to the last).
+    const keeps = q.get("camera");
+    const cameraShots = q.get("cameraShots")?.split(",").filter(Boolean);
     const speech = says === "none" ? { speech: null } : says === "lines" ? { speech: lines?.length ? { lines } : {} } : says ? { speech: { asset: says, from: at("speechFrom"), to: at("speechTo") } } : {};
     try {
       return json(
@@ -599,6 +602,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(q.get("end") === "none" ? { end: null } : q.get("end") ? { end: q.get("end")! } : {}),
           ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
           ...speech,
+          ...(keeps === "none" ? { camera: null } : keeps ? { camera: { cut: keeps, ...(cameraShots?.length ? { shots: cameraShots } : {}) } } : {}),
           ...(q.get("clip") === "take" ? { clip: "take" as const } : {}),
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,

@@ -28,12 +28,15 @@ import { AnchorChip, Empty, TextField } from "./ui";
 import { Icon } from "./Icon";
 
 export function SidePanel() {
-  const side = useStore((s) => s.side);
+  const shown = useStore((s) => s.side);
   const project = useProject();
   const pending = project.notes.filter((n) => n.status === "queued" || n.status === "open").length;
   const agent = useStore((s) => s.agent);
   const here = !agent.project || agent.project === project.id;
   const asks = here ? agent.approvals.length : 0;
+  // In Make, what's selected opens in the middle, so the panel is the agent and the notes.
+  const making = useStore((s) => s.mode === "make");
+  const side = making && shown !== "notes" ? "agent" : shown;
   return (
     <>
       <div className="tabs">
@@ -43,12 +46,21 @@ export function SidePanel() {
         <button className={side === "notes" ? "on" : ""} onClick={() => actions.setSide("notes")}>
           Notes {pending > 0 && <span className="count">{pending}</span>}
         </button>
-        <button className={side === "inspect" ? "on" : ""} onClick={() => actions.setSide("inspect")}>
-          Inspect
-        </button>
-        <button className={side === "script" ? "on" : ""} onClick={() => actions.setSide("script")} title="The cut as what's said in it: edit the words to edit the cut">
-          Script
-        </button>
+        {!making && (
+          <>
+            <button className={side === "inspect" ? "on" : ""} onClick={() => actions.setSide("inspect")}>
+              Inspect
+            </button>
+            <button className={side === "script" ? "on" : ""} onClick={() => actions.setSide("script")} title="The cut as what's said in it: edit the words to edit the cut">
+              Script
+            </button>
+          </>
+        )}
+        {making && (
+          <button className="tab-fold" onClick={() => actions.setMakeWide(true)} title="Fold this panel away, to give what you're making the room" aria-label="Hide the panel">
+            <Icon name="forward" size={12} />
+          </button>
+        )}
       </div>
       <div className={`side-body ${side === "agent" ? "agent" : ""}`}>{side === "inspect" ? <Inspector /> : side === "notes" ? <Notes /> : side === "script" ? <Script /> : <AgentPanel />}</div>
     </>
@@ -389,7 +401,7 @@ function ShotTiming({ shot }: { shot: Shot }) {
   );
 }
 
-function NotesFor() {
+export function NotesFor() {
   const p = useProject();
   const tl = useTimeline();
   const sel = useStore((s) => s.selection);

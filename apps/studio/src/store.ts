@@ -51,6 +51,13 @@ export type State = {
   cutId?: string;
   /** Editing the cut, or making stills and clips for it (the hash carries it: #project/cut/make). */
   mode: "edit" | "make";
+  /**
+   * Which of Make's pages the middle shows: the cut's shots to make, the cast and sets, or everything made. A shot,
+   * cast member or take that's selected in Make opens large over it, and closing it comes back here.
+   */
+  makePage: "shots" | "cast" | "made";
+  /** Make's panel on the right (the agent and notes) folded away, to give what's being made the room. */
+  makeWide: boolean;
   /** The cut on screen together with the shared material; what views and edits work on. Always `cutView(doc, cutId)`. */
   project?: Project;
   /** Version of the file the open project came from; saves are refused if the file moved on. */
@@ -118,6 +125,8 @@ let state: State = {
   save: "saved",
   format: "",
   mode: "edit",
+  makePage: "shots",
+  makeWide: false,
   also: [],
   playhead: 0,
   playing: false,
@@ -354,6 +363,7 @@ export const actions = {
       rate: 1,
       zoom: 0,
       mode,
+      makePage: "shots",
     });
     showCut(id, cutId);
     pickUpCut(id, cutId);
@@ -396,8 +406,20 @@ export const actions = {
   setMode(mode: State["mode"]) {
     if (mode === state.mode || !state.projectId) return;
     if (mode === "make") player?.pause();
-    setState({ mode, playing: false });
+    // A shot to make or a cast member that's selected comes along and opens in Make; anything else is left behind, so
+    // Make opens on its pages.
+    const s = state.selection;
+    const shot = s?.kind === "shot" ? state.project?.shots.find((x) => x.id === s.id) : undefined;
+    const opens = s?.kind === "cast" || shot?.content.kind === "placeholder" || shot?.content.kind === "generated";
+    setState({ mode, playing: false, ...(mode === "make" && !opens ? { selection: undefined, also: [] } : {}) });
     showCut(state.projectId, state.cutId!);
+  },
+  /** Shows one of Make's pages, closing whatever was open large over it. */
+  setMakePage(makePage: State["makePage"]) {
+    setState({ makePage, selection: undefined, also: [] });
+  },
+  setMakeWide(makeWide: boolean) {
+    setState({ makeWide });
   },
   /** Shows another cut of the open project. */
   setCut(cutId: string) {
@@ -565,7 +587,8 @@ export const actions = {
 
   /** Selects one thing, or a shot and `also` more with it. */
   select(selection: Selection | undefined, also: string[] = []) {
-    setState({ selection, also, side: selection && selection.kind !== "note" ? "inspect" : state.side });
+    // In Make what's selected opens in the middle, so the panel on the right stays as it is.
+    setState({ selection, also, side: selection && selection.kind !== "note" && state.mode === "edit" ? "inspect" : state.side });
   },
   /** Adds a shot to the selection or takes it out (⌘-click), or selects the run from the selected one to it (⇧-click). */
   selectMore(id: string, how: "toggle" | "run") {

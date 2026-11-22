@@ -577,6 +577,20 @@ export const ShotContent = z.discriminatedUnion("kind", [
       })
       .optional()
       .describe("For video takes that copy movement: the people in the start picture move as the people in this stretch of a clip do (SCAIL-2)"),
+    camera: z
+      .union([
+        z.object({
+          cut: z.string().describe("The cut the blockout is in: coded shots that draw a grey set, a stand-in for each person and the camera's move"),
+          shots: z.array(z.string()).optional().describe("From the first of these shots of that cut to the last; default the whole cut"),
+        }),
+        z.object({
+          asset: z.string().describe("A clip whose camera to keep"),
+          from: z.number().min(0).describe("The second of the clip it starts at"),
+          to: z.number().optional().describe("The second it ends at; default the shot's length after `from`"),
+        }),
+      ])
+      .optional()
+      .describe("For video takes that keep another clip's camera (its move, its framing, where its cuts fall): a blockout, or a stretch of a clip. The next take keeps it again"),
     speech: z
       .object({
         lines: z.array(z.string()).optional().describe("Voice lines of the cut it says, as they're heard while the shot plays; default every line heard then"),

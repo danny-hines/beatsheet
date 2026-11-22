@@ -33,6 +33,8 @@ import {
   SCHEMA_VERSION,
   shotNeeds,
   showTake,
+  blockoutStretch,
+  cameraOnShot,
   speechWindow,
   STAGE_IDS,
   takeLead,
@@ -1167,5 +1169,38 @@ describe("keeping a clip's camera", () => {
     expect(takeLead({ camera, seconds: 4, shotSeconds: 3 }, 4, () => undefined)).toBe(0);
     // A take from a prompt alone has its spare either side.
     expect(takeLead({ seconds: 4, shotSeconds: 3 }, 4, () => undefined)).toBe(0.5);
+  });
+
+  // A blockout: two camera moves, 4 and 3 seconds, drawn wide and vertical.
+  const move = (id: string, duration: number) => ({ id, track: "pic", duration, content: { kind: "coded" as const, component: "scenes/Blockout.tsx#Blockout" }, fidelity: "board" as const });
+  const blockout = Project.parse({
+    ...shotProject([], [], [move("orbit", 4), move("push", 3)]),
+    formats: [
+      { id: "wide", label: "21:9", width: 2520, height: 1080, fps: 30 },
+      { id: "vertical", label: "9:16", width: 1080, height: 1920, fps: 30 },
+    ],
+  });
+
+  it("follows the blockout in its format closest in shape, all of it or from the first shot named to the last", () => {
+    expect(blockoutStretch(blockout, undefined, "16:9")).toMatchObject({ format: { id: "wide" }, from: 0, to: 7, missing: [], has: ["orbit", "push"] });
+    expect(blockoutStretch(blockout, undefined, "4:5")).toMatchObject({ format: { id: "vertical" }, from: 0, to: 7 });
+    expect(blockoutStretch(blockout, ["push"], "9:16")).toMatchObject({ format: { id: "vertical" }, from: 4, to: 7, missing: [] });
+    // Named out of order, it's still the stretch from the first to the last; a shot that isn't there is said.
+    expect(blockoutStretch(blockout, ["push", "orbit"], "9:16")).toMatchObject({ from: 0, to: 7 });
+    expect(blockoutStretch(blockout, ["orbit", "crane"], "9:16")).toMatchObject({ from: 0, to: 4, missing: ["crane"] });
+  });
+
+  it("is kept on the shot by its cut and shots, so the next take follows the blockout as it is then", () => {
+    expect(cameraOnShot({ ...camera, shots: ["orbit"] })).toEqual({ cut: "blockout", shots: ["orbit"] });
+    expect(cameraOnShot(camera)).toEqual({ cut: "blockout" });
+    expect(cameraOnShot({ asset: "walk", from: 1, to: 5 })).toEqual({ asset: "walk", from: 1, to: 5 });
+    const take: Asset = { id: "orbit-take", kind: "video", path: "orbit-take.mp4", duration: 4, provenance: { source: "generated", provider: "tein", params: { model: "seedance-2.5", prompt: "she turns", camera: { ...camera, to: 4, shots: ["orbit"] }, seconds: 4 } } };
+    const plain: Asset = { id: "plain-take", kind: "video", path: "plain-take.mp4", duration: 5, provenance: { source: "generated", provider: "fal", params: { model: "wan-3", prompt: "she turns", start: "board", seconds: 5 } } };
+    const shown = { kind: "generated" as const, prompt: "a courtyard", take: "plain-take", takes: ["plain-take", "orbit-take"], start: "board" };
+    const followed = showTake(shown, take, [take, plain], 4);
+    expect(followed).toMatchObject({ take: "orbit-take", camera: { cut: "blockout", shots: ["orbit"] } });
+    expect(followed).not.toHaveProperty("start");
+    // Going back to a take that kept no camera, the shot keeps none.
+    expect(showTake(followed, plain, [take, plain], 4)).not.toHaveProperty("camera");
   });
 });

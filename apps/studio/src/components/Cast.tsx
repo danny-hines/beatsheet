@@ -16,14 +16,14 @@ import { PopMenu, TextField } from "./ui";
 import { VoicePicker } from "./Voices";
 import { Icon } from "./Icon";
 
-type Kind = CastMember["kind"];
-const KINDS: [Kind, string][] = [
+export type Kind = CastMember["kind"];
+export const KINDS: [Kind, string][] = [
   ["character", "Character"],
   ["place", "Set"],
   ["prop", "Prop"],
   ["style", "Style"],
 ];
-const WORD: Record<Kind, string> = { character: "character", place: "set", prop: "prop", style: "style" };
+export const WORD: Record<Kind, string> = { character: "character", place: "set", prop: "prop", style: "style" };
 /** What a description of each kind looks like: the specifics a model can draw. */
 const ABOUT_EXAMPLE: Record<Kind, string> = {
   character: "Woman in her forties, short curly gray hair, round tortoiseshell glasses, mustard cardigan, warm crooked smile",
@@ -43,7 +43,7 @@ const castIdFor = (name: string, taken: string[], fallback: string) => {
 const UNNAMED = /^(character|place|prop|style)(-\d+)?$/;
 
 /** Makes a cast member (from pictures, when there are some) and selects it, so its name can be typed straight away. */
-function newMember(kind: Kind, from: Asset[] = []) {
+export function newMember(kind: Kind, from: Asset[] = []) {
   let id = "";
   actions.edit((d) => {
     const cast = (d.cast ??= []);
@@ -62,7 +62,7 @@ function addTo(id: string, as: Asset[]) {
   });
 }
 
-const label = (m: CastMember) => m.name || `Unnamed ${WORD[m.kind]}`;
+export const label = (m: CastMember) => m.name || `Unnamed ${WORD[m.kind]}`;
 
 /** Styles to start from: picking one adds it to the cast as a style, which can then be described further. */
 const STYLE_PRESETS: { id: string; name: string; about: string }[] = [
@@ -120,7 +120,7 @@ export function lookStyleName(p: { cast?: CastMember[]; look?: { style?: string 
  * Asks the agent to look through the Library for who and what recurs and propose them as the cast (a cast hand-off,
  * where the person keeps the ones they want).
  */
-async function findCast() {
+export async function findCast() {
   const { projectId, cutId } = getState();
   await actions.flushSave();
   const res = await fetch("/api/turn/ask", {
@@ -137,8 +137,17 @@ async function findCast() {
     if (res.status === 409) actions.setSettingsOpen(true);
     return;
   }
+  // The agent's panel, where its answer comes, even if Make had it folded away.
+  actions.setMakeWide(false);
   actions.setSide("agent");
 }
+
+/** The picture that stands for a cast member: its chosen portrait (a look's when the plain one has none), else what it's given, else a photo it's seen in. */
+export const castPicture = (p: Project, m: CastMember): string | undefined =>
+  m.portrait ?? m.variants?.find((v) => v.portrait)?.portrait ?? m.sheet ?? m.images?.[0] ?? m.seen?.find((s) => p.assets.find((a) => a.id === s.asset)?.kind === "image")?.asset;
+
+/** How many of this cut's shots to make name a cast member, in any of its looks. */
+export const shotsWith = (p: Project, id: string): number => [...shotsPerLook(p, id).values()].reduce((a, b) => a + b, 0);
 
 /** The cast and sets, at the top of the Library: each one's main picture, name and @id. */
 export function CastList() {
@@ -164,13 +173,7 @@ export function CastList() {
         </button>
       </div>
       {cast.map((m) => {
-        // Its chosen portrait (a look's when the plain one has none), else what it's given, else a photo it's seen in.
-        const pic =
-          m.portrait ??
-          m.variants?.find((v) => v.portrait)?.portrait ??
-          m.sheet ??
-          m.images?.[0] ??
-          m.seen?.find((s) => p.assets.find((a) => a.id === s.asset)?.kind === "image")?.asset;
+        const pic = castPicture(p, m);
         return (
           <button key={m.id} className={`asset-row cast-row ${selection?.kind === "cast" && selection.id === m.id ? "sel" : ""}`} onClick={() => actions.select({ kind: "cast", id: m.id })}>
             <span className="asset-row-thumb">
