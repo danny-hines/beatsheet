@@ -47,6 +47,7 @@ import {
   type CastLook,
   type Commercial,
   type Fit,
+  type PlannedTake,
   type Project,
   type SubjectTrack,
 } from "@beatsheet/schema";
@@ -56,7 +57,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, providerInUse, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, providerInUse, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -95,7 +96,7 @@ Designed scenes: a shot doesn't have to be footage. Coded shots draw anything: k
 
 Pages behind a login (a Google Photos album, a dashboard, a private doc): the person's Chrome is signed in, so use it when you can reach it: the claude-in-chrome tools (Claude Code), your own browser tool's chrome backend (Codex), or the chrome-devtools tools (attached to their running Chrome; if they can't connect, ask the person to turn on remote debugging once at chrome://inspect/#remote-debugging and allow the connection Chrome asks about). The person is asked before you act on each site. To bring media in from there, download it in Chrome (it lands in ~/Downloads; Google Photos zips a multi-photo download) and pass the files or zip to import_media, which skips what the project already has: compare with list_assets first rather than downloading everything. Without those tools, your own browsers aren't signed in to anything: hand_off with kind "provide" and need "chrome", saying what you'll do there; the card gives the person a button that lets you use their Chrome (or they can download the files and tell you where they are). Never read a browser's saved logins or cookies.
 
-Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's fal key): give it a placeholder or generated shot (or several, with shots) and it makes takes for them, with each shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle each shot cheaply as a board, then rough clips from each shot's chosen board (op "video", start "board"), then finals with the best model once the cut holds (quality "final"). Cast and sets (/cast: characters, places, props, styles) keep made shots consistent: name them in prompts with @id (@cat, @cat/heist for a variant) and they're described to the model, and stills are given their pictures. Make a cast member's pictures with generate's sheet (from the photos it's seen in, or from its description), and ask for photos only the person has with a provide hand-off (need "cast"). list_models says which models could make something, about what each costs, and why the others can't; with shots, what a whole pass would cost. generate returns at once and the takes land as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off that says what it would cost. The film recipe skill is the whole process for a video made from nothing. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
+Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's fal key): give it a placeholder or generated shot (or several, with shots) and it makes takes for them, with each shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle each shot cheaply as a board, then rough clips from each shot's chosen board (op "video", start "board"), then finals with the best model once the cut holds (quality "final"). Cast and sets (/cast: characters, places, props, styles) keep made shots consistent: name them in prompts with @id (@cat, @cat/heist for a variant) and they're described to the model, and stills are given their pictures. Make a cast member's pictures with generate's sheet (from the photos it's seen in, or from its description), and ask for photos only the person has with a provide hand-off (need "cast"). list_models says which models could make something, about what each costs, and why the others can't; with shots, what a whole pass would cost. generate returns at once and the takes land as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off whose option carries the request as make (the card shows the person every picture and word it sends and what it costs, and picking it starts it). The film recipe skill is the whole process for a video made from nothing. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
 
 Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or ${IS_WINDOWS ? "Windows'" : "the Mac's"} own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
 
@@ -1497,20 +1498,35 @@ server.registerTool(
   },
 );
 
+/** generate's arguments for one request (not a pass over several shots), as a hand-off option carries them: the take that picking it starts. */
+const { project: _project, shots: _shots, ...oneMakeArgs } = makeArgs;
+const OPTION_MAKE = z
+  .object({
+    ...oneMakeArgs,
+    count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2, as for generate)"),
+    model: z.string().optional().describe("A model id from list_models; default Auto"),
+    via: z.string().optional().describe("Where to make it, when a model runs in two places, as for generate"),
+    anyway: z.boolean().optional().describe("As for generate: you've looked, and the characters a clip is about are in its frames"),
+  })
+  .describe(
+    "A take that picking this option starts: generate's arguments for one request (a shot, a sheet or a still). It's checked as you hand off, as generate checks it, and the card shows the person everything it would send (each picture, named for its part; the blockout or clip it follows; the model, where it runs and the cost; the words as the service gets them), so they can look before it's paid for. Picking it starts that very request, and your next message says which jobs it started. Use it whenever an option is a go-ahead to spend, rather than listing the references in words.",
+  );
+const HAND_OFF_OPTION = OPTION.extend({ make: OPTION_MAKE.optional() });
+
 server.registerTool(
   "hand_off",
   {
     description:
-      'End your turn and hand it to the person, with exactly what you need from them. "choose": 2-6 options (directions, takes, songs, looks), each a few words plus a sentence; set multiple when they may pick several, and point an option at a cut, assets or an image that shows it. A second question that belongs with the first (the look to go with the directions) goes in questions, on the same card. "review": a cut is playable and you want their notes. "provide": you need something only they have (a song, more footage, some text, or their signed-in Chrome for a page behind a login). "cast": you\'ve sorted the Library into who and what recurs (the cat in 14 photos, the house in 9); each proposal is a cast member with the pictures it\'s in, and the ones they keep are in the cast before their answer reaches you. Call it last; their answer comes back as your next message.',
+      'End your turn and hand it to the person, with exactly what you need from them. "choose": 2-6 options (directions, takes, songs, looks), each a few words plus a sentence; set multiple when they may pick several, and point an option at a cut, assets or an image that shows it. An option that\'s a go-ahead to spend (send a take, make the boards) carries the request as make, so the card shows what it sends and picking it starts it. A second question that belongs with the first (the look to go with the directions) goes in questions, on the same card. "review": a cut is playable and you want their notes. "provide": you need something only they have (a song, more footage, some text, or their signed-in Chrome for a page behind a login). "cast": you\'ve sorted the Library into who and what recurs (the cat in 14 photos, the house in 9); each proposal is a cast member with the pictures it\'s in, and the ones they keep are in the cast before their answer reaches you. Call it last; their answer comes back as your next message.',
     inputSchema: {
       project: projectArg,
       cut: cutArg,
       kind: z.enum(["choose", "review", "provide", "cast"]),
       message: z.string().describe("What you're asking, in a sentence or two"),
-      options: z.array(OPTION).optional().describe('For "choose"'),
+      options: z.array(HAND_OFF_OPTION).optional().describe('For "choose"'),
       multiple: z.boolean().optional().describe('For "choose": they may pick more than one'),
       questions: z
-        .array(z.object({ id: z.string(), message: z.string(), options: z.array(OPTION).min(2).max(6), multiple: z.boolean().optional() }))
+        .array(z.object({ id: z.string(), message: z.string(), options: z.array(HAND_OFF_OPTION).min(2).max(6), multiple: z.boolean().optional() }))
         .max(2)
         .optional()
         .describe('For "choose": more questions on the same card, answered together, e.g. {id: "look", message: "And which look?", options: [...each with image]}'),
@@ -1551,15 +1567,29 @@ server.registerTool(
     if (kind === "provide" && !need) return text('A "provide" hand-off needs "need": song, footage, text or chrome.');
     // Pictures made for options are kept relative to the project, where the studio can show them.
     const missing: string[] = [];
-    const withIds = (os: z.infer<typeof OPTION>[], prefix: string) =>
-      os.map((o, i) => {
+    // A take an option would start is planned now, so the card can show what it sends and picking it starts just that.
+    const unplanned: string[] = [];
+    const withIds = (os: z.infer<typeof HAND_OFF_OPTION>[], prefix: string) =>
+      os.map(({ make: asked, ...o }, i) => {
         let image = o.image;
         if (image) {
           const full = resolve(dir, image);
           image = relative(dir, full);
           if (image.startsWith("..") || isAbsolute(image) || !existsSync(full)) missing.push(o.image!);
         }
-        return { ...o, id: o.id ?? `${prefix}${i + 1}`, ...(image ? { image } : {}) };
+        let make: PlannedTake | undefined;
+        if (asked) {
+          const { anyway, ...args } = asked;
+          const ask = asksFor({ ...args, count: args.count ?? 2 })[0]!;
+          try {
+            const held = anyway ? [] : absentLines(absentFrom(id, [ask]));
+            if (held.length) unplanned.push(`"${o.label}": ${held.join(" ")} ${ABSENT_WHY} If you've looked and they're there, add anyway: true to its make.`);
+            else make = planTake(id, ask);
+          } catch (err) {
+            unplanned.push(`"${o.label}": ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+        return { ...o, id: o.id ?? `${prefix}${i + 1}`, ...(image ? { image } : {}), ...(make ? { make } : {}) };
       });
     const ask =
       kind === "choose"
@@ -1568,8 +1598,20 @@ server.registerTool(
           ? { kind, message, need: need! }
           : { kind, message, cut: project.cut.id };
     if (missing.length) return text(`No such picture in the project: ${missing.join(", ")}. Use the paths preview_looks gave (made/looks/…).`);
+    if (unplanned.length)
+      return text([`Not handed over: the take planned on ${unplanned.length === 1 ? "an option" : "some options"} can't be made as asked.`, ...unplanned.map((u) => `- ${u}`), "Fix its make and hand off again."].join("\n"));
     yourTurn(id, ask as Parameters<typeof yourTurn>[1], project.cut.id);
-    return text("Handed over: it's the person's turn now. Stop here; their answer comes as your next message.");
+    const planned = ask.kind === "choose" ? [...ask.options, ...(ask.questions ?? []).flatMap((q) => q.options)].flatMap((o) => (o.make ? [{ label: o.label, make: o.make }] : [])) : [];
+    const part = { start: "starts from", end: "ends on", ref: "reference" } as const;
+    return text(
+      [
+        "Handed over: it's the person's turn now. Stop here; their answer comes as your next message.",
+        ...planned.map(
+          ({ label, make: m }) =>
+            `"${label}" shows what it sends: ${m.pictures.length ? m.pictures.map((p) => `${p.asset} (${part[p.as]})`).join(", ") : "no pictures"}${m.camera ? `, keeping the camera of ${"cut" in m.camera ? `the blockout in cut ${m.camera.cut}` : m.camera.asset} from ${m.camera.from}s to ${m.camera.to}s` : ""}, with ${m.label} on ${m.where}${m.usd ? `, about $${m.usd.toFixed(2)}` : ""}. Picking it starts it.`,
+        ),
+      ].join("\n"),
+    );
   },
 );
 

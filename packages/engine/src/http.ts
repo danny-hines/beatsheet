@@ -30,7 +30,7 @@ import { narrate } from "./narrate.ts";
 import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
-import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, startPicked, turnBudget, type MakeAsk } from "./make.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -317,16 +317,19 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // Only once it's sure to be delivered: the notes it takes, and the cast members kept, would otherwise go twice.
     if (id === "ask" && !body.text?.trim()) return json(res, 400, { error: "Ask what?" });
     const notes = body.notes ? takeNotes(body.project, body.cut).line : undefined;
+    // A take an option planned starts as it's picked, before the agent hears of it: what the card showed is what's sent.
+    const started = id === "answer" ? startPicked(body.project, body) : [];
     const message =
       id === "ask"
         ? `On project ${body.project}${body.cut ? `, cut ${body.cut}` : ""}: ${body.text!.trim()}`
-        : answerMessage(body.project, currentTurn(body.project), { ...body, notes }, keepProposals(body.project, { keep: body.keep }));
+        : answerMessage(body.project, currentTurn(body.project), { ...body, notes }, keepProposals(body.project, { keep: body.keep }), started);
+    const unstarted = started.flatMap((s) => ("error" in s ? [`"${s.label}" wasn't started: ${s.error}`] : []));
     if (open) {
       await agent.send(message);
-      return json(res, 200, { delivered: "session" });
+      return json(res, 200, { delivered: "session", ...(unstarted.length ? { unstarted } : {}) });
     }
     void agent.start(preferred!.id, { model: preferred!.model, project: body.project, cut: body.cut, then: message });
-    return json(res, 200, { delivered: "started", agent: preferred!.id });
+    return json(res, 200, { delivered: "started", agent: preferred!.id, ...(unstarted.length ? { unstarted } : {}) });
   }
   // What went wrong in the studio page, kept where it can be read later (the Mac app has no console to open).
   if (section === "log" && req.method === "POST") {

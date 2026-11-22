@@ -771,6 +771,17 @@ button.big { padding: 8px 16px; font-size: var(--t-4); }
 .turn-board.one .turn-pic img { aspect-ratio: auto; max-height: 420px; object-fit: contain; }
 .turn-pic .enlarge { opacity: 0.7; }
 .turn-pic:hover .enlarge { opacity: 1; }
+/* What picking an option sends: each picture named for its part, the blockout, the words. */
+.turn-sends { display: flex; flex-direction: column; gap: 4px; width: 100%; padding-top: 4px; border-top: 1px solid var(--line); }
+.turn-sends-pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 4px; }
+.turn-send { position: relative; display: flex; flex-direction: column; justify-content: flex-end; aspect-ratio: 4 / 3; overflow: hidden; border: 1px solid var(--line-2); border-radius: var(--r-1); background: var(--black); cursor: zoom-in; }
+.turn-send img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.turn-send > span { position: relative; padding: 0 4px; font-size: var(--t-1); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--scrim); color: var(--on-scrim); }
+.turn-send-part { padding-top: 1px !important; font-weight: 600; }
+.turn-send-name { padding-bottom: 2px !important; opacity: 0.85; }
+.turn-send.blockout { cursor: pointer; background: repeating-linear-gradient(135deg, var(--well) 0 6px, var(--raised) 6px 12px); }
+.turn-send.blockout > span { white-space: normal; }
+.turn-sends-told { display: block; max-height: 180px; overflow-y: auto; padding: 4px 8px; white-space: pre-wrap; line-height: 1.5; background: var(--well); border-radius: var(--r-1); cursor: text; user-select: text; }
 .turn-question { margin-top: 8px; }
 .turn-question > p { margin: 0 0 4px; }
 .turn-changes { display: flex; flex-wrap: wrap; gap: 4px 4px; align-items: baseline; padding-bottom: 4px; border-bottom: 1px solid var(--accent-line); }

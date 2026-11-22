@@ -980,6 +980,78 @@ describe("keeping a blockout's camera", () => {
     expect(shot("s2").content).toMatchObject({ kind: "generated", take: take.id, provider: "fal", model: "seedance-2.5" });
   });
 
+  it("plans the take a hand-off option starts, shows everything it sends, and starts just that when it's picked", async () => {
+    await board();
+    blockout();
+    const ask = { op: "video" as const, shot: "s2", prompt: "@cat, the orange stand-in, strolls down the alley", start: "board", refs: ["cat-photo"], camera: { cut: "blockout", shots: ["orbit"] }, count: 1 };
+    const planned = make.planTake(PROJECT, ask);
+    // Nothing is sent or saved to plan it.
+    expect([tein.uploads, tein.submits.length, rendered.length, make.listJobs(PROJECT).length]).toEqual([0, 0, 0, 1]);
+    expect(planned).toMatchObject({
+      op: "video",
+      cut: "main",
+      shot: "s2",
+      model: "seedance-2.5",
+      label: "Seedance 2.5",
+      where: "Tein",
+      count: 1,
+      seconds: 4,
+      aspect: "9:16",
+      // With a blockout, the board goes as the first reference rather than a first frame.
+      pictures: [
+        { asset: "s2-take", as: "ref" },
+        { asset: "cat-photo", as: "ref" },
+      ],
+      camera: { cut: "blockout", format: "vertical", from: 0, to: 4, shots: ["orbit"] },
+    });
+    expect(planned.usd).toBeCloseTo(8 * 0.0809, 3);
+    expect(planned.told).toMatch(/strolls down the alley.* The 2 reference pictures show who and what is in it\. The reference video is a blockout: keep its camera exactly/);
+
+    const { startPicked } = make;
+    const { answerMessage } = await import("../src/turns.ts");
+    const turn = {
+      who: "you" as const,
+      since: new Date().toISOString(),
+      cut: "main",
+      ask: { kind: "choose" as const, message: "Send it?", options: [{ id: "send", label: "Send it", make: planned }, { id: "wait", label: "Change it first" }] },
+    };
+    store.updateFile(PROJECT, (d) => void (d.turn = turn));
+    // Said more than the pick: left to the agent, which may change it.
+    expect(startPicked(PROJECT, { picks: ["send"], text: "and make it dusk" })).toEqual([{ option: "send", label: "Send it", waiting: true }]);
+    expect(make.listJobs(PROJECT)).toHaveLength(1);
+    // Picked: started as it was planned, once, and the card's option says which jobs it started.
+    const started = startPicked(PROJECT, { picks: ["send"] });
+    expect(started).toEqual([{ option: "send", label: "Send it", planned, jobs: [expect.any(String)], usd: planned.usd }]);
+    const ids = (started[0] as { jobs: string[] }).jobs;
+    expect(answerMessage(PROJECT, turn, { picks: ["send"] }, undefined, started)).toContain(`It's started, exactly as the card showed it: 1 take of shot s2 with Seedance 2.5 on Tein, about $${planned.usd!.toFixed(2)} (jobs ${ids[0]}).`);
+    expect(store.loadFile(PROJECT).doc.turn?.ask).toMatchObject({ options: [{ make: { started: ids } }, {}] });
+    expect(startPicked(PROJECT, { picks: ["send"] })).toMatchObject([{ jobs: ids, before: true }]);
+    expect(make.listJobs(PROJECT)).toHaveLength(2);
+    await make.driveJobs(PROJECT);
+    // What went is what the card showed: the two pictures in that order, the blockout, and the words to the letter.
+    expect(tein.submits).toHaveLength(1);
+    expect(tein.submits[0]).toMatchObject({ reference_image: [`${base}/out/tein-upload-1.jpg`, `${base}/out/tein-upload-2.jpg`], reference_video: [expect.any(String)], duration: 4, ratio: "9:16" });
+    expect(tein.submits[0]!.prompt).toBe(planned.told);
+    expect(rendered).toEqual([{ cut: "blockout", format: "vertical", range: { from: 0, to: 4 } }]);
+  });
+
+  it("doesn't start a planned take whose pictures changed after the card was made, and says what changed", async () => {
+    await board();
+    blockout();
+    const planned = make.planTake(PROJECT, { op: "video", shot: "s2", prompt: "The orange stand-in is a ginger cat", start: "board", camera: { cut: "blockout", shots: ["orbit"] }, count: 1 });
+    store.updateFile(PROJECT, (d) => void (d.turn = { who: "you", since: "", ask: { kind: "choose", message: "Send it?", options: [{ id: "send", label: "Send it", make: planned }, { id: "no", label: "No" }] } }));
+    // A new board lands on the shot: "board" now means another picture.
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 });
+    await make.driveJobs(PROJECT);
+    store.updateProject(PROJECT, (p) => {
+      const c = p.shots.find((s) => s.id === "s2")!.content;
+      if (c.kind === "generated") c.take = "s2-take-2";
+    });
+    const jobs = make.listJobs(PROJECT).length;
+    expect(make.startPicked(PROJECT, { picks: ["send"] })).toEqual([{ option: "send", label: "Send it", error: "What it would send changed since the card was made: its pictures would be s2-take-2" }]);
+    expect(make.listJobs(PROJECT)).toHaveLength(jobs);
+  });
+
   it("says what's wrong before anything is sent: no such cut or shot", () => {
     blockout();
     const uploads = seen.uploads;

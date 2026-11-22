@@ -9,6 +9,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { keepCast, parseFile, type HandOff, type ProjectFile, type Turn } from "@beatsheet/schema";
+import type { PickStarted } from "./make.ts";
 import { ConflictError, loadFile, saveFile, updateFile, updateProject } from "./store.ts";
 
 /** Snapshots taken at the start of agent turns, newest kept. */
@@ -172,7 +173,20 @@ export function keepProposals(id: string, a: Answer): { added: string[]; joined:
   return kept;
 }
 
-export function answerMessage(id: string, turn: Turn | undefined, a: Answer, kept?: { added: string[]; joined: string[] }): string {
+/** What a picked option's take did, as a line to the agent: started as the card showed it, left to it, or not started and why. */
+function startedLine(s: PickStarted): string {
+  if ("waiting" in s) return `I said more than the pick, so the take planned on "${s.label}" wasn't started: start it with generate, changed as I said.`;
+  if ("error" in s) return `The take planned on "${s.label}" wasn't started, so nothing was spent: ${s.error}`;
+  const p = s.planned;
+  const what = p.shot ? `shot ${p.shot}` : p.sheet ? `a sheet for @${p.sheet}` : p.op === "image" ? "a still" : "a clip";
+  const takes = `${p.count} take${p.count === 1 ? "" : "s"} of ${what}`;
+  const cost = s.usd > 0 ? `about $${s.usd.toFixed(2)}` : "no charge";
+  if (s.before) return `The take planned on "${s.label}" was already started (jobs ${s.jobs.join(", ")}); nothing new was started.`;
+  const lands = p.shot ? "They land on the shot as they finish." : p.sheet ? "They join its pictures as they finish." : "They land in the project's assets as they finish.";
+  return `It's started, exactly as the card showed it: ${takes} with ${p.label} on ${p.where}, ${cost} (jobs ${s.jobs.join(", ")}). ${lands} Call jobs with wait to follow them; don't start it again.`;
+}
+
+export function answerMessage(id: string, turn: Turn | undefined, a: Answer, kept?: { added: string[]; joined: string[] }, started: PickStarted[] = []): string {
   const ask = turn?.ask;
   const parts: string[] = [];
   const where = `project ${id}${turn?.cut ? `, cut ${turn.cut}` : ""}`;
@@ -193,6 +207,8 @@ export function answerMessage(id: string, turn: Turn | undefined, a: Answer, kep
         (picked.length > 1 ? " Make each one its own cut." : ""),
     );
   }
+  // A take a picked option planned was started (or not) before this was sent: the agent hears which.
+  for (const s of started) parts.push(startedLine(s));
   // The card's other questions, each with what was picked.
   for (const q of ask?.kind === "choose" ? (ask.questions ?? []) : []) {
     const ids = a.also?.[q.id];

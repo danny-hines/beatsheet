@@ -48,6 +48,7 @@ import {
   type FitOk,
   type MakeOp,
   type MakeRequest,
+  type PlannedTake,
   type Project,
   type Quality,
   type ServiceState,
@@ -742,7 +743,7 @@ export function assertSpendable(usd: number, opts: { spendable?: number } = {}) 
   }
   if (opts.spendable !== undefined && usd > opts.spendable + 1e-9)
     throw new Error(
-      `This is about $${usd.toFixed(2)}, and only $${Math.max(0, opts.spendable).toFixed(2)} more can be spent this turn without asking (the person allows $${turnBudget().toFixed(2)} a turn). Ask first: a choose hand-off that says what it would cost.`,
+      `This is about $${usd.toFixed(2)}, and only $${Math.max(0, opts.spendable).toFixed(2)} more can be spent this turn without asking (the person allows $${turnBudget().toFixed(2)} a turn). Ask first: a choose hand-off whose option carries this request as make, so the card shows what it sends and costs.`,
     );
 }
 
@@ -887,6 +888,129 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
   });
   void driveJobs(projectId);
   return { plans: started, usd };
+}
+
+/**
+ * What a request would send, without sending anything: checked as generate checks it (so one that can't be made says
+ * why), with the model it goes to, where that runs and what it costs, every picture that goes with it named for its
+ * part, the blockout or clip it follows, and the words as that service gets them. A hand-off option carries this, so
+ * the person can look it over before it's paid for; picking it starts the same request (startPlanned).
+ */
+export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
+  const { req: r, fit, shape } = plan(projectId, ask);
+  // The request is built for its service as it would be when sent, with each picture standing in for where it'd be
+  // uploaded: the pictures found in it are the ones that go (a start frame and references don't go together on some),
+  // and its words are the ones the service reads, with what's added about the pictures and the blockout.
+  const tag = (id: string) => `beatsheet:${id}`;
+  const stand = {
+    prompt: r.sent ?? r.prompt,
+    quality: r.quality,
+    seconds: fit.seconds,
+    aspect: fit.aspect,
+    start: r.start && tag(r.start),
+    end: r.end && tag(r.end),
+    refs: r.refs?.map(tag),
+    camera: r.camera && { url: "beatsheet:camera", blockout: "cut" in r.camera },
+    video: r.drive || r.clip ? "beatsheet:clip" : undefined,
+    audio: r.speech ? "beatsheet:sound" : undefined,
+  };
+  let built: Record<string, unknown> | undefined;
+  try {
+    if (fit.route === "tein") built = teinInput(shape, fit.endpoint, stand);
+    else if (fit.route === "fal") built = falInput(shape, stand);
+    else if (fit.route === "runway") built = runwayInput(shape, fit.endpoint, { ...stand, refs: r.op === "video" && r.start ? undefined : stand.refs }).body;
+    else if (fit.route === "higgsfield") built = higgsfieldInput(shape, fit.endpoint, { ...stand, refs: r.start ? undefined : stand.refs }).body;
+  } catch {
+    // A shape built some other way: the request as asked for.
+  }
+  const sent = built && JSON.stringify(built);
+  const parts = [...(r.start ? [{ asset: r.start, as: "start" as const }] : []), ...(r.end ? [{ asset: r.end, as: "end" as const }] : []), ...(r.refs ?? []).map((asset) => ({ asset, as: "ref" as const }))];
+  const told = built && [built.prompt, built.promptText, built.text].find((x): x is string => typeof x === "string");
+  const free = PLAN_ROUTES.includes(fit.route) || fit.route === "comfy";
+  return {
+    ask: ask as Record<string, unknown>,
+    op: r.op,
+    cut: loadProject(projectId, ask.cut).project.cut.id,
+    ...(ask.shot ? { shot: ask.shot } : {}),
+    ...(ask.sheet ? { sheet: ask.sheet } : {}),
+    model: fit.model,
+    label: fit.label,
+    where: fit.where,
+    ...(free ? { usd: 0 } : fit.usd !== undefined ? { usd: fit.usd } : {}),
+    count: Math.max(1, r.count ?? 1),
+    ...(fit.seconds !== undefined ? { seconds: fit.seconds } : {}),
+    ...(fit.aspect ? { aspect: fit.aspect } : {}),
+    pictures: sent ? parts.filter((p) => sent.includes(JSON.stringify(tag(p.asset)))) : parts,
+    ...(r.camera ? { camera: r.camera } : {}),
+    ...(r.drive ? { drive: r.drive } : {}),
+    ...(r.clip ? { clip: r.clip } : {}),
+    ...(r.speech ? { speech: r.speech } : {}),
+    told: told ?? r.sent ?? r.prompt,
+  };
+}
+
+/** What two plans of a take would send differs in: a few words for each difference, none when they're the same. */
+export function planChanges(was: PlannedTake, now: PlannedTake): string[] {
+  const out: string[] = [];
+  if (was.model !== now.model || was.where !== now.where) out.push(`it would go to ${now.label} on ${now.where}, not ${was.label} on ${was.where}`);
+  const pics = (p: PlannedTake) => p.pictures.map((x) => `${x.as}:${x.asset}`).join(",");
+  if (pics(was) !== pics(now)) out.push(`its pictures would be ${now.pictures.map((x) => x.asset).join(", ") || "none"}`);
+  if (was.told !== now.told) out.push("its words changed");
+  const along = (p: PlannedTake) => JSON.stringify([p.camera, p.drive, p.clip, p.speech]);
+  if (along(was) !== along(now)) out.push("the stretch it follows changed");
+  if (was.seconds !== now.seconds || was.aspect !== now.aspect || was.count !== now.count) out.push(`it would be ${now.count} × ${now.seconds ?? "?"}s at ${now.aspect ?? "its own shape"}`);
+  return out;
+}
+
+/**
+ * Starts the take a hand-off option planned, now that the person picked it: the same request, planned again first so
+ * that what starts is what the card showed. One whose plan has changed since (an asset gone, the shot or the cast
+ * changed) isn't started, and says what changed. The person's pick is their go-ahead, so the turn's own budget doesn't
+ * apply; the spending limit does.
+ */
+export function startPlanned(projectId: string, planned: PlannedTake): { jobs: MakeJob[]; usd: number } {
+  const ask = planned.ask as MakeAsk;
+  const changed = planChanges(planned, planTake(projectId, ask));
+  if (changed.length) throw new Error(`What it would send changed since the card was made: ${changed.join("; ")}`);
+  const { plans, usd } = startMakeAll(projectId, [ask]);
+  return { jobs: plans[0]!.jobs, usd };
+}
+
+/** What picking an option that planned a take did: started it (or had already), left it to the agent, or couldn't. */
+export type PickStarted = { option: string; label: string } & ({ planned: PlannedTake; jobs: string[]; usd: number; before?: true } | { waiting: true } | { error: string });
+
+/**
+ * Starts the takes the picked options planned (their `make`), before the agent hears the answer, so what starts is
+ * what the card showed. Not when the person said more than the pick (they may want it changed, and the agent starts
+ * it), and never twice: the jobs go on the option, and one picked again says it was already started.
+ */
+export function startPicked(projectId: string, a: { picks?: string[]; also?: Record<string, string[]>; text?: string }): PickStarted[] {
+  const ask = loadFile(projectId).doc.turn?.ask;
+  if (ask?.kind !== "choose") return [];
+  const picked = [
+    ...ask.options.filter((o) => a.picks?.includes(o.id)).map((o) => ({ o, q: undefined as string | undefined })),
+    ...(ask.questions ?? []).flatMap((q) => q.options.filter((o) => a.also?.[q.id]?.includes(o.id)).map((o) => ({ o, q: q.id }))),
+  ].filter(({ o }) => o.make);
+  return picked.map(({ o, q }): PickStarted => {
+    const make = o.make!;
+    const was = { option: o.id, label: o.label };
+    if (make.started?.length) return { ...was, planned: make, jobs: make.started, usd: make.usd ?? 0, before: true };
+    if (a.text?.trim()) return { ...was, waiting: true };
+    try {
+      const { jobs, usd } = startPlanned(projectId, make);
+      const ids = jobs.map((j) => j.id);
+      updateFile(projectId, (d) => {
+        const now = d.turn?.ask;
+        if (now?.kind !== "choose") return;
+        const options = q ? now.questions?.find((x) => x.id === q)?.options : now.options;
+        const made = options?.find((x) => x.id === o.id)?.make;
+        if (made) made.started = ids;
+      });
+      return { ...was, planned: make, jobs: ids, usd };
+    } catch (err) {
+      return { ...was, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 }
 
 /** Starts the takes one request asks for (see startMakeAll). */

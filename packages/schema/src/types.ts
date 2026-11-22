@@ -740,6 +740,42 @@ const cutBody = {
 export const Cut = z.object({ id: z.string(), name: z.string(), origin: Origin.optional(), ...cutBody });
 export type Cut = z.infer<typeof Cut>;
 
+const Stretch = z.object({ asset: z.string(), from: z.number(), to: z.number() });
+
+/**
+ * Pictures or a clip an option would make, checked when the agent handed off: the request as it asked for it (`ask`,
+ * generate's arguments) and everything that would go to the model, so the person can look at each picture, the
+ * blockout and the words before anything is paid for. Picking the option starts that very request; `started` is the
+ * jobs it started, so it isn't started twice.
+ */
+export const PlannedTake = z.object({
+  ask: z.record(z.string(), z.unknown()).describe("The request as the agent asked for it: generate's arguments"),
+  op: z.enum(["image", "video"]),
+  cut: z.string(),
+  shot: z.string().optional(),
+  sheet: z.string().optional(),
+  model: z.string(),
+  label: z.string().describe("The model, for people: Seedance 2.5"),
+  where: z.string().describe("Where it runs, for people: Tein, fal, ChatGPT plan"),
+  usd: z.number().optional().describe("What all its takes cost, about; none when it's free there"),
+  count: z.number().int().positive(),
+  seconds: z.number().optional(),
+  aspect: z.string().optional(),
+  pictures: z
+    .array(z.object({ asset: z.string(), as: z.enum(["start", "end", "ref"]) }))
+    .describe("Every picture that goes with it, in the order the model gets them: what it starts from, ends on, and its references"),
+  camera: z
+    .union([z.object({ cut: z.string(), format: z.string(), from: z.number(), to: z.number(), shots: z.array(z.string()).optional() }), Stretch])
+    .optional()
+    .describe("The blockout (a stretch of a cut, rendered when it's made) or clip whose camera it keeps"),
+  drive: Stretch.optional().describe("The stretch of a clip whose movement it copies"),
+  clip: Stretch.optional().describe("The stretch of a clip whose mouths it changes"),
+  speech: z.union([z.object({ lines: z.array(z.string()), from: z.number(), to: z.number() }), Stretch]).optional(),
+  told: z.string().describe("The words as the service gets them, with what the engine adds about the pictures and the blockout"),
+  started: z.array(z.string()).optional().describe("The jobs picking it started"),
+});
+export type PlannedTake = z.infer<typeof PlannedTake>;
+
 /**
  * What the agent needs from the person when it hands the turn over: a pick between a few directions, a look at a cut,
  * or something only they can provide (a song, more footage).
@@ -752,6 +788,7 @@ const ChooseOption = z.object({
   assets: z.array(z.string()).max(6).optional().describe("Key frames that sketch it, in order, like a storyboard"),
   image: z.string().optional().describe("A picture made for the option (a look's preview from preview_looks), relative to the project folder"),
   cut: z.string().optional().describe("A cut that already shows the idea"),
+  make: PlannedTake.optional().describe("Pictures or a clip that picking this starts, with everything that would be sent"),
 });
 export type ChooseOption = z.infer<typeof ChooseOption>;
 

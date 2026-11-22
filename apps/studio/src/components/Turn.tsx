@@ -1,6 +1,6 @@
-import type { Asset, HandOff, ProjectFile } from "@beatsheet/schema";
+import type { Asset, HandOff, PlannedTake, ProjectFile } from "@beatsheet/schema";
 import { useState, type ReactNode } from "react";
-import { AGENT_NAMES, imageUrl, pickFootage, pickPath, posterUrl, projectFileUrl, proxyUrl, runJob, sessionActivity } from "../lib";
+import { AGENT_NAMES, hideBroken, imageUrl, pickFootage, pickPath, posterUrl, projectFileUrl, proxyUrl, runJob, sessionActivity } from "../lib";
 import { actions, getState, setState, useStore } from "../store";
 import { EnlargeIcon, Viewer, type ViewerItem } from "./Viewer";
 
@@ -76,6 +76,9 @@ export async function answer(body: { picks?: string[]; also?: Record<string, str
     if (res.status === 409) actions.setSettingsOpen(true);
     return;
   }
+  // A take a picked option planned that couldn't start: the agent hears why too, and nothing was spent.
+  const { unstarted } = (await res.json().catch(() => ({}))) as { unstarted?: string[] };
+  if (unstarted?.length) setState({ notice: `${unstarted.join(" ")} Nothing was spent.` });
   actions.setSide("agent");
 }
 
@@ -327,6 +330,129 @@ function Board({ pics, onOpen }: { pics: Pic[]; onOpen: (id: string) => void }) 
   );
 }
 
+const PART = { start: "Starts from", end: "Ends on", ref: "Reference" } as const;
+
+type Steps = { sheet?: string; sheets?: string[]; portrait?: string; portraits?: string[]; images?: string[]; kept?: string[]; faces?: string[]; wardrobe?: string[] };
+
+/** What a picture is to the cast, when it's one of theirs: "Galileo (William)'s sheet". */
+function castName(cast: ProjectFile["cast"], id: string): string | undefined {
+  for (const m of cast ?? []) {
+    const looks: [Steps, string][] = [[m, m.name], ...(m.variants ?? []).map((v): [Steps, string] => [v, `${m.name} (${v.id})`])];
+    for (const [l, name] of looks) {
+      if (l.sheet === id || l.sheets?.includes(id)) return `${name}'s sheet`;
+      if (l.portrait === id || l.portraits?.includes(id)) return `${name}'s portrait`;
+      if (l.faces?.includes(id)) return `a photo of ${name}`;
+      if (l.wardrobe?.includes(id)) return `${name}'s wardrobe`;
+      if (l.images?.includes(id) || l.kept?.includes(id)) return `a picture of ${name}`;
+    }
+  }
+  return undefined;
+}
+
+type SendPic = Pic & { part: string; name: string };
+
+/**
+ * Everything a planned take sends that can be looked at, in the order the model gets it: each picture named for its
+ * part and for what it is (a cast member's sheet; a made still by its id, as the agent calls it, since its label is
+ * only the start of its prompt; footage by its label), then the clip it follows, if it's a clip.
+ */
+function sendsPictures(projectId: string, assets: Asset[] | undefined, cast: ProjectFile["cast"], of: string, m: PlannedTake): SendPic[] {
+  const named = (id: string) => {
+    const a = assets?.find((x) => x.id === id);
+    const made = a?.provenance?.source === "generated" || !a?.label;
+    return castName(cast, id) ?? (made ? id : a!.label!.length > 48 ? `${a!.label!.slice(0, 47)}…` : a!.label!);
+  };
+  const out: SendPic[] = m.pictures.map((p, i) => {
+    const name = named(p.asset);
+    const caption = `${PART[p.as]}: ${name}${name === p.asset ? "" : ` (${p.asset})`}`;
+    return { id: `${of}/sends/${i}`, of, part: PART[p.as], name, caption, src: imageUrl(projectId, p.asset), thumb: posterUrl(projectId, p.asset) };
+  });
+  const clips: [string, { asset: string; from: number; to: number } | undefined][] = [
+    ["Camera of", m.camera && "asset" in m.camera ? m.camera : undefined],
+    ["Moves like", m.drive],
+    ["Mouths changed in", m.clip],
+  ];
+  for (const [part, s] of clips) {
+    if (!s) continue;
+    const name = `${named(s.asset)}, ${round1(s.from)}–${round1(s.to)}s`;
+    out.push({ id: `${of}/sends/${out.length}`, of, part, name, caption: `${part}: ${name} (${s.asset})`, video: true, src: proxyUrl(projectId, s.asset), thumb: posterUrl(projectId, s.asset) });
+  }
+  return out;
+}
+
+const round1 = (x: number) => Math.round(x * 10) / 10;
+
+/**
+ * What picking an option sends, before anything is paid for: every picture with the part it plays (each opens large),
+ * the blockout it keeps the camera of (which opens its cut), the model, where it runs and what it costs, and the words
+ * as the service gets them. It's the request the engine checked as the agent handed off, and picking starts it.
+ */
+function Sends({ planned: m, pics, onOpen }: { planned: PlannedTake; pics: SendPic[]; onOpen: (id: string) => void }) {
+  const [told, setTold] = useState(false);
+  const cuts = useStore((s) => s.doc?.cuts);
+  const cost = m.usd === undefined ? "" : m.usd > 0 ? `about $${m.usd.toFixed(2)}` : "no charge";
+  const facts = [`${m.count} ${m.op === "image" ? "still" : "clip"}${m.count === 1 ? "" : "s"}`, m.seconds && `${round1(m.seconds)}s`, m.aspect, cost].filter(Boolean).join(" · ");
+  const blockout = m.camera && "cut" in m.camera ? m.camera : undefined;
+  return (
+    <span className="turn-sends">
+      <span className="small">
+        <strong>{m.started?.length ? "Started" : "Picking this sends"}</strong> <span className="dim">to {m.label} on {m.where} · {facts}</span>
+      </span>
+      {pics.length + (blockout ? 1 : 0) > 0 ? (
+        <span className="turn-sends-pics">
+          {pics.map((p) => (
+            <span
+              key={p.id}
+              className="turn-send"
+              title={`${p.caption}. See it large`}
+              onClick={(e) => {
+                // It's inside the option's button: looking isn't picking.
+                e.stopPropagation();
+                onOpen(p.id);
+              }}
+            >
+              <img src={p.thumb} alt="" loading="lazy" onError={hideBroken} />
+              <span className="turn-send-part">{p.part}</span>
+              <span className="turn-send-name">{p.name}</span>
+            </span>
+          ))}
+          {blockout && (
+            <span
+              className="turn-send blockout"
+              title="The blockout it keeps the camera of: its move, framing and timing. Open the cut to watch it"
+              onClick={(e) => {
+                e.stopPropagation();
+                actions.visitCut(blockout.cut);
+              }}
+            >
+              <span className="turn-send-part">Camera of</span>
+              <span className="turn-send-name">
+                {cuts?.find((c) => c.id === blockout.cut)?.name ?? blockout.cut}, {round1(blockout.from)}–{round1(blockout.to)}s
+              </span>
+            </span>
+          )}
+        </span>
+      ) : (
+        <span className="dim small">No pictures go with it: words only.</span>
+      )}
+      <span
+        className="link small"
+        onClick={(e) => {
+          e.stopPropagation();
+          setTold(!told);
+        }}
+      >
+        {told ? "Hide the words" : "The words it sends"}
+      </span>
+      {told && (
+        <span className="turn-sends-told small" onClick={(e) => e.stopPropagation()}>
+          {m.told}
+        </span>
+      )}
+    </span>
+  );
+}
+
 /** Every option's pictures in one large view, so ← and → compare them, with the option's own answer in its bar. */
 function Large({ projectId, pics, at, onClose, action }: { projectId: string; pics: Pic[]; at: string; onClose: () => void; action: (of: string) => ReactNode }) {
   return (
@@ -347,10 +473,12 @@ function Large({ projectId, pics, at, onClose, action }: { projectId: string; pi
 function Options({ options, picked, onPick }: { options: Option[]; picked: string[]; onPick: (id: string) => void }) {
   const projectId = useStore((s) => s.projectId);
   const assets = useStore((s) => s.doc?.assets);
+  const cast = useStore((s) => s.doc?.cast);
   const [large, setLarge] = useState<string>();
   const pics = projectId
     ? options.map((o) => pictures(projectId, assets, o.id, [o.label, o.detail].filter(Boolean).join(" · "), o.image, o.assets?.length ? o.assets : o.asset ? [o.asset] : []))
     : [];
+  const sent = projectId ? options.map((o) => (o.make ? sendsPictures(projectId, assets, cast, o.id, o.make) : [])) : [];
   return (
     <div className="turn-options">
       {options.map((o, i) => (
@@ -371,12 +499,13 @@ function Options({ options, picked, onPick }: { options: Option[]; picked: strin
               </span>
             )}
           </span>
+          {o.make && <Sends planned={o.make} pics={sent[i] ?? []} onOpen={setLarge} />}
         </button>
       ))}
       {projectId && large && (
         <Large
           projectId={projectId}
-          pics={pics.flat()}
+          pics={[...pics.flat(), ...sent.flat()]}
           at={large}
           onClose={() => setLarge(undefined)}
           action={(of) => (
