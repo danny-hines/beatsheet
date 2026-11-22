@@ -288,7 +288,7 @@ function ComfySection() {
       )}
       {error && <p className="warn small">{error}</p>}
       {!!models.length && (
-        <ul className="make-plans">
+        <ul className="make-workflows">
           {models.map((m) => (
             <li key={m.name}>
               <span>

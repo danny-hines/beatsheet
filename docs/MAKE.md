@@ -465,7 +465,7 @@ What's built but thin, or set aside for later, as it turns up. Each comes off th
 - **A plan's allowance** isn't shown anywhere: a still on a plan is free until the plan's limit, and then fails with the time it resets (Codex says when; Muse Code hasn't been seen to).
 - **A plan's shape** is asked for in words; Codex chooses the nearest size it makes (1024×1536 for 9:16), which the shot then reframes.
 - **A still that's mid-request when the engine stops** is lost (GPT Image, Muse Image, Gemini and the plans don't keep it to fetch again), and counted as spent in case it was charged. Trying again makes it again.
-- **Cut-outs for cast pictures** need SAM on this computer (Settings → On this PC); without it a cast member's photos go to the model whole, sofa and all. Only a character's or prop's own photos are cut out, not its sheet or a still from a clip. A blurry photo cuts out ragged.
+- **Cut-outs for cast pictures** need SAM on this computer (Settings → People and cut-outs); without it a cast member's photos go to the model whole, sofa and all. Only a character's or prop's own photos are cut out, not its sheet or a still from a clip. A blurry photo cuts out ragged.
 - **Dragging from the board** onto the timeline needs both on screen; in Make mode the timeline isn't. Use in (on a card) or the Library does it.
 - **A clip from cast pictures with no board** isn't chained for you (make a still with them, then animate it). The film recipe always boards first.
 - **Kling 3's own character references** (its `elements`) aren't used; the board carries the cast instead.

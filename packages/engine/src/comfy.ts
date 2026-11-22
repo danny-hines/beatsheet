@@ -754,7 +754,7 @@ async function gatedProblem(names: string[], token: string | undefined): Promise
   if (!repos.length) return undefined;
   const pages = joined(repos.map((r) => `https://huggingface.co/${r}`));
   if (!token)
-    return `Some of these files are shared only with people who've accepted their license: accept it at ${pages} (signed in to Hugging Face), then add a Hugging Face token in Settings → On this PC, where SAM 3.1 takes one`;
+    return `Some of these files are shared only with people who've accepted their license: accept it at ${pages} (signed in to Hugging Face), then add a Hugging Face token in Settings → People and cut-outs, where SAM 3.1 takes one`;
   const who = readSettings().huggingface?.name;
   for (const repo of repos) {
     const file = MODEL_FILES[names.find((n) => MODEL_FILES[n]?.gated === repo)!]!;

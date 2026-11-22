@@ -175,7 +175,7 @@ export async function windowsTrack(file: string, a: { duration?: number }, at: n
   }
 }
 
-const NEEDS_SAM = "Cut-outs on this PC need SAM 3.1: install it in Settings → On this PC. (With a fal key, a photo can be cut out by description meanwhile.)";
+const NEEDS_SAM = "Cut-outs on this PC need SAM 3.1: install it in Settings → People and cut-outs. (With a fal key, a photo can be cut out by description meanwhile.)";
 
 /**
  * A cut-out of a photo, or of a clip's frame at `at`: what's under `point`, what's in `box` (a subject there), or

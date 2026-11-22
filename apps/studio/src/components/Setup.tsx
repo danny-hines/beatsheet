@@ -20,7 +20,7 @@ const samName = (sam?: SamStatus) => (sam?.model === "sam3.1" ? "SAM 3.1" : "SAM
 
 const ABOUT = {
   agent: "The agent edits your videos with you, on your own account. Make one the default; you can switch any time from the top bar.",
-  mac: `Free and private: these run on your ${OS.computer}, and nothing leaves it.`,
+  mac: `Finding and following the people in your footage, and cutting people and things out of it. Free and private: these run on your ${OS.computer}, and nothing leaves it.`,
   services: WINDOWS ? "Each key you add gives the agent more to work with. Keys are checked, then kept in Windows Credential Manager." : "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
   providers: "For shots that are made rather than filmed. Choose the service you already use; cutting your own footage needs none.",
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
@@ -114,7 +114,7 @@ function Step({ n, done, title, note, about, children }: { n: number; done?: boo
 
 const PANES = [
   { id: "agent", label: "Agent" },
-  { id: "mac", label: `On ${OS.here}` },
+  { id: "mac", label: "People and cut-outs" },
   { id: "voices", label: "Voices" },
   { id: "services", label: "Media services" },
   { id: "make", label: "Making" },

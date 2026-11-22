@@ -17,33 +17,50 @@ const SIZES: { id: ModelSize; label: string; bytes: number; note: string }[] = [
   { id: "best", label: "Best", bytes: 574e6, note: "large v3 turbo: for a graphics card or Apple silicon" },
 ];
 
-async function load(): Promise<Info> {
-  return (await fetch("/api/settings/transcribe").then((r) => r.json())) as Info;
+/**
+ * What can transcribe now, kept in one place: the page and the Settings nav's line both read it, so the line changes as
+ * soon as Whisper is installed or removed on the page.
+ */
+let known: Info | undefined;
+const watching = new Set<(info: Info) => void>();
+const tell = (info: Info) => {
+  known = info;
+  for (const set of watching) set(info);
+};
+async function refresh(): Promise<void> {
+  tell((await fetch("/api/settings/transcribe").then((r) => r.json())) as Info);
+}
+function useInfo(): Info | undefined {
+  const [info, setInfo] = useState(known);
+  useEffect(() => {
+    watching.add(setInfo);
+    void refresh();
+    return () => void watching.delete(setInfo);
+  }, []);
+  return info;
 }
 
 /** A line for the Settings nav: what Auto would use now. */
 export function useTranscribeSummary(): string {
-  const [info, setInfo] = useState<Info>();
-  useEffect(() => void load().then(setInfo), []);
+  const info = useInfo();
   if (!info) return "";
   const ready = TRANSCRIBERS.filter((t) => info.states[t.id]?.state === "ready");
   return ready.length ? ready.map((t) => t.label).join(", ") : "None set up";
 }
 
 export function TranscribeSection() {
-  const [info, setInfo] = useState<Info>();
-  useEffect(() => void load().then(setInfo), []);
+  const info = useInfo();
   if (!info) return <p className="dim small">Loading…</p>;
   const save = async (change: Record<string, unknown>) => {
     const res = await fetch("/api/settings/transcribe", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(change) });
-    setInfo((await res.json()) as Info);
+    tell((await res.json()) as Info);
   };
   return (
     <div className="make-settings">
-      <WhisperCard info={info} onChange={() => void load().then(setInfo)} setModel={(m) => void save({ whisperModel: m })} />
+      <WhisperCard info={info} onChange={() => void refresh()} setModel={(m) => void save({ whisperModel: m })} />
       <section>
-        <h4>What transcribes</h4>
-        <Available info={info} />
+        <h4>Or a service with your key</h4>
+        <Services info={info} />
         <p className="dim small">
           beatsheet uses Whisper here when {OS.here} is quick at it, a service with your key when it's slow, and Whisper here anyway when there's no key. Asking for who's speaking leaves only the
           ones that can tell. You can pick another for a clip when you transcribe it.
@@ -165,8 +182,8 @@ function WhisperCard({ info, onChange, setModel }: { info: Info; onChange: () =>
   );
 }
 
-/** Every transcriber, each saying whether it can be used here, what it costs and whether it tells speakers apart. */
-function Available({ info }: { info: Info }) {
+/** The services that transcribe, each saying what it costs, whether it tells speakers apart and whether it's ready (Whisper here has its card above). */
+function Services({ info }: { info: Info }) {
   const state = (id: string) => {
     const s = info.states[id];
     if (!s) return "";
@@ -176,7 +193,7 @@ function Available({ info }: { info: Info }) {
   return (
     <div className="make-ranking">
       <ul>
-        {TRANSCRIBERS.map((t) => (
+        {TRANSCRIBERS.filter((t) => t.runs === "service").map((t) => (
           <li key={t.id}>
             <span>
               {t.label}

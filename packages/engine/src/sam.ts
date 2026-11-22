@@ -333,7 +333,7 @@ export type SamCutout = { file: string; box: { x: number; y: number; w: number; 
  */
 export async function samSegment(image: string, prompt: string, out: string, opts: { each?: boolean; threshold?: number } = {}): Promise<SamCutout[]> {
   if (CUDA) return cuda.samSegment(image, prompt, out, opts);
-  if (!samReady()) throw new Error("SAM 3 isn't installed on this Mac. Install it in Settings → On this Mac.");
+  if (!samReady()) throw new Error("SAM 3 isn't installed on this Mac. Install it in Settings → People and cut-outs.");
   const w = await worker();
   const r = await w.ask<{ cutouts: SamCutout[] }>({ op: "segment", image, prompt, out, each: !!opts.each, threshold: opts.threshold ?? 0.5 });
   return r.cutouts;
@@ -342,7 +342,7 @@ export async function samSegment(image: string, prompt: string, out: string, opt
 /** Where what `prompt` describes is in a picture, best match first, without cutting anything out. */
 export async function samFind(image: string, prompt: string, threshold = 0.5): Promise<{ box: SamCutout["box"]; score: number }[]> {
   if (CUDA) return cuda.samFind(image, prompt, threshold);
-  if (!samReady()) throw new Error("SAM 3 isn't installed on this Mac. Install it in Settings → On this Mac.");
+  if (!samReady()) throw new Error("SAM 3 isn't installed on this Mac. Install it in Settings → People and cut-outs.");
   const w = await worker();
   return (await w.ask<{ found: { box: SamCutout["box"]; score: number }[] }>({ op: "find", image, prompt, threshold })).found;
 }

@@ -1035,6 +1035,9 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-row select:first-child { flex: 1; min-width: 0; }
 .make-ranking ul { margin: 4px 0 8px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .make-ranking li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+/* What ComfyUI can run: each model's name, and beside it whether it's ready or why not. */
+.make-workflows { margin: 4px 0 6px; padding: 0; list-style: none; display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; align-items: baseline; }
+.make-workflows li { display: contents; }
 .make-providers h5 { margin: 6px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); font-weight: 600; }
 .make-providers ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .make-providers li { min-width: 0; overflow: hidden; }

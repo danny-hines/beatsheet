@@ -452,7 +452,7 @@ export function stopSam(): Promise<void> {
 }
 
 async function ready(): Promise<Worker> {
-  if (!samReady()) throw new Error("SAM 3.1 isn't installed on this PC. Install it in Settings → On this PC.");
+  if (!samReady()) throw new Error("SAM 3.1 isn't installed on this PC. Install it in Settings → People and cut-outs.");
   return worker();
 }
 

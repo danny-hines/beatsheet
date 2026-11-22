@@ -1,7 +1,7 @@
 /**
- * Settings → Restoring: the programs that clean sound and restore picture on this computer (DeepFilterNet for voices,
- * Real-ESRGAN for upscaling, RIFE for frames in between), each installed, checked and timed here, and what each
- * cleaner and upscaler can do here. The one here comes first when this machine is quick at it.
+ * Settings → Restoring, a job at a time (cleaning voices, upscaling, smoother motion): the program that does it on
+ * this computer (DeepFilterNet, Real-ESRGAN, RIFE), installed, checked and timed here, then the services that do it
+ * with a key. The one here comes first when this machine is quick at it.
  */
 import type { ToolId, ToolStatus } from "@beatsheet/engine";
 import { FIXERS, type FixerJob, type FixerState } from "@beatsheet/schema";
@@ -18,40 +18,57 @@ const ABOUT_TOOL: Record<ToolId, string> = {
   rife: "Makes the frames in between, for smoother motion, on the graphics card. Downloads about 430 MB and keeps about 20.",
 };
 
-async function load(): Promise<Info> {
-  return (await fetch("/api/settings/restore").then((r) => r.json())) as Info;
+/**
+ * What's installed and ready, kept in one place: the page and the Settings nav's line both read it, so the line changes
+ * as soon as something is installed or removed on the page.
+ */
+let known: Info | undefined;
+const watching = new Set<(info: Info) => void>();
+async function refresh(): Promise<void> {
+  known = (await fetch("/api/settings/restore").then((r) => r.json())) as Info;
+  for (const tell of watching) tell(known);
+}
+function useInfo(): Info | undefined {
+  const [info, setInfo] = useState(known);
+  useEffect(() => {
+    watching.add(setInfo);
+    void refresh();
+    return () => void watching.delete(setInfo);
+  }, []);
+  return info;
 }
 
 /** A line for the Settings nav: what's installed here. */
 export function useRestoreSummary(): string {
-  const [info, setInfo] = useState<Info>();
-  useEffect(() => void load().then(setInfo), []);
+  const info = useInfo();
   if (!info) return "";
-  const ready = Object.values(info.tools).filter((t) => t.state === "ready");
+  const tools = Object.values(info.tools);
+  const ready = tools.filter((t) => t.state === "ready");
+  if (tools.some((t) => t.state === "installing")) return "Installing…";
   return ready.length ? ready.map((t) => t.label).join(", ") : "Nothing installed";
 }
 
+const JOBS: { does: FixerJob; title: string; tool: ToolId }[] = [
+  { does: "clean", title: "Cleaning voices", tool: "deepfilter" },
+  { does: "upscale", title: "Upscaling", tool: "realesrgan" },
+  { does: "frames", title: "Smoother motion", tool: "rife" },
+];
+
 export function RestoreSection() {
-  const [info, setInfo] = useState<Info>();
-  useEffect(() => void load().then(setInfo), []);
+  const info = useInfo();
   if (!info) return <p className="dim small">Loading…</p>;
-  const refresh = () => void load().then(setInfo);
   return (
     <div className="make-settings">
-      {(["deepfilter", "realesrgan", "rife"] as const).map((id) => (
-        <ToolCard key={id} s={info.tools[id]} onChange={refresh} />
+      {JOBS.map((job) => (
+        <section key={job.does}>
+          <h4>{job.title}</h4>
+          <ToolCard s={info.tools[job.tool]} onChange={() => void refresh()} />
+          <Services does={job.does} info={info} />
+        </section>
       ))}
-      <section>
-        <h4>What cleans voices</h4>
-        <Available does="clean" info={info} />
-      </section>
-      <section>
-        <h4>What upscales</h4>
-        <Available does="upscale" info={info} />
-        <p className="dim small">
-          beatsheet uses what's on {OS.here} when it's quick enough, and a service with your key when {OS.here} would take far longer than the footage plays. You can pick another when you restore a clip.
-        </p>
-      </section>
+      <p className="dim small">
+        beatsheet uses what's on {OS.here} when it's quick enough, and a service with your key when {OS.here} would take far longer than the footage plays. You can pick another when you restore a clip.
+      </p>
     </div>
   );
 }
@@ -128,8 +145,13 @@ function ToolCard({ s, onChange }: { s: ToolStatus; onChange: () => void }) {
   );
 }
 
-/** The fixers for one job, each saying whether it can be used here and what it costs. */
-function Available({ does, info }: { does: FixerJob; info: Info }) {
+/**
+ * The services that do one job, each saying what it costs and whether it's ready (what's on this computer has its card
+ * above). Nothing, for a job no service here does.
+ */
+function Services({ does, info }: { does: FixerJob; info: Info }) {
+  const services = FIXERS.filter((f) => f.does === does && f.runs === "service");
+  if (!services.length) return null;
   const state = (id: string) => {
     const s = info.states[id];
     if (!s) return "";
@@ -140,7 +162,7 @@ function Available({ does, info }: { does: FixerJob; info: Info }) {
   return (
     <div className="make-ranking">
       <ul>
-        {FIXERS.filter((f) => f.does === does).map((t) => (
+        {services.map((t) => (
           <li key={t.id}>
             <span>
               {t.label}
