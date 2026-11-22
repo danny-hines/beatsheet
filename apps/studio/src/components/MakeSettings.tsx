@@ -7,6 +7,7 @@ import type { ComfyCheck, InstallStatus, ProviderRow } from "@beatsheet/engine";
 import type { MakeOp, ServiceState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS, WINDOWS } from "../lib";
+import { ServiceMark } from "./ui";
 import { actions } from "../store";
 
 type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: number; spent?: number; plans?: ({ id: string } & ServiceState)[]; providers?: Record<MakeOp, ProviderRow[]> };
@@ -112,6 +113,7 @@ function Providers({ label, op, rows, choose }: { label: string; op: MakeOp; row
               <label className="check-row">
                 {/* On click, not change: clicking the one beatsheet guessed keeps it as the person's choice. */}
                 <input type="radio" name={`provider-${op}`} checked={r.inUse} disabled={!connected && r.kind === "plan"} readOnly onClick={() => (connected ? choose(op, r.id) : setAdding(r.id))} />
+                <ServiceMark id={r.id} label={r.label} />
                 <span>{r.label}</span>
                 <span className="pill">{r.kind === "plan" ? "Subscription" : "API key"}</span>
                 <span className="dim small make-provider-models" title={r.models.join(", ")}>
@@ -258,6 +260,7 @@ function ComfySection() {
         ) : null}
       </p>
       <div className="make-row">
+        <ServiceMark id="comfy" label="ComfyUI" />
         <span>ComfyUI at</span>
         <input value={url} onChange={(e) => setUrl(e.target.value)} disabled={on || busy} placeholder={c.suggested} aria-label="ComfyUI's address" />
         {on ? (

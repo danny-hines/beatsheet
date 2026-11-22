@@ -132,6 +132,14 @@ p { margin: 6px 0; }
 /* ---- Pills and chips ------------------------------------------------------------------------------------------- */
 .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #2a2e36; color: #c9ced6; white-space: nowrap; }
 .pill-recipe { background: #3a2f17; color: var(--accent); }
+/* A service's mark beside its name: its owner's picture as it is, a shape of theirs in the text colour, or a tile with its initial when we have no mark. */
+.service-mark { flex: none; display: inline-block; width: 16px; height: 16px; vertical-align: -3px; object-fit: contain; }
+.service-mark.shape { background: currentColor; -webkit-mask: var(--mark) center / contain no-repeat; mask: var(--mark) center / contain no-repeat; }
+.service-mark.tile { background: var(--line-2); color: var(--dim); border-radius: 4px; font-size: 10px; font-weight: 600; line-height: 16px; text-align: center; }
+.agent-pick button { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; }
+.agent-pick .service-mark { width: 13px; height: 13px; }
+.make-ranking .service-mark { margin-right: 6px; }
+.marks-note { margin: 18px 0 0; font-size: 11px; }
 .fid-idea { background: #2c2f35; color: #b8bec8; }
 .fid-board { background: #1d2f45; color: #8fc0f5; }
 .fid-rough { background: #3d2c17; color: #f0bf85; }
@@ -1046,7 +1054,7 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-providers label.check-row { display: flex; flex-direction: row; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
 .make-providers label.check-row > span { white-space: nowrap; }
 .make-provider-models { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-.make-provider-status, .make-provider-key { margin: 2px 0 0 24px; }
+.make-provider-status, .make-provider-key { margin: 2px 0 0 48px; }
 .make-provider-key { display: flex; flex-direction: column; gap: 4px; }
 
 /* Make mode: the composer, the board of takes (a row per request, what was made from a take nested under it) and the

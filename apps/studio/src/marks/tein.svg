@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <style>.ink{fill:#16161a}@media (prefers-color-scheme: dark){.ink{fill:#ffffff}}</style>
+  <g class="ink">
+    <rect x="0" y="12" width="8" height="8" opacity=".28"/>
+    <rect x="24" y="12" width="8" height="8" opacity=".34"/>
+    <rect x="0" y="24" width="8" height="8" opacity=".24"/>
+    <rect x="24" y="24" width="8" height="8" opacity=".3"/>
+    <rect x="4" y="16" width="2" height="2" opacity=".3"/>
+    <rect x="26" y="26" width="2" height="2" opacity=".3"/>
+    <rect x="2" y="26" width="2" height="2" opacity=".25"/>
+    <rect x="28" y="14" width="2" height="2" opacity=".3"/>
+    <rect x="0" y="0" width="8" height="8" opacity=".5"/>
+    <rect x="12" y="0" width="8" height="8"/>
+    <rect x="12" y="12" width="8" height="8" opacity=".88"/>
+    <rect x="12" y="24" width="6" height="6" opacity=".6"/>
+    <rect x="18" y="24" width="2" height="2" opacity=".3"/>
+    <rect x="14" y="30" width="2" height="2" opacity=".2"/>
+  </g>
+  <rect x="24" y="0" width="8" height="8" fill="#1f18c0"/>
+</svg>

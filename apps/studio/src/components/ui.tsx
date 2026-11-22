@@ -1,6 +1,7 @@
 import { describeAnchor, formatTime, resolveAnchor, type Anchor, type Fidelity } from "@beatsheet/schema";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { FIDELITY_LABEL } from "../lib";
+import { initial, markFile } from "../marks";
 import { useProject, useStore } from "../store";
 
 export function AnchorChip({ anchor, fallback }: { anchor?: Anchor; fallback?: string }) {
@@ -149,6 +150,28 @@ export function PopMenu({ x, y, onClose, children }: { x: number; y: number; onC
 
 export function Empty({ children }: { children: ReactNode }) {
   return <div className="empty">{children}</div>;
+}
+
+/**
+ * A service's or an agent's own mark, for the rows where a person picks or connects one. Decoration only: the name is
+ * always written beside it. Without a mark of theirs it's a tile with their initial, so a list's names still line up;
+ * `tile={false}` leaves the space empty instead, where nothing has to line up.
+ */
+export function ServiceMark({ id, label = id, tile = true }: { id: string; label?: string; tile?: boolean }) {
+  const mark = markFile(id);
+  if (!mark) return tile ? <span className="service-mark tile" aria-hidden>{initial(label)}</span> : null;
+  if (mark.shape) return <span className="service-mark shape" style={{ "--mark": `url("${mark.url}")` } as CSSProperties} aria-hidden />;
+  return <img className="service-mark" src={mark.url} alt="" aria-hidden />;
+}
+
+/** Whose the marks are: the line Google's and OpenAI's terms ask for wherever their marks are shown. */
+export function MarksNote() {
+  return (
+    <p className="dim small marks-note">
+      Each logo belongs to the company it stands for and only says what that row connects to; beatsheet isn't made or endorsed by any of them. The OpenAI logo is OpenAI's. Gemini and Google
+      Antigravity are trademarks of Google LLC.
+    </p>
+  );
 }
 
 /** beatsheet's mark: beat bars on a warm square, as on the app icon. */

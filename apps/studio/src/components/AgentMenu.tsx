@@ -1,6 +1,7 @@
 import type { AgentId, AgentSessionSummary, Presence } from "@beatsheet/engine";
 import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, timeAgo, OS } from "../lib";
+import { ServiceMark } from "./ui";
 import { actions, useStore } from "../store";
 
 /** Re-renders every `ms` so "12s ago" stays true. */
@@ -169,6 +170,7 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
         <div className="agent-pick">
           {AGENT_ORDER.map((id) => (
             <button key={id} className={`${id} missing`} disabled>
+              <ServiceMark id={id} tile={false} />
               {AGENT_NAMES[id]}
             </button>
           ))}
@@ -184,6 +186,7 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
       <div className="agent-pick">
         {list.map((a) => (
           <button key={a.id} className={`${a.id} ${a.id === agent?.id ? "on" : ""} ${a.installed ? "" : "missing"}`} onClick={() => setPick(a.id)}>
+            <ServiceMark id={a.id} tile={false} />
             {a.label}
           </button>
         ))}

@@ -7,6 +7,7 @@ import type { ToolId, ToolStatus } from "@beatsheet/engine";
 import { FIXERS, type FixerJob, type FixerState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
+import { ServiceMark } from "./ui";
 
 type Info = { tools: Record<ToolId, ToolStatus>; states: Record<string, FixerState> };
 
@@ -165,6 +166,7 @@ function Services({ does, info }: { does: FixerJob; info: Info }) {
         {services.map((t) => (
           <li key={t.id}>
             <span>
+              <ServiceMark id={t.id} label={t.label} />
               {t.label}
               <span className="dim small">
                 {" "}

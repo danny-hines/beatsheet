@@ -2,7 +2,7 @@ import type { AgentCheck, AgentId, AgentInfo, SamStatus, ServiceInfo } from "@be
 import { useEffect, useState, type ReactNode } from "react";
 import { AGENT_NAMES, AGENT_ORDER, CAPABILITY_LABELS, timeAgo, OS, WINDOWS } from "../lib";
 import { actions, useStore, type State } from "../store";
-import { Mark } from "./ui";
+import { Mark, MarksNote, ServiceMark } from "./ui";
 import { refreshVoices, useVoices, voiceLabel, VoicesSection } from "./Voices";
 import { MakeSection, ProvidersSetup, useMakeSummary } from "./MakeSettings";
 import { TranscribeSection, useTranscribeSummary } from "./TranscribeSettings";
@@ -125,6 +125,9 @@ const PANES = [
 type Pane = (typeof PANES)[number]["id"];
 
 /** Settings, after first launch: a dialog over the editor, one pane at a time. Every change saves as it's made. */
+/** The panes that show a service's or an agent's own mark, and so say whose the marks are. */
+const MARKED: Pane[] = ["agent", "services", "make", "transcribe", "restore"];
+
 export function SettingsDialog() {
   const setup = useStore((s) => s.setup);
   const list = useAgentList();
@@ -195,6 +198,7 @@ export function SettingsDialog() {
             ) : (
               <Abilities setup={setup} />
             )}
+            {MARKED.includes(pane) && <MarksNote />}
           </div>
           {!agentReady(setup) && pane !== "agent" && (
             <div className="settings-pane-foot small warn">
@@ -220,6 +224,7 @@ function AgentSection({ list, setup, autonomy }: { list?: AgentInfo[]; setup: Se
           : AGENT_ORDER.map((id) => (
               <div key={id} className={`setup-agent ${id}`}>
                 <div className="setup-agent-head">
+                  <ServiceMark id={id} tile={false} />
                   <strong>{AGENT_NAMES[id]}</strong>
                 </div>
                 <div className="small setup-status">
@@ -437,6 +442,7 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
   return (
     <div className={`setup-agent ${info.id} ${ok ? "ok" : ""} ${isDefault ? "chosen" : ""}`}>
       <div className="setup-agent-head">
+        <ServiceMark id={info.id} tile={false} />
         <strong>{AGENT_NAMES[info.id]}</strong>
         {isDefault && <span className="model-tag">Default</span>}
         <span className="spacer" />
@@ -563,6 +569,7 @@ function ServiceRow({ service }: { service: ServiceInfo }) {
   return (
     <div className={`setup-service ${service.configured ? "ok" : ""}`}>
       <div className="setup-service-head">
+        <ServiceMark id={service.id} label={service.label} />
         <strong>{service.label}</strong>
         <span className="spacer" />
         <a href={service.keyUrl} target="_blank" rel="noreferrer" className="small">

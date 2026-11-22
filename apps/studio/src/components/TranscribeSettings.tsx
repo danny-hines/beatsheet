@@ -7,6 +7,7 @@ import type { ModelSize, WhisperStatus } from "@beatsheet/engine";
 import { TRANSCRIBERS, type TranscriberState } from "@beatsheet/schema";
 import { useEffect, useState } from "react";
 import { OS } from "../lib";
+import { ServiceMark } from "./ui";
 
 type Info = { whisper: WhisperStatus; states: Record<string, TranscriberState>; whisperModel?: ModelSize };
 
@@ -196,6 +197,7 @@ function Services({ info }: { info: Info }) {
         {TRANSCRIBERS.filter((t) => t.runs === "service").map((t) => (
           <li key={t.id}>
             <span>
+              <ServiceMark id={t.id} label={t.label} />
               {t.label}
               <span className="dim small">
                 {" "}
