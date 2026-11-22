@@ -20,8 +20,15 @@ const SAME_AS: Record<string, string> = {
   comfy: "comfyui",
 };
 
-/** A mark's file, and whether it's a shape to tint rather than a picture to show as it is. */
-export type MarkFile = { url: string; shape: boolean };
+/**
+ * Files that carry their owner's clear space inside them, so the mark is only part of the picture: how much larger to
+ * draw the file so the mark itself is the size of the others. The file isn't touched; its empty margin spills past the
+ * slot. OpenAI's Blossom is the middle 51% of its file; ElevenLabs' two bars are a third of theirs in height.
+ */
+const LARGER: Record<string, number> = { openai: 1.9, elevenlabs: 2.7 };
+
+/** A mark's file, whether it's a shape to tint rather than a picture to show as it is, and how much larger to draw it. */
+export type MarkFile = { url: string; shape: boolean; scale?: number };
 
 const KINDS = [
   { ext: ".svg", shape: false },
@@ -34,7 +41,7 @@ export function markFile(id: string, files: Record<string, string> = FILES): Mar
   for (const name of new Set([id, SAME_AS[id] ?? id])) {
     for (const { ext, shape } of KINDS) {
       const url = files[`./marks/${name}${ext}`];
-      if (url) return { url, shape };
+      if (url) return { url, shape, ...(LARGER[name] ? { scale: LARGER[name] } : {}) };
     }
   }
   return undefined;

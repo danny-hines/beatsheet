@@ -7,6 +7,9 @@ shown only to say which service a row in Settings connects to, beside that servi
   another's mark are listed in `SAME_AS` in `../marks.ts`.
 - `<id>.svg` and `<id>.png` are shown exactly as their owner made them. `<id>.mask.svg` is a one-colour shape, drawn in
   the text colour (a CSS mask). Every file is byte for byte what its owner serves: don't edit, recolour or redraw one.
+- A file that carries its owner's clear space inside it (OpenAI's Blossom is the middle half of its file, ElevenLabs'
+  bars a third of theirs) is drawn
+  larger, by `LARGER` in `../marks.ts`, so the mark itself matches the others. That's a size on screen, not an edit.
 - A service with no file here gets a tile with its initial (nothing at all on the agent cards). Leave it that way when
   the owner's terms ask for permission first, or when nobody has read them.
 - Marks are for services and agents a person connects, not for the makers of models that run on someone else's service.

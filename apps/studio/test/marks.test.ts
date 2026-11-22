@@ -9,7 +9,7 @@ describe("service marks", () => {
   });
 
   it("knows a shape that's meant to be tinted from a picture", () => {
-    expect(markFile("elevenlabs", files)).toEqual({ url: "/eleven.svg", shape: true });
+    expect(markFile("elevenlabs", files)).toMatchObject({ url: "/eleven.svg", shape: true });
   });
 
   it("gives a plan or a hosted model the mark of what it runs on", () => {
@@ -17,6 +17,13 @@ describe("service marks", () => {
     expect(markFile("openai-whisper", files)?.url).toBe("/openai.svg");
     expect(markFile("seedvr", files)?.url).toBe("/fal.png");
     expect(markFile("scribe", files)?.url).toBe("/eleven.svg");
+  });
+
+  it("draws a file that's mostly clear space larger, for everything that goes by it", () => {
+    expect(markFile("openai", files)).toEqual({ url: "/openai.svg", shape: false, scale: 1.9 });
+    expect(markFile("chatgpt", files)?.scale).toBe(1.9);
+    expect(markFile("scribe", files)).toEqual({ url: "/eleven.svg", shape: true, scale: 2.7 });
+    expect(markFile("fal", files)?.scale).toBeUndefined();
   });
 
   it("prefers a mark of its own when there is one", () => {

@@ -160,8 +160,9 @@ export function Empty({ children }: { children: ReactNode }) {
 export function ServiceMark({ id, label = id, tile = true }: { id: string; label?: string; tile?: boolean }) {
   const mark = markFile(id);
   if (!mark) return tile ? <span className="service-mark tile" aria-hidden>{initial(label)}</span> : null;
-  if (mark.shape) return <span className="service-mark shape" style={{ "--mark": `url("${mark.url}")` } as CSSProperties} aria-hidden />;
-  return <img className="service-mark" src={mark.url} alt="" aria-hidden />;
+  const larger = mark.scale ? { transform: `scale(${mark.scale})` } : undefined;
+  if (mark.shape) return <span className="service-mark shape" style={{ "--mark": `url("${mark.url}")`, ...larger } as CSSProperties} aria-hidden />;
+  return <img className="service-mark" src={mark.url} style={larger} alt="" aria-hidden />;
 }
 
 /** Whose the marks are: the line Google's and OpenAI's terms ask for wherever their marks are shown. */
