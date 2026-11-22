@@ -59,6 +59,10 @@ async function openWindow() {
     }
   });
   win.on("closed", () => (win = null));
+  // In full screen the Mac's window buttons are gone, so the studio takes back the room its top bar leaves for them.
+  const tellFullScreen = () => win?.webContents.send("beatsheet:full-screen", win.isFullScreen());
+  win.on("enter-full-screen", tellFullScreen);
+  win.on("leave-full-screen", tellFullScreen);
   await win.loadURL(currentOrigin);
   // For checking the app without a person at the screen: a picture of this window only, then (optionally) quit.
   const snap = process.env.BEATSHEET_SNAPSHOT;
@@ -98,6 +102,7 @@ ipcMain.handle("beatsheet:save-video", async (_e, opts: { name: string; dir?: st
   const r = win ? await dialog.showSaveDialog(win, options) : await dialog.showSaveDialog(options);
   return r.canceled || !r.filePath ? null : r.filePath.toLowerCase().endsWith(`.${ext}`) ? r.filePath : `${r.filePath}.${ext}`;
 });
+ipcMain.handle("beatsheet:full-screen", () => !!win?.isFullScreen());
 ipcMain.handle("beatsheet:reveal", (_e, path: string) => shell.showItemInFolder(path));
 ipcMain.handle("beatsheet:open-file", (_e, path: string) => shell.openPath(path));
 

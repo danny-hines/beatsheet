@@ -170,6 +170,8 @@ type Desktop = {
   /** Photos and videos, a folder of them, or several of either (on Windows, files or a folder: `kind`). */
   pickFootage?: (kind?: "files" | "folder") => Promise<string[] | null>;
   onMenu: (fn: (command: string) => void) => () => void;
+  /** Whether the window fills the screen: told now and whenever it changes. Returns how to stop listening. */
+  onFullScreen?: (fn: (on: boolean) => void) => () => void;
   /** Asks macOS for the camera or microphone; resolves to granted, denied, restricted or not-determined. */
   mediaAccess?: (kind: "camera" | "microphone") => Promise<string>;
   /** Opens System Settings at the privacy pane for the camera, the microphone or screen recording. */

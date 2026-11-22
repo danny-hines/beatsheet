@@ -73,12 +73,15 @@ export function App() {
     });
     if (desktop) document.documentElement.classList.add("desktop");
     if (desktop && WINDOWS) document.documentElement.classList.add("win");
+    // html.fullscreen: the Mac's window buttons are hidden, so the top bar needn't leave them room.
+    const offFullScreen = desktop?.onFullScreen?.((on) => document.documentElement.classList.toggle("fullscreen", on));
     void actions.loadAgent().then(() => getState().agent.agent && actions.loadAgentList());
     return () => {
       window.removeEventListener("hashchange", onHash);
       window.removeEventListener("focus", onFocus);
       events.close();
       offMenu?.();
+      offFullScreen?.();
     };
   }, []);
   usePlayback();

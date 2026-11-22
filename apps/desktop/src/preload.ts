@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld("beatsheet", {
   pathFor: (file: File) => webUtils.getPathForFile(file),
   mediaAccess: (kind: "camera" | "microphone") => ipcRenderer.invoke("beatsheet:media-access", kind) as Promise<string>,
   openPrivacy: (kind: "camera" | "microphone" | "screen") => ipcRenderer.invoke("beatsheet:open-privacy", kind),
+  /** Whether the window fills the screen (the Mac hides the window buttons then): told now, and whenever it changes. */
+  onFullScreen: (fn: (on: boolean) => void) => {
+    const listener = (_e: unknown, on: boolean) => fn(on);
+    ipcRenderer.on("beatsheet:full-screen", listener);
+    void ipcRenderer.invoke("beatsheet:full-screen").then(fn);
+    return () => ipcRenderer.off("beatsheet:full-screen", listener);
+  },
   onMenu: (fn: (command: string) => void) => {
     const listener = (_e: unknown, command: string) => fn(command);
     ipcRenderer.on("beatsheet:menu", listener);

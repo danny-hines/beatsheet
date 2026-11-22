@@ -772,7 +772,9 @@ button.big { padding: 8px 16px; font-size: var(--t-4); }
 
 /* ---- In the Mac app ----------------------------------------------------------------------------------------------- */
 /* The window has no title bar: the top bar is where you drag it, with room for the window buttons. */
-html.desktop .topbar { padding-left: 64px; -webkit-app-region: drag; }
+html.desktop .topbar { padding-left: 84px; -webkit-app-region: drag; transition: padding-left 0.15s; } /* The width of the window buttons, not a step of the spacing grid. */
+/* In full screen the window buttons are hidden, so the bar starts at the edge like everywhere else. */
+html.desktop.fullscreen .topbar { padding-left: 12px; }
 html.desktop .topbar button, html.desktop .topbar select, html.desktop .topbar a { -webkit-app-region: no-drag; }
 /* Anything you type in or pick from that opens inside the bar (the cut menu, its rename box, any dialog) isn't part of the handle. */
 html.desktop .topbar input, html.desktop .topbar textarea, html.desktop .topbar label, html.desktop .topbar .cut-panel, html.desktop .topbar .modal-back, html.desktop .modal-back, html.desktop .viewer { -webkit-app-region: no-drag; }
