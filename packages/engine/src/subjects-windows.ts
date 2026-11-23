@@ -16,7 +16,7 @@ import { promisify } from "node:util";
 import type { Rect } from "@beatsheet/schema";
 import { cliEnv } from "./agent/cli.ts";
 import { alphaWebm } from "./media.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { findOnPath, pathKey } from "./platform.ts";
 import { findUv } from "./pyenv.ts";
 import { samReady } from "./sam.ts";
@@ -90,7 +90,7 @@ export const readRate = (duration: number | undefined, most: number, least = 1) 
 
 // ---- Without SAM: OpenCV, through uv
 
-const LITE = join(REPO, "packages", "engine", "native", "subjects-lite.py");
+const LITE = join(RESOURCES, "packages", "engine", "native", "subjects-lite.py");
 const OPENCV = ["opencv-contrib-python-headless==4.10.0.84", "numpy<2"];
 /** OpenCV's face finder (YuNet, 230 KB), pinned and checked. */
 const FACE_MODEL = {

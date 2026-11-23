@@ -2,7 +2,7 @@
  * Codex, hosted with `codex app-server` and the person's own ChatGPT sign-in. beatsheet's tools come in as an MCP server
  * in the thread's config; AGENTS.md comes from the workspace.
  */
-import { inRepo, REPO } from "../paths.ts";
+import { inWorkspace, WORKSPACE } from "../paths.ts";
 import { readSettings } from "../settings.ts";
 import { CHROME_DEVTOOLS, cliEnv, codexHasChrome, findCli, MCP_SERVER } from "./cli.ts";
 import { StdioRpc, uuid7, type RpcId } from "./rpc.ts";
@@ -51,7 +51,7 @@ function toItem(x: CodexItem): AgentItem | undefined {
     case "commandExecution":
       return { id: x.id, kind: "tool", tool: "shell", status, detail: x.command as string };
     case "fileChange":
-      return { id: x.id, kind: "tool", tool: "edit files", status, detail: (x.changes as { path: string }[]).map((c) => inRepo(c.path)).join(", ") };
+      return { id: x.id, kind: "tool", tool: "edit files", status, detail: (x.changes as { path: string }[]).map((c) => inWorkspace(c.path)).join(", ") };
     case "mcpToolCall":
       return { id: x.id, kind: "tool", status, server: x.server as string, tool: x.tool as string, args: x.arguments, error: (x.error as { message: string } | null)?.message };
     case "webSearch":
@@ -83,7 +83,7 @@ export class CodexAdapter extends AgentAdapter {
       rpc.on("notification", (m: string, p: Record<string, unknown>) => this.onEvent(m, p));
       rpc.on("request", (id: RpcId, m: string, p: Record<string, unknown>) => this.onRequest(id, m, p));
       rpc.on("closed", (err: Error) => this.rpc === rpc && err.message !== "closed" && this.fail(err));
-      rpc.spawn(codex, ["app-server"], { cwd: REPO, env: await cliEnv() });
+      rpc.spawn(codex, ["app-server"], { cwd: WORKSPACE, env: await cliEnv() });
       await rpc.request("initialize", { clientInfo: { name: "beatsheet_studio", title: "beatsheet studio", version: "0.1.0" }, capabilities: null });
       rpc.notify("initialized");
       this.rpc = rpc;
@@ -100,7 +100,7 @@ export class CodexAdapter extends AgentAdapter {
   private threadOptions(model?: string) {
     return {
       ...(model ? { model } : {}),
-      cwd: REPO,
+      cwd: WORKSPACE,
       approvalPolicy: readSettings().autonomy === "free" ? "never" : "on-request",
       sandbox: "workspace-write",
       config: { mcp_servers: { beatsheet: MCP_SERVER, ...(readSettings().chrome && !codexHasChrome() ? { "chrome-devtools": CHROME_DEVTOOLS } : {}) } },
@@ -123,7 +123,7 @@ export class CodexAdapter extends AgentAdapter {
 
   async sessions(): Promise<AgentSessionSummary[]> {
     const rpc = await this.host();
-    const r = await rpc.request<{ data: Thread[] }>("thread/list", { cwd: REPO, limit: 40, sourceKinds: ["appServer", "cli", "vscode", "exec"] });
+    const r = await rpc.request<{ data: Thread[] }>("thread/list", { cwd: WORKSPACE, limit: 40, sourceKinds: ["appServer", "cli", "vscode", "exec"] });
     return r.data.flatMap(
       (t) => studioSession({ id: t.id, updatedAt: new Date(t.updatedAt * 1000).toISOString(), name: t.name ?? undefined, model: t.model ?? undefined, prompt: t.preview }) ?? [],
     );

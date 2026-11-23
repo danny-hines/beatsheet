@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { cliEnv } from "./agent/cli.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { containerTrouble, inContainer, run as runLaunch, systemExe, untarCommand, venvPython } from "./platform.ts";
 import { download, dropCache, du, findUv, stream } from "./pyenv.ts";
 import type { SamCutout, SamStatus } from "./sam.ts";
@@ -66,7 +66,7 @@ const paths = {
   weights: join(SAM_DIR, "weights", MODEL.file),
   ready: join(SAM_DIR, "ready.json"),
 };
-const WORKER = join(REPO, "packages", "engine", "native", "sam-cuda-worker.py");
+const WORKER = join(RESOURCES, "packages", "engine", "native", "sam-cuda-worker.py");
 
 type Ready = { commit: string; model: string; at: string; loadSeconds: number; checkSeconds: number; bytes: number; gpu: string; triton: string };
 

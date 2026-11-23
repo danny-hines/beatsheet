@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { HERE, IS_WINDOWS, run as runLaunch, unzipCommand } from "./platform.ts";
 import { download, du, stream, type Download } from "./pyenv.ts";
 import { SETTINGS_DIR } from "./settings.ts";
@@ -225,7 +225,7 @@ async function selfCheck(id: ToolId, binary: string, log: (l: string) => void): 
     if (id === "deepfilter") {
       // The check clip with tape-like hiss under it, padded to half a minute so loading the model isn't most of the time.
       const noisy = join(dir, "noisy.wav");
-      const voice = join(REPO, "packages", "engine", "native", "whisper-check.mp3");
+      const voice = join(RESOURCES, "packages", "engine", "native", "whisper-check.mp3");
       await exec("ffmpeg", ["-v", "error", "-y", "-i", voice, "-f", "lavfi", "-i", "anoisesrc=color=pink:amplitude=0.08:sample_rate=48000", "-filter_complex", "[0]aresample=48000,apad=whole_dur=30[v];[v][1]amix=inputs=2:duration=first:normalize=0", "-ac", "1", "-ar", "48000", "-c:a", "pcm_s16le", noisy]);
       const t = Date.now();
       const out = await runDeepFilter({ binary }, noisy, join(dir, "out"));

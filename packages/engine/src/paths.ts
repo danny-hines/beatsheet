@@ -3,21 +3,59 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import type { Asset, Source } from "@beatsheet/schema";
 
-/** The beatsheet folder: projects, examples, recipes and the MCP server live under it. The Mac app sets it explicitly. */
-export const REPO = process.env.BEATSHEET_REPO ?? resolve(import.meta.dirname, "..", "..", "..");
-/** Real projects live outside git; examples ship with the repo. */
-export const ROOTS = {
-  projects: process.env.BEATSHEET_PROJECTS ?? join(REPO, "projects"),
-  examples: join(REPO, "examples"),
+export type Roots = {
+  /** What ships with beatsheet and is only read: helper sources, workers, sounds, workflows, examples, its own code. Laid out like the repository. */
+  resources: string;
+  /** The person's beatsheet folder: their projects, and the instructions and recipes agents work from. Agents run in it. */
+  workspace: string;
+  /** beatsheet's scratch: its log, which agents are connected, sign-in scripts. */
+  runtime: string;
+  projects: string;
+  examples: string;
 };
+
+/**
+ * beatsheet's folders, from the environment. In a checkout they're all the repository (`checkout`, asked for only when
+ * something isn't set); an installed app sets BEATSHEET_RESOURCES and BEATSHEET_WORKSPACE, because what it ships with
+ * can't be written to and the person's projects can't live inside it.
+ */
+export function rootsFrom(env: Record<string, string | undefined>, checkout: () => string): Roots {
+  const resources = env.BEATSHEET_RESOURCES || checkout();
+  const workspace = env.BEATSHEET_WORKSPACE || checkout();
+  return {
+    resources,
+    workspace,
+    runtime: env.BEATSHEET_RUNTIME || join(workspace, ".beatsheet"),
+    projects: env.BEATSHEET_PROJECTS || join(workspace, "projects"),
+    examples: join(resources, "examples"),
+  };
+}
+
+/** The same folders as a child process should be told them (the MCP server an agent starts may not inherit this environment). */
+export const rootsEnv = (r: Roots): Record<string, string> => ({
+  BEATSHEET_RESOURCES: r.resources,
+  BEATSHEET_WORKSPACE: r.workspace,
+  BEATSHEET_RUNTIME: r.runtime,
+  BEATSHEET_PROJECTS: r.projects,
+});
+
+// The desktop app sets BEATSHEET_REPO: bundled into one file, this code can't tell where the repository is.
+const roots = rootsFrom(process.env, () => process.env.BEATSHEET_REPO ?? resolve(import.meta.dirname, "..", "..", ".."));
+export const RESOURCES = roots.resources;
+export const WORKSPACE = roots.workspace;
+export const RUNTIME = roots.runtime;
+/** Real projects live outside git; examples ship with beatsheet. */
+export const ROOTS = { projects: roots.projects, examples: roots.examples };
+/** What a process beatsheet starts needs in its environment to use the same folders. */
+export const ROOTS_ENV = rootsEnv(roots);
 
 export const expandHome = (p: string) => (p === "~" || p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\")) ? join(homedir(), p.slice(1)) : p);
 
 /** Whether two resolved paths name the same file or folder (Windows doesn't mind the case). */
 export const samePath = (a: string, b: string) => (process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b);
 
-/** A path inside the beatsheet folder as the folder's own, for showing (whichever slash it uses). */
-export const inRepo = (p: string) => p.replace(`${REPO}/`, "").replace(`${REPO}\\`, "");
+/** A path inside the person's beatsheet folder as the folder's own, for showing (whichever slash it uses). */
+export const inWorkspace = (p: string) => p.replace(`${WORKSPACE}/`, "").replace(`${WORKSPACE}\\`, "");
 
 export const isProjectId = (id: string) => /^[a-z0-9][a-z0-9-]*$/i.test(id);
 

@@ -18,7 +18,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { promisify } from "node:util";
 import { cliEnv } from "./agent/cli.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { download, du, findUv, stream } from "./pyenv.ts";
 import * as cuda from "./sam-cuda.ts";
 import { SETTINGS_DIR } from "./settings.ts";
@@ -48,7 +48,7 @@ const paths = {
   ready: join(SAM_DIR, "ready.json"),
   uv: join(SAM_DIR, "bin", "uv"),
 };
-const WORKER = join(REPO, "packages", "engine", "native", "sam-worker.py");
+const WORKER = join(RESOURCES, "packages", "engine", "native", "sam-worker.py");
 
 type Ready = { commit: string; at: string; loadSeconds: number; checkSeconds: number; bytes: number };
 export type SamStatus = {

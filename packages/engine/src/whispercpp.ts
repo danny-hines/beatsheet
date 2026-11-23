@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SaidWord } from "@beatsheet/schema";
 import { cliEnv } from "./agent/cli.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { findOnPath, HERE, IS_WINDOWS, pathKey, run as runLaunch, systemExe, unzipCommand, untarCommand } from "./platform.ts";
 import { download, du, stream, type Download } from "./pyenv.ts";
 import { readSettings, SETTINGS_DIR } from "./settings.ts";
@@ -23,7 +23,7 @@ const exec = promisify(execFile);
 
 export const WHISPER_DIR = join(SETTINGS_DIR, "whisper");
 const paths = { ready: join(WHISPER_DIR, "ready.json"), models: join(WHISPER_DIR, "models") };
-const CHECK = join(REPO, "packages", "engine", "native", "whisper-check.mp3");
+const CHECK = join(RESOURCES, "packages", "engine", "native", "whisper-check.mp3");
 
 /** whisper.cpp's build b5454, pinned so an install today matches one next month. */
 const RELEASE = "https://github.com/ggml-org/whisper.cpp/releases/download/b5454";

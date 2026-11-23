@@ -12,7 +12,7 @@ import { renderMedia, renderStill, selectComposition } from "@remotion/renderer"
 import { EXPORT_KINDS, type ExportKind, type Project } from "@beatsheet/schema";
 import type { MediaQuality, VideoProps } from "@beatsheet/video";
 import { startServer } from "./http.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { loadProject } from "./store.ts";
 import { wordsInCut } from "./transcribe.ts";
 
@@ -21,7 +21,7 @@ const run = promisify(execFile);
 const chromiumOptions = { gl: "angle" as const };
 
 let serveUrl: Promise<string> | undefined;
-const getBundle = () => (serveUrl ??= bundle({ entryPoint: join(REPO, "packages", "video", "src", "root.tsx") }));
+const getBundle = () => (serveUrl ??= bundle({ entryPoint: join(RESOURCES, "packages", "video", "src", "root.tsx") }));
 
 /** The composition for a cut, or for `override`: a stand-in cut made from the project's material (a look's preview, say). */
 async function prepare(id: string, cut: string | undefined, format: string | undefined, quality: MediaQuality, override?: Project, transparent?: boolean) {

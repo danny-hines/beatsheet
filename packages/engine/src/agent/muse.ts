@@ -4,7 +4,7 @@
  */
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { REPO } from "../paths.ts";
+import { WORKSPACE } from "../paths.ts";
 import { readSettings } from "../settings.ts";
 import { CHROME_DEVTOOLS, cliEnv, findCli, spawnCli } from "./cli.ts";
 import { StdioRpc, uuid7 } from "./rpc.ts";
@@ -118,7 +118,7 @@ async function plan(): Promise<string | undefined> {
   if (!muse) return undefined;
   const env = await cliEnv();
   const out = await new Promise<string>((resolve) => {
-    const child = spawnCli(muse, ["usage", "--json"], { cwd: REPO, env, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawnCli(muse, ["usage", "--json"], { cwd: WORKSPACE, env, stdio: ["ignore", "pipe", "ignore"] });
     let text = "";
     child.stdout!.on("data", (d) => (text += d));
     const timer = setTimeout(() => child.kill(), 30_000);
@@ -155,7 +155,7 @@ export class MuseAdapter extends AgentAdapter {
       // Approvals and input prompts arrive as requests but are answered with commands; refuse anything else.
       rpc.on("request", (id, method: string) => !["approval/request", "userInput/request"].includes(method) && rpc.refuse(id));
       rpc.on("closed", (err: Error) => this.rpc === rpc && err.message !== "closed" && this.fail(err));
-      rpc.spawn(muse, ["serve", "--trust-workspace"], { cwd: REPO });
+      rpc.spawn(muse, ["serve", "--trust-workspace"], { cwd: WORKSPACE });
       await rpc.request("initialize", { clientInfo: { name: "beatsheet_studio", title: "beatsheet studio", version: "0.1.0" }, capabilities: { requestedCapabilities: ["sessionMcp"] } });
       rpc.notify("initialized", {});
       this.rpc = rpc;
@@ -199,7 +199,7 @@ export class MuseAdapter extends AgentAdapter {
     const rpc = await this.host();
     const r = await rpc.request<{ sessions: { sessionId: string; name?: string; firstUserPrompt?: string; modelId?: string | null; lastActivityAt?: string; updatedAt?: string }[] }>(
       "session/list",
-      { workspaceRoot: REPO, limit: 40 },
+      { workspaceRoot: WORKSPACE, limit: 40 },
     );
     return r.sessions.flatMap((s) => studioSession({ id: s.sessionId, updatedAt: s.lastActivityAt ?? s.updatedAt ?? "", name: s.name, model: s.modelId ?? undefined, prompt: s.firstUserPrompt }) ?? []);
   }
@@ -210,7 +210,7 @@ export class MuseAdapter extends AgentAdapter {
     this.replace({ status: "starting", project: opts.project, cut: opts.cut, model });
     try {
       const rpc = await this.host();
-      const r = await rpc.request<{ session: { sessionId: string; name?: string; modelId?: string | null } }>("session/start", { commandId: uuid7(), modelId: model, workspaceRoot: REPO, config: sessionConfig() });
+      const r = await rpc.request<{ session: { sessionId: string; name?: string; modelId?: string | null } }>("session/start", { commandId: uuid7(), modelId: model, workspaceRoot: WORKSPACE, config: sessionConfig() });
       this.named = !!r.session.name;
       this.set({ status: "idle", sessionId: r.session.sessionId, name: r.session.name, model: r.session.modelId ?? model });
     } catch (err) {
@@ -309,7 +309,7 @@ export class MuseAdapter extends AgentAdapter {
     const id = this.view.sessionId;
     const rpc = this.rpc;
     if (!rpc || !id) return;
-    const r = await rpc.request<{ sessions: { sessionId: string; name?: string }[] }>("session/list", { workspaceRoot: REPO, limit: 10 }).catch(() => undefined);
+    const r = await rpc.request<{ sessions: { sessionId: string; name?: string }[] }>("session/list", { workspaceRoot: WORKSPACE, limit: 10 }).catch(() => undefined);
     const name = r?.sessions.find((x) => x.sessionId === id)?.name;
     if (name && this.view.sessionId === id) {
       this.named = true;

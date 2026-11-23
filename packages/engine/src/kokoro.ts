@@ -11,7 +11,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, statfsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cliEnv } from "./agent/cli.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { containerTrouble, HERE, inContainer, venvPython } from "./platform.ts";
 import { dropCache, du, findUv, stream } from "./pyenv.ts";
 import { SETTINGS_DIR } from "./settings.ts";
@@ -34,7 +34,7 @@ const paths = {
   hf: join(KOKORO_DIR, "hf"),
   ready: join(KOKORO_DIR, "ready.json"),
 };
-const WORKER = join(REPO, "packages", "engine", "native", "kokoro-worker.py");
+const WORKER = join(RESOURCES, "packages", "engine", "native", "kokoro-worker.py");
 
 /**
  * The voices worth offering, best first (Kokoro's own grades), with the language each speaks. The name's first letter

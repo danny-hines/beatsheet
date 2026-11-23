@@ -7,7 +7,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { build, type Plugin } from "esbuild";
-import { expandHome, projectDir, REPO } from "./paths.ts";
+import { expandHome, projectDir, RESOURCES } from "./paths.ts";
 import { loadFile } from "./store.ts";
 
 /** What the page provides; a scene's imports of these are handed the page's own copy. */
@@ -69,7 +69,7 @@ export async function compileScene(file: string, nodeModules: string[] = []): Pr
       target: "es2022",
       jsx: "automatic",
       loader: { ".svg": "text", ".glsl": "text", ".json": "json" },
-      nodePaths: [...nodeModules, join(REPO, "node_modules")],
+      nodePaths: [...nodeModules, join(RESOURCES, "node_modules")],
       plugins: [host],
       logLevel: "silent",
       sourcemap: "inline",

@@ -3,14 +3,14 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { BeatGrid, MusicSection } from "@beatsheet/schema";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 
 const run = promisify(execFile);
 
 export type MusicAnalysis = { grid: BeatGrid; duration: number; sections: MusicSection[]; barEnergy: number[] };
 
 export async function analyzeMusic(file: string): Promise<MusicAnalysis> {
-  const script = join(REPO, "packages", "engine", "py", "analyze_music.py");
+  const script = join(RESOURCES, "packages", "engine", "py", "analyze_music.py");
   const { stdout } = await run("uv", ["run", "--quiet", "--with", "librosa", "--with", "numpy", "python", "-I", script, file], {
     maxBuffer: 8 * 1024 * 1024,
   });

@@ -6,10 +6,10 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { slugify, type Asset } from "@beatsheet/schema";
 import { addAsset } from "./ingest.ts";
-import { projectDir, REPO } from "./paths.ts";
+import { projectDir, RESOURCES } from "./paths.ts";
 import { getSecret, readSettings } from "./settings.ts";
 
-export const SFX_DIR = join(REPO, "packages", "engine", "sfx");
+export const SFX_DIR = join(RESOURCES, "packages", "engine", "sfx");
 
 /** Makes a sound effect with ElevenLabs and adds it to the project's assets (kind sfx), for sfx cues to use by id. */
 export async function generateSfx(projectId: string, req: { prompt: string; seconds?: number; label?: string; loop?: boolean }): Promise<Asset> {

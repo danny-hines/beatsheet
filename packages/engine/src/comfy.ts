@@ -28,7 +28,7 @@ import { promisify } from "node:util";
 import sharp from "sharp";
 import type { Quality, ServiceState, Unusable } from "@beatsheet/schema";
 import { FalError } from "./fal.ts";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { download, type Download } from "./pyenv.ts";
 import { gpu } from "./sam-cuda.ts";
 import { SETTINGS_DIR, getSecret, readSettings, updateSettings } from "./settings.ts";
@@ -39,7 +39,7 @@ const exec = promisify(execFile);
 export const COMFY_DEFAULT = "http://127.0.0.1:8188";
 
 /** The workflows that ship with beatsheet, and the person's own exports, which take their place. */
-const BUILT_IN = join(REPO, "packages", "engine", "comfy");
+const BUILT_IN = join(RESOURCES, "packages", "engine", "comfy");
 export const OWN_WORKFLOWS = join(SETTINGS_DIR, "comfy");
 
 /** full: no distill LoRA and more steps, for finals; fast: a few steps, for roughs. */

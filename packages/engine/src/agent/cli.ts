@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { REPO } from "../paths.ts";
+import { RESOURCES, ROOTS_ENV, RUNTIME, WORKSPACE } from "../paths.ts";
 import { antigravityServer, installAntigravity } from "./antigravity-server.ts";
 import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, registryPath, systemExe, withPath } from "../platform.ts";
 
@@ -82,7 +82,7 @@ export async function cliVersions(name: CliName): Promise<{ version?: string; la
   if (!cli) return {};
   const env = await cliEnv();
   const said = await new Promise<string>((resolve) => {
-    const child = spawnCli(cli, ["--version"], { cwd: REPO, env, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawnCli(cli, ["--version"], { cwd: WORKSPACE, env, stdio: ["ignore", "pipe", "ignore"] });
     let text = "";
     child.stdout!.on("data", (d) => (text += d));
     const timer = setTimeout(() => child.kill(), 15_000);
@@ -170,8 +170,8 @@ export async function useLoginPath(): Promise<void> {
  */
 export const MCP_SERVER = {
   command: process.versions.electron ? "node" : process.execPath,
-  args: [join(REPO, "packages", "engine", "src", "mcp.ts")],
-  env: { BEATSHEET_HOSTED: "1" },
+  args: [join(RESOURCES, "packages", "engine", "src", "mcp.ts")],
+  env: { BEATSHEET_HOSTED: "1", ...ROOTS_ENV },
 };
 
 /**
@@ -181,7 +181,7 @@ export const MCP_SERVER = {
  */
 export const CHROME_DEVTOOLS = {
   command: MCP_SERVER.command,
-  args: [join(REPO, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js"), "--autoConnect", "--no-usage-statistics"],
+  args: [join(RESOURCES, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js"), "--autoConnect", "--no-usage-statistics"],
 };
 
 /** Whether the person's Codex has its own way into their Chrome (OpenAI's Chrome plugin, enabled in its config). */
@@ -212,7 +212,7 @@ export async function updateCli(name: CliName, onLine: (line: string) => void): 
   const cli = await findCli(name);
   if (!update || !cli) throw new Error(`beatsheet can't update ${name} for you`);
   onLine(`$ ${name} ${update.args.join(" ")}`);
-  await followed(spawnCli(cli, update.args, { cwd: REPO, env: await cliEnv(), stdio: ["ignore", "pipe", "pipe"] }), onLine, "The updater");
+  await followed(spawnCli(cli, update.args, { cwd: WORKSPACE, env: await cliEnv(), stdio: ["ignore", "pipe", "pipe"] }), onLine, "The updater");
   forgetCli(name);
 }
 
@@ -240,14 +240,14 @@ function followed(child: ReturnType<typeof spawn>, onLine: (line: string) => voi
 export async function openSignIn(name: CliName): Promise<void> {
   const cli = await findCli(name);
   if (!cli) throw new Error(`${name} isn't installed`);
-  const dir = join(REPO, ".beatsheet", "launch");
+  const dir = join(RUNTIME, "launch");
   mkdirSync(dir, { recursive: true });
   if (WINDOWS) {
     const script = join(dir, `sign-in-${name}.cmd`);
     // `call`, so a .cmd shim (npm's codex) returns to the script; /k keeps the window open to read what it said.
     const command = SETUP[name].signIn.replace(/^\S+/, `call "${cli}"`);
     // UTF-8 (chcp 65001), as the script is written, for a folder or user name beyond ASCII.
-    writeFileSync(script, ["@echo off", "chcp 65001 >nul", `title Sign in to ${name}`, `cd /d "${REPO}"`, command, ""].join("\r\n"));
+    writeFileSync(script, ["@echo off", "chcp 65001 >nul", `title Sign in to ${name}`, `cd /d "${WORKSPACE}"`, command, ""].join("\r\n"));
     const child = spawn(process.env.ComSpec ?? systemExe("cmd.exe"), ["/d", "/c", `start "Sign in to ${name}" "${process.env.ComSpec ?? systemExe("cmd.exe")}" /k "${script}"`], {
       env: await cliEnv(),
       detached: true,
@@ -259,7 +259,7 @@ export async function openSignIn(name: CliName): Promise<void> {
   }
   const script = join(dir, `sign-in-${name}.command`);
   const command = SETUP[name].signIn.replace(/^\S+/, `'${cli}'`);
-  writeFileSync(script, ["#!/bin/zsh -l", `cd '${REPO}'`, `printf '\\e]0;Sign in to ${name}\\a'`, command, ""].join("\n"));
+  writeFileSync(script, ["#!/bin/zsh -l", `cd '${WORKSPACE}'`, `printf '\\e]0;Sign in to ${name}\\a'`, command, ""].join("\n"));
   chmodSync(script, 0o755);
   await run("open", ["-a", "Terminal", script]);
 }

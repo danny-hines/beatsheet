@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { powershell, psString, run as runLaunch } from "./platform.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
@@ -21,7 +21,7 @@ const building = new Map<string, Promise<string>>();
 /** The helper's binary, building it if needed. */
 export function swiftHelper(name: "vision" | "speech"): Promise<string> {
   if (process.platform !== "darwin") return Promise.reject(new Error(`${WHAT[name]} need a Mac.`));
-  const source = join(REPO, "packages", "engine", "native", `${name}.swift`);
+  const source = join(RESOURCES, "packages", "engine", "native", `${name}.swift`);
   const hash = createHash("sha256").update(readFileSync(source)).digest("hex").slice(0, 12);
   const dir = join(SETTINGS_DIR, "bin");
   const bin = join(dir, `beatsheet-${name}-${hash}`);
@@ -59,7 +59,7 @@ const CS: Record<string, { what: string; references: string[] }> = {
 /** The Windows helper's .exe, building it if needed. */
 export function windowsHelper(name: "credentials" | "speech"): Promise<string> {
   if (process.platform !== "win32") return Promise.reject(new Error(`${CS[name]!.what} needs Windows.`));
-  const source = join(REPO, "packages", "engine", "native", `${name}.cs`);
+  const source = join(RESOURCES, "packages", "engine", "native", `${name}.cs`);
   const hash = createHash("sha256").update(readFileSync(source)).digest("hex").slice(0, 12);
   const dir = join(SETTINGS_DIR, "bin");
   const exe = join(dir, `beatsheet-${name}-${hash}.exe`);

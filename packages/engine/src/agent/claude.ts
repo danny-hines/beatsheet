@@ -8,14 +8,14 @@ import { randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { inRepo, REPO } from "../paths.ts";
+import { inWorkspace, WORKSPACE } from "../paths.ts";
 import { IS_WINDOWS } from "../platform.ts";
 import { readSettings } from "../settings.ts";
 import { cliEnv, findCli, MCP_SERVER, spawnCli } from "./cli.ts";
 import { AgentAdapter, message, planName, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
 
 /** Claude Code keeps each workspace's transcripts in a folder named after its path. */
-const TRANSCRIPTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", REPO.replace(/[^a-zA-Z0-9]/g, "-"));
+const TRANSCRIPTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects", WORKSPACE.replace(/[^a-zA-Z0-9]/g, "-"));
 
 const PICKS = "Whatever your Claude Code settings pick";
 /** The models when Claude Code can't say which it offers (an older CLI); otherwise the list is its own. */
@@ -57,7 +57,7 @@ const blockText = (content: unknown): string =>
 const detailFor = (input: unknown) => {
   const i = (input ?? {}) as Record<string, unknown>;
   const v = i.command ?? i.file_path ?? i.path ?? i.pattern ?? i.url ?? i.description;
-  return typeof v === "string" ? inRepo(v) : undefined;
+  return typeof v === "string" ? inWorkspace(v) : undefined;
 };
 
 /**
@@ -117,7 +117,7 @@ export function modelsFrom(listed: ListedModel[]): AgentModel[] {
  */
 function listModels(claude: string, env: NodeJS.ProcessEnv): Promise<ListedModel[]> {
   return new Promise((resolve, reject) => {
-    const child = spawnCli(claude, ["-p", "--input-format=stream-json", "--output-format=stream-json", "--verbose", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawnCli(claude, ["-p", "--input-format=stream-json", "--output-format=stream-json", "--verbose", "--strict-mcp-config"], { cwd: WORKSPACE, env, stdio: ["pipe", "pipe", "ignore"] });
     const end = (settle: () => void) => (clearTimeout(timer), child.kill(), settle());
     const timer = setTimeout(() => end(() => reject(new Error("Claude Code didn't list its models in time"))), 30_000);
     child.on("error", (err) => end(() => reject(err)));
@@ -173,7 +173,7 @@ const PLANS: Record<string, string> = { free: "Free", pro: "Pro", max: "Max", te
 /** The plan Claude Code is signed in on, from `claude auth status` (which makes no model call). */
 async function plan(claude: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
   const out = await new Promise<string>((resolve) => {
-    const child = spawnCli(claude, ["auth", "status", "--json"], { cwd: REPO, env, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawnCli(claude, ["auth", "status", "--json"], { cwd: WORKSPACE, env, stdio: ["ignore", "pipe", "ignore"] });
     let text = "";
     child.stdout!.on("data", (d) => (text += d));
     const timer = setTimeout(() => child.kill(), 30_000);
@@ -225,7 +225,7 @@ export class ClaudeAdapter extends AgentAdapter {
     const env = await cliEnv();
     const onPlan = plan(claude, env);
     const said = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      const child = spawnCli(claude, ["-p", "Reply with just the word OK.", "--output-format", "json", "--max-turns", "1", "--strict-mcp-config"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawnCli(claude, ["-p", "Reply with just the word OK.", "--output-format", "json", "--max-turns", "1", "--strict-mcp-config"], { cwd: WORKSPACE, env, stdio: ["ignore", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
       child.stdout!.on("data", (d) => (stdout += d));
@@ -299,7 +299,7 @@ export class ClaudeAdapter extends AgentAdapter {
       ...permissionArgs(readSettings().autonomy, readSettings().chrome),
       ...extra,
     ];
-    const child = spawnCli(claude, args, { cwd: REPO, env, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawnCli(claude, args, { cwd: WORKSPACE, env, stdio: ["pipe", "pipe", "pipe"] });
     this.child = child;
     this.buffer = "";
     this.stderr = "";
@@ -528,7 +528,7 @@ function canSummarizeThinking(claude: string, env: NodeJS.ProcessEnv): Promise<b
   let known = thinkingFlag.get(claude);
   if (!known) {
     known = new Promise((resolve) => {
-      const child = spawnCli(claude, ["-p", "--thinking-display", "summarized"], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawnCli(claude, ["-p", "--thinking-display", "summarized"], { cwd: WORKSPACE, env, stdio: ["ignore", "pipe", "pipe"] });
       let out = "";
       child.stdout!.on("data", (d) => (out += d));
       child.stderr!.on("data", (d) => (out += d));

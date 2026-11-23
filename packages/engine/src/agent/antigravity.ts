@@ -7,8 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { RUNTIME } from "../agents.ts";
-import { inRepo, REPO } from "../paths.ts";
+import { inWorkspace, RUNTIME, WORKSPACE } from "../paths.ts";
 import { replaceFile } from "../platform.ts";
 import { readSettings } from "../settings.ts";
 import { antigravityServer } from "./antigravity-server.ts";
@@ -121,7 +120,7 @@ const contentText = (call: ToolCall) =>
     .map((c) => (c.type === "content" ? text(c.content) : ""))
     .filter(Boolean)
     .join("\n");
-const paths = (call: ToolCall) => [...new Set((call.locations ?? []).map((l) => l.path))].map(inRepo);
+const paths = (call: ToolCall) => [...new Set((call.locations ?? []).map((l) => l.path))].map(inWorkspace);
 const input = (call: ToolCall): Record<string, unknown> => {
   if (typeof call.rawInput === "string") {
     try {
@@ -198,7 +197,7 @@ export class AntigravityAdapter extends AgentAdapter {
       rpc.on("notification", (m: string, p: Record<string, unknown>) => this.onEvent(m, p));
       rpc.on("request", (id: RpcId, m: string, p: Record<string, unknown>) => this.onRequest(id, m, p));
       rpc.on("closed", (err: Error) => this.rpc === rpc && err.message !== "closed" && this.fail(err));
-      rpc.spawn(server.command, server.args, { cwd: REPO, env: await cliEnv() });
+      rpc.spawn(server.command, server.args, { cwd: WORKSPACE, env: await cliEnv() });
       await rpc.request(
         "initialize",
         { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "beatsheet_studio", title: "beatsheet studio", version: "0.1.0" } },
@@ -219,12 +218,12 @@ export class AntigravityAdapter extends AgentAdapter {
     const probe = readIndex().probe;
     if (probe && existsSync(conversation(probe))) {
       try {
-        return await rpc.request<Opened>("session/load", { sessionId: probe, cwd: REPO, mcpServers: [] }, 120_000);
+        return await rpc.request<Opened>("session/load", { sessionId: probe, cwd: WORKSPACE, mcpServers: [] }, 120_000);
       } catch (err) {
         if (signedOut(err)) throw err;
       }
     }
-    const r = await rpc.request<Opened>("session/new", { cwd: REPO, mcpServers: [] }, 120_000);
+    const r = await rpc.request<Opened>("session/new", { cwd: WORKSPACE, mcpServers: [] }, 120_000);
     updateIndex((x) => void (x.probe = r.sessionId));
     return r;
   }
@@ -279,7 +278,7 @@ export class AntigravityAdapter extends AgentAdapter {
     this.reset();
     try {
       const rpc = await this.host();
-      const r = await rpc.request<Opened>("session/new", { cwd: REPO, mcpServers: mcpServers() }, 120_000);
+      const r = await rpc.request<Opened>("session/new", { cwd: WORKSPACE, mcpServers: mcpServers() }, 120_000);
       const sessionId = r.sessionId!;
       let model = modelsOf(r).find((m) => m.default)?.id;
       if (opts.model && opts.model !== "default" && opts.model !== model) {
@@ -299,7 +298,7 @@ export class AntigravityAdapter extends AgentAdapter {
     this.reset();
     try {
       const rpc = await this.host();
-      const r = await rpc.request<Opened>("session/load", { sessionId, cwd: REPO, mcpServers: mcpServers() }, 120_000);
+      const r = await rpc.request<Opened>("session/load", { sessionId, cwd: WORKSPACE, mcpServers: mcpServers() }, 120_000);
       this.finish();
       this.set({ status: "idle", model: modelsOf(r).find((m) => m.default)?.id ?? this.view.model });
     } catch (err) {

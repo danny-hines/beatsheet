@@ -13,9 +13,11 @@ import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
 
-// The engine finds projects, recipes and its MCP server relative to the repo.
+// The engine's folders default to the repo: what it ships with (BEATSHEET_RESOURCES) and the person's projects and
+// recipes (BEATSHEET_WORKSPACE). An installed app sets those two apart (rootsFrom in the engine's paths.ts).
 process.env.BEATSHEET_REPO ??= resolve(__dirname, "..", "..", "..");
 const REPO = process.env.BEATSHEET_REPO;
+const RESOURCES = process.env.BEATSHEET_RESOURCES || REPO;
 // Opened from Finder the app starts in /, where tools that work relative to where they run (Remotion's browser
 // download, for one) can't write; work from the repo instead.
 process.chdir(REPO);
@@ -28,10 +30,10 @@ let stopServer: (() => void) | undefined;
 
 async function studioUrl(): Promise<string> {
   if (DEV_URL) return DEV_URL;
-  // Loaded only now, after BEATSHEET_REPO is set.
+  // Loaded only now, after BEATSHEET_REPO is set (the engine reads its folders as it loads).
   const { serveApp } = await import("../../../packages/engine/src/app-server.ts");
   // The same port every launch, so the studio remembers each project's last cut (and the rest of what it keeps).
-  const server = await serveApp({ studioDir: join(REPO, "apps", "studio", "dist"), port: Number(process.env.BEATSHEET_PORT ?? 47219) });
+  const server = await serveApp({ studioDir: join(RESOURCES, "apps", "studio", "dist"), port: Number(process.env.BEATSHEET_PORT ?? 47219) });
   stopServer = server.close;
   return server.origin;
 }

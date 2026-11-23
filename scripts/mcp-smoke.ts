@@ -4,13 +4,15 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { ROOTS, ROOTS_ENV } from "../packages/engine/src/paths.ts";
 import { updateFile } from "../packages/engine/src/store.ts";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const project = process.argv[2] ?? "july-4";
 const withFrame = process.argv.includes("--frame");
 const client = new Client({ name: "smoke", version: "0" });
-await client.connect(new StdioClientTransport({ command: "node", args: [join(import.meta.dirname, "..", "packages/engine/src/mcp.ts")] }));
+// Like an agent's MCP client, the server gets a bare environment, plus beatsheet's folders (as hosted sessions pass them).
+await client.connect(new StdioClientTransport({ command: "node", args: [join(import.meta.dirname, "..", "packages/engine/src/mcp.ts")], env: { ...getDefaultEnvironment(), ...ROOTS_ENV } }));
 
 type Result = { content: { type: string; text?: string; data?: string }[]; isError?: boolean };
 const call = async (name: string, args: Record<string, unknown>) => {
@@ -30,7 +32,7 @@ show("list_assets unrated", assets, 4);
 const ids = assets.text.split("\n").slice(0, 3).map((l) => l.split(" · ")[0]!);
 show("look_at_assets", await call("look_at_assets", { project, ids }), 6);
 const original =
-  (JSON.parse(readFileSync(join(import.meta.dirname, "..", "projects", project, "project.json"), "utf8")) as { cuts: { shots: { id: string; label?: string }[] }[] }).cuts[0]!.shots.find(
+  (JSON.parse(readFileSync(join(ROOTS.projects, project, "project.json"), "utf8")) as { cuts: { shots: { id: string; label?: string }[] }[] }).cuts[0]!.shots.find(
     (s) => s.id === "s01",
   )?.label ?? "";
 const before = await call("edit_project", { project, ops: [{ op: "test", path: "/shots/id=s01/id", value: "s01" }, { op: "replace", path: "/shots/id=s01/label", value: "SMOKE TEST" }] });
@@ -45,7 +47,7 @@ show("create_cut", made, 6);
 const cut = made.text.match(/Made cut "([^"]+)"/)?.[1];
 if (cut) {
   show("edit the new cut", await call("edit_project", { project, cut, ops: [{ op: "replace", path: "/shots/id=s01/label", value: "ONLY IN THE NEW CUT" }] }), 2);
-  const doc = JSON.parse(readFileSync(join(import.meta.dirname, "..", "projects", project, "project.json"), "utf8")) as { cuts: { id: string; shots: { id: string; label?: string }[] }[] };
+  const doc = JSON.parse(readFileSync(join(ROOTS.projects, project, "project.json"), "utf8")) as { cuts: { id: string; shots: { id: string; label?: string }[] }[] };
   const labels = doc.cuts.map((c) => `${c.id}: ${c.shots.find((s) => s.id === "s01")?.label ?? "(none)"}`);
   console.log(`   s01 label per cut → ${labels.join(" | ")}`);
   updateFile(project, (d) => void (d.cuts = d.cuts.filter((c) => c.id !== cut)));

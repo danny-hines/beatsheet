@@ -11,7 +11,7 @@ import { cpus, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { SpeakerTurn } from "@beatsheet/schema";
-import { REPO } from "./paths.ts";
+import { RESOURCES } from "./paths.ts";
 import { IS_WINDOWS, run as runLaunch, systemExe } from "./platform.ts";
 import { download, stream, type Download } from "./pyenv.ts";
 import { SETTINGS_DIR } from "./settings.ts";
@@ -21,7 +21,7 @@ const exec = promisify(execFile);
 
 export const SPEAKERS_DIR = join(SETTINGS_DIR, "whisper", "speakers");
 const READY = join(SPEAKERS_DIR, "ready.json");
-const CHECK = join(REPO, "packages", "engine", "native", "speakers-check.mp3");
+const CHECK = join(RESOURCES, "packages", "engine", "native", "speakers-check.mp3");
 
 /** sherpa-onnx v2.0.1, pinned: a processor build for each system (no text-to-speech, which beatsheet doesn't need). */
 const RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download";

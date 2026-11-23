@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findCli, useLoginPath } from "../packages/engine/src/agent/cli.ts";
-import { REPO } from "../packages/engine/src/paths.ts";
+import { RESOURCES, ROOTS, WORKSPACE } from "../packages/engine/src/paths.ts";
 import { inContainer, systemExe } from "../packages/engine/src/platform.ts";
 import { SETTINGS_DIR } from "../packages/engine/src/settings.ts";
 
@@ -27,7 +27,7 @@ const version = (cmd: string, args = ["-version"]) => {
 };
 
 await useLoginPath();
-console.log(`beatsheet at ${REPO}\nits own folder: ${SETTINGS_DIR}\n`);
+console.log(`beatsheet at ${RESOURCES}${WORKSPACE === RESOURCES ? "" : `\nits workspace: ${WORKSPACE}`}\nprojects: ${ROOTS.projects}\nits own folder: ${SETTINGS_DIR}\n`);
 
 // Started from inside a packaged app (a terminal in Claude's desktop app), Windows keeps beatsheet's folder in that
 // app's own copy. Only a folder that exists can say so; this changes nothing.
@@ -70,12 +70,12 @@ if (WINDOWS) {
 // checkout without symlinks has small text files there instead.
 const relink = WINDOWS ? "Turn on Developer Mode (Settings → System → Advanced; For developers on older Windows), then in this folder: git config core.symlinks true && git checkout -- .claude/skills AGENTS.md" : "git checkout -- .claude/skills AGENTS.md";
 for (const skill of ["montage", "story", "motion"]) {
-  const link = join(REPO, ".claude", "skills", skill);
+  const link = join(WORKSPACE, ".claude", "skills", skill);
   const ok = existsSync(join(link, "SKILL.md"));
   const why = !existsSync(link) ? "missing" : lstatSync(link).isFile() ? `a text file saying "${readFileSync(link, "utf8").trim()}", not a link` : "doesn't lead to SKILL.md";
   say(ok, `recipe link .claude/skills/${skill}`, ok ? "ok" : why, relink);
 }
-const agents = join(REPO, "AGENTS.md");
+const agents = join(WORKSPACE, "AGENTS.md");
 const agentsOk = existsSync(agents) && readFileSync(agents, "utf8").length > 200;
 say(agentsOk, "AGENTS.md (for Codex)", agentsOk ? "ok" : "a text file, not the link to CLAUDE.md", relink);
 

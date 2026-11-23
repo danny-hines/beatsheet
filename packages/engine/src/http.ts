@@ -15,7 +15,7 @@ import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } f
 
 const TOOLS: ToolId[] = ["deepfilter", "realesrgan", "rife"];
 import { agentStudio, AGENT_IDS, AGENT_LABELS, type AgentId } from "./agent/index.ts";
-import { listAgents, RUNTIME } from "./agents.ts";
+import { listAgents } from "./agents.ts";
 import { PLANS, planStates } from "./plans.ts";
 import { readTranscript, transcribeAsset, transcribeChoices, transcriberStates, transcriptLines } from "./transcribe.ts";
 import { cancelWhisperInstall, installWhisper, installWhisperSpeakers, MODELS, removeWhisper, whisperStatus, type ModelSize } from "./whispercpp.ts";
@@ -37,7 +37,7 @@ import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
 import { listVoices, previewFile, setVoiceSettings } from "./voices.ts";
 import { cutOut, findSubjects, joinSubjects, trackSubject, visionStatus, type CutOutOptions } from "./subjects.ts";
 import { addFootage, addSong, ensureCached, importFolder, lookAgain, scanFolder } from "./ingest.ts";
-import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, sourceRoot } from "./paths.ts";
+import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, RUNTIME, sourceRoot } from "./paths.ts";
 import { IS_WINDOWS, pickerCommand, revealCommand, run as runLaunch } from "./platform.ts";
 import { ConflictError, InvalidProjectError, listProjects, loadFile, loadProject, readRaw, saveFile, trashPlan, trashProject } from "./store.ts";
 
@@ -53,7 +53,7 @@ const TYPES: Record<string, string> = {
   ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf",
 };
 
-/** Appends to .beatsheet/studio.log, keeping the newest half when it passes half a megabyte. */
+/** Appends to studio.log in the runtime folder (.beatsheet in a checkout), keeping the newest half when it passes half a megabyte. */
 function appendStudioLog(entry: string) {
   const file = join(RUNTIME, "studio.log");
   mkdirSync(RUNTIME, { recursive: true });

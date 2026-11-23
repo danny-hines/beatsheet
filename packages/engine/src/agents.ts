@@ -3,17 +3,16 @@
  * studio hosts itself is in agent/.)
  *
  * Presence comes from the MCP server itself: every agent that loads beatsheet's tools (hosted by the studio or started
- * by hand in a terminal) writes a small file under .beatsheet/agents while it's alive.
+ * by hand in a terminal) writes a small file under the runtime folder's agents/ (.beatsheet/agents in a checkout) while
+ * it's alive.
  */
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { REPO } from "./paths.ts";
+import { RUNTIME } from "./paths.ts";
 import { replaceFile } from "./platform.ts";
 import { loadFile } from "./store.ts";
 
-
-export const RUNTIME = join(REPO, ".beatsheet");
 export const AGENTS_DIR = join(RUNTIME, "agents");
 const SESSIONS_DIR = join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "muse", "sessions");
 
