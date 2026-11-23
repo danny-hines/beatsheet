@@ -2,7 +2,7 @@
 
 ## Project files are the source of truth
 
-Each project is one `project.json` (format: `packages/schema/src/types.ts`). The studio, tests and agents all read and write it. After editing one, run `node scripts/validate-examples.ts` (or `npm run check`).
+Each project is one `project.json` (format: `packages/schema/src/types.ts`). The studio, tests and agents all read and write it. <!-- checkout -->After editing one, run `node scripts/validate-examples.ts` (or `npm run check`).<!-- /checkout -->
 
 - **A project has shared material and cuts.** Shared: the footage folders (`sources`), the footage itself (`assets`, with ratings, tags and moments) and the `brief`. Each cut (`cuts[]`) is a version of the video with its own `spec` (purpose, length, audience), formats, music, voice, shots, notes and stages. Code mostly works on one cut at a time: `cutView(file, cutId)` gives a `Project` (the cut plus the shared parts) and `withCut(file, project)` writes it back.
 - Files from before cuts (`beatsheet/0.1`) are upgraded when read (`upgrade` in `packages/schema/src/cuts.ts`) and written in the new shape, with the original kept as `project.v1.json`.
@@ -16,9 +16,11 @@ Each project is one `project.json` (format: `packages/schema/src/types.ts`). The
 ## Working on a project
 
 - Real projects live in `projects/<id>/` (not in git): `project.json`, the song in `music/`, and a `.cache/` of preview copies, posters and filmstrips. The footage stays in its own folders (`sources`); asset paths are relative to their source.
-- Prefer the `beatsheet` MCP tools when they're available: `get_project`, `list_assets`, `look_at_assets`, `log_assets`, `first_cut`, `set_song`, `edit_project`, `create_cut`, `add_asset`, `find_subjects`, `track_subject`, `join_subjects`, `cast_from_subject`, `cut_out`, `still_from_clip`, `split_at_cuts`, `transcribe`, `transcript`, `name_speaker`, `clean_sound`, `restore`, `edit_by_words`, `subtitles`, `sync_angles`, `cut_to_speakers`, `even_out`, `list_voices`, `narrate`, `generate_music`, `generate_sfx`, `fit_music`, `list_kit`, `write_scene`, `import_file`, `capture_page`, `import_media`, `palette`, `preview_looks`, `add_font`, `list_models`, `generate`, `jobs`, `review_cut`, `get_batch`, `resolve_note`, `frame`, `render`, `hand_off`. Cut-level tools take `cut` (default the first cut). They validate every write and check versions, so they never clobber the person's edits in the studio. Editing `project.json` by hand works too, but run `node scripts/validate-examples.ts` afterwards for examples.
+- Prefer the `beatsheet` MCP tools when they're available: `get_project`, `list_assets`, `look_at_assets`, `log_assets`, `first_cut`, `set_song`, `edit_project`, `create_cut`, `add_asset`, `find_subjects`, `track_subject`, `join_subjects`, `cast_from_subject`, `cut_out`, `still_from_clip`, `split_at_cuts`, `transcribe`, `transcript`, `name_speaker`, `clean_sound`, `restore`, `edit_by_words`, `subtitles`, `sync_angles`, `cut_to_speakers`, `even_out`, `list_voices`, `narrate`, `generate_music`, `generate_sfx`, `fit_music`, `list_kit`, `write_scene`, `import_file`, `capture_page`, `import_media`, `palette`, `preview_looks`, `add_font`, `list_models`, `generate`, `jobs`, `review_cut`, `get_batch`, `resolve_note`, `frame`, `render`, `hand_off`. Cut-level tools take `cut` (default the first cut). They validate every write and check versions, so they never clobber the person's edits in the studio. <!-- checkout -->Editing `project.json` by hand works too, but run `node scripts/validate-examples.ts` afterwards for examples.<!-- /checkout -->
 - Recipes (how to run each stage for a kind of video) are skills in `.agents/skills/` (linked from `.claude/skills/` for Claude Code). Montages: `.agents/skills/montage/SKILL.md`; narrated videos: `story`; designed scenes: `motion`; videos made from nothing: `film`, with `make` for each request to an image or video model (how to prompt each one in its `models.md`). Which model suits which kind of shot, with prices, licenses and the evidence, is `docs/MODELS.md`.
+<!-- checkout -->
 - CLI: `npm run beatsheet -- <import|song|assemble|cache|render|analyze|list>`.
+<!-- /checkout -->
 - Designed (coded) shots name a component: `kit:<Name>` from the kit in `packages/video/src/kit` (props in `catalog.ts`), or `<file>#<Export>` relative to the project's `codeRoot` (its `scenes/` folder by default). The engine compiles scene files with esbuild (`packages/engine/src/scenes.ts`) and the page runs them with its own React, Remotion, three and kit (`packages/video/src/runtime.tsx`). Scenes must be deterministic: everything from `t`/`frame`, nothing fetched.
 - The project's `look` (colours, fonts, grain, the footage's grade) is shared by every cut; captions and `sfx` cues belong to a cut. Built-in sounds are in `packages/engine/sfx`.
 - Files you make (a generated clip, a trimmed export, a still) go in through `add_asset` with their provenance, so the studio can show them and make their previews. Don't write into a footage folder.
@@ -43,8 +45,11 @@ A batch lists note ids with resolved context: the shot, the line, the time range
 2. Keep the change scoped to what the note points at.
 3. Set the note's `status` to `"done"` and write a one-line `reply` saying what changed. If you can't do it, leave it `"open"` and use `reply` to say why.
 
+<!-- checkout -->
 ## Code
 
 - TypeScript throughout. `packages/schema` is pure (no DOM, no Node APIs) so the studio, the engine and an MCP server can all share it.
 - The resolver never throws on bad timing. It returns diagnostics and NaN times; keep it that way.
 - Add a test in `packages/schema/test` for every resolver change. The Sparkade tests use real numbers from that cut, so keep them passing.
+- An installed app gives agents a copy of this file in their workspace, without the parts between `<!-- checkout -->` and its closing comment, along with the recipes and the files `REFERENCE` lists (`packages/engine/src/workspace.ts`). Mark what's only true in a checkout the same way, and add any new file agents are pointed at to `REFERENCE`; a test fails when one is missing.
+<!-- /checkout -->

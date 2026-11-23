@@ -9,6 +9,7 @@ import { agentStudio } from "./agent/index.ts";
 import { useLoginPath } from "./agent/cli.ts";
 import { startEvents } from "./events.ts";
 import { beatsheetHandler } from "./http.ts";
+import { prepareWorkspace } from "./workspace.ts";
 
 const STATIC_TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -44,6 +45,8 @@ function serveStudio(dir: string, req: IncomingMessage, res: ServerResponse) {
 export async function serveApp(opts: { studioDir: string; port?: number }): Promise<{ origin: string; close: () => void }> {
   // Opened from Finder, the app has a bare PATH; ffmpeg and friends are on the login shell's.
   await useLoginPath();
+  // An installed app's workspace gets its instructions, recipes and tools before any agent starts in it.
+  prepareWorkspace();
   const api = beatsheetHandler();
   const stopEvents = startEvents();
   const server = createServer((req, res) => {
