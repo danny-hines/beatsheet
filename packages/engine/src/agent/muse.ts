@@ -106,7 +106,7 @@ export function modelsFrom(listed: ListedModel[]): AgentModel[] {
  */
 function sessionConfig() {
   if (!readSettings().chrome) return undefined;
-  return { mcpServers: { "chrome-devtools": { transport: "stdio" as const, command: CHROME_DEVTOOLS.command, args: CHROME_DEVTOOLS.args, mode: "optional" as const } } };
+  return { mcpServers: { "chrome-devtools": { transport: "stdio" as const, command: CHROME_DEVTOOLS.command, args: CHROME_DEVTOOLS.args, ...(Object.keys(CHROME_DEVTOOLS.env).length ? { env: CHROME_DEVTOOLS.env } : {}), mode: "optional" as const } } };
 }
 
 /**

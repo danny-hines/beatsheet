@@ -9,7 +9,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { RESOURCES, ROOTS_ENV, RUNTIME, WORKSPACE } from "../paths.ts";
+import { BUILT, RESOURCES, ROOTS_ENV, RUNTIME, WORKSPACE } from "../paths.ts";
 import { antigravityServer, installAntigravity } from "./antigravity-server.ts";
 import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, registryPath, systemExe, withPath } from "../platform.ts";
 
@@ -164,25 +164,39 @@ export async function useLoginPath(): Promise<void> {
   process.env.PATH = [...new Set(parts.filter(Boolean))].join(":");
 }
 
+export type NodeCommand = { command: string; args: string[]; env: Record<string, string> };
+
 /**
- * beatsheet's MCP server as a stdio command. Sessions the studio hosts mark themselves so the menu doesn't list them
- * twice. Inside the Mac app this process is Electron, so the server runs on the person's own Node instead.
+ * A script as a command that runs it on Node. From a terminal this process is Node, and runs it. Inside the desktop app
+ * this process is Electron, which runs as Node when ELECTRON_RUN_AS_NODE says so: an app built with its own pieces
+ * (`own`) uses that, so the person needs no Node of their own; one without them falls back to their `node`.
  */
-export const MCP_SERVER = {
-  command: process.versions.electron ? "node" : process.execPath,
-  args: [join(RESOURCES, "packages", "engine", "src", "mcp.ts")],
-  env: { BEATSHEET_HOSTED: "1", ...ROOTS_ENV },
-};
+export function nodeCommand(script: string, on: { execPath: string; electron: boolean; own: boolean }): NodeCommand {
+  if (!on.electron) return { command: on.execPath, args: [script], env: {} };
+  return on.own ? { command: on.execPath, args: [script], env: { ELECTRON_RUN_AS_NODE: "1" } } : { command: "node", args: [script], env: {} };
+}
+
+const HERE = { execPath: process.execPath, electron: !!process.versions.electron, own: !!BUILT.mcp };
+const mcp = nodeCommand(BUILT.mcp ?? join(RESOURCES, "packages", "engine", "src", "mcp.ts"), HERE);
+
+/**
+ * beatsheet's MCP server as a stdio command, with the folders it works in: the one file the desktop app built, or the
+ * source. This is what an agent started by hand gets (the workspace's .mcp.json).
+ */
+export const MCP_COMMAND: NodeCommand = { ...mcp, env: { ...mcp.env, ...ROOTS_ENV } };
+
+/** The same for sessions the studio hosts, which mark themselves so the menu doesn't list them twice. */
+export const MCP_SERVER: NodeCommand = { ...MCP_COMMAND, env: { BEATSHEET_HOSTED: "1", ...MCP_COMMAND.env } };
 
 /**
  * Chrome DevTools MCP attached to the person's own running Chrome (signed in), for agents without a Chrome tool of
  * their own when "Use my Chrome" is on. It needs Chrome 144+ with remote debugging turned on at
  * chrome://inspect/#remote-debugging, and Chrome asks the person to allow each connection.
  */
-export const CHROME_DEVTOOLS = {
-  command: MCP_SERVER.command,
-  args: [join(RESOURCES, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js"), "--autoConnect", "--no-usage-statistics"],
-};
+export const CHROME_DEVTOOLS: NodeCommand = (() => {
+  const c = nodeCommand(join(RESOURCES, "node_modules", "chrome-devtools-mcp", "build", "src", "bin", "chrome-devtools-mcp.js"), HERE);
+  return { ...c, args: [...c.args, "--autoConnect", "--no-usage-statistics"] };
+})();
 
 /** Whether the person's Codex has its own way into their Chrome (OpenAI's Chrome plugin, enabled in its config). */
 export function codexHasChrome(): boolean {

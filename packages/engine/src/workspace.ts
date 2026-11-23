@@ -9,8 +9,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
-import { MCP_SERVER } from "./agent/cli.ts";
-import { RESOURCES, ROOTS, ROOTS_ENV, samePath, WORKSPACE } from "./paths.ts";
+import { MCP_COMMAND } from "./agent/cli.ts";
+import { RESOURCES, ROOTS, samePath, WORKSPACE } from "./paths.ts";
 
 /** A file beatsheet keeps in the workspace: where (with forward slashes, from the workspace) and what. */
 export type SeedFile = { path: string; data: Buffer };
@@ -128,7 +128,7 @@ export function prepareWorkspace(): Seeded | undefined {
   if (samePath(RESOURCES, WORKSPACE)) return undefined;
   try {
     mkdirSync(ROOTS.projects, { recursive: true });
-    const seeded = seedWorkspace(WORKSPACE, seedFiles(RESOURCES, { command: MCP_SERVER.command, args: MCP_SERVER.args, env: ROOTS_ENV }));
+    const seeded = seedWorkspace(WORKSPACE, seedFiles(RESOURCES, MCP_COMMAND));
     if (seeded.wrote.length || seeded.removed.length) {
       const moved = seeded.kept.length ? ` (${seeded.kept.length} changed by hand, kept in .beatsheet/kept)` : "";
       console.log(`beatsheet: workspace at ${WORKSPACE}: ${seeded.wrote.length} files written${moved}${seeded.removed.length ? `, ${seeded.removed.length} removed` : ""}`);

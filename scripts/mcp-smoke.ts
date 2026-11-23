@@ -1,5 +1,5 @@
 // Drives the beatsheet MCP server the way Claude Code or Codex would, over stdio.
-// Usage: node scripts/mcp-smoke.ts <project under projects/> [--frame]
+// Usage: node scripts/mcp-smoke.ts <project under projects/> [--frame] [--app]
 // (changes one label and puts it back; branches a cut, edits it, then removes it)
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,9 +10,16 @@ import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotoc
 
 const project = process.argv[2] ?? "july-4";
 const withFrame = process.argv.includes("--frame");
+// --app: the server as the desktop app starts it, from its last build (npm run desktop, or apps/desktop/scripts/build.mjs):
+// the one built file on Electron running as Node, rendering from the built video bundle.
+const dist = join(import.meta.dirname, "..", "apps", "desktop", "dist");
+const server = process.argv.includes("--app")
+  ? { command: (await import("electron")).default as unknown as string, args: [join(dist, "mcp.mjs")], env: { ELECTRON_RUN_AS_NODE: "1", BEATSHEET_MCP: join(dist, "mcp.mjs"), BEATSHEET_VIDEO: join(dist, "video") } }
+  : { command: "node", args: [join(import.meta.dirname, "..", "packages/engine/src/mcp.ts")], env: {} };
 const client = new Client({ name: "smoke", version: "0" });
 // Like an agent's MCP client, the server gets a bare environment, plus beatsheet's folders (as hosted sessions pass them).
-await client.connect(new StdioClientTransport({ command: "node", args: [join(import.meta.dirname, "..", "packages/engine/src/mcp.ts")], env: { ...getDefaultEnvironment(), ...ROOTS_ENV } }));
+await client.connect(new StdioClientTransport({ command: server.command, args: server.args, env: { ...getDefaultEnvironment(), ...ROOTS_ENV, ...server.env } }));
+if (process.argv.includes("--app")) console.log(`server: ${server.command} ${server.args.join(" ")}`);
 
 type Result = { content: { type: string; text?: string; data?: string }[]; isError?: boolean };
 const call = async (name: string, args: Record<string, unknown>) => {

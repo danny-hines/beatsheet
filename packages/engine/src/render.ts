@@ -7,12 +7,11 @@ import { copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSyn
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { EXPORT_KINDS, type ExportKind, type Project } from "@beatsheet/schema";
 import type { MediaQuality, VideoProps } from "@beatsheet/video";
 import { startServer } from "./http.ts";
-import { RESOURCES } from "./paths.ts";
+import { BUILT, RESOURCES } from "./paths.ts";
 import { loadProject } from "./store.ts";
 import { wordsInCut } from "./transcribe.ts";
 
@@ -21,7 +20,12 @@ const run = promisify(execFile);
 const chromiumOptions = { gl: "angle" as const };
 
 let serveUrl: Promise<string> | undefined;
-const getBundle = () => (serveUrl ??= bundle({ entryPoint: join(RESOURCES, "packages", "video", "src", "root.tsx") }));
+/**
+ * The composition as Remotion serves it: the bundle the desktop app built ahead when there is one, else bundled now from
+ * the source (the bundler is loaded only then, so an installed app doesn't need it).
+ */
+const getBundle = () =>
+  (serveUrl ??= BUILT.video ? Promise.resolve(BUILT.video) : import("@remotion/bundler").then(({ bundle }) => bundle({ entryPoint: join(RESOURCES, "packages", "video", "src", "root.tsx") })));
 
 /** The composition for a cut, or for `override`: a stand-in cut made from the project's material (a look's preview, say). */
 async function prepare(id: string, cut: string | undefined, format: string | undefined, quality: MediaQuality, override?: Project, transparent?: boolean) {

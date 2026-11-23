@@ -18,6 +18,11 @@ import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme
 process.env.BEATSHEET_REPO ??= resolve(__dirname, "..", "..", "..");
 const REPO = process.env.BEATSHEET_REPO;
 const RESOURCES = process.env.BEATSHEET_RESOURCES || REPO;
+// What this build made beside this file (scripts/build.mjs) to run in place of the source: beatsheet's MCP server as
+// one file, which agents start on Electron itself (as Node), and the video composition's bundle. With them the app
+// needs neither a Node of the person's nor a bundler.
+if (existsSync(join(__dirname, "mcp.mjs"))) process.env.BEATSHEET_MCP ??= join(__dirname, "mcp.mjs");
+if (existsSync(join(__dirname, "video", "index.html"))) process.env.BEATSHEET_VIDEO ??= join(__dirname, "video");
 // Opened from Finder the app starts in /, where tools that work relative to where they run (Remotion's browser
 // download, for one) can't write; work from the repo instead.
 process.chdir(REPO);
