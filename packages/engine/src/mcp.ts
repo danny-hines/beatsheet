@@ -66,8 +66,8 @@ import { generateSfx } from "./sounds.ts";
 import { narrate } from "./narrate.ts";
 import { cutOut, findSubjects, joinSubjects, trackSubject } from "./subjects.ts";
 import { listVoices, voiceName } from "./voices.ts";
-import { IS_WINDOWS } from "./platform.ts";
-import { cachePaths } from "./paths.ts";
+import { IS_WINDOWS, putFirstOnPath } from "./platform.ts";
+import { BUILT, cachePaths } from "./paths.ts";
 import { listProjects, loadProject, saveProject, updateFile, updateProject } from "./store.ts";
 import { yourTurn } from "./turns.ts";
 
@@ -103,6 +103,9 @@ Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLa
 Notes: the person pins notes on a cut and sends them as a batch. Call get_batch, handle each note with scoped edits, look at the result with frame when it's visual, resolve_note with a one-line reply saying what changed, then hand_off for a review.
 
 When a message arrives saying the person sent beatsheet notes, they just pressed Send in the studio: call get_batch for that project and cut and handle the notes right away.`;
+
+// Started by an agent, this process has the agent's PATH: the programs the app carries (ffmpeg, ffprobe) go ahead of it.
+putFirstOnPath(BUILT.bin);
 
 const server = new McpServer({ name: "beatsheet", version: "0.1.0" }, { instructions: INSTRUCTIONS });
 

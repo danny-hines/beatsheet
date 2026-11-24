@@ -18,6 +18,8 @@ npm run check                    # typecheck, tests, validate the examples
 
 `beatsheet.app` is a personal build linked to this folder: it uses the projects here and the agent CLIs on this Mac. Rebuild it after pulling changes. It needs ffmpeg (`brew install ffmpeg`); opened from Finder, it finds Homebrew's tools through your login shell's PATH.
 
+The app can carry its own ffmpeg instead: `scripts/build-ffmpeg.sh` builds ffmpeg and ffprobe from pinned sources (about ten minutes, once; it needs Xcode's command line tools and uv, and installs nothing), with just what beatsheet uses: x264, libvpx, Opus, LAME, vid.stab and dav1d. The next `npm run desktop` or `npm run app` puts them in the app, ahead of the PATH. It's a GPL build, so the sources it was made from are kept in `apps/desktop/vendor/sources/` to publish with the app.
+
 ## How it works
 
 **First launch.** Setup asks for one working agent. Each card says whether that CLI is installed and signed in: **Install** runs the official installer, **Sign in** opens the CLI's own sign-in in Terminal, and **Check again** tries it. beatsheet never sees your agent's credentials. Below the agents, one optional step chooses where stills and video are made: one service for each, from every one beatsheet can make them on (a plan your agent is signed in on, or fal, Gemini, Meta, OpenAI or Tein with a key), and switch any time in Settings → Making. Nothing is made on a service you haven't chosen. Other services (ElevenLabs) add voices, music and sound. Each key is verified before it's saved and kept in the macOS Keychain. Setup is under ⚙ (or ⌘,) any time.

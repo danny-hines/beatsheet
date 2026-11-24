@@ -11,6 +11,8 @@ projects/
 
 # The Mac app build
 apps/desktop/release
+# ffmpeg built from source for the app to carry (scripts/build-ffmpeg.sh), with the sources it was built from
+apps/desktop/vendor
 
 # Original research notes that name people stay on this machine
 research_notes/private/

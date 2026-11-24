@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openBrowser } from "@remotion/renderer";
 import { slugify, type Asset } from "@beatsheet/schema";
+import { renderBrowser } from "./chrome.ts";
 import { addAsset } from "./ingest.ts";
 import { projectDir } from "./paths.ts";
 
@@ -23,7 +24,7 @@ export type CaptureOptions = {
 export async function capturePage(projectId: string, url: string, opts: CaptureOptions = {}): Promise<Asset> {
   if (!/^https?:\/\//i.test(url)) throw new Error("Give a full web address (https://…)");
   const width = opts.width ?? 390, height = opts.height ?? 844;
-  const browser = await openBrowser("chrome", { chromiumOptions: { gl: "angle" }, logLevel: "error" });
+  const browser = await openBrowser("chrome", { chromiumOptions: { gl: "angle" }, logLevel: "error", browserExecutable: await renderBrowser() });
   try {
     const page = await browser.newPage({ context: () => null, logLevel: "error", indent: false, pageIndex: 0, onBrowserLog: null, onLog: () => undefined });
     // A phone-sized window draws the site's mobile layout, at the phone's sharpness.

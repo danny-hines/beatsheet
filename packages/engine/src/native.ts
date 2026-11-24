@@ -1,15 +1,16 @@
 /**
  * Small Swift helpers for what macOS does best (Vision for subjects, AVSpeechSynthesizer for the Mac's voices), built
  * from `native/<name>.swift` with the Xcode command line tools the first time each is needed, and again whenever its
- * source changes. On Windows the same idea in C# (`native/<name>.cs`: Credential Manager for keys, SAPI for Windows'
- * own voices), compiled by Windows PowerShell, which every Windows 10 and 11 has.
+ * source changes. The desktop app's build makes them ahead, and the app uses those. On Windows the same idea in C#
+ * (`native/<name>.cs`: Credential Manager for keys, SAPI for Windows' own voices), compiled by Windows PowerShell,
+ * which every Windows 10 and 11 has.
  */
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { RESOURCES } from "./paths.ts";
+import { BUILT, RESOURCES } from "./paths.ts";
 import { powershell, psString, run as runLaunch } from "./platform.ts";
 import { SETTINGS_DIR } from "./settings.ts";
 
@@ -18,21 +19,32 @@ const WHAT: Record<string, string> = { vision: "Apple's Vision tools", speech: "
 
 const building = new Map<string, Promise<string>>();
 
-/** The helper's binary, building it if needed. */
-export function swiftHelper(name: "vision" | "speech"): Promise<string> {
-  if (process.platform !== "darwin") return Promise.reject(new Error(`${WHAT[name]} need a Mac.`));
-  const source = join(RESOURCES, "packages", "engine", "native", `${name}.swift`);
-  const hash = createHash("sha256").update(readFileSync(source)).digest("hex").slice(0, 12);
-  const dir = join(SETTINGS_DIR, "bin");
-  const bin = join(dir, `beatsheet-${name}-${hash}`);
+/**
+ * What a helper built to run on other Macs is built for: the oldest macOS the helpers' code allows (vision.swift's
+ * people and thing masks and speech.swift's voice traits arrived in 14), on this machine's kind of processor. Built on
+ * first use instead, a helper is made for the Mac it's on.
+ */
+export const SWIFT_TARGET = `${process.arch === "arm64" ? "arm64" : "x86_64"}-apple-macos14.0`;
+
+const swiftSource = (name: string) => join(RESOURCES, "packages", "engine", "native", `${name}.swift`);
+/** A helper's file name, which carries its source's fingerprint: a changed source is a different file. */
+const swiftFile = (name: string) => `beatsheet-${name}-${createHash("sha256").update(readFileSync(swiftSource(name))).digest("hex").slice(0, 12)}`;
+
+/**
+ * Compiles a Swift helper into `dir`, unless this version of its source is already built there, and removes builds of
+ * earlier versions. The desktop app's build makes them ahead with `target` (SWIFT_TARGET), so a Mac it's installed on
+ * needs no Xcode tools.
+ */
+export function buildSwiftHelper(name: "vision" | "speech", dir: string, target?: string): Promise<string> {
+  const bin = join(dir, swiftFile(name));
   if (existsSync(bin)) return Promise.resolve(bin);
-  let p = building.get(name);
+  let p = building.get(bin);
   if (!p) {
     p = (async () => {
       mkdirSync(dir, { recursive: true });
       const tmp = `${bin}.${process.pid}.tmp`;
       try {
-        await run("xcrun", ["swiftc", "-O", "-swift-version", "5", "-o", tmp, source], { maxBuffer: 1 << 24 });
+        await run("xcrun", ["swiftc", "-O", "-swift-version", "5", ...(target ? ["-target", target] : []), "-o", tmp, swiftSource(name)], { maxBuffer: 1 << 24 });
       } catch (err) {
         const msg = String((err as { stderr?: string }).stderr || (err as Error).message);
         throw new Error(
@@ -45,10 +57,18 @@ export function swiftHelper(name: "vision" | "speech"): Promise<string> {
       // Earlier builds (from older versions of the source) aren't needed any more.
       for (const f of readdirSync(dir)) if (f.startsWith(`beatsheet-${name}-`) && join(dir, f) !== bin) rmSync(join(dir, f), { force: true });
       return bin;
-    })().finally(() => building.delete(name));
-    building.set(name, p);
+    })().finally(() => building.delete(bin));
+    building.set(bin, p);
   }
   return p;
+}
+
+/** The helper's binary: the one the desktop app's build made when it's this version of the source, else built now. */
+export function swiftHelper(name: "vision" | "speech"): Promise<string> {
+  if (process.platform !== "darwin") return Promise.reject(new Error(`${WHAT[name]} need a Mac.`));
+  const built = BUILT.bin && join(BUILT.bin, swiftFile(name));
+  if (built && existsSync(built)) return Promise.resolve(built);
+  return buildSwiftHelper(name, join(SETTINGS_DIR, "bin"));
 }
 
 const CS: Record<string, { what: string; references: string[] }> = {

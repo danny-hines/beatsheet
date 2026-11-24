@@ -48,16 +48,20 @@ export const RUNTIME = roots.runtime;
 export const ROOTS = { projects: roots.projects, examples: roots.examples };
 /**
  * What the desktop app built ahead, to run in place of the source: beatsheet's MCP server as one file (run on the app's
- * own runtime, so nobody needs Node installed) and the video composition's bundle (so nothing is bundled when the first
- * frame is rendered). Only the app sets these, for the build it is itself part of; from a terminal the source runs, so
- * a build left over from before a change is never picked up.
+ * own runtime, so nobody needs Node installed), the video composition's bundle (so nothing is bundled when the first
+ * frame is rendered), and a folder of programs it carries (the Swift helpers ready-made, so nobody needs Xcode's tools;
+ * ffmpeg and ffprobe when the build includes them), which go ahead of the PATH. Only the app sets these, for the build
+ * it is itself part of; from a terminal the source runs, so a build left over from before a change is never picked up.
  */
-export const BUILT = { mcp: process.env.BEATSHEET_MCP || undefined, video: process.env.BEATSHEET_VIDEO || undefined };
+export const BUILT = { mcp: process.env.BEATSHEET_MCP || undefined, video: process.env.BEATSHEET_VIDEO || undefined, bin: process.env.BEATSHEET_BIN || undefined };
 /** What a process beatsheet starts needs in its environment to use the same folders and the same built pieces. */
 export const ROOTS_ENV: Record<string, string> = {
   ...rootsEnv(roots),
   ...(BUILT.mcp ? { BEATSHEET_MCP: BUILT.mcp } : {}),
   ...(BUILT.video ? { BEATSHEET_VIDEO: BUILT.video } : {}),
+  ...(BUILT.bin ? { BEATSHEET_BIN: BUILT.bin } : {}),
+  // beatsheet's own folder (settings, what it fetched), when it isn't the usual one.
+  ...(process.env.BEATSHEET_HOME ? { BEATSHEET_HOME: process.env.BEATSHEET_HOME } : {}),
 };
 
 export const expandHome = (p: string) => (p === "~" || p.startsWith("~/") || (process.platform === "win32" && p.startsWith("~\\")) ? join(homedir(), p.slice(1)) : p);

@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { BUILT, RESOURCES, ROOTS_ENV, RUNTIME, WORKSPACE } from "../paths.ts";
 import { antigravityServer, installAntigravity } from "./antigravity-server.ts";
-import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, registryPath, systemExe, withPath } from "../platform.ts";
+import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, putFirstOnPath, registryPath, systemExe, withPath } from "../platform.ts";
 
 const run = promisify(execFile);
 const WINDOWS = process.platform === "win32";
@@ -151,17 +151,20 @@ export async function cliEnv(extra: Record<string, string> = {}): Promise<NodeJS
  * Gives this process the login shell's PATH. An app opened from Finder starts with a bare one (/usr/bin:/bin…), so the
  * tools beatsheet runs itself (ffmpeg, ffprobe, uv, Homebrew's in general) wouldn't be found. Homebrew's usual folders
  * are added too, in case the shell's profile doesn't set them.
+ * The programs the app carries go ahead of all of it.
  */
 export async function useLoginPath(): Promise<void> {
   if (WINDOWS) {
     // A Windows app already has the PATH the person set; this adds anything installed since it started.
     const key = pathKey(process.env);
     process.env[key] = mergePath([process.env[key], await registryPath().catch(() => "")]);
+    putFirstOnPath(BUILT.bin);
     return;
   }
   const env = await cliEnv();
   const parts = [...(env.PATH ?? "").split(":"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   process.env.PATH = [...new Set(parts.filter(Boolean))].join(":");
+  putFirstOnPath(BUILT.bin);
 }
 
 export type NodeCommand = { command: string; args: string[]; env: Record<string, string> };
@@ -177,6 +180,8 @@ export function nodeCommand(script: string, on: { execPath: string; electron: bo
 }
 
 const HERE = { execPath: process.execPath, electron: !!process.versions.electron, own: !!BUILT.mcp };
+/** A script of beatsheet's own as a command, on whichever Node this process has to hand. */
+export const onNode = (script: string): NodeCommand => nodeCommand(script, HERE);
 const mcp = nodeCommand(BUILT.mcp ?? join(RESOURCES, "packages", "engine", "src", "mcp.ts"), HERE);
 
 /**

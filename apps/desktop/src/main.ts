@@ -23,6 +23,8 @@ const RESOURCES = process.env.BEATSHEET_RESOURCES || REPO;
 // needs neither a Node of the person's nor a bundler.
 if (existsSync(join(__dirname, "mcp.mjs"))) process.env.BEATSHEET_MCP ??= join(__dirname, "mcp.mjs");
 if (existsSync(join(__dirname, "video", "index.html"))) process.env.BEATSHEET_VIDEO ??= join(__dirname, "video");
+// And the programs it carries, which go ahead of the PATH: the Swift helpers ready-made, and ffmpeg when it's there.
+if (existsSync(join(__dirname, "bin"))) process.env.BEATSHEET_BIN ??= join(__dirname, "bin");
 // Opened from Finder the app starts in /, where tools that work relative to where they run (Remotion's browser
 // download, for one) can't write; work from the repo instead.
 process.chdir(REPO);

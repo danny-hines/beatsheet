@@ -90,6 +90,13 @@ export function mergePath(lists: (string | undefined)[], platform: Platform = pr
   return out.join(sep);
 }
 
+/** Puts a folder of programs (`bin`: what the app carries, ffmpeg and ffprobe) ahead of everything on the PATH, so an installed app runs its own. */
+export function putFirstOnPath(bin: string | undefined, env: NodeJS.ProcessEnv = process.env, platform: Platform = process.platform): void {
+  if (!bin) return;
+  const key = pathKey(env, platform);
+  env[key] = mergePath([bin, env[key]], platform);
+}
+
 /** `env` with PATH set, under the one name Windows will use. */
 export function withPath(env: NodeJS.ProcessEnv, PATH: string, platform: Platform = process.platform): NodeJS.ProcessEnv {
   const out = { ...env };

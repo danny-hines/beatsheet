@@ -11,10 +11,10 @@ import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotoc
 const project = process.argv[2] ?? "july-4";
 const withFrame = process.argv.includes("--frame");
 // --app: the server as the desktop app starts it, from its last build (npm run desktop, or apps/desktop/scripts/build.mjs):
-// the one built file on Electron running as Node, rendering from the built video bundle.
+// the one built file on Electron running as Node, rendering from the built video bundle, with the programs it carries.
 const dist = join(import.meta.dirname, "..", "apps", "desktop", "dist");
 const server = process.argv.includes("--app")
-  ? { command: (await import("electron")).default as unknown as string, args: [join(dist, "mcp.mjs")], env: { ELECTRON_RUN_AS_NODE: "1", BEATSHEET_MCP: join(dist, "mcp.mjs"), BEATSHEET_VIDEO: join(dist, "video") } }
+  ? { command: (await import("electron")).default as unknown as string, args: [join(dist, "mcp.mjs")], env: { ELECTRON_RUN_AS_NODE: "1", BEATSHEET_MCP: join(dist, "mcp.mjs"), BEATSHEET_VIDEO: join(dist, "video"), BEATSHEET_BIN: join(dist, "bin") } }
   : { command: "node", args: [join(import.meta.dirname, "..", "packages/engine/src/mcp.ts")], env: {} };
 const client = new Client({ name: "smoke", version: "0" });
 // Like an agent's MCP client, the server gets a bare environment, plus beatsheet's folders (as hosted sessions pass them).

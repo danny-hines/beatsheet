@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { EXPORT_KINDS, type ExportKind, type Project } from "@beatsheet/schema";
 import type { MediaQuality, VideoProps } from "@beatsheet/video";
+import { renderBrowser } from "./chrome.ts";
 import { startServer } from "./http.ts";
 import { BUILT, RESOURCES } from "./paths.ts";
 import { loadProject } from "./store.ts";
@@ -33,10 +34,12 @@ async function prepare(id: string, cut: string | undefined, format: string | und
   const project = override ?? loaded.project;
   const dir = loaded.dir;
   const fmt = project.formats.find((f) => f.id === format) ?? project.formats[0]!;
-  const [url, origin] = await Promise.all([getBundle(), startServer()]);
+  const [url, origin, browserExecutable] = await Promise.all([getBundle(), startServer(), renderBrowser()]);
+  // How every Remotion call here opens Chrome: with WebGL, and in an installed app the one copy beatsheet keeps.
+  const chrome = { chromiumOptions, browserExecutable };
   const inputProps: VideoProps = { project, format: fmt.id, mediaBase: `${origin}/media/${id}`, quality, words: wordsInCut(id, project), ...(transparent ? { transparent } : {}) };
-  const composition = await selectComposition({ serveUrl: url, id: "beatsheet", inputProps, chromiumOptions });
-  return { project, dir, fmt, url, inputProps, composition };
+  const composition = await selectComposition({ serveUrl: url, id: "beatsheet", inputProps, ...chrome });
+  return { project, dir, fmt, url, inputProps, composition, chrome };
 }
 
 export async function renderProject(
@@ -58,7 +61,7 @@ export async function renderProject(
 ): Promise<string> {
   const quality = opts.quality ?? "original";
   const kind = opts.kind ?? "mp4";
-  const { project, dir, fmt, url, inputProps, composition } = await prepare(id, opts.cut, opts.format, quality, undefined, kind === "alpha");
+  const { project, dir, fmt, url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, quality, undefined, kind === "alpha");
   mkdirSync(join(dir, "out"), { recursive: true });
   // Each cut renders to its own file; the first cut keeps the plain name.
   const cutPart = project.cut.id === "main" ? "" : `-${project.cut.id}`;
@@ -78,7 +81,7 @@ export async function renderProject(
     frameRange,
     outputLocation: out,
     inputProps,
-    chromiumOptions,
+    ...chrome,
     onProgress: ({ progress }) => opts.onProgress?.(progress * (opts.master === false ? 1 : 0.95)),
   });
   if (opts.master !== false && EXPORT_KINDS[kind].audio) await master(out, kind);
@@ -123,12 +126,12 @@ export async function master(file: string, kind: ExportKind = "mp4"): Promise<{ 
 
 /** Several stills of a cut (or of `project`, a stand-in cut) in one go, as JPEG files in `dir`, in order. */
 export async function renderStills(id: string, opts: { cut?: string; format?: string; times: number[]; scale?: number; dir: string; project?: Project }): Promise<string[]> {
-  const { url, inputProps, composition } = await prepare(id, opts.cut, opts.format, "proxy", opts.project);
+  const { url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "proxy", opts.project);
   const files: string[] = [];
   for (const [i, t] of opts.times.entries()) {
     const frame = Math.min(composition.durationInFrames - 1, Math.max(0, Math.round(t * composition.fps)));
     const file = join(opts.dir, `still-${String(i).padStart(3, "0")}.jpg`);
-    await renderStill({ composition, serveUrl: url, frame, output: file, inputProps, imageFormat: "jpeg", jpegQuality: 80, scale: opts.scale ?? 0.35, chromiumOptions });
+    await renderStill({ composition, serveUrl: url, frame, output: file, inputProps, imageFormat: "jpeg", jpegQuality: 80, scale: opts.scale ?? 0.35, ...chrome });
     files.push(file);
   }
   return files;
@@ -136,12 +139,12 @@ export async function renderStills(id: string, opts: { cut?: string; format?: st
 
 /** A JPEG of the cut at time t, for the agent to look at its own work. */
 export async function renderFrame(id: string, opts: { cut?: string; format?: string; t: number; scale?: number }): Promise<Buffer> {
-  const { url, inputProps, composition } = await prepare(id, opts.cut, opts.format, "proxy");
+  const { url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "proxy");
   const frame = Math.min(composition.durationInFrames - 1, Math.max(0, Math.round(opts.t * composition.fps)));
   const dir = join(tmpdir(), "beatsheet-stills");
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${id}-${frame}-${Date.now()}.jpg`);
-  await renderStill({ composition, serveUrl: url, frame, output: file, inputProps, imageFormat: "jpeg", jpegQuality: 80, scale: opts.scale ?? 0.4, chromiumOptions });
+  await renderStill({ composition, serveUrl: url, frame, output: file, inputProps, imageFormat: "jpeg", jpegQuality: 80, scale: opts.scale ?? 0.4, ...chrome });
   const buf = readFileSync(file);
   rmSync(file, { force: true });
   return buf;
@@ -149,12 +152,12 @@ export async function renderFrame(id: string, opts: { cut?: string; format?: str
 
 /** A full-size picture of the cut at time t (a thumbnail, a poster), from the original footage, as a PNG in out/. */
 export async function renderPoster(id: string, opts: { cut?: string; format?: string; t: number; saveAs?: string }): Promise<string> {
-  const { project, dir, fmt, url, inputProps, composition } = await prepare(id, opts.cut, opts.format, "original");
+  const { project, dir, fmt, url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "original");
   const frame = Math.min(composition.durationInFrames - 1, Math.max(0, Math.round(opts.t * composition.fps)));
   mkdirSync(join(dir, "out"), { recursive: true });
   const cutPart = project.cut.id === "main" ? "" : `-${project.cut.id}`;
   const out = opts.saveAs ?? join(dir, "out", `${project.id}${cutPart}-${fmt.id}-${(frame / composition.fps).toFixed(2).replace(".", "s")}.png`);
-  await renderStill({ composition, serveUrl: url, frame, output: out, inputProps, imageFormat: "png", chromiumOptions });
+  await renderStill({ composition, serveUrl: url, frame, output: out, inputProps, imageFormat: "png", ...chrome });
   return out;
 }
 
