@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 import sharp from "sharp";
 import { slugify, type Asset, type CastMember } from "@beatsheet/schema";
 import { addAsset } from "./ingest.ts";
+import { pictureBytes } from "./media.ts";
 import { assetPath, cachePaths, projectDir } from "./paths.ts";
 import { loadProject, updateFile } from "./store.ts";
 
@@ -46,7 +47,7 @@ export async function stillOfSubject(file: string, video: boolean, sample: numbe
     rmSync(tmp, { force: true });
   } else {
     // Read into memory first: on Windows sharp keeps a file it opened locked.
-    frame = await sharp(readFileSync(file)).rotate().toBuffer();
+    frame = await sharp(await pictureBytes(file)).rotate().toBuffer();
   }
   const { width: W = 0, height: H = 0 } = await sharp(frame).metadata();
   // A face gets its head and shoulders (the box is only the face); a person or a thing, a margin.
@@ -91,7 +92,7 @@ export async function wardrobeFrom(projectId: string, ask: { asset: string; look
   const face = faces.find((s) => s.id === named) ?? [...faces].sort((p, q) => area(q) - area(p))[0];
   const cached = cachePaths(dir, a.id).image;
   // Read into memory first: on Windows sharp keeps a file it opened locked.
-  const frame = await sharp(readFileSync(existsSync(cached) ? cached : assetPath(project, dir, a))).rotate().toBuffer();
+  const frame = await sharp(await pictureBytes(existsSync(cached) ? cached : assetPath(project, dir, a))).rotate().toBuffer();
   const { width: W = 0, height: H = 0 } = await sharp(frame).metadata();
   let box = { left: 0, top: 0, width: W, height: H };
   if (face) {

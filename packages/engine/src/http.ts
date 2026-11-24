@@ -9,7 +9,7 @@ import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type Rect, type RestoreSteps } from "@beatsheet/schema";
 import { createHash } from "node:crypto";
-import { makeFrames, makePeaks } from "./media.ts";
+import { makeFrames, makeFullPicture, makePeaks, needsConverting } from "./media.ts";
 import { cancelInstall, checkComfy, COMFY_DEFAULT, comfyUrl, connectComfy, disconnectComfy, installModels, installStatus, OWN_WORKFLOWS, recheckComfy } from "./comfy.ts";
 import { cancelToolInstall, installTool, removeTool, toolStatus, type ToolId } from "./fixtools.ts";
 
@@ -1033,6 +1033,11 @@ async function media(req: IncomingMessage, res: ServerResponse, parts: string[])
       : kind === "poster" ? c.poster
       : kind === "strip" ? c.strip
       : original;
+    // The file itself is what a finished export draws, and Chrome can't draw a phone's HEIC: it gets a full-size JPEG.
+    if (pick === original && a.kind === "image" && needsConverting(original) && existsSync(original)) {
+      await makeFullPicture(original, c.full);
+      return sendFile(req, res, c.full);
+    }
     return sendFile(req, res, pick);
   }
   if (what === "file") {

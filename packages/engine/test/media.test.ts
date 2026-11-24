@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } fro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
-import { makeFrames, makeOnce, makePeaks, makeVideoProxy } from "../src/media.ts";
+import sharp from "sharp";
+import { makeFrames, makeFullPicture, makeImageProxy, makeOnce, makePeaks, makePoster, makeVideoProxy, needsConverting, pictureBytes } from "../src/media.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "beatsheet-media-"));
 const ff = (...args: string[]) => execFileSync("ffmpeg", ["-v", "error", "-y", ...args]);
@@ -96,5 +97,70 @@ describe("what the timeline shows of a clip", () => {
     const [w, h] = probe.split(",").map(Number);
     expect(h).toBe(72);
     expect(w).toBe(128 * 3);
+  });
+});
+
+/**
+ * turned.heic is a phone-style photo made for this: 400×200 as stored, red on its left half and blue on its right,
+ * marked to be shown turned a quarter clockwise. Shown right, it's 200×400 with red on top.
+ */
+describe("a phone's HEIC photo", () => {
+  const heic = join(import.meta.dirname, "turned.heic");
+  const shown = async (picture: Buffer | string) => {
+    const { data, info } = await sharp(picture).rotate().raw().toBuffer({ resolveWithObject: true });
+    const at = (10 * info.width + Math.round(info.width / 2)) * info.channels;
+    return { size: `${info.width}x${info.height}`, top: data[at]! > data[at + 2]! ? "red" : "blue" };
+  };
+
+  it("isn't something the picture library reads by itself (if it ever is, the converting can go)", async () => {
+    await expect(sharp(heic).rotate().raw().toBuffer()).rejects.toThrow();
+  });
+
+  // ffmpeg reads HEIC from 7.1; an older one on the PATH can't be asked to.
+  const ffmpegReadsHeic = (() => {
+    const v = /ffmpeg version n?(\d+)\.(\d+)/.exec(spawnSync("ffmpeg", ["-version"]).stdout?.toString() ?? "");
+    return !!v && (Number(v[1]) > 7 || (Number(v[1]) === 7 && Number(v[2]) >= 1));
+  })();
+
+  it.skipIf(process.platform !== "darwin")("comes out the way it's shown through the Mac's own converter", async () => {
+    expect(await shown(await pictureBytes(heic, "sips"))).toEqual({ size: "200x400", top: "red" });
+  });
+
+  it.skipIf(!ffmpegReadsHeic)("comes out the way it's shown through ffmpeg, as on Windows", async () => {
+    expect(await shown(await pictureBytes(heic, "ffmpeg"))).toEqual({ size: "200x400", top: "red" });
+  });
+
+  it.skipIf(process.platform !== "darwin" && !ffmpegReadsHeic)("gets its screen-sized copy and its poster, upright", async () => {
+    const proxy = join(dir, "heic", "image.jpg");
+    const poster = join(dir, "heic", "poster.jpg");
+    await makeImageProxy(heic, proxy);
+    await makePoster(heic, poster, "image");
+    expect(await shown(proxy)).toEqual({ size: "200x400", top: "red" });
+    // The poster is always 480 on its long side.
+    expect(await shown(poster)).toEqual({ size: "240x480", top: "red" });
+    // Nothing left behind in the folder but the two pictures.
+    expect(readdirSync(join(dir, "heic")).sort()).toEqual(["image.jpg", "poster.jpg"]);
+  });
+
+  it.skipIf(process.platform !== "darwin" && !ffmpegReadsHeic)("gets a full-size copy for a finished export, which Chrome can draw", async () => {
+    expect(needsConverting(heic)).toBe(true);
+    expect(needsConverting("IMG_0001.HEIC")).toBe(true);
+    expect(needsConverting("IMG_0001.jpg")).toBe(false);
+    const full = join(dir, "heic-full", "full.jpg");
+    await makeFullPicture(heic, full);
+    expect(await shown(full)).toEqual({ size: "200x400", top: "red" });
+    expect((await sharp(full).metadata()).format).toBe("jpeg");
+  });
+
+  it("leaves other photos as they are", async () => {
+    const jpg = join(dir, "plain.jpg");
+    await sharp({ create: { width: 8, height: 8, channels: 3, background: "#336699" } }).jpeg().toFile(jpg);
+    expect((await pictureBytes(jpg)).equals(readFileSync(jpg))).toBe(true);
+  });
+
+  it("says which photo it couldn't read", async () => {
+    const broken = join(dir, "broken.heic");
+    writeFileSync(broken, "not a photo");
+    await expect(pictureBytes(broken)).rejects.toThrow(/Couldn't read the photo .*broken\.heic/);
   });
 });

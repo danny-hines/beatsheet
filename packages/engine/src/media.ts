@@ -4,8 +4,9 @@
  */
 import { execFile, spawn } from "node:child_process";
 import { filmFrames, PEAK_RATE } from "@beatsheet/schema";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
 import { replaceFile } from "./platform.ts";
@@ -78,14 +79,49 @@ export function makePlayable(src: string, out: string, how: { deinterlace?: bool
   return makeOnce(out, (tmp) => ffmpeg(["-i", src, "-vf", vf, "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", tmp]));
 }
 
+/** Photos the picture library's own build can't decode: a phone's HEIC (it reads HEIF only when AVIF is inside). */
+const NOT_SHARPS = /\.(heic|heif)$/i;
+let conversions = 0;
+
+/**
+ * A photo's bytes as the picture library (sharp) can read them: the file's own, or for a phone's HEIC a full-size
+ * JPEG of it. macOS's own converter makes that (it knows every kind of iPhone photo); elsewhere ffmpeg, which reads
+ * HEIC from 7.1. Either way the picture comes out the way it's shown once sharp turns it (`.rotate()`).
+ */
+export async function pictureBytes(src: string, with_: "sips" | "ffmpeg" = process.platform === "darwin" ? "sips" : "ffmpeg"): Promise<Buffer> {
+  if (!NOT_SHARPS.test(src)) return readFileSync(src);
+  const tmp = join(tmpdir(), `beatsheet-photo-${process.pid}-${++conversions}.jpg`);
+  try {
+    if (with_ === "sips") await run("sips", ["-s", "format", "jpeg", "-s", "formatOptions", "best", src, "--out", tmp]);
+    else await run("ffmpeg", ["-v", "error", "-y", "-i", src, "-frames:v", "1", "-q:v", "1", tmp]);
+    return readFileSync(tmp);
+  } catch (err) {
+    const why = String((err as { stderr?: string }).stderr || (err as Error).message).trim().split("\n").pop();
+    throw new Error(`Couldn't read the photo ${src}${why ? `: ${why}` : ""}`);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
+
+/** Whether a photo has to be converted before a browser (the studio, the renderer's Chrome) or sharp can show it. */
+export const needsConverting = (file: string) => NOT_SHARPS.test(file);
+
+/**
+ * A full-size, upright JPEG of a photo no browser shows as it is (a phone's HEIC): what a finished export draws in
+ * place of the file itself. Made the first time it's wanted and kept with the previews.
+ */
+export function makeFullPicture(src: string, out: string): Promise<void> {
+  return makeOnce(out, async (tmp) => void (await sharp(await pictureBytes(src)).rotate().jpeg({ quality: 95, chromaSubsampling: "4:4:4" }).toFile(tmp)));
+}
+
 /** A screen-sized, upright JPEG of a photo (browsers can't show HEIC, and 50 MP photos scrub badly). */
 export function makeImageProxy(src: string, out: string): Promise<void> {
-  return makeOnce(out, async (tmp) => void (await sharp(src).rotate().resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toFile(tmp)));
+  return makeOnce(out, async (tmp) => void (await sharp(await pictureBytes(src)).rotate().resize({ width: 1920, height: 1920, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 82 }).toFile(tmp)));
 }
 
 export function makePoster(src: string, out: string, kind: "video" | "image", duration?: number): Promise<void> {
   return makeOnce(out, async (tmp) => {
-    if (kind === "image") await sharp(src).rotate().resize({ width: 480, height: 480, fit: "inside" }).jpeg({ quality: 78 }).toFile(tmp);
+    if (kind === "image") await sharp(await pictureBytes(src)).rotate().resize({ width: 480, height: 480, fit: "inside" }).jpeg({ quality: 78 }).toFile(tmp);
     else await ffmpeg(["-ss", String(Math.max(0, (duration ?? 1) * 0.4)), "-i", src, "-frames:v", "1", "-vf", "scale=-2:360", "-q:v", "4", tmp]);
   });
 }

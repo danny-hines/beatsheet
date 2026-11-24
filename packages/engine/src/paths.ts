@@ -129,6 +129,8 @@ export function cachePaths(dir: string, assetId: string) {
   return {
     proxy: join(c, "proxy", `${assetId}.mp4`),
     image: join(c, "image", `${assetId}.jpg`),
+    /** A full-size JPEG of a photo browsers can't show (HEIC), for finished exports. */
+    full: join(c, "full", `${assetId}.jpg`),
     poster: join(c, "poster", `${assetId}.jpg`),
     strip: join(c, "strip", `${assetId}.jpg`),
     frames: join(c, "frames", `${assetId}.jpg`),

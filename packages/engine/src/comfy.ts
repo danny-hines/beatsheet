@@ -28,6 +28,7 @@ import { promisify } from "node:util";
 import sharp from "sharp";
 import type { Quality, ServiceState, Unusable } from "@beatsheet/schema";
 import { FalError } from "./fal.ts";
+import { pictureBytes } from "./media.ts";
 import { RESOURCES } from "./paths.ts";
 import { download, type Download } from "./pyenv.ts";
 import { gpu } from "./sam-cuda.ts";
@@ -836,7 +837,7 @@ const cover = (w: number, h: number) => `scale=${w}:${h}:force_original_aspect_r
  */
 export async function fitReference(src: string, dest: string): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
-  await sharp(src).rotate().flatten({ background: "#e4e4e4" }).resize(1536, 1536, { fit: "inside", withoutEnlargement: true }).png().toFile(dest);
+  await sharp(await pictureBytes(src)).rotate().flatten({ background: "#e4e4e4" }).resize(1536, 1536, { fit: "inside", withoutEnlargement: true }).png().toFile(dest);
 }
 
 /** The picture, scaled to cover the size and cropped to it. */

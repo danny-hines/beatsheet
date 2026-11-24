@@ -20,7 +20,7 @@ import { execFile } from "node:child_process";
 import sharp from "sharp";
 import { slugify, type Asset, type Rect, type SubjectTrack } from "@beatsheet/schema";
 import { addAsset } from "./ingest.ts";
-import { alphaWebm } from "./media.ts";
+import { alphaWebm, pictureBytes } from "./media.ts";
 import { swiftHelper } from "./native.ts";
 import { assetPath, cachePaths } from "./paths.ts";
 import { samReady, samSegment } from "./sam.ts";
@@ -443,7 +443,7 @@ async function localSamCutOut(id: string, a: Asset, original: string, outBase: s
 async function samCutOut(id: string, a: Asset, original: string, outBase: string, prompt: string, each: boolean): Promise<Asset[]> {
   const key = await getSecret("fal");
   if (!key) throw new Error("Cut-outs by description use SAM 3.1 through fal: add a fal key in Settings.");
-  const photo = await sharp(original).rotate().resize({ width: 1536, height: 1536, fit: "inside" }).jpeg({ quality: 90 }).toBuffer();
+  const photo = await sharp(await pictureBytes(original)).rotate().resize({ width: 1536, height: 1536, fit: "inside" }).jpeg({ quality: 90 }).toBuffer();
   const meta = await sharp(photo).metadata();
   const res = await fetch("https://fal.run/fal-ai/sam-3/image", {
     method: "POST",
