@@ -15,7 +15,8 @@
 //
 // Signing. With a Developer ID Application certificate in the keychain the app is signed for the hardened runtime
 // (build/entitlements.mac.plist) and notarized with the notarytool profile named by BEATSHEET_NOTARY_PROFILE
-// ("beatsheet-notary" unless set; make it once with `xcrun notarytool store-credentials beatsheet-notary`). The
+// ("beatsheet-notary" unless set; make it once with `xcrun notarytool store-credentials beatsheet-notary`), and so is
+// the DMG; --no-notarize signs without sending anything to Apple, for trying things. The
 // certificate and the credentials stay in the keychain: this script never sees them. Without a certificate the app is
 // signed for this Mac only, and says so: it's for trying the packaging, not for giving to anyone.
 //
@@ -29,6 +30,7 @@
 //
 // Mac only so far.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -155,6 +157,35 @@ for (const dir of packages) {
   // Each package's own files; the packages nested inside it are in the list themselves when they're needed.
   cpSync(dir, join(stage, relative(repo, dir)), { recursive: true, filter: (src) => !src.endsWith(".map") && !src.endsWith(".DS_Store") && !relative(dir, src).split(sep).includes("node_modules") });
 }
+
+/**
+ * Points programs that name their libraries bare ("libavcodec.dylib", as Remotion's ffmpeg does) at the copy beside
+ * them (@loader_path). Bare names only resolve through DYLD_LIBRARY_PATH, which the hardened runtime of a signed app
+ * ignores: the program would stop before it starts. Done in the staged copy, before anything is signed.
+ */
+function loadFromBeside(root) {
+  let changed = 0;
+  for (const entry of readdirSync(root, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile()) continue;
+    const file = join(entry.parentPath, entry.name);
+    const program = /\.(dylib|node)$/.test(entry.name) || (!entry.name.includes(".") && (statSync(file).mode & 0o111) !== 0);
+    if (!program) continue;
+    let libraries;
+    try {
+      libraries = execFileSync("otool", ["-L", file], { stdio: ["ignore", "pipe", "ignore"] }).toString().split("\n").slice(1).map((line) => line.trim().split(" ")[0]);
+    } catch {
+      continue; // a script, not a program
+    }
+    const beside = [...new Set(libraries)].filter((name) => name && !name.includes("/") && name !== entry.name && existsSync(join(entry.parentPath, name)));
+    if (!beside.length) continue;
+    execFileSync("install_name_tool", [...beside.flatMap((name) => ["-change", name, `@loader_path/${name}`]), file], { stdio: "ignore" });
+    changed++;
+  }
+  return changed;
+}
+const pointed = loadFromBeside(join(stage, "node_modules"));
+if (pointed) console.log(`  ${pointed} programs pointed at the libraries beside them`);
+
 writeFileSync(join(stage, "package.json"), `${JSON.stringify({ name: "beatsheet", version, private: true, license: "MIT", description }, null, 2)}\n`);
 const megabytes = (dir) => Math.round(Number(execFileSync("du", ["-sk", dir]).toString().split("\t")[0]) / 1024);
 console.log(`  ${packages.length} packages, ${megabytes(stage)} MB in all`);
@@ -171,7 +202,8 @@ const icon = join(release, "beatsheet.icns");
 await writeIcns(icon);
 
 const identities = execFileSync("security", ["find-identity", "-v", "-p", "codesigning"]).toString();
-const signed = /"Developer ID Application: /.test(identities);
+const identity = /"(Developer ID Application: [^"]+)"/.exec(identities)?.[1];
+const signed = !!identity;
 const notarize = signed && !process.argv.includes("--no-notarize");
 if (notarize) process.env.APPLE_KEYCHAIN_PROFILE ??= process.env.BEATSHEET_NOTARY_PROFILE ?? "beatsheet-notary";
 console.log(
@@ -237,10 +269,42 @@ for (const need of ["LICENSE", "apps/desktop/dist/main.cjs", "apps/desktop/dist/
   if (!existsSync(join(inside, need))) throw new Error(`The packaged app is missing ${need}`);
 }
 run("codesign", ["--verify", "--deep", "--strict", app]);
-if (signed) {
-  // As Gatekeeper will judge it on someone else's Mac.
+// Remotion's ffmpeg starts with nothing in the environment to tell it where its libraries are, as it has to in a
+// signed app (loadFromBeside).
+for (const program of ["ffmpeg", "ffprobe"]) {
+  run(join(inside, "node_modules", "@remotion", `compositor-darwin-${arch}`, program), ["-version"], { env: {}, cwd: "/", stdio: "ignore" });
+}
+if (notarize) {
+  // As Gatekeeper will judge it on someone else's Mac (one that isn't notarized, it turns away).
   run("spctl", ["--assess", "--type", "execute", "--verbose=2", app]);
-  if (notarize) run("xcrun", ["stapler", "validate", app]);
+  run("xcrun", ["stapler", "validate", app]);
+}
+
+// The disk image is what people download, so it's signed, notarized and stapled as well: it opens without a word
+// from macOS, with or without a connection. That changes the file, so what latest-mac.yml says of it is brought up
+// to date; its blockmap, which described the file as it was and which nothing reads (a Mac updates from the zip),
+// goes.
+if (signed && !dirOnly) {
+  const fingerprint = (file) => createHash("sha512").update(readFileSync(file)).digest("base64");
+  for (const name of readdirSync(out).filter((f) => f.endsWith(".dmg"))) {
+    const dmg = join(out, name);
+    const before = { sha512: fingerprint(dmg), size: statSync(dmg).size };
+    run("codesign", ["--force", "--timestamp", "--sign", identity, dmg]);
+    if (notarize) {
+      console.log(`Notarizing ${name}…`);
+      run("xcrun", ["notarytool", "submit", dmg, "--keychain-profile", process.env.APPLE_KEYCHAIN_PROFILE, "--wait"]);
+      run("xcrun", ["stapler", "staple", dmg]);
+      run("spctl", ["--assess", "--type", "open", "--context", "context:primary-signature", "--verbose=2", dmg]);
+    }
+    rmSync(`${dmg}.blockmap`, { force: true });
+    const yml = join(out, "latest-mac.yml");
+    if (existsSync(yml)) {
+      const text = readFileSync(yml, "utf8");
+      const entry = `sha512: ${before.sha512}\n    size: ${before.size}`;
+      if (!text.includes(entry)) throw new Error(`latest-mac.yml doesn't describe ${name} as it was built; it can't be brought up to date`);
+      writeFileSync(yml, text.replace(entry, `sha512: ${fingerprint(dmg)}\n    size: ${statSync(dmg).size}`));
+    }
+  }
 }
 console.log(`\nMade ${relative(repo, app)} (${megabytes(app)} MB)`);
 if (!dirOnly) for (const f of readdirSync(out).filter((f) => /\.(dmg|zip)$/.test(f))) console.log(`     ${relative(repo, join(out, f))} (${Math.round(statSync(join(out, f)).size / 1048576)} MB)`);
