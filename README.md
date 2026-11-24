@@ -23,7 +23,15 @@ The app can carry its own ffmpeg instead: `scripts/build-ffmpeg.sh` builds ffmpe
 
 `npm run dist` makes the app that runs without this folder (after `scripts/build-ffmpeg.sh`): everything it needs is inside it, its projects and the agents' recipes live in `~/Movies/beatsheet`, and it needs no Node, Homebrew or Xcode tools, on macOS 14 or later (Apple Silicon). `npm run dist -- --dir` makes just the app, which is quicker for trying it. With a Developer ID Application certificate in the keychain it's signed and notarized (using the notarytool profile `beatsheet-notary`; make it once with `xcrun notarytool store-credentials beatsheet-notary`); without one it's signed for this Mac only and won't open on another.
 
-The installed app updates itself when it's built with somewhere to look: `"updates"` in `apps/desktop/package.json` (an electron-builder publish entry: a public GitHub repository's releases, or a folder on a web server). It checks a little after starting and every few hours, downloads a newer version in the background, then asks once whether to restart; otherwise the update goes in on the next quit. **Check for Updates…** is in the beatsheet menu (Help on Windows). `npm run dist` then also writes `latest-mac.yml`: put it, the zip and its blockmap where the entry points; nothing is uploaded for you. macOS only installs an update into an app signed with a Developer ID. Opening the installed app a second time brings the first forward rather than starting another.
+The installed app updates itself from where `"updates"` in `apps/desktop/package.json` says (an electron-builder publish entry): this repository's releases on GitHub. It checks a little after starting and every few hours, downloads a newer version in the background, then asks once whether to restart; otherwise the update goes in on the next quit. **Check for Updates…** is in the beatsheet menu (Help on Windows). `npm run dist` also writes `latest-mac.yml`, which is how an installed app learns of a version; nothing is uploaded for you. macOS only installs an update into an app signed with a Developer ID. Opening the installed app a second time brings the first forward rather than starting another.
+
+To publish a version: set `"version"` in `apps/desktop/package.json`, run `npm run dist` on a Mac with the certificate, and make a release tagged `v<version>` holding the DMG (what people download), the zip, its blockmap and `latest-mac.yml` (what installed apps update from), with the ffmpeg sources from `apps/desktop/vendor/sources/`. As a draft, which nobody sees until you publish it on GitHub:
+
+```bash
+gh release create v0.1.0 --draft --title "beatsheet 0.1.0" apps/desktop/release/dist/beatsheet-0.1.0-arm64.dmg apps/desktop/release/dist/beatsheet-0.1.0-arm64-mac.zip apps/desktop/release/dist/beatsheet-0.1.0-arm64-mac.zip.blockmap apps/desktop/release/dist/latest-mac.yml apps/desktop/vendor/sources/*
+```
+
+Installed apps only see published releases, and take the newest.
 
 ## How it works
 
@@ -257,6 +265,6 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 - Agents on an API key instead of a CLI.
 - Recording a signed-in page as video. The agent can browse it in your Chrome, but only you can record it (Record → Screen); a window recorder the agent can start and stop is next.
 - Keeping Codex away from the Keychain: keys are stored with the `security` command, so a shell in Codex's sandbox can read them. They need storing where only beatsheet can read them.
-- Signing and notarizing the installed app (`npm run dist`): written, and waiting on a Developer ID certificate to be tried. It has nowhere to look for updates yet (no `"updates"` entry), and there's no Windows installer.
+- Signing and notarizing the installed app (`npm run dist`): written, and waiting on a Developer ID certificate to be tried. No version has been released yet, and there's no Windows installer.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the reasoning.

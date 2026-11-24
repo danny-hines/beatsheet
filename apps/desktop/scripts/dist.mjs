@@ -24,7 +24,8 @@
 // repository's releases, or { "provider": "generic", "url": "https://…/" } for a folder on a web server
 // (BEATSHEET_UPDATE_URL names such a folder for one build, for trying it). With one set, this also writes
 // latest-mac.yml beside the zip: put the three (the yml, the zip and its blockmap) where the entry points, with the
-// DMG for people to download. Nothing is uploaded from here. With none set, the app doesn't look for updates.
+// DMG for people to download (for GitHub, a release tagged v<version>; the README has the command). Nothing is
+// uploaded from here. With none set, the app doesn't look for updates.
 //
 // Mac only so far.
 import { execFileSync } from "node:child_process";
