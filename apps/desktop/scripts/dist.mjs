@@ -19,6 +19,13 @@
 // certificate and the credentials stay in the keychain: this script never sees them. Without a certificate the app is
 // signed for this Mac only, and says so: it's for trying the packaging, not for giving to anyone.
 //
+// Updates. The installed app looks for newer versions where "updates" in apps/desktop/package.json says: an
+// electron-builder publish entry, such as { "provider": "github", "owner": "…", "repo": "…" } for a public
+// repository's releases, or { "provider": "generic", "url": "https://…/" } for a folder on a web server
+// (BEATSHEET_UPDATE_URL names such a folder for one build, for trying it). With one set, this also writes
+// latest-mac.yml beside the zip: put the three (the yml, the zip and its blockmap) where the entry points, with the
+// DMG for people to download. Nothing is uploaded from here. With none set, the app doesn't look for updates.
+//
 // Mac only so far.
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -40,7 +47,8 @@ const out = join(release, "dist");
 const arch = process.arch; // arm64, or x64 on an Intel Mac
 const dirOnly = process.argv.includes("--dir");
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd: repo, stdio: "inherit", ...opts });
-const { version, description } = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
+const { version, description, updates } = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
+const feed = process.env.BEATSHEET_UPDATE_URL ? { provider: "generic", url: process.env.BEATSHEET_UPDATE_URL } : (updates ?? null);
 
 // The oldest macOS it runs on, set by the Swift helpers (SWIFT_TARGET) and matched by the ffmpeg build.
 const { SWIFT_TARGET } = await import("../../../packages/engine/src/native.ts");
@@ -106,7 +114,7 @@ for (const path of REFERENCE) carry(path);
  * or reads without importing: three, which scenes' imports are bundled from, and Chrome DevTools MCP. @remotion/bundler
  * stays behind: the video is bundled already.
  */
-const RUNTIME_PACKAGES = ["sharp", "@remotion/renderer", "esbuild", "zod", "@modelcontextprotocol/sdk", "three", "chrome-devtools-mcp"];
+const RUNTIME_PACKAGES = ["sharp", "@remotion/renderer", "esbuild", "zod", "@modelcontextprotocol/sdk", "electron-updater", "three", "chrome-devtools-mcp"];
 
 /** Where Node would find `name` from `from`: the nearest node_modules holding it. */
 function installed(name, from) {
@@ -174,6 +182,8 @@ rmSync(out, { recursive: true, force: true });
 const electronVersion = JSON.parse(readFileSync(join(repo, "node_modules", "electron", "package.json"), "utf8")).version;
 await packageApp({
   targets: Platform.MAC.createTarget(),
+  // Where the app looks for updates is written into it; putting the files there is someone's own step.
+  publish: "never",
   config: {
     appId: "dev.beatsheet.studio",
     productName: "beatsheet",
@@ -184,7 +194,7 @@ await packageApp({
     // Nothing to compile: every package comes ready-made from node_modules.
     npmRebuild: false,
     nodeGypRebuild: false,
-    publish: null,
+    publish: feed,
     // With a certificate, an app that came out unsigned is a failure, not a warning.
     forceCodeSigning: signed,
     // Electron runs as Node for beatsheet's MCP server (agent/cli.ts), so that switch stays as Electron ships it: on.
@@ -232,4 +242,5 @@ if (signed) {
 }
 console.log(`\nMade ${relative(repo, app)} (${megabytes(app)} MB)`);
 if (!dirOnly) for (const f of readdirSync(out).filter((f) => /\.(dmg|zip)$/.test(f))) console.log(`     ${relative(repo, join(out, f))} (${Math.round(statSync(join(out, f)).size / 1048576)} MB)`);
+console.log(feed ? `Looks for updates at ${feed.url ?? `${feed.provider}: ${feed.owner}/${feed.repo}`}${signed ? "" : " (an update only goes in when the app is signed with a Developer ID)"}.` : "Doesn't look for updates: no \"updates\" entry in apps/desktop/package.json.");
 if (!signed) console.log("Signed for this Mac only: not something to give to anyone.");

@@ -23,6 +23,8 @@ The app can carry its own ffmpeg instead: `scripts/build-ffmpeg.sh` builds ffmpe
 
 `npm run dist` makes the app that runs without this folder (after `scripts/build-ffmpeg.sh`): everything it needs is inside it, its projects and the agents' recipes live in `~/Movies/beatsheet`, and it needs no Node, Homebrew or Xcode tools, on macOS 14 or later (Apple Silicon). `npm run dist -- --dir` makes just the app, which is quicker for trying it. With a Developer ID Application certificate in the keychain it's signed and notarized (using the notarytool profile `beatsheet-notary`; make it once with `xcrun notarytool store-credentials beatsheet-notary`); without one it's signed for this Mac only and won't open on another.
 
+The installed app updates itself when it's built with somewhere to look: `"updates"` in `apps/desktop/package.json` (an electron-builder publish entry: a public GitHub repository's releases, or a folder on a web server). It checks a little after starting and every few hours, downloads a newer version in the background, then asks once whether to restart; otherwise the update goes in on the next quit. **Check for Updates…** is in the beatsheet menu (Help on Windows). `npm run dist` then also writes `latest-mac.yml`: put it, the zip and its blockmap where the entry points; nothing is uploaded for you. macOS only installs an update into an app signed with a Developer ID. Opening the installed app a second time brings the first forward rather than starting another.
+
 ## How it works
 
 **First launch.** Setup asks for one working agent. Each card says whether that CLI is installed and signed in: **Install** runs the official installer, **Sign in** opens the CLI's own sign-in in Terminal, and **Check again** tries it. beatsheet never sees your agent's credentials. Below the agents, one optional step chooses where stills and video are made: one service for each, from every one beatsheet can make them on (a plan your agent is signed in on, or fal, Gemini, Meta, OpenAI or Tein with a key), and switch any time in Settings → Making. Nothing is made on a service you haven't chosen. Other services (ElevenLabs) add voices, music and sound. Each key is verified before it's saved and kept in the macOS Keychain. Setup is under ⚙ (or ⌘,) any time.
@@ -255,6 +257,6 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 - Agents on an API key instead of a CLI.
 - Recording a signed-in page as video. The agent can browse it in your Chrome, but only you can record it (Record → Screen); a window recorder the agent can start and stop is next.
 - Keeping Codex away from the Keychain: keys are stored with the `security` command, so a shell in Codex's sandbox can read them. They need storing where only beatsheet can read them.
-- Signing and notarizing the installed app (`npm run dist`): written, and waiting on a Developer ID certificate to be tried. It doesn't update itself yet, and there's no Windows installer.
+- Signing and notarizing the installed app (`npm run dist`): written, and waiting on a Developer ID certificate to be tried. It has nowhere to look for updates yet (no `"updates"` entry), and there's no Windows installer.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the reasoning.

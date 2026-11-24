@@ -14,6 +14,7 @@ import { promisify } from "node:util";
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
 // Pure helpers only: the rest of the engine reads its folders as it loads, so it's loaded later (studioUrl).
 import { appDataDir } from "../../../packages/engine/src/platform.ts";
+import { startUpdates, updateMenuItem } from "./updates.ts";
 
 // The engine's folders default to the repo: what it ships with (BEATSHEET_RESOURCES) and the person's projects and
 // recipes (BEATSHEET_WORKSPACE). An installed app sets those two apart (rootsFrom in the engine's paths.ts).
@@ -47,6 +48,15 @@ if (INSTALLED) {
     process.chdir(app.getPath("home"));
   }
 } else process.chdir(REPO);
+// With beatsheet's own folder somewhere else (BEATSHEET_HOME, for a trial beside the real thing), the window's own data
+// (what the page remembers, its cache) goes there too, so the trial and the real app don't share it.
+if (process.env.BEATSHEET_HOME) app.setPath("userData", join(process.env.BEATSHEET_HOME, "window"));
+// One beatsheet at a time, installed: two would share the projects, the settings and the address the studio keeps what
+// it remembers under. Opening it again brings the window forward instead. A check without a person at the screen
+// (BEATSHEET_SNAPSHOT) may run beside it.
+const UNATTENDED = !!process.env.BEATSHEET_SNAPSHOT;
+const ONLY_ONE = INSTALLED && !UNATTENDED;
+const FIRST = !ONLY_ONE || app.requestSingleInstanceLock();
 const DEV_URL = process.env.BEATSHEET_DEV_URL;
 const WINDOWS = process.platform === "win32";
 if (WINDOWS) hideConsoles();
@@ -186,10 +196,12 @@ function screenCapture() {
 function menu() {
   if (WINDOWS) return windowsMenu();
   const send = (command: string) => () => win?.webContents.send("beatsheet:menu", command);
+  // Check for Updates…, when this app looks for them (updates.ts); drawn again as an update comes in.
+  const update = updateMenuItem();
   const template: MenuItemConstructorOptions[] = [
     {
       label: "beatsheet",
-      submenu: [{ role: "about" }, { type: "separator" }, { label: "Settings…", accelerator: "Cmd+,", click: send("settings") }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "quit" }],
+      submenu: [{ role: "about" }, ...(update ? [update] : []), { type: "separator" }, { label: "Settings…", accelerator: "Cmd+,", click: send("settings") }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "quit" }],
     },
     {
       label: "File",
@@ -278,7 +290,7 @@ function windowsMenu() {
       submenu: [{ role: "reload" }, { role: "toggleDevTools", accelerator: "F12" }, { type: "separator" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }, { type: "separator" }, { role: "togglefullscreen" }],
     },
     { role: "windowMenu" },
-    { label: "&Help", submenu: [{ label: "About beatsheet", click: () => void dialog.showMessageBox({ title: "beatsheet", message: "beatsheet", detail: `Version ${app.getVersion()}\n${REPO}` }) }] },
+    { label: "&Help", submenu: [...(updateMenuItem() ? [updateMenuItem()!, { type: "separator" as const }] : []), { label: "About beatsheet", click: () => void dialog.showMessageBox({ title: "beatsheet", message: "beatsheet", detail: `Version ${app.getVersion()}\n${REPO}` }) }] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -304,11 +316,22 @@ app.setName("beatsheet");
 if (WINDOWS) app.setAppUserModelId("dev.beatsheet.studio");
 // The preview's sounds each get their own <audio> (see Preview.tsx); playback always starts from the person's click or key.
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
+app.on("second-instance", () => {
+  if (!win) return void openWindow();
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
+// Another beatsheet is open already: it has been told to come forward, and this one goes.
+if (!FIRST) app.quit();
 app.whenReady().then(async () => {
+  if (!FIRST) return;
   menu();
   screenCapture();
   currentOrigin = await studioUrl();
   console.log(`beatsheet: studio at ${currentOrigin}`);
+  // Before the window: an unattended check waits in openWindow until its picture is taken.
+  if (INSTALLED) startUpdates({ window: () => win, onChange: menu, logFile: join(process.env.BEATSHEET_RUNTIME!, "updates.log"), unattended: UNATTENDED }).catch((err) => console.error(`beatsheet: updates are off: ${err instanceof Error ? err.message : String(err)}`));
   await openWindow();
   app.on("activate", () => !win && void openWindow());
 });
