@@ -12,6 +12,7 @@ Under the hood, **nothing is placed at a fixed time unless it has to be**. A sho
 npm install
 npm run desktop                  # the Mac app, from this folder
 npm run app                      # makes apps/desktop/release/beatsheet.app to double-click
+npm run dist                     # makes the app people install: a DMG in apps/desktop/release/dist/
 npm run dev                      # or the studio in a browser at http://localhost:5180
 npm run check                    # typecheck, tests, validate the examples
 ```
@@ -19,6 +20,8 @@ npm run check                    # typecheck, tests, validate the examples
 `beatsheet.app` is a personal build linked to this folder: it uses the projects here and the agent CLIs on this Mac. Rebuild it after pulling changes. It needs ffmpeg (`brew install ffmpeg`); opened from Finder, it finds Homebrew's tools through your login shell's PATH.
 
 The app can carry its own ffmpeg instead: `scripts/build-ffmpeg.sh` builds ffmpeg and ffprobe from pinned sources (about ten minutes, once; it needs Xcode's command line tools and uv, and installs nothing), with just what beatsheet uses: x264, libvpx, Opus, LAME, vid.stab and dav1d. The next `npm run desktop` or `npm run app` puts them in the app, ahead of the PATH. It's a GPL build, so the sources it was made from are kept in `apps/desktop/vendor/sources/` to publish with the app.
+
+`npm run dist` makes the app that runs without this folder (after `scripts/build-ffmpeg.sh`): everything it needs is inside it, its projects and the agents' recipes live in `~/Movies/beatsheet`, and it needs no Node, Homebrew or Xcode tools, on macOS 14 or later (Apple Silicon). `npm run dist -- --dir` makes just the app, which is quicker for trying it. With a Developer ID Application certificate in the keychain it's signed and notarized (using the notarytool profile `beatsheet-notary`; make it once with `xcrun notarytool store-credentials beatsheet-notary`); without one it's signed for this Mac only and won't open on another.
 
 ## How it works
 
@@ -252,6 +255,6 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 - Agents on an API key instead of a CLI.
 - Recording a signed-in page as video. The agent can browse it in your Chrome, but only you can record it (Record → Screen); a window recorder the agent can start and stop is next.
 - Keeping Codex away from the Keychain: keys are stored with the `security` command, so a shell in Codex's sandbox can read them. They need storing where only beatsheet can read them.
-- A signed, notarized app that runs without this folder.
+- Signing and notarizing the installed app (`npm run dist`): written, and waiting on a Developer ID certificate to be tried. It doesn't update itself yet, and there's no Windows installer.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the reasoning.

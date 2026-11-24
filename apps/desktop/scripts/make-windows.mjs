@@ -6,7 +6,7 @@
 //
 // Usage: node apps/desktop/scripts/make-app.mjs (on Windows it runs this)
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { iconPng, writeIco } from "./icon.mjs";
@@ -34,7 +34,8 @@ rmSync(join(out, "resources", "default_app.asar"), { force: true });
 // The app's code is this repo's build: resources\app just loads it, so its own folder (and node_modules) are the repo's.
 const appDir = join(out, "resources", "app");
 mkdirSync(appDir, { recursive: true });
-writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "beatsheet", productName: "beatsheet", version: "0.1.0", main: "index.js" }, null, 2));
+const { version } = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
+writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "beatsheet", productName: "beatsheet", version, main: "index.js" }, null, 2));
 writeFileSync(join(appDir, "index.js"), `require(${JSON.stringify(join(desktop, "dist", "main.cjs"))});\n`);
 
 console.log("Drawing the icon…");

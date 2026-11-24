@@ -6,11 +6,10 @@
 //
 // On Windows it makes a folder with beatsheet.exe instead (make-windows.mjs).
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import sharp from "sharp";
-import { svg } from "./icon.mjs";
+import { writeIcns } from "./icon.mjs";
 
 if (process.platform === "win32") {
   await import("./make-windows.mjs");
@@ -35,7 +34,8 @@ cpSync(electronApp, out, { recursive: true, verbatimSymlinks: true });
 // The app's code is this repo's build: Resources/app just loads it, so its own folder (and node_modules) are the repo's.
 const appDir = join(out, "Contents", "Resources", "app");
 mkdirSync(appDir, { recursive: true });
-writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "beatsheet", productName: "beatsheet", version: "0.1.0", main: "index.js" }, null, 2));
+const { version } = JSON.parse(readFileSync(join(desktop, "package.json"), "utf8"));
+writeFileSync(join(appDir, "package.json"), JSON.stringify({ name: "beatsheet", productName: "beatsheet", version, main: "index.js" }, null, 2));
 writeFileSync(join(appDir, "index.js"), `require(${JSON.stringify(join(desktop, "dist", "main.cjs"))});\n`);
 
 // Name and identity.
@@ -50,15 +50,7 @@ set("NSMicrophoneUsageDescription", "beatsheet records your voice for voiceovers
 
 // The icon: the bar-and-beat b (icon.mjs).
 console.log("Drawing the icon…");
-const iconset = join(desktop, "release", "beatsheet.iconset");
-rmSync(iconset, { recursive: true, force: true });
-mkdirSync(iconset, { recursive: true });
-for (const size of [16, 32, 128, 256, 512]) {
-  await sharp(Buffer.from(svg)).resize(size, size).png().toFile(join(iconset, `icon_${size}x${size}.png`));
-  await sharp(Buffer.from(svg)).resize(size * 2, size * 2).png().toFile(join(iconset, `icon_${size}x${size}@2x.png`));
-}
-run("iconutil", ["-c", "icns", iconset, "-o", join(out, "Contents", "Resources", "electron.icns")]);
-rmSync(iconset, { recursive: true, force: true });
+await writeIcns(join(out, "Contents", "Resources", "electron.icns"));
 
 // Changing the bundle breaks Electron's signature; sign it again for this Mac only.
 console.log("Signing for this Mac…");

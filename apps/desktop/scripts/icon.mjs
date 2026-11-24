@@ -2,7 +2,8 @@
 // download. The studio draws the same mark (Mark in apps/studio/src/components/ui.tsx) with the same colours
 // (--panel, --line-2, --text and --accent in its styles.css). The Mac's app build makes an .icns of it; on Windows the
 // build makes an .ico, and the window shows a PNG of it.
-import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import sharp from "sharp";
 
 export const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
@@ -15,6 +16,19 @@ export const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height=
 
 /** A PNG of the icon, `size` pixels square. */
 export const iconPng = (size) => sharp(Buffer.from(svg)).resize(size, size).png().toBuffer();
+
+/** The Mac's .icns of the icon, at every size macOS asks for (made with its own iconutil). */
+export async function writeIcns(file) {
+  const iconset = file.replace(/\.icns$/, ".iconset");
+  rmSync(iconset, { recursive: true, force: true });
+  mkdirSync(iconset, { recursive: true });
+  for (const size of [16, 32, 128, 256, 512]) {
+    await sharp(Buffer.from(svg)).resize(size, size).png().toFile(`${iconset}/icon_${size}x${size}.png`);
+    await sharp(Buffer.from(svg)).resize(size * 2, size * 2).png().toFile(`${iconset}/icon_${size}x${size}@2x.png`);
+  }
+  execFileSync("iconutil", ["-c", "icns", iconset, "-o", file], { stdio: "inherit" });
+  rmSync(iconset, { recursive: true, force: true });
+}
 
 /** A Windows .ico holding the icon at the sizes Windows asks for (PNG inside, as Vista and later read). */
 export async function writeIco(file) {

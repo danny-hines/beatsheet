@@ -7,16 +7,27 @@
  * links open Windows Settings, and recording asks which screen with a small dialog of its own.
  */
 import childProcess from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, Menu, nativeTheme, session, shell, systemPreferences, type MenuItemConstructorOptions } from "electron";
+// Pure helpers only: the rest of the engine reads its folders as it loads, so it's loaded later (studioUrl).
+import { appDataDir } from "../../../packages/engine/src/platform.ts";
 
 // The engine's folders default to the repo: what it ships with (BEATSHEET_RESOURCES) and the person's projects and
 // recipes (BEATSHEET_WORKSPACE). An installed app sets those two apart (rootsFrom in the engine's paths.ts).
 process.env.BEATSHEET_REPO ??= resolve(__dirname, "..", "..", "..");
 const REPO = process.env.BEATSHEET_REPO;
+// Installed (the packaged app, made by scripts/dist.mjs): what it ships with is inside the app, which can't be written
+// to, so the person's projects and the recipes agents work from live in a folder of their own (beatsheet, in Movies;
+// Videos on Windows) and beatsheet's scratch goes in its own folder.
+const INSTALLED = app.isPackaged;
+if (INSTALLED) {
+  process.env.BEATSHEET_RESOURCES ||= REPO;
+  process.env.BEATSHEET_WORKSPACE ||= join(app.getPath("videos"), "beatsheet");
+  process.env.BEATSHEET_RUNTIME ||= join(process.env.BEATSHEET_HOME || appDataDir(), "runtime");
+}
 const RESOURCES = process.env.BEATSHEET_RESOURCES || REPO;
 // What this build made beside this file (scripts/build.mjs) to run in place of the source: beatsheet's MCP server as
 // one file, which agents start on Electron itself (as Node), and the video composition's bundle. With them the app
@@ -26,8 +37,16 @@ if (existsSync(join(__dirname, "video", "index.html"))) process.env.BEATSHEET_VI
 // And the programs it carries, which go ahead of the PATH: the Swift helpers ready-made, and ffmpeg when it's there.
 if (existsSync(join(__dirname, "bin"))) process.env.BEATSHEET_BIN ??= join(__dirname, "bin");
 // Opened from Finder the app starts in /, where tools that work relative to where they run (Remotion's browser
-// download, for one) can't write; work from the repo instead.
-process.chdir(REPO);
+// download, for one) can't write; work from the repo instead. Installed, from the person's beatsheet folder.
+if (INSTALLED) {
+  try {
+    mkdirSync(process.env.BEATSHEET_WORKSPACE!, { recursive: true });
+    process.chdir(process.env.BEATSHEET_WORKSPACE!);
+  } catch {
+    // A folder that can't be made is reported when the engine sets it up; home will do to work from.
+    process.chdir(app.getPath("home"));
+  }
+} else process.chdir(REPO);
 const DEV_URL = process.env.BEATSHEET_DEV_URL;
 const WINDOWS = process.platform === "win32";
 if (WINDOWS) hideConsoles();
