@@ -268,3 +268,13 @@ Steps that need Danny: anything signed in or paid for (agent sign-in, the Eleven
 - Signing and notarizing the installed app (`npm run dist`): written, and waiting on a Developer ID certificate to be tried. No version has been released yet, and there's no Windows installer.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the reasoning.
+
+## License
+
+beatsheet's own code is under the [MIT License](LICENSE).
+
+It's built on other people's work, which keeps its own terms:
+
+- **Remotion** (the player and the renderer) has [its own license](https://github.com/remotion-dev/remotion/blob/main/LICENSE.md): free for individuals, for organizations of up to three people and for non-profits. A larger company needs Remotion's company license to use it, and so to use beatsheet.
+- **ffmpeg**, as the installed app carries it, is built with x264 and vid.stab and is under the GPL (version 2 or later). `FFMPEG.txt` beside it says what it was built from, and those sources are published with each release.
+- The other packages in the app are under MIT, ISC, BSD, Apache-2.0 and similar licenses, each with its license in its own folder; libvips (inside sharp) is under the LGPL.

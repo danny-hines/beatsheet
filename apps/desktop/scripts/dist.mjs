@@ -106,6 +106,7 @@ carryBuilt("apps/studio/dist");
 for (const dir of ["native", "py", "sfx", "comfy"]) carry(`packages/engine/${dir}`);
 carry("examples");
 // What the workspace is given (workspace.ts): the instructions, the recipes, and the files they point at.
+carry("LICENSE");
 carry("CLAUDE.md");
 carry(".agents/skills");
 for (const path of REFERENCE) carry(path);
@@ -154,7 +155,7 @@ for (const dir of packages) {
   // Each package's own files; the packages nested inside it are in the list themselves when they're needed.
   cpSync(dir, join(stage, relative(repo, dir)), { recursive: true, filter: (src) => !src.endsWith(".map") && !src.endsWith(".DS_Store") && !relative(dir, src).split(sep).includes("node_modules") });
 }
-writeFileSync(join(stage, "package.json"), `${JSON.stringify({ name: "beatsheet", version, private: true, description }, null, 2)}\n`);
+writeFileSync(join(stage, "package.json"), `${JSON.stringify({ name: "beatsheet", version, private: true, license: "MIT", description }, null, 2)}\n`);
 const megabytes = (dir) => Math.round(Number(execFileSync("du", ["-sk", dir]).toString().split("\t")[0]) / 1024);
 console.log(`  ${packages.length} packages, ${megabytes(stage)} MB in all`);
 
@@ -232,7 +233,7 @@ await packageApp({
 const app = join(out, `mac${arch === "x64" ? "" : `-${arch}`}`, "beatsheet.app");
 if (!existsSync(app)) throw new Error(`The app isn't where it was expected: ${app}`);
 const inside = join(app, "Contents", "Resources", "beatsheet");
-for (const need of ["apps/desktop/dist/main.cjs", "apps/desktop/dist/video/bundle.js.map", "apps/desktop/dist/bin/ffmpeg", "apps/studio/dist/index.html", ".agents/skills/montage/SKILL.md", "node_modules/three/examples/jsm", "node_modules/sharp/package.json", "packages/engine/sfx"]) {
+for (const need of ["LICENSE", "apps/desktop/dist/main.cjs", "apps/desktop/dist/video/bundle.js.map", "apps/desktop/dist/bin/ffmpeg", "apps/studio/dist/index.html", ".agents/skills/montage/SKILL.md", "node_modules/three/examples/jsm", "node_modules/sharp/package.json", "packages/engine/sfx"]) {
   if (!existsSync(join(inside, need))) throw new Error(`The packaged app is missing ${need}`);
 }
 run("codesign", ["--verify", "--deep", "--strict", app]);

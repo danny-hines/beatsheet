@@ -2,6 +2,7 @@
   "name": "@beatsheet/desktop",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "beatsheet as a Mac (or Windows) app: the studio in its own window, with the engine and agents running inside it.",
   "updates": {
     "provider": "github",
