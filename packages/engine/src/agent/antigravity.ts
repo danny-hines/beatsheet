@@ -6,16 +6,18 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { inWorkspace, RUNTIME, WORKSPACE } from "../paths.ts";
+import { dirname, join, resolve } from "node:path";
+import { expandHome, inWorkspace, RUNTIME, WORKSPACE } from "../paths.ts";
 import { replaceFile } from "../platform.ts";
 import { readSettings } from "../settings.ts";
+import { loadFile } from "../store.ts";
 import { antigravityServer } from "./antigravity-server.ts";
 import { CHROME_DEVTOOLS, cliEnv, MCP_SERVER } from "./cli.ts";
 import { StdioRpc, type RpcId } from "./rpc.ts";
-import { AgentAdapter, message, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentSessionSummary } from "./session.ts";
+import { AgentAdapter, message, readStudioMessage, signedIn, studioSession, touchesKeys, type AgentApproval, type AgentCheck, type AgentItem, type AgentModel, type AgentOption, type AgentSessionSummary } from "./session.ts";
 
 type Content = { type: string; text?: string };
+type PlanEntry = { content: string; status?: string };
 /** A tool call as the server describes it (`tool_call`, `tool_call_update`, and in a permission request). */
 export type ToolCall = {
   toolCallId: string;
@@ -28,7 +30,7 @@ export type ToolCall = {
   rawInput?: unknown;
   _meta?: { mcp?: { server?: string; tool?: string } };
 };
-type Update = { sessionUpdate: string; content?: Content } & Partial<ToolCall>;
+type Update = { sessionUpdate: string; content?: Content; entries?: PlanEntry[]; configOptions?: ConfigOption[] } & Partial<ToolCall>;
 type PermissionOption = { optionId: string; name: string; kind: string };
 type ConfigOption = { id: string; currentValue: string; options: { value: string; name: string; description?: string }[] };
 type Opened = { sessionId?: string; configOptions?: ConfigOption[] };
@@ -65,7 +67,7 @@ const KEYED: Record<string, string> = { "gemini-api-key": "Gemini API key", "oau
  * lists its sessions by id alone. `probe` is the one empty session beatsheet opens to check the sign-in and read the
  * models, so checking doesn't leave a new one behind each time.
  */
-type Index = { probe?: string; sessions: Record<string, { prompt?: string; model?: string }> };
+type Index = { probe?: string; sessions: Record<string, { prompt?: string; model?: string; thinking?: string }> };
 const INDEX = join(RUNTIME, "antigravity.json");
 
 function readIndex(file = INDEX): Index {
@@ -111,6 +113,12 @@ export function mcpServers(chrome = !!readSettings().chrome) {
 /** The model choices from a session's config, the current one marked default. */
 export function modelsOf(opened: Opened): AgentModel[] {
   const o = opened.configOptions?.find((c) => c.id === "model");
+  return (o?.options ?? []).map((m) => ({ id: m.value, label: m.name, hint: m.description || undefined, default: m.value === o!.currentValue }));
+}
+
+/** The thinking / reasoning levels from a session's config, when the server exposes one. */
+export function thinkingOf(opened: Opened): AgentOption[] {
+  const o = opened.configOptions?.find((c) => c.id === "thinking_level");
   return (o?.options ?? []).map((m) => ({ id: m.value, label: m.name, hint: m.description || undefined, default: m.value === o!.currentValue }));
 }
 
@@ -161,15 +169,105 @@ function card(call: ToolCall): Omit<AgentApproval, "id" | "choices"> {
   return { title: call.title || "Antigravity is asking", detail: contentText(call) || undefined };
 }
 
+/** Read-only commands allowed without asking (matches Claude Code's "looking around" allowlist). */
+const SAFE_COMMANDS = new Set(["ls", "pwd", "which", "file", "stat", "du", "wc", "ffprobe", "mdls"]);
+/** Shell chaining, redirection, subshells or newlines disqualify a command from auto-approval. */
+const SHELL_META = /[;&|`$><\r\n()]/;
+
+/** Whether a shell command is a single, harmless read-only inspection command. */
+export function isSafeReadCommand(command?: string): boolean {
+  const text = command?.trim();
+  if (!text || SHELL_META.test(text)) return false;
+  const first = text.split(/\s+/)[0]!;
+  const bin = first.replace(/^["']|["']$/g, "");
+  const name = bin.includes("/") || bin.includes("\\") ? bin.split(/[\\/]/).pop() ?? "" : bin;
+  return SAFE_COMMANDS.has(name.toLowerCase().replace(/\.exe$/, ""));
+}
+
+/** All file or folder paths a read/search tool call points at (locations first, then common input keys). */
+function rawPaths(call: ToolCall): string[] {
+  const fromLocs = (call.locations ?? []).map((l) => l.path).filter(Boolean);
+  if (fromLocs.length) return [...new Set(fromLocs)];
+  const inp = input(call);
+  const found: string[] = [];
+  for (const k of ["Path", "AbsolutePath", "DirectoryPath", "SearchPath", "TargetFile", "path", "file_path"]) {
+    const v = inp[k];
+    if (typeof v === "string" && v.trim()) found.push(v.trim());
+  }
+  return [...new Set(found)];
+}
+
+/** Parent directory of a path, preserving Windows or POSIX separators even when tested cross-platform. */
+function parentDir(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, "");
+  const slash = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (slash <= 0) return dirname(p);
+  return trimmed.slice(0, slash);
+}
+
+/** Whether `target` sits inside `root` (case-insensitive on Windows). */
+function isUnder(target: string, root: string, workspace: string, windows: boolean): boolean {
+  const norm = (s: string) => {
+    const expanded = expandHome(s);
+    const full = /^[a-zA-Z]:[\\/]/.test(expanded) ? expanded : resolve(workspace, expanded);
+    const unified = full.replace(/\\/g, "/").replace(/\/+$/, "");
+    return windows ? unified.toLowerCase() : unified;
+  };
+  const a = norm(root);
+  const b = norm(target);
+  if (a === b) return true;
+  if (!b.startsWith(`${a}/`)) return false;
+  // Reject ".." traversal segments if the path wasn't normalized (e.g. Windows path tested on macOS).
+  const rel = b.slice(a.length + 1);
+  return !rel.split("/").includes("..");
+}
+
 /**
  * What "for this session" covers, as beatsheet remembers it (the server only offers once or for good): the same
- * command, the same MCP tool, or any edit.
+ * command, the same MCP tool, any edit, or for reads the parent directory (so allowing a footage folder doesn't ask
+ * for every clip in it).
  */
 export function scope(call: ToolCall): string {
   const named = toolName(call);
   if (named.server) return `mcp:${named.server}/${named.tool}`;
   if (call.kind === "execute") return `run:${named.detail}`;
+  if (call.kind === "read") {
+    const p = rawPaths(call)[0];
+    return `read:${p ? parentDir(p) : (named.detail ?? "")}`;
+  }
   return `${call.kind}:${call.kind === "edit" ? "" : (named.detail ?? "")}`;
+}
+
+/**
+ * Whether beatsheet approves a permission request without popping a card. Always refuses keys; always approves
+ * beatsheet's own MCP tools; in "ask" mode also approves safe inspection inside the workspace or active project's
+ * footage folders, harmless read-only commands, and subagent/thinking helpers.
+ */
+export function autoApprove(
+  call: ToolCall,
+  opts: { autonomy: "ask" | "free"; allowed: ReadonlySet<string>; workspace: string; roots?: readonly string[]; windows?: boolean },
+): { approve: boolean; keys: boolean } {
+  if (call._meta?.mcp?.server === "beatsheet") return { approve: true, keys: false };
+  const shown = card(call);
+  const windows = opts.windows ?? process.platform === "win32";
+  const keys = touchesKeys([call.title, shown.detail, JSON.stringify(input(call))].join("\n"), windows);
+  if (keys) return { approve: false, keys: true };
+  if (opts.autonomy === "free" || opts.allowed.has(scope(call))) return { approve: true, keys: false };
+  if (call.kind === "think") return { approve: true, keys: false };
+  if (call.kind === "read" || call.kind === "search") {
+    const targets = rawPaths(call);
+    const allowedRoots = [opts.workspace, ...(opts.roots ?? [])];
+    if (targets.length && targets.every((t) => allowedRoots.some((r) => isUnder(t, r, opts.workspace, windows)))) return { approve: true, keys: false };
+  }
+  if (call.kind === "execute" && isSafeReadCommand(shown.detail)) return { approve: true, keys: false };
+  return { approve: false, keys: false };
+}
+
+/** Formats ACP `plan` entries into a compact notice for the transcript. */
+function formatPlan(entries?: PlanEntry[]): string | undefined {
+  if (!entries?.length) return undefined;
+  const mark = (s?: string) => (s === "completed" ? "✓" : s === "in_progress" ? "▸" : "·");
+  return entries.map((e) => `${mark(e.status)} ${e.content}`).join("\n");
 }
 
 const picked = (optionId?: string) => (optionId ? { outcome: { outcome: "selected", optionId } } : { outcome: { outcome: "cancelled" } });
@@ -178,6 +276,8 @@ export class AntigravityAdapter extends AgentAdapter {
   readonly id = "antigravity" as const;
   private rpc?: StdioRpc;
   private starting?: Promise<StdioRpc>;
+  /** Last probe result, shared by models() and thinkingLevels() while this server runs. */
+  private probed?: Promise<Opened>;
   /** Permission requests waiting on the person, with the option each choice sends back. */
   private waiting = new Map<string, { rpcId: RpcId; answers: Record<string, string | undefined>; scope: string }>();
   /** What the person allowed for the rest of this session. */
@@ -196,7 +296,11 @@ export class AntigravityAdapter extends AgentAdapter {
       const rpc = new StdioRpc("Antigravity");
       rpc.on("notification", (m: string, p: Record<string, unknown>) => this.onEvent(m, p));
       rpc.on("request", (id: RpcId, m: string, p: Record<string, unknown>) => this.onRequest(id, m, p));
-      rpc.on("closed", (err: Error) => this.rpc === rpc && err.message !== "closed" && this.fail(err));
+      rpc.on("closed", (err: Error) => {
+        if (this.rpc !== rpc) return;
+        this.probed = undefined;
+        if (err.message !== "closed") this.fail(err);
+      });
       rpc.spawn(server.command, server.args, { cwd: WORKSPACE, env: await cliEnv() });
       await rpc.request(
         "initialize",
@@ -211,21 +315,27 @@ export class AntigravityAdapter extends AgentAdapter {
 
   /**
    * beatsheet's one empty session, opened again: it proves the sign-in (the server refuses without one) and carries
-   * the models the account offers.
+   * the models and thinking levels the account offers.
    */
-  private async probe(): Promise<Opened> {
-    const rpc = await this.host();
-    const probe = readIndex().probe;
-    if (probe && existsSync(conversation(probe))) {
-      try {
-        return await rpc.request<Opened>("session/load", { sessionId: probe, cwd: WORKSPACE, mcpServers: [] }, 120_000);
-      } catch (err) {
-        if (signedOut(err)) throw err;
+  private probe(fresh = false): Promise<Opened> {
+    if (!fresh && this.probed) return this.probed;
+    const p = (async () => {
+      const rpc = await this.host();
+      const probe = readIndex().probe;
+      if (probe && existsSync(conversation(probe))) {
+        try {
+          return await rpc.request<Opened>("session/load", { sessionId: probe, cwd: WORKSPACE, mcpServers: [] }, 120_000);
+        } catch (err) {
+          if (signedOut(err)) throw err;
+        }
       }
-    }
-    const r = await rpc.request<Opened>("session/new", { cwd: WORKSPACE, mcpServers: [] }, 120_000);
-    updateIndex((x) => void (x.probe = r.sessionId));
-    return r;
+      const r = await rpc.request<Opened>("session/new", { cwd: WORKSPACE, mcpServers: [] }, 120_000);
+      updateIndex((x) => void (x.probe = r.sessionId));
+      return r;
+    })();
+    this.probed = p;
+    p.catch(() => this.probed === p && (this.probed = undefined));
+    return p;
   }
 
   async models(): Promise<AgentModel[]> {
@@ -239,9 +349,17 @@ export class AntigravityAdapter extends AgentAdapter {
     return list.length ? list : [{ id: "default", label: "Default", hint: "Whatever Antigravity picks", default: true }];
   }
 
+  async thinkingLevels(): Promise<AgentOption[]> {
+    try {
+      return thinkingOf(await this.probe());
+    } catch {
+      return [];
+    }
+  }
+
   async check(): Promise<AgentCheck> {
     try {
-      await this.probe();
+      await this.probe(true);
     } catch (err) {
       return { ok: false, detail: signedOut(err) ? "Not signed in" : message(err) };
     }
@@ -273,20 +391,31 @@ export class AntigravityAdapter extends AgentAdapter {
     return indexedSessions();
   }
 
-  async start(opts: { model?: string; project?: string; cut?: string }) {
-    this.replace({ status: "starting", project: opts.project, cut: opts.cut, model: opts.model });
+  async start(opts: { model?: string; thinking?: string; project?: string; cut?: string }) {
+    this.replace({ status: "starting", project: opts.project, cut: opts.cut, model: opts.model, thinking: opts.thinking });
     this.reset();
     try {
       const rpc = await this.host();
       const r = await rpc.request<Opened>("session/new", { cwd: WORKSPACE, mcpServers: mcpServers() }, 120_000);
       const sessionId = r.sessionId!;
-      let model = modelsOf(r).find((m) => m.default)?.id;
+      let config = r.configOptions;
+      let model = modelsOf({ configOptions: config }).find((m) => m.default)?.id;
       if (opts.model && opts.model !== "default" && opts.model !== model) {
-        await rpc.request("session/set_config_option", { sessionId, configId: "model", value: opts.model });
+        const res = await rpc.request<Opened | undefined>("session/set_config_option", { sessionId, configId: "model", value: opts.model });
+        if (res?.configOptions) config = res.configOptions;
         model = opts.model;
       }
-      updateIndex((x) => void (x.sessions[sessionId] = { model }));
-      this.set({ status: "idle", sessionId, model });
+      let thinking = thinkingOf({ configOptions: config }).find((t) => t.default)?.id;
+      if (opts.thinking && opts.thinking !== "default" && opts.thinking !== thinking) {
+        try {
+          await rpc.request("session/set_config_option", { sessionId, configId: "thinking_level", value: opts.thinking });
+          thinking = opts.thinking;
+        } catch {
+          // The chosen model may not expose this thinking level; carry on with its default.
+        }
+      }
+      updateIndex((x) => void (x.sessions[sessionId] = { model, thinking }));
+      this.set({ status: "idle", sessionId, model, thinking });
     } catch (err) {
       this.fail(signedOut(err) ? new Error("Antigravity isn't signed in. Sign in from Settings → Agent.") : err);
     }
@@ -294,13 +423,18 @@ export class AntigravityAdapter extends AgentAdapter {
 
   async resume(sessionId: string, project?: string, cut?: string) {
     // The history streams in as updates to this session before the answer, so the view takes its id first.
-    this.replace({ status: "starting", sessionId, project, cut, model: readIndex().sessions[sessionId]?.model });
+    const saved = readIndex().sessions[sessionId];
+    this.replace({ status: "starting", sessionId, project, cut, model: saved?.model, thinking: saved?.thinking });
     this.reset();
     try {
       const rpc = await this.host();
       const r = await rpc.request<Opened>("session/load", { sessionId, cwd: WORKSPACE, mcpServers: mcpServers() }, 120_000);
       this.finish();
-      this.set({ status: "idle", model: modelsOf(r).find((m) => m.default)?.id ?? this.view.model });
+      this.set({
+        status: "idle",
+        model: modelsOf(r).find((m) => m.default)?.id ?? this.view.model,
+        thinking: thinkingOf(r).find((t) => t.default)?.id ?? this.view.thinking,
+      });
     } catch (err) {
       this.fail(err);
     }
@@ -356,11 +490,23 @@ export class AntigravityAdapter extends AgentAdapter {
   stop() {
     const rpc = this.rpc;
     this.rpc = undefined;
+    this.probed = undefined;
     // On Windows this ends the whole tree: the server starts a second copy of itself and its harness.
     rpc?.close();
     this.queue = [];
     this.reset();
     this.replace({ status: "off" });
+  }
+
+  /** The active project's declared footage folders, so Antigravity can read media in them without approval spam. */
+  private projectRoots(): string[] {
+    if (!this.view.project) return [];
+    try {
+      const { doc, dir } = loadFile(this.view.project);
+      return doc.sources.map((s) => resolve(dir, expandHome(s.path)));
+    } catch {
+      return [];
+    }
   }
 
   private reset() {
@@ -384,12 +530,13 @@ export class AntigravityAdapter extends AgentAdapter {
     const answers = { accept: options.find((o) => o.kind === "allow_once")?.optionId, decline: options.find((o) => o.kind === "reject_once")?.optionId };
     const shown = card(call);
     const key = scope(call);
-    // beatsheet's own tools are what the session is for.
-    if (call._meta?.mcp?.server === "beatsheet") return rpc.respond(rpcId, picked(answers.accept));
-    // Allowed for the session already, or working without asking: beatsheet says yes itself, except to anything that
-    // reads keys.
-    const keys = touchesKeys([call.title, shown.detail, JSON.stringify(input(call))].join("\n"));
-    if (answers.accept && !keys && (this.allowed.has(key) || readSettings().autonomy === "free")) return rpc.respond(rpcId, picked(answers.accept));
+    const { approve, keys } = autoApprove(call, {
+      autonomy: readSettings().autonomy === "free" ? "free" : "ask",
+      allowed: this.allowed,
+      workspace: WORKSPACE,
+      roots: this.projectRoots(),
+    });
+    if (answers.accept && approve) return rpc.respond(rpcId, picked(answers.accept));
     const id = String(rpcId);
     const choices = [
       ...(answers.accept ? [{ id: "accept", label: call.kind === "execute" ? "Run" : "Allow", primary: true }] : []),
@@ -420,6 +567,19 @@ export class AntigravityAdapter extends AgentAdapter {
         // An update to a call the studio skipped stays skipped.
         if (!this.view.items.some((x) => x.id === u.toolCallId)) return;
         return this.upsert(this.toolItem(u as ToolCall));
+      case "plan": {
+        const summary = formatPlan(u.entries);
+        if (!summary) return;
+        this.finish();
+        return this.upsert({ id: "plan", kind: "notice", status: "done", text: summary });
+      }
+      case "config_option_update": {
+        if (!u.configOptions?.length) return;
+        const model = modelsOf({ configOptions: u.configOptions }).find((m) => m.default)?.id;
+        const thinking = thinkingOf({ configOptions: u.configOptions }).find((t) => t.default)?.id;
+        if (model || thinking) this.set({ ...(model ? { model } : {}), ...(thinking ? { thinking } : {}) });
+        return;
+      }
     }
   }
 

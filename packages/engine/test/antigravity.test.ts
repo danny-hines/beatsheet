@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { pickBuild, platformKey } from "../src/agent/antigravity-server.ts";
-import { AntigravityAdapter, housekeeping, indexedSessions, modelsOf, scope, toolName, type ToolCall } from "../src/agent/antigravity.ts";
+import { parseRegistryVersion, pickBuild, platformKey } from "../src/agent/antigravity-server.ts";
+import { AntigravityAdapter, autoApprove, housekeeping, indexedSessions, isSafeReadCommand, modelsOf, scope, thinkingOf, toolName, type ToolCall } from "../src/agent/antigravity.ts";
 import { touchesKeys } from "../src/agent/session.ts";
 
 /** An Antigravity adapter on a session, wired to a fake ACP server, to see what reaches the person and what goes back. */
@@ -150,23 +150,111 @@ describe("Antigravity's stream, as the studio shows it", () => {
     expect(a.view.items).toEqual([]);
   });
 
-  it("scopes 'for this session' to the command, the MCP tool, or edits", () => {
+  it("scopes 'for this session' to the command, the MCP tool, edits, or a read's parent directory", () => {
     expect(scope(run("x", "npm test"))).toBe("run:npm test");
     expect(scope(LIST_PROJECTS)).toBe("mcp:beatsheet/list_projects");
     expect(scope({ toolCallId: "x", kind: "edit", title: "Edit a.ts", locations: [{ path: "a.ts" }] })).toBe(scope({ toolCallId: "y", kind: "edit", title: "Edit b.ts", locations: [{ path: "b.ts" }] }));
+    const readA: ToolCall = { toolCallId: "r1", kind: "read", locations: [{ path: "/Users/me/Photos/trip/clip1.mp4" }] };
+    const readB: ToolCall = { toolCallId: "r2", kind: "read", locations: [{ path: "/Users/me/Photos/trip/clip2.mp4" }] };
+    const readOther: ToolCall = { toolCallId: "r3", kind: "read", locations: [{ path: "/Users/me/Photos/other/clip3.mp4" }] };
+    expect(scope(readA)).toBe("read:/Users/me/Photos/trip");
+    expect(scope(readA)).toBe(scope(readB));
+    expect(scope(readA)).not.toBe(scope(readOther));
   });
 
-  it("reads the models from a session's config", () => {
+  it("auto-approves safe inspection in ask mode, while refusing out-of-bounds reads, chained commands, and keys", () => {
+    const base = { autonomy: "ask" as const, allowed: new Set<string>(), workspace: "/Users/me/beatsheet", roots: ["/Users/me/Movies/Trip"], windows: false };
+    // Workspace and active project footage reads/searches pass without a card.
+    expect(autoApprove({ toolCallId: "1", kind: "read", locations: [{ path: "/Users/me/beatsheet/projects/trip/.cache/review/main-vertical.mp4" }] }, base)).toEqual({ approve: true, keys: false });
+    expect(autoApprove({ toolCallId: "2", kind: "read", locations: [{ path: "/Users/me/Movies/Trip/IMG_001.MOV" }] }, base)).toEqual({ approve: true, keys: false });
+    expect(autoApprove({ toolCallId: "3", kind: "search", rawInput: { DirectoryPath: "projects/trip" } }, base)).toEqual({ approve: true, keys: false });
+    // Reads outside workspace and project sources still ask.
+    expect(autoApprove({ toolCallId: "4", kind: "read", locations: [{ path: "/Users/me/Documents/taxes.pdf" }] }, base)).toEqual({ approve: false, keys: false });
+    expect(autoApprove({ toolCallId: "4b", kind: "read", locations: [{ path: "/Users/me/beatsheet/../secret.txt" }] }, base)).toEqual({ approve: false, keys: false });
+    // Subagents (think) and simple read-only inspection commands pass; chained or mutating commands ask.
+    expect(autoApprove({ toolCallId: "5", kind: "think", title: "Review cut" }, base)).toEqual({ approve: true, keys: false });
+    expect(autoApprove(run("6", "ffprobe -v quiet projects/trip/music/song.mp3"), base)).toEqual({ approve: true, keys: false });
+    expect(autoApprove(run("7", "ls -la && rm -rf out"), base)).toEqual({ approve: false, keys: false });
+    expect(autoApprove(run("8", "rm -rf out"), base)).toEqual({ approve: false, keys: false });
+    // Key reads are always flagged and never auto-approved, even in free mode or inside a read-only command.
+    expect(autoApprove(run("9", "cat ~/.gemini/antigravity-acp/acp_token.json"), { ...base, autonomy: "free" })).toEqual({ approve: false, keys: true });
+    expect(autoApprove({ toolCallId: "10", kind: "read", locations: [{ path: "/Users/me/.gemini/antigravity-acp/acp_token.json" }] }, { ...base, autonomy: "free" })).toEqual({ approve: false, keys: true });
+    expect(isSafeReadCommand("ffprobe -show_streams a.mp4")).toBe(true);
+    expect(isSafeReadCommand("ls | head")).toBe(false);
+    expect(isSafeReadCommand("ls $(whoami)")).toBe(false);
+  });
+
+  it("reads the models and thinking levels from a session's config", () => {
     const opened = {
       configOptions: [
-        { id: "model", currentValue: "gemini-3.8-flash", options: [{ value: "gemini-4-argon", name: "Gemini 4 Argon" }, { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
-        { id: "thinking_level", currentValue: "high", options: [{ value: "low", name: "Low" }] },
+        { id: "model", currentValue: "gemini-3.8-flash", options: [{ value: "gemini-4-neon", name: "Gemini 4 Neon" }, { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
+        { id: "thinking_level", currentValue: "high", options: [{ value: "low", name: "Low" }, { value: "high", name: "High" }, { value: "xhigh", name: "XHigh" }] },
       ],
     };
     expect(modelsOf(opened)).toEqual([
-      { id: "gemini-4-argon", label: "Gemini 4 Argon", hint: undefined, default: false },
+      { id: "gemini-4-neon", label: "Gemini 4 Neon", hint: undefined, default: false },
       { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash", hint: undefined, default: true },
     ]);
+    expect(thinkingOf(opened)).toEqual([
+      { id: "low", label: "Low", hint: undefined, default: false },
+      { id: "high", label: "High", hint: undefined, default: true },
+      { id: "xhigh", label: "XHigh", hint: undefined, default: false },
+    ]);
+  });
+
+  it("renders plan updates as notices and tracks config_option_update changes", () => {
+    const { a, update } = harness();
+    update({
+      sessionUpdate: "plan",
+      entries: [
+        { content: "Log the footage", status: "completed" },
+        { content: "Build first cut", status: "in_progress" },
+        { content: "Review preview MP4", status: "pending" },
+      ],
+    });
+    expect(a.view.items).toEqual([{ id: "plan", kind: "notice", status: "done", text: "✓ Log the footage\n▸ Build first cut\n· Review preview MP4" }]);
+    update({
+      sessionUpdate: "config_option_update",
+      configOptions: [
+        { id: "model", currentValue: "gemini-4-neon", options: [{ value: "gemini-4-neon", name: "Gemini 4 Neon" }] },
+        { id: "thinking_level", currentValue: "xhigh", options: [{ value: "xhigh", name: "XHigh" }] },
+      ],
+    });
+    expect(a.view.model).toBe("gemini-4-neon");
+    expect(a.view.thinking).toBe("xhigh");
+  });
+
+  it("applies both model and thinking_level when starting a session", async () => {
+    const runtime = mkdtempSync(join(tmpdir(), "beatsheet-agy-rt-"));
+    process.env.BEATSHEET_RUNTIME = runtime;
+    vi.resetModules();
+    const { AntigravityAdapter: Fresh } = await import("../src/agent/antigravity.ts");
+    delete process.env.BEATSHEET_RUNTIME;
+    const a = new Fresh();
+    const calls: { method: string; params: unknown }[] = [];
+    const rpc = {
+      closed: false,
+      request: async (method: string, params: unknown) => {
+        calls.push({ method, params });
+        if (method === "session/new") {
+          return {
+            sessionId: "s-neon",
+            configOptions: [
+              { id: "model", currentValue: "gemini-3.8-flash", options: [{ value: "gemini-4-neon", name: "Gemini 4 Neon" }, { value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }] },
+              { id: "thinking_level", currentValue: "medium", options: [{ value: "medium", name: "Medium" }, { value: "xhigh", name: "XHigh" }] },
+            ],
+          };
+        }
+        return {};
+      },
+    };
+    (a as unknown as { rpc: unknown }).rpc = rpc;
+    await a.start({ model: "gemini-4-neon", thinking: "xhigh", project: "demo", cut: "main" });
+    expect(calls.filter((c) => c.method === "session/set_config_option").map((c) => c.params)).toEqual([
+      { sessionId: "s-neon", configId: "model", value: "gemini-4-neon" },
+      { sessionId: "s-neon", configId: "thinking_level", value: "xhigh" },
+    ]);
+    expect(a.view).toMatchObject({ status: "idle", sessionId: "s-neon", model: "gemini-4-neon", thinking: "xhigh" });
   });
 });
 
@@ -207,5 +295,8 @@ describe("installing Google's ACP server", () => {
   it("refuses a download from anywhere else, and a platform with no build", () => {
     expect(() => pickBuild(entry, "linux-x86_64")).toThrow(/isn't from Google/);
     expect(() => pickBuild(entry, "darwin-aarch64")).toThrow(/no build/);
+    expect(parseRegistryVersion(entry, "windows-x86_64")).toBe("1.4.4");
+    expect(parseRegistryVersion(entry, "linux-x86_64")).toBeUndefined();
+    expect(parseRegistryVersion(entry, "darwin-aarch64")).toBeUndefined();
   });
 });

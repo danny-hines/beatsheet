@@ -328,7 +328,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       await agent.send(message);
       return json(res, 200, { delivered: "session", ...(unstarted.length ? { unstarted } : {}) });
     }
-    void agent.start(preferred!.id, { model: preferred!.model, project: body.project, cut: body.cut, then: message });
+    void agent.start(preferred!.id, { model: preferred!.model, thinking: preferred!.thinking, project: body.project, cut: body.cut, then: message });
     return json(res, 200, { delivered: "started", agent: preferred!.id, ...(unstarted.length ? { unstarted } : {}) });
   }
   // What went wrong in the studio page, kept where it can be read later (the Mac app has no console to open).
@@ -338,7 +338,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, { ok: true });
   }
   if (section === "settings") {
-    const body = req.method === "POST" ? (JSON.parse((await readBody(req)) || "{}") as { id?: string; model?: string; key?: string; level?: string; on?: boolean }) : {};
+    const body = req.method === "POST" ? (JSON.parse((await readBody(req)) || "{}") as { id?: string; model?: string; thinking?: string; key?: string; level?: string; on?: boolean }) : {};
     if (!id && req.method === "GET") {
       await findSavedKeys();
       return json(res, 200, { settings: readSettings(), services: listServices(), capabilities: capabilities(), vision: await visionStatus(), sam: samStatus() });
@@ -420,7 +420,12 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     }
     if (id === "agent" && req.method === "POST") {
       if (!AGENT_IDS.includes(body.id as AgentId)) return json(res, 400, { error: "Which agent?" });
-      return json(res, 200, updateSettings((s) => void (s.agent = { id: body.id as AgentId, model: body.model })));
+      if (body.thinking && !/^[\w.:/-]+$/.test(body.thinking)) return json(res, 400, { error: `Unknown thinking level "${body.thinking}"` });
+      return json(
+        res,
+        200,
+        updateSettings((s) => void (s.agent = { id: body.id as AgentId, model: body.model, ...(body.thinking ? { thinking: body.thinking } : {}) })),
+      );
     }
     if (id === "done" && req.method === "POST") return json(res, 200, updateSettings((s) => void (s.setupDone = true)));
     // How much the agent does without asking. It applies to the session that's open now, mid-turn included.
@@ -501,7 +506,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, await agent.sessions(which, params.get("project") ?? undefined, params.get("cut") ?? undefined));
     }
     if (req.method === "POST") {
-      const body = JSON.parse((await readBody(req)) || "{}") as { agent?: AgentId; model?: string; project?: string; cut?: string; session?: string; text?: string; approvalId?: string; choiceId?: string; then?: string };
+      const body = JSON.parse((await readBody(req)) || "{}") as { agent?: AgentId; model?: string; thinking?: string; project?: string; cut?: string; session?: string; text?: string; approvalId?: string; choiceId?: string; then?: string };
       if (["start", "resume", "check", "install", "update", "signin"].includes(id ?? "") && !AGENT_IDS.includes(body.agent!)) return json(res, 400, { error: "Which agent?" });
       // Updating runs the CLI's own updater, followed the same way as an install.
       if (id === "update") {
@@ -536,8 +541,9 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         return json(res, 200, check);
       }
       if (body.model && !/^[\w.:/-]+$/.test(body.model)) return json(res, 400, { error: `Unknown model "${body.model}"` });
+      if (body.thinking && !/^[\w.:/-]+$/.test(body.thinking)) return json(res, 400, { error: `Unknown thinking level "${body.thinking}"` });
       // Starting takes a while (the CLI boots, then the first message); the page follows along through change events.
-      if (id === "start") void agent.start(body.agent!, { model: body.model, project: body.project, cut: body.cut });
+      if (id === "start") void agent.start(body.agent!, { model: body.model, thinking: body.thinking, project: body.project, cut: body.cut });
       else if (id === "resume" && body.session) void agent.resume(body.agent!, body.session, body.project, body.cut);
       else if (id === "send" && body.text?.trim()) await agent.send(body.text.trim());
       else if (id === "interrupt") await agent.interrupt();

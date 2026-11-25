@@ -129,7 +129,7 @@ What it says: `speech: {}` is the lines heard while the shot plays, the ones its
 - **Which model** (`docs/MODELS.md` has the evidence; there's no blind comparison yet, so take the person's picks as the evidence). Making a board talk: H3 Max Lip Sync (Auto; 480p roughs about 5¢ a second, 1080p finals 16¢, 5 seconds at least, up to 15 minutes), or Kling Avatar 2 Pro, OmniHuman 2, VEED Fabric 1.0, LongCat Avatar (in steps of about 5 seconds) and sync-3 on fal, or InfiniteTalk on the person's own NVIDIA card through ComfyUI at no charge (480p, up to 14.7 seconds; on fal 20¢ a second, up to 28.8). Changing the mouths in a clip: Kling Lip Sync for a rough (about 1¢ a second, 2 to 10 seconds), LatentSync for a longer rough (20¢ a take up to 40 seconds; it repaints only the mouth, so the clip stays sharp), sync-3 for a final (about 13¢ a second; the vendors' pick, handles profiles and hands in front of the mouth), Lipsync 2 Pro between. `list_models` with `speech` (and `clip`) says what each would cost and why the others can't.
 - Write the prompt as for any clip from its board, and say how they speak ("talks quietly, looking just off camera"), not the words: the words come from the sound (models.md says which models read the prompt at all).
 - One person speaking per take. Two people talking in one shot: lip-sync one, or split the shot.
-- Watch it in the cut (`review_cut`) with the voice playing; a mouth that's late or early by a few frames is the lining up, not the model.
+- Watch it in the cut (`review_cut`) with the voice playing — if your runtime can read video files, watch the preview MP4 `review_cut` saves directly; a mouth that's late or early by a few frames is the lining up, not the model.
 
 ## Cast and sets
 

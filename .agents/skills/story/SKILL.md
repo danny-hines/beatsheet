@@ -73,8 +73,8 @@ What separates a great one from an edit anyone could do in 20 minutes:
    `generate_sfx` for anything specific, like the product's own sound.
 8. **Check.**
    - `frame` each designed scene: before, mid-move and settled. Critique each hero scene against the `motion` skill's checklist and revise it at least once.
-   - `review_cut` the whole thing, and fix the holds, the uncropped footage, the silences, anything cut off.
-   - In its design pass, critique the designed shots as a design lead would and fix the three weakest things. If you can start a subagent, have it do that critique cold, with `frame` and the brand's references.
+   - `review_cut` the whole thing, and fix the holds, the uncropped footage, the silences, anything cut off. If your runtime can read video files, watch the preview MP4 `review_cut` saves (with sound) to check pacing, audio mix, ducking, SFX timing and motion directly.
+   - In its design pass, critique the designed shots as a design lead would and fix the three weakest things. If you can start a subagent, have it do that critique cold, with `frame` (or the saved preview MP4 and design sheet from `review_cut`) and the brand's references.
    - `review_cut` again until it's clean.
 9. **Hand off** with kind `review`: what you made, the choices worth a second opinion, and what to judge.
 

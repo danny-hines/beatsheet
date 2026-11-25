@@ -47,6 +47,30 @@ const launchOf = (dir: string): Launch | undefined => {
 };
 const byVersion = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
+/** The registry's version for this platform, or undefined if the entry isn't a valid Google build here. */
+export function parseRegistryVersion(entry: Registry, key = platformKey()): string | undefined {
+  try {
+    return pickBuild(entry, key).version;
+  } catch {
+    return undefined;
+  }
+}
+
+let cachedLatest: { at: number; version?: string } | undefined;
+/** Latest Antigravity ACP server version in the registry for this machine, checked at most every six hours. */
+export async function latestAntigravityVersion(key = platformKey()): Promise<string | undefined> {
+  if (cachedLatest && Date.now() - cachedLatest.at < 6 * 3600_000) return cachedLatest.version;
+  let version: string | undefined;
+  try {
+    const res = await fetch(REGISTRY, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) version = parseRegistryVersion((await res.json()) as Registry, key);
+  } catch {
+    // offline, or GitHub is slow
+  }
+  cachedLatest = { at: version ? Date.now() : Date.now() - 6 * 3600_000 + 5 * 60_000, version };
+  return version;
+}
+
 /** The newest installed server and how to start it, or null. */
 export function antigravityServer(root = ANTIGRAVITY_DIR): { command: string; args: string[]; version: string } | null {
   if (!existsSync(root)) return null;

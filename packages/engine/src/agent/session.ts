@@ -40,6 +40,8 @@ export type AgentView = {
   sessionId?: string;
   name?: string;
   model?: string;
+  /** Thinking / reasoning effort for agents that expose one (e.g. Antigravity's thinking_level). */
+  thinking?: string;
   project?: string;
   /** The cut this conversation is about. */
   cut?: string;
@@ -56,8 +58,9 @@ export type AgentChange =
   | { type: "delta"; itemId: string; field: string; delta: string };
 
 /** An earlier session the studio started, for "resume". */
-export type AgentSessionSummary = { id: string; updatedAt: string; name?: string; model?: string; title?: string; project?: string; cut?: string; cutName?: string };
-export type AgentModel = { id: string; label: string; hint?: string; default?: boolean };
+export type AgentSessionSummary = { id: string; updatedAt: string; name?: string; model?: string; title?: string; project?: string; cutName?: string; cut?: string };
+export type AgentOption = { id: string; label: string; hint?: string; default?: boolean };
+export type AgentModel = AgentOption;
 /** Whether the CLI can actually work: installed and signed in. `detail` says who it's signed in as, or what to do. */
 export type AgentCheck = { ok: boolean; detail: string };
 
@@ -142,11 +145,13 @@ export abstract class AgentAdapter extends EventEmitter {
 
   /** The models this CLI offers right now. */
   abstract models(): Promise<AgentModel[]>;
+  /** Thinking / reasoning levels this CLI offers, when it exposes a separate choice. */
+  thinkingLevels?(): Promise<AgentOption[]>;
   /** Proves the CLI is signed in, as cheaply as it allows. */
   abstract check(): Promise<AgentCheck>;
   /** Earlier sessions the studio started here, newest first. */
   abstract sessions(): Promise<AgentSessionSummary[]>;
-  abstract start(opts: { model?: string; project?: string; cut?: string }): Promise<void>;
+  abstract start(opts: { model?: string; thinking?: string; project?: string; cut?: string }): Promise<void>;
   abstract resume(sessionId: string, project?: string, cut?: string): Promise<void>;
   /** A message from the person. Waits for the current turn if the agent is busy. */
   abstract send(text: string): Promise<void>;

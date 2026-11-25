@@ -538,6 +538,10 @@ pre.job-log { background: var(--well); border: 1px solid var(--line); border-rad
 .agent-pick button { flex: 1; font-size: var(--t-2); padding: 4px 4px; }
 .agent-pick button.on { background: var(--agent-bg); border-color: var(--agent); color: var(--text); font-weight: 600; }
 .agent-pick button.missing { color: var(--dim); }
+.thinking-pick { display: flex; align-items: center; gap: 6px; margin: 4px 0 6px; }
+.thinking-buttons { display: flex; gap: 3px; flex: 1; }
+.thinking-buttons button { flex: 1; font-size: var(--t-1); padding: 2px 6px; }
+.thinking-buttons button.on { background: var(--agent-bg); border-color: var(--agent); color: var(--text); font-weight: 600; }
 .model-list { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 4px; }
 .model-option, .resume-option { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; width: 100%; }
 .agent-chooser .model-option:hover, .agent-chooser .resume-option:hover { border-color: var(--agent); }
@@ -658,6 +662,7 @@ button.big { padding: 8px 16px; font-size: var(--t-4); }
 /* One row on every card: the model on the left, the card's one button on the right. The model's name gives way first. */
 .setup-agent-actions { display: flex; align-items: center; gap: 4px; min-height: 28px; }
 .setup-agent-actions select { flex: 0 1 auto; min-width: 0; max-width: 190px; text-overflow: ellipsis; }
+.setup-agent-actions select.thinking-select { max-width: 110px; }
 .setup-agent-actions button { flex: none; white-space: nowrap; }
 /* Still finding out: an agent before the list arrives, models before their CLI answers. */
 .looking { animation: blink 1.6s ease-in-out infinite; }

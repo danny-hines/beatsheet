@@ -95,7 +95,7 @@ export function NewProjectDialog() {
     const preferred = getState().setup?.settings.agent;
     if (route === "folder" && preferred) {
       actions.setSide("agent");
-      void actions.agentCommand("start", { agent: preferred.id, model: preferred.model, project: j.project });
+      void actions.agentCommand("start", { agent: preferred.id, model: preferred.model, thinking: preferred.thinking, project: j.project });
     }
   };
 

@@ -12,7 +12,7 @@ import { ClaudeAdapter } from "./claude.ts";
 import { cliVersions, findCli, installCli, openSignIn, SETUP, updateCli } from "./cli.ts";
 import { CodexAdapter } from "./codex.ts";
 import { MuseAdapter } from "./muse.ts";
-import { AGENT_LABELS, brief, message, offView, touchesKeys, type AgentAdapter, type AgentChange, type AgentCheck, type AgentId, type AgentModel, type AgentSessionSummary, type AgentView } from "./session.ts";
+import { AGENT_LABELS, brief, message, offView, touchesKeys, type AgentAdapter, type AgentChange, type AgentCheck, type AgentId, type AgentModel, type AgentOption, type AgentSessionSummary, type AgentView } from "./session.ts";
 
 export * from "./session.ts";
 export { uuid7 } from "./rpc.ts";
@@ -26,8 +26,9 @@ export type AgentInfo = {
   installCommand?: string;
   signInCommand: string;
   models?: AgentModel[];
+  thinkingLevels?: AgentOption[];
   error?: string;
-  /** The CLI's version, and a later one when beatsheet can update it to that. */
+  /** The CLI's version, and a later one when it can be updated to that. */
   version?: string;
   latest?: string;
 };
@@ -42,6 +43,8 @@ export class AgentStudio extends EventEmitter {
   private current?: AgentAdapter;
   /** Each CLI's models, asked once: the answer, or the asking still under way. */
   private models = new Map<AgentId, Promise<AgentModel[]>>();
+  /** Each CLI's thinking / reasoning levels, when it exposes a separate choice. */
+  private thinking = new Map<AgentId, Promise<AgentOption[]>>();
   /** Each CLI's version and whether there's a later one, likewise. */
   private versions = new Map<AgentId, Promise<{ version?: string; latest?: string }>>();
   /** A version an update didn't reach (the CLI's own channel is behind npm's): not offered again. */
@@ -188,7 +191,7 @@ export class AgentStudio extends EventEmitter {
       else {
         const preferred = readSettings().agent;
         if (!preferred) throw new Error("No agent is set up yet. Pick one in Settings.");
-        await this.start(preferred.id, { model: preferred.model, project, cut, then: CARRY_ON });
+        await this.start(preferred.id, { model: preferred.model, thinking: preferred.thinking, project, cut, then: CARRY_ON });
       }
     }
     return { resumed };
@@ -209,16 +212,28 @@ export class AgentStudio extends EventEmitter {
         const v = await (quick ? Promise.race([versions, new Promise<undefined>((r) => setTimeout(r, 250))]) : versions);
         info.version = v?.version;
         info.latest = v?.latest && v.latest !== this.unreached.get(id) ? v.latest : undefined;
+        const adapter = this.adapter(id);
         let asking = this.models.get(id);
         if (!asking) {
-          const started = this.adapter(id).models();
+          const started = adapter.models();
           this.models.set(id, started);
           // A failed ask is forgotten, so the next one asks again.
           started.catch(() => this.models.get(id) === started && this.models.delete(id));
           asking = started;
         }
+        let askingThinking = this.thinking.get(id);
+        if (!askingThinking && adapter.thinkingLevels) {
+          const started = adapter.thinkingLevels();
+          this.thinking.set(id, started);
+          started.catch(() => this.thinking.get(id) === started && this.thinking.delete(id));
+          askingThinking = started;
+        }
         try {
           info.models = await (quick ? Promise.race([asking, new Promise<undefined>((r) => setTimeout(r, 250))]) : asking);
+          if (askingThinking) {
+            const levels = await (quick ? Promise.race([askingThinking, new Promise<undefined>((r) => setTimeout(r, 50))]) : askingThinking);
+            if (levels?.length) info.thinkingLevels = levels;
+          }
         } catch (err) {
           info.error = message(err);
         }
@@ -235,6 +250,7 @@ export class AgentStudio extends EventEmitter {
     if (this.current?.id !== id || this.view.status === "off") {
       this.adapters.get(id)?.stop();
       this.models.delete(id);
+      this.thinking.delete(id);
       this.versions.delete(id);
     }
     try {
@@ -247,6 +263,7 @@ export class AgentStudio extends EventEmitter {
 
   install(id: AgentId, onLine: (line: string) => void) {
     this.models.delete(id);
+    this.thinking.delete(id);
     this.versions.delete(id);
     return installCli(id, onLine);
   }
@@ -261,6 +278,7 @@ export class AgentStudio extends EventEmitter {
     this.adapters.get(id)?.stop();
     await updateCli(id, onLine);
     this.models.delete(id);
+    this.thinking.delete(id);
     const now = cliVersions(id).catch(() => ({}));
     this.versions.set(id, now);
     const after: { version?: string; latest?: string } = await now;
@@ -270,6 +288,7 @@ export class AgentStudio extends EventEmitter {
 
   signIn(id: AgentId) {
     this.models.delete(id);
+    this.thinking.delete(id);
     const a = this.adapter(id);
     return a.signIn ? a.signIn() : openSignIn(id);
   }
@@ -291,7 +310,7 @@ export class AgentStudio extends EventEmitter {
   }
 
   /** A new session; its first message points it at the project's cut, with `then` (an answer, say) to act on. */
-  async start(id: AgentId, opts: { model?: string; project?: string; cut?: string; then?: string }) {
+  async start(id: AgentId, opts: { model?: string; thinking?: string; project?: string; cut?: string; then?: string }) {
     const cut = opts.project ? this.cutOf(opts.project, opts.cut) : undefined;
     const a = this.use(id);
     await a.start({ ...opts, cut });

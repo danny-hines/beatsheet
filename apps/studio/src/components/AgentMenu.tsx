@@ -1,6 +1,6 @@
 import type { AgentId, AgentSessionSummary, Presence } from "@beatsheet/engine";
 import { useEffect, useRef, useState } from "react";
-import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, timeAgo, OS } from "../lib";
+import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, thinkingName, timeAgo, OS } from "../lib";
 import { ServiceMark } from "./ui";
 import { actions, useStore } from "../store";
 import { Icon } from "./Icon";
@@ -45,13 +45,14 @@ export function AgentHead({ session }: { session: boolean }) {
   const model = session
     ? modelName(list, view.agent, view.model)
     : preferred && (modelName(list, preferred.id, preferred.model) ?? list?.find((a) => a.id === preferred.id)?.models?.find((m) => m.default)?.label);
+  const thinking = session ? thinkingName(list, view.agent, view.thinking) : preferred && thinkingName(list, preferred.id, preferred.thinking);
   const dot = !session ? "idle" : view.status === "running" || view.status === "starting" ? "pending" : view.status === "error" ? "idle" : "on";
   return (
     <div className={`agent-head ${id ?? ""}`} ref={ref}>
       <button className="agent-head-button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)} title="Change the agent or model, or resume an earlier session">
         <span className={`dot ${dot}`} />
         <strong>{id ? AGENT_NAMES[id] : "Agent"}</strong>
-        {model && <span className="model-tag">{model}</span>}
+        {model && <span className="model-tag">{thinking ? `${model} · ${thinking}` : model}</span>}
         <Icon name="down" size={10} className="caret" />
         <span className="spacer" />
         {session && <span className="dim small activity">{sessionActivity(view)}</span>}
@@ -120,6 +121,7 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
   // may load after this first renders).
   const [picked, setPick] = useState<AgentId | undefined>();
   const pick = picked ?? view.agent ?? lastChoice ?? preferred?.id ?? remembered();
+  const [pickedThinking, setPickedThinking] = useState<string | undefined>();
   const [sessions, setSessions] = useState<AgentSessionSummary[] | null>(null);
   const now = Date.now();
 
@@ -128,6 +130,11 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
   }, [list]);
   const installed = list?.filter((a) => a.installed) ?? [];
   const agent = list?.find((a) => a.id === pick) ?? installed[0] ?? list?.[0];
+  const thinkingLevels = agent?.thinkingLevels;
+  const thinking =
+    (pickedThinking && thinkingLevels?.some((t) => t.id === pickedThinking) ? pickedThinking : undefined) ??
+    (preferred && preferred.id === agent?.id ? preferred.thinking : undefined) ??
+    thinkingLevels?.find((t) => t.default)?.id;
 
   useEffect(() => {
     setSessions(null);
@@ -194,10 +201,22 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
         <>
           <section>
             <h4>New session</h4>
+            {thinkingLevels && thinkingLevels.length > 0 && (
+              <div className="thinking-pick" role="group" aria-label="Thinking level">
+                <span className="dim small">Thinking</span>
+                <div className="thinking-buttons">
+                  {thinkingLevels.map((t) => (
+                    <button key={t.id} type="button" className={t.id === thinking ? "on" : ""} onClick={() => setPickedThinking(t.id)} title={t.hint}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="model-list">
               {!agent.models && <p className="dim small looking">Loading {agent.label}'s models…</p>}
               {agent.models?.map((m) => (
-                <button key={m.id} className="model-option" onClick={() => go("start", { model: m.id === "default" ? undefined : m.id })}>
+                <button key={m.id} className="model-option" onClick={() => go("start", { model: m.id === "default" ? undefined : m.id, ...(thinking ? { thinking } : {}) })}>
                   <strong>
                     {m.label}
                     {preferred?.id === agent.id && (preferred.model ?? agent.models?.find((x) => x.default)?.id) === m.id ? (

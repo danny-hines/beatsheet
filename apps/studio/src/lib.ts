@@ -224,6 +224,12 @@ export function modelName(list: AgentInfo[] | undefined, agent: AgentId | undefi
   return list?.find((a) => a.id === agent)?.models?.find((m) => m.id === id)?.label ?? id;
 }
 
+/** A thinking level's name for display, from the agent's own list when it's loaded. */
+export function thinkingName(list: AgentInfo[] | undefined, agent: AgentId | undefined, id?: string): string | undefined {
+  if (!id) return undefined;
+  return list?.find((a) => a.id === agent)?.thinkingLevels?.find((t) => t.id === id)?.label ?? id;
+}
+
 const TOOL_WORDS: Record<string, string> = {
   list_projects: "looking around",
   get_project: "reading the project",

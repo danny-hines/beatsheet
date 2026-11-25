@@ -224,7 +224,15 @@ function AgentSection({ list, setup, autonomy }: { list?: AgentInfo[]; setup: Se
     <>
       <div className="setup-agents">
         {list
-          ? list.map((a) => <AgentCard key={a.id} info={a} isDefault={chosen?.id === a.id} defaultModel={chosen?.id === a.id ? chosen.model : undefined} />)
+          ? list.map((a) => (
+              <AgentCard
+                key={a.id}
+                info={a}
+                isDefault={chosen?.id === a.id}
+                defaultModel={chosen?.id === a.id ? chosen.model : undefined}
+                defaultThinking={chosen?.id === a.id ? chosen.thinking : undefined}
+              />
+            ))
           : AGENT_ORDER.map((id) => (
               <div key={id} className={`setup-agent ${id}`}>
                 <div className="setup-agent-head">
@@ -379,7 +387,7 @@ type InstallJob = { id: string; status: "running" | "done" | "error"; log: strin
  * One agent CLI. It either works or says what's missing: not installed (Install runs the official installer), not
  * signed in (Sign in opens the CLI's own sign-in in Terminal), or something else (Check again).
  */
-function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefault: boolean; defaultModel?: string }) {
+function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: AgentInfo; isDefault: boolean; defaultModel?: string; defaultThinking?: string }) {
   const stored = useStore((s) => s.setup?.settings.checks[info.id]);
   const [checking, setChecking] = useState(false);
   const [install, setInstall] = useState<InstallJob | null>(null);
@@ -387,10 +395,14 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
   const [updating, setUpdating] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [model, setModel] = useState(defaultModel ?? info.models?.find((m) => m.default)?.id ?? info.models?.[0]?.id);
-  // The models arrive after the card does; start on the default one.
+  const [thinking, setThinking] = useState(defaultThinking ?? info.thinkingLevels?.find((t) => t.default)?.id ?? info.thinkingLevels?.[0]?.id);
+  // The models and thinking levels arrive after the card does; start on each default.
   useEffect(() => {
     if (!model && info.models) setModel(defaultModel ?? info.models.find((m) => m.default)?.id ?? info.models[0]?.id);
   }, [info.models]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!thinking && info.thinkingLevels) setThinking(defaultThinking ?? info.thinkingLevels.find((t) => t.default)?.id ?? info.thinkingLevels[0]?.id);
+  }, [info.thinkingLevels]); // eslint-disable-line react-hooks/exhaustive-deps
   const post = (path: string, body: unknown) => fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
   const check = async () => {
@@ -433,8 +445,8 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
     setSigningIn(true);
   };
 
-  const makeDefault = async (id: AgentId, m?: string) => {
-    await post("/api/settings/agent", { id, model: m === "default" ? undefined : m });
+  const makeDefault = async (id: AgentId, m?: string, t?: string) => {
+    await post("/api/settings/agent", { id, model: m === "default" ? undefined : m, thinking: t && t !== "default" ? t : undefined });
     await actions.loadSettings();
   };
 
@@ -452,7 +464,11 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
         <span className="spacer" />
         {/* The version installed; when there's a later one, the way to it instead. */}
         {info.latest && install?.status !== "running" ? (
-          <button className="link small" onClick={() => void runInstall("update")} title={`${info.version} is installed. Runs ${info.label}'s own updater.`}>
+          <button
+            className="link small"
+            onClick={() => void runInstall("update")}
+            title={info.id === "antigravity" ? `${info.version} is installed. Downloads Google's newer Antigravity ACP server.` : `${info.version} is installed. Runs ${info.label}'s own updater.`}
+          >
             Update to {info.latest}
           </button>
         ) : (
@@ -508,13 +524,30 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
             value={model}
             onChange={(e) => {
               setModel(e.target.value);
-              if (isDefault) void makeDefault(info.id, e.target.value);
+              if (isDefault) void makeDefault(info.id, e.target.value, thinking);
             }}
             title="Model new sessions start on"
           >
             {info.models.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label}
+              </option>
+            ))}
+          </select>
+        )}
+        {ok && info.thinkingLevels && info.thinkingLevels.length > 0 && (
+          <select
+            className="thinking-select"
+            value={thinking}
+            onChange={(e) => {
+              setThinking(e.target.value);
+              if (isDefault) void makeDefault(info.id, model, e.target.value);
+            }}
+            title="Thinking level new sessions start on"
+          >
+            {info.thinkingLevels.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
               </option>
             ))}
           </select>
@@ -533,7 +566,7 @@ function AgentCard({ info, isDefault, defaultModel }: { info: AgentInfo; isDefau
           )
         )}
         {ok && !isDefault && (
-          <button className="primary" onClick={() => void makeDefault(info.id, model)}>
+          <button className="primary" onClick={() => void makeDefault(info.id, model, thinking)}>
             Use as default
           </button>
         )}

@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { BUILT, RESOURCES, ROOTS_ENV, RUNTIME, WORKSPACE } from "../paths.ts";
-import { antigravityServer, installAntigravity } from "./antigravity-server.ts";
+import { antigravityServer, installAntigravity, latestAntigravityVersion } from "./antigravity-server.ts";
 import { cliGuesses, findOnPath, launch, mergePath, pathKey, powershell, putFirstOnPath, registryPath, systemExe, withPath } from "../platform.ts";
 
 const run = promisify(execFile);
@@ -77,7 +77,12 @@ async function latestVersion(pkg: string): Promise<string | undefined> {
 
 /** The version of a CLI that's installed, and a later one when it can be updated to it from here. */
 export async function cliVersions(name: CliName): Promise<{ version?: string; latest?: string }> {
-  if (name === "antigravity") return {};
+  if (name === "antigravity") {
+    const version = antigravityServer()?.version;
+    if (!version) return {};
+    const published = await latestAntigravityVersion();
+    return { version, latest: published && newer(published, version) ? published : undefined };
+  }
   const cli = await findCli(name);
   if (!cli) return {};
   const env = await cliEnv();
@@ -227,6 +232,11 @@ export async function installCli(name: CliName, onLine: (line: string) => void):
 
 /** Runs the CLI's own updater, a line of its output at a time. */
 export async function updateCli(name: CliName, onLine: (line: string) => void): Promise<void> {
+  if (name === "antigravity") {
+    await installAntigravity(onLine);
+    forgetCli(name);
+    return;
+  }
   const update = UPDATES[name];
   const cli = await findCli(name);
   if (!update || !cli) throw new Error(`beatsheet can't update ${name} for you`);

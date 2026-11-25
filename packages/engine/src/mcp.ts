@@ -67,7 +67,7 @@ import { narrate } from "./narrate.ts";
 import { cutOut, findSubjects, joinSubjects, trackSubject } from "./subjects.ts";
 import { listVoices, voiceName } from "./voices.ts";
 import { IS_WINDOWS, putFirstOnPath } from "./platform.ts";
-import { BUILT, cachePaths } from "./paths.ts";
+import { assetPath, BUILT, cachePaths, inWorkspace } from "./paths.ts";
 import { listProjects, loadProject, saveProject, updateFile, updateProject } from "./store.ts";
 import { yourTurn } from "./turns.ts";
 
@@ -101,6 +101,8 @@ Making media: generate_music makes a song (with the person's ElevenLabs key) and
 Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or ${IS_WINDOWS ? "Windows'" : "the Mac's"} own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
 
 Notes: the person pins notes on a cut and sends them as a batch. Call get_batch, handle each note with scoped edits, look at the result with frame when it's visual, resolve_note with a one-line reply saying what changed, then hand_off for a review.
+
+Video and audio files: if your runtime can read video or audio files directly (not only images), watch the preview MP4 that review_cut saves to judge motion, pacing, audio mix, ducking and lip-sync first-hand; watch a clip's proxy MP4 (listed by look_at_assets) when exact action timing or delivery matters, and listen to the song file to feel its phrasing and drops.
 
 When a message arrives saying the person sent beatsheet notes, they just pressed Send in the studio: call get_batch for that project and cut and handle the notes right away.`;
 
@@ -174,18 +176,27 @@ server.registerTool(
     },
   },
   async ({ project: id, cut, filter = "all" }) => {
-    const { project } = loadProject(id, cut);
+    const { project, dir } = loadProject(id, cut);
     const used = usage(project);
-    const rows = project.assets
-      .filter((a) => {
-        if (filter === "unrated") return !a.rating && a.kind !== "music";
-        if (filter === "keepers") return (a.rating ?? 0) >= 3;
-        if (filter === "rejected") return a.rating === -1;
-        if (filter === "used") return used.has(a.id);
-        if (filter === "unused") return !used.has(a.id) && a.kind !== "music";
-        return true;
-      })
-      .map((a) => assetLine(a, used.get(a.id)));
+    const matched = project.assets.filter((a) => {
+      if (filter === "unrated") return !a.rating && a.kind !== "music";
+      if (filter === "keepers") return (a.rating ?? 0) >= 3;
+      if (filter === "rejected") return a.rating === -1;
+      if (filter === "used") return used.has(a.id);
+      if (filter === "unused") return !used.has(a.id) && a.kind !== "music";
+      return true;
+    });
+    const rows = matched.map((a) => {
+      const line = assetLine(a, used.get(a.id));
+      if (a.kind === "music" || a.kind === "audio") {
+        const p = assetPath(project, dir, a);
+        if (existsSync(p)) return `${line} · file: ${inWorkspace(p)}`;
+      }
+      return line;
+    });
+    if (matched.some((a) => a.kind === "video")) {
+      rows.push(`\nProxy MP4s (for agents that can read video files): ${inWorkspace(join(dir, ".cache", "proxy"))}/<id>.mp4`);
+    }
     return text(rows.length ? rows.join("\n") : "Nothing matches.");
   },
 );
@@ -193,7 +204,8 @@ server.registerTool(
 server.registerTool(
   "look_at_assets",
   {
-    description: "See footage without watching it: an 8-frame filmstrip of each video (frames evenly spaced across the clip) or a thumbnail of each photo. Up to 12 at a time. Use this to log what's in a clip before rating it or picking moments.",
+    description:
+      "See footage without watching it: an 8-frame filmstrip of each video (frames evenly spaced across the clip) or a thumbnail of each photo, plus the proxy video/audio path for agents that can read media files directly. Up to 12 at a time. Use this to log what's in a clip before rating it or picking moments.",
     inputSchema: { project: projectArg, ids: z.array(z.string()).min(1).max(12) },
   },
   async ({ project: id, ids }) => {
@@ -205,15 +217,27 @@ server.registerTool(
         content.push({ type: "text", text: `${assetId}: no such asset` });
         continue;
       }
+      if (a.kind === "audio" || a.kind === "music" || a.kind === "voice" || a.kind === "sfx") {
+        const file = assetPath(project, dir, a);
+        content.push({ type: "text", text: `${assetLine(a)}${existsSync(file) ? ` · listen: ${inWorkspace(file)}` : ""}` });
+        continue;
+      }
       const c = cachePaths(dir, a.id);
       const file = a.kind === "video" ? c.strip : c.poster;
+      const watch = a.kind === "video" ? (existsSync(c.proxy) ? c.proxy : assetPath(project, dir, a)) : existsSync(c.image) ? c.image : c.poster;
+      const paths =
+        a.kind === "video"
+          ? [existsSync(watch) ? `watch: ${inWorkspace(watch)}` : "", existsSync(c.strip) ? `strip: ${inWorkspace(c.strip)}` : ""].filter(Boolean).join(" · ")
+          : existsSync(watch)
+            ? `file: ${inWorkspace(watch)}`
+            : "";
       try {
         const data = readFileSync(file).toString("base64");
         const span = a.kind === "video" && a.duration ? ` (frames at ${Array.from({ length: 8 }, (_, i) => ((i + 0.5) * a.duration! / 8).toFixed(1)).join(", ")}s)` : "";
-        content.push({ type: "text", text: `${assetLine(a)}${span}` });
+        content.push({ type: "text", text: `${assetLine(a)}${span}${paths ? ` [${paths}]` : ""}` });
         content.push({ type: "image", data, mimeType: "image/jpeg" });
       } catch {
-        content.push({ type: "text", text: `${assetId}: no thumbnail yet (run \`npm run beatsheet -- cache ${id}\`)` });
+        content.push({ type: "text", text: `${assetId}: no thumbnail yet (run \`npm run beatsheet -- cache ${id}\`)${paths ? ` [${paths}]` : ""}` });
       }
     }
     return { content };
@@ -449,19 +473,33 @@ server.registerTool(
   "review_cut",
   {
     description:
-      "Look over the whole cut before handing it back: a contact sheet (one frame every second or two, read left to right, row by row) and what a viewer would notice: pictures that sit still too long, silence, uncropped footage, narration without captions, no sound design, the length. Then the design pass: the designed shots larger (entering, midway, settled) to critique as a design lead would. Takes a minute or two. Fix what matters, then hand off.",
+      "Look over the whole cut before handing it back: saves a low-res preview MP4 (with sound) under .cache/review/ for agents that can watch video, returns a contact sheet (one frame every second or two, read left to right, row by row) and notes on what a viewer would notice: pictures that sit still too long, silence, uncropped footage, narration without captions, no sound design, the length. Then the design pass: the designed shots larger (entering, midway, settled) to critique as a design lead would. Takes a minute or two. Fix what matters, then hand off.",
     inputSchema: { project: projectArg, cut: cutArg, format: z.string().optional() },
   },
   async ({ project: id, cut, format }) => {
     const r = await reviewCut(id, { cut, format });
-    const head = `Contact sheet: one frame every ${r.every}s, ${r.columns} to a row (the first row is 0:00–${formatTime(r.every * r.columns)}). The cut runs ${formatTime(r.duration)}.`;
+    const videoRel = inWorkspace(r.videoFile);
+    const sheetRel = inWorkspace(r.sheetFile);
+    const head = [
+      `Contact sheet: one frame every ${r.every}s, ${r.columns} to a row (the first row is 0:00–${formatTime(r.every * r.columns)}). The cut runs ${formatTime(r.duration)}.`,
+      `Preview video (with sound): ${videoRel} · Contact sheet: ${sheetRel} — if you can read video files, watch ${videoRel} directly to judge motion, pacing, audio mix and lip-sync.`,
+    ].join("\n");
     const content: ({ type: "image"; data: string; mimeType: string } | { type: "text"; text: string })[] = [
       { type: "image", data: r.sheet.toString("base64"), mimeType: "image/jpeg" },
       { type: "text", text: `${head}\n${r.notes.length ? r.notes.map((n) => `- ${n}`).join("\n") : "Nothing stands out."}` },
     ];
     if (r.designs) {
+      const designRel = r.designsFile ? inWorkspace(r.designsFile) : undefined;
       content.push({ type: "image", data: r.designs.toString("base64"), mimeType: "image/jpeg" });
-      content.push({ type: "text", text: [`Design pass: the designed shots, a row each, entering, midway and settled:`, ...r.designRows!.map((d, i) => `${i + 1}. ${d}`), ...r.designNotes.map((n) => `- ${n}`), DESIGN_CRITIQUE].join("\n") });
+      content.push({
+        type: "text",
+        text: [
+          `Design pass: the designed shots, a row each, entering, midway and settled${designRel ? ` (saved at ${designRel})` : ""}:`,
+          ...r.designRows!.map((d, i) => `${i + 1}. ${d}`),
+          ...r.designNotes.map((n) => `- ${n}`),
+          DESIGN_CRITIQUE,
+        ].join("\n"),
+      });
     }
     return { content };
   },

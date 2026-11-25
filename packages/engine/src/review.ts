@@ -8,15 +8,40 @@
  * its design: no look of its own, hero moments left to stock kit scenes, the same scene over and over, a slam on every cut.
  */
 import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { formatTime, resolveTimeline, type Project } from "@beatsheet/schema";
+import { replaceFile } from "./platform.ts";
 import { loadProject } from "./store.ts";
 
 const run = promisify(execFile);
 const ffmpegLog = (args: string[]) => run("ffmpeg", ["-hide_banner", "-nostats", ...args], { maxBuffer: 1 << 25 }).then((r) => r.stderr, (err: { stderr?: string }) => err.stderr ?? "");
+const safeSlug = (s: string) => s.replace(/[^a-z0-9_-]+/gi, "-") || "cut";
+
+/** Where review_cut keeps its latest low-res preview video and contact sheets inside the project's .cache/. */
+export function reviewPaths(projectDir: string, cutId: string, formatId: string) {
+  const base = join(projectDir, ".cache", "review");
+  const stem = `${safeSlug(cutId)}-${safeSlug(formatId)}`;
+  return {
+    video: join(base, `${stem}.mp4`),
+    sheet: join(base, `${stem}-sheet.jpg`),
+    designs: join(base, `${stem}-designs.jpg`),
+  };
+}
+
+/** Copies a rendered file into the project cache atomically, working across volumes (tmpdir → workspace). */
+function keepFile(src: string, dest: string) {
+  mkdirSync(dirname(dest), { recursive: true });
+  const tmp = `${dest}.${process.pid}.tmp`;
+  try {
+    copyFileSync(src, tmp);
+    replaceFile(tmp, dest);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
+}
 
 export type Review = {
   sheet: Buffer;
@@ -24,17 +49,23 @@ export type Review = {
   columns: number;
   notes: string[];
   duration: number;
+  /** The low-res preview MP4 (with sound) kept in the project's .cache/review/, for agents that can watch video. */
+  videoFile: string;
+  /** The contact sheet saved beside the preview MP4. */
+  sheetFile: string;
   /** The designed shots, a row each (as `designRows` lists them): entering, midway and settled. */
   designs?: Buffer;
+  designsFile?: string;
   designRows?: string[];
   /** What the project says about its design, for the design pass. */
   designNotes: string[];
 };
 
 export async function reviewCut(projectId: string, opts: { cut?: string; format?: string } = {}): Promise<Review> {
-  const { project } = loadProject(projectId, opts.cut);
+  const { project, dir: projDir } = loadProject(projectId, opts.cut);
   const fmt = project.formats.find((f) => f.id === opts.format) ?? project.formats[0]!;
   const tl = resolveTimeline(project, fmt.id);
+  const kept = reviewPaths(projDir, project.cut.id, fmt.id);
   const dir = join(tmpdir(), `beatsheet-review-${process.pid}-${Date.now().toString(36)}`);
   mkdirSync(dir, { recursive: true });
   try {
@@ -78,6 +109,7 @@ export async function reviewCut(projectId: string, opts: { cut?: string; format?
       .slice(0, 10)
       .sort((a, b) => a.start - b.start);
     let designs: Buffer | undefined;
+    let designsFile: string | undefined;
     const designRows: string[] = [];
     if (designed.length) {
       const { renderStills } = await import("./render.ts");
@@ -88,13 +120,19 @@ export async function reviewCut(projectId: string, opts: { cut?: string; format?
       const designFile = join(dir, "designs.jpg");
       await run("ffmpeg", ["-v", "error", "-y", "-i", join(stills, "still-%03d.jpg"), "-vf", `tile=3x${designed.length}:padding=6:color=gray`, "-frames:v", "1", "-q:v", "3", designFile], { maxBuffer: 1 << 24 });
       designs = readFileSync(designFile);
+      keepFile(designFile, kept.designs);
+      designsFile = kept.designs;
       for (const r of designed) {
         const s = shots.get(r.id)!;
         const c = s.content.kind === "coded" ? s.content.component : "";
         designRows.push(`${r.id} (${c}${s.label ? `, "${s.label}"` : ""}) ${formatTime(r.start)}–${formatTime(r.end)}`);
       }
+    } else {
+      rmSync(kept.designs, { force: true });
     }
-    return { sheet: readFileSync(sheetFile), every, columns, notes, duration, designs, designRows, designNotes: designChecks(project) };
+    keepFile(video, kept.video);
+    keepFile(sheetFile, kept.sheet);
+    return { sheet: readFileSync(sheetFile), every, columns, notes, duration, videoFile: kept.video, sheetFile: kept.sheet, designs, designsFile, designRows, designNotes: designChecks(project) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

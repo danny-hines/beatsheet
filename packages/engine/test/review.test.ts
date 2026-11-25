@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cutView, parseFile, SCHEMA_V1, STAGE_IDS, type Project, type Shot } from "@beatsheet/schema";
-import { designChecks } from "../src/review.ts";
+import { designChecks, reviewPaths } from "../src/review.ts";
 
 const project = (shots: Shot[], look?: Project["look"]): Project => {
   const r = parseFile({
@@ -47,5 +47,15 @@ describe("the design pass's notes on a cut", () => {
   it("is quiet about a branded cut whose hero moments are its own", () => {
     expect(designChecks(project([kit("a", "scenes/Hook.tsx#Hook"), kit("b", "kit:Stat"), kit("c", "scenes/End.tsx#End", "slam")], brand))).toEqual([]);
     expect(designChecks(project([]))).toEqual([]);
+  });
+});
+
+describe("where review_cut keeps its preview video and sheets", () => {
+  it("keeps them under .cache/review named by cut and format, sanitizing odd ids", () => {
+    const p = reviewPaths("/ws/projects/demo", "teaser", "vertical");
+    expect(p.video).toBe("/ws/projects/demo/.cache/review/teaser-vertical.mp4");
+    expect(p.sheet).toBe("/ws/projects/demo/.cache/review/teaser-vertical-sheet.jpg");
+    expect(p.designs).toBe("/ws/projects/demo/.cache/review/teaser-vertical-designs.jpg");
+    expect(reviewPaths("/ws/projects/demo", "../bad cut", "9:16").video).toBe("/ws/projects/demo/.cache/review/-bad-cut-9-16.mp4");
   });
 });
