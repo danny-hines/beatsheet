@@ -8,7 +8,7 @@ import { extname, join, normalize, sep } from "node:path";
 import { agentStudio } from "./agent/index.ts";
 import { useLoginPath } from "./agent/cli.ts";
 import { startEvents } from "./events.ts";
-import { beatsheetHandler } from "./http.ts";
+import { beatsheetHandler, sendFile } from "./http.ts";
 import { prepareWorkspace } from "./workspace.ts";
 
 const STATIC_TYPES: Record<string, string> = {
@@ -18,7 +18,11 @@ const STATIC_TYPES: Record<string, string> = {
   ".json": "application/json",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
   ".ico": "image/x-icon",
+  ".woff": "font/woff",
   ".woff2": "font/woff2",
   ".map": "application/json",
 };
@@ -31,8 +35,16 @@ function serveStudio(dir: string, req: IncomingMessage, res: ServerResponse) {
     res.statusCode = 403;
     return res.end();
   }
-  if (!existsSync(file) || statSync(file).isDirectory()) file = join(dir, "index.html");
-  res.setHeader("content-type", STATIC_TYPES[extname(file)] ?? "application/octet-stream");
+  if (!existsSync(file) || statSync(file).isDirectory()) {
+    if (extname(path)) {
+      res.statusCode = 404;
+      return res.end();
+    }
+    file = join(dir, "index.html");
+  }
+  const ext = extname(file).toLowerCase();
+  if (ext === ".mp4" || ext === ".webm") return sendFile(req, res, file);
+  res.setHeader("content-type", STATIC_TYPES[ext] ?? "application/octet-stream");
   // The built assets have hashed names; the page itself always comes fresh.
   res.setHeader("cache-control", file.endsWith("index.html") ? "no-cache" : "max-age=31536000, immutable");
   createReadStream(file).pipe(res);

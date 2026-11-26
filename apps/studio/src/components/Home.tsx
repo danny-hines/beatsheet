@@ -1,30 +1,32 @@
 import type { TrashPlan } from "@beatsheet/engine";
 import type { HandOff } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
-import { AGENT_NAMES, desktop, hideBroken, pickPath, posterUrl, timeAgo, OS, keys, WINDOWS } from "../lib";
+import { AGENT_NAMES, desktop, hideBroken, posterUrl, timeAgo, OS, keys, WINDOWS } from "../lib";
+import { RECIPE_CATEGORIES, RECIPES, recipePreviewUrl, type RecipeCategoryId, type RecipeTemplate } from "../recipes";
 import { actions, useStore, type ProjectSummary } from "../store";
 import { Mark, PopMenu } from "./ui";
 import { Icon } from "./Icon";
 
 /**
- * Where the app opens: start a project (from a folder, picked or dropped anywhere on the window, or from scratch),
- * or pick one up where it was left, with whose turn it is on each.
+ * Where the app opens: browse recipes or start from scratch (or drop a footage folder anywhere on the window), then
+ * pick up any project where it was left, with whose turn it is on each.
  */
 export function Home() {
   const list = useStore((s) => s.list);
   const listed = useStore((s) => s.listed);
   const [dropping, setDropping] = useState(false);
+  const [cat, setCat] = useState<RecipeCategoryId>("featured");
+  const [query, setQuery] = useState("");
   const [menu, setMenu] = useState<{ p: ProjectSummary; x: number; y: number }>();
   const [trashing, setTrashing] = useState<ProjectSummary>();
   const now = useNow();
+
   const mine = list.filter((p) => p.where !== "examples").sort((a, b) => (b.edited ?? "").localeCompare(a.edited ?? ""));
   const examples = list.filter((p) => p.where === "examples");
+  const q = query.trim().toLowerCase();
+  const shownMine = q ? mine.filter((p) => p.title.toLowerCase().includes(q) || p.recipe.toLowerCase().includes(q)) : mine;
 
-  const openFolder = async () => {
-    const folder = await pickPath("folder");
-    if (folder) actions.setNewProjectOpen(true, { folder });
-  };
-  // In the Mac app a footage folder can be dropped anywhere here.
+  // In the desktop app a footage folder can be dropped anywhere here.
   const drop = desktop && {
     onDragOver: (e: React.DragEvent) => {
       e.preventDefault();
@@ -50,49 +52,56 @@ export function Home() {
             <h1 className="wordmark" aria-label="beatsheet">
               beat<i />sheet
             </h1>
+            {desktop && (
+              <span className="home-drop-hint">
+                <Icon name="folder" size={13} /> Drop a footage folder anywhere
+              </span>
+            )}
             <span className="spacer" />
+            <button className="primary home-new-btn" onClick={() => actions.setNewProjectOpen(true)}>
+              <Icon name="add" size={13} /> New project
+            </button>
             <button className="icon" onClick={() => actions.setSettingsOpen(true)} title={`Settings: agents, models and media services (${keys("⌘,")})`}>
               <Icon name="tune" />
             </button>
           </header>
 
-          <section className="home-section">
-            <h2>New project</h2>
-            <div className="home-new">
-              <button className="home-route" onClick={() => void openFolder()}>
-                <FolderIcon />
-                <span>
-                  <strong>Open a footage folder</strong>
-                  <span className="dim small">The agent goes through every clip and photo, then suggests a few directions to pick from.</span>
-                </span>
-              </button>
-              <button className="home-route" onClick={() => actions.setNewProjectOpen(true, "scratch")}>
-                <PlusIcon />
-                <span>
-                  <strong>Start from scratch</strong>
-                  <span className="dim small">An empty project. Add footage whenever you're ready.</span>
-                </span>
-              </button>
-            </div>
-            {desktop && <p className="dim small home-hint">Or drop a folder of footage anywhere on this window.</p>}
-          </section>
+          <RecipeShelf cat={cat} onCat={setCat} />
 
           <section className="home-section">
-            <h2>Projects {mine.length > 0 && <span className="dim">{mine.length}</span>}</h2>
+            <div className="home-sec-head">
+              <h2>
+                Projects {mine.length > 0 && <span className="dim">{mine.length}</span>}
+              </h2>
+              <span className="spacer" />
+              {mine.length > 3 && (
+                <input
+                  className="home-search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Filter projects…"
+                  aria-label="Filter projects"
+                />
+              )}
+            </div>
             {listed && !mine.length ? (
               <p className="dim home-empty">Nothing here yet. Your projects show up here, newest first.</p>
-            ) : (
+            ) : shownMine.length ? (
               <div className="home-grid">
-                {mine.map((p) => (
+                {shownMine.map((p) => (
                   <ProjectCard key={p.id} p={p} now={now} onMenu={(x, y) => setMenu({ p, x, y })} />
                 ))}
               </div>
+            ) : (
+              <p className="dim small home-empty">No projects match “{query}”.</p>
             )}
           </section>
 
           {examples.length > 0 && (
             <section className="home-section">
-              <h2>Examples</h2>
+              <div className="home-sec-head">
+                <h2>Examples</h2>
+              </div>
               <div className="home-grid">
                 {examples.map((p) => (
                   <ProjectCard key={p.id} p={p} now={now} />
@@ -104,7 +113,7 @@ export function Home() {
       </div>
       {dropping && (
         <div className="home-drop">
-          <FolderIcon />
+          <Icon name="folder" size={44} className="home-icon" />
           <strong>Drop to start a project from this folder</strong>
         </div>
       )}
@@ -112,6 +121,223 @@ export function Home() {
       {trashing && <TrashDialog p={trashing} onClose={() => setTrashing(undefined)} />}
     </div>
   );
+}
+
+/** Category pills + horizontal scrolling recipe rail, with Start from scratch pinned first. */
+function RecipeShelf({ cat, onCat }: { cat: RecipeCategoryId; onCat: (c: RecipeCategoryId) => void }) {
+  const railRef = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: true, right: false });
+  const items = cat === "featured" ? RECIPES.filter((r) => r.featured) : RECIPES.filter((r) => r.category === cat);
+
+  const syncEdges = () => {
+    const el = railRef.current;
+    if (!el) return;
+    setEdges({
+      left: el.scrollLeft <= 12,
+      right: el.scrollLeft + el.clientWidth >= el.scrollWidth - 12,
+    });
+  };
+
+  useEffect(() => {
+    if (railRef.current) railRef.current.scrollLeft = 0;
+    const id = requestAnimationFrame(syncEdges);
+    window.addEventListener("resize", syncEdges);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("resize", syncEdges);
+    };
+  }, [cat]);
+
+  const scrollBy = (dx: number) => railRef.current?.scrollBy({ left: dx, behavior: "smooth" });
+
+  return (
+    <section className="home-section recipe-shelf">
+      <div className="recipe-shelf-top">
+        <h2>Start a project</h2>
+        <div className="recipe-cats" role="tablist" aria-label="Recipe categories">
+          {RECIPE_CATEGORIES.map((c) => (
+            <button key={c.id} className={`recipe-cat ${c.id === cat ? "on" : ""}`} role="tab" aria-selected={c.id === cat} onClick={() => onCat(c.id)}>
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="recipe-rail-shell">
+        <div className={`recipe-fade left ${edges.left ? "hidden" : ""}`} />
+        <div className={`recipe-fade right ${edges.right ? "hidden" : ""}`} />
+        <button className={`recipe-arrow left ${edges.left ? "hidden" : ""}`} onClick={() => scrollBy(-540)} aria-label="Scroll recipes left">
+          <Icon name="back" size={13} />
+        </button>
+        <button className={`recipe-arrow right ${edges.right ? "hidden" : ""}`} onClick={() => scrollBy(540)} aria-label="Scroll recipes right">
+          <Icon name="forward" size={13} />
+        </button>
+        <div className="recipe-rail" ref={railRef} onScroll={syncEdges}>
+          <button className="recipe-card scratch" onClick={() => actions.setNewProjectOpen(true)}>
+            <span className="recipe-scratch-plus">
+              <Icon name="add" size={16} />
+            </span>
+            <strong>Start from scratch</strong>
+            <span className="dim small">Blank project. Drop footage or write a brief whenever you're ready.</span>
+          </button>
+          {items.map((r) => (
+            <RecipeCard key={r.id} r={r} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RecipeCard({ r }: { r: RecipeTemplate }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const src = recipePreviewUrl(r.id);
+  const onEnter = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = 0;
+    void v.play().catch(() => {});
+  };
+  const onLeave = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    v.currentTime = 0;
+  };
+  return (
+    <button
+      className="recipe-card"
+      onClick={() => actions.setNewProjectOpen(true, { recipe: r.id })}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      onFocus={onEnter}
+      onBlur={onLeave}
+    >
+      <div className="recipe-media">
+        {src ? <video ref={videoRef} src={src} muted loop playsInline preload="metadata" /> : <RecipeArtwork kind={r.artwork} />}
+      </div>
+      <div className="recipe-scrim" />
+      <div className="recipe-badges">
+        <span className={`recipe-pill ${src ? "has-video" : ""}`}>{r.tag}</span>
+      </div>
+      <div className="recipe-info">
+        <strong>{r.title}</strong>
+        <span>{r.subtitle}</span>
+      </div>
+    </button>
+  );
+}
+
+/** Clean procedural mini-artwork for recipe cards before their rendered .mp4 preview loop is added. */
+function RecipeArtwork({ kind }: { kind: string }) {
+  switch (kind) {
+    case "launch":
+      return (
+        <div className="r-art r-art-launch">
+          <div className="r-art-grid" />
+          <span className="r-art-kicker">INTRODUCING</span>
+          <span className="r-art-big">BUILT TO<br />SHIP FAST</span>
+          <div className="r-art-stats">
+            <span>10× FASTER</span>
+            <span>LIVE UI</span>
+          </div>
+        </div>
+      );
+    case "explainer":
+      return (
+        <div className="r-art r-art-explainer">
+          <svg viewBox="0 0 280 180" fill="none" aria-hidden>
+            <g stroke="rgba(134,197,154,0.2)" strokeWidth="1">
+              <line x1="20" y1="36" x2="260" y2="36" />
+              <line x1="20" y1="72" x2="260" y2="72" />
+              <line x1="20" y1="108" x2="260" y2="108" />
+            </g>
+            <path className="r-art-curve" d="M32 104 C 76 104, 88 46, 138 52 C 186 58, 194 94, 244 40" stroke="#86c59a" strokeWidth="2.4" strokeLinecap="round" />
+            <circle cx="138" cy="52" r="5" fill="#ffcb3d" />
+            <circle cx="244" cy="40" r="4" fill="#8db8e8" />
+            <line x1="138" y1="52" x2="162" y2="30" stroke="#ffcb3d" strokeWidth="1" strokeDasharray="2 2" />
+            <rect x="164" y="20" width="66" height="17" rx="3" fill="rgba(255,203,61,0.16)" stroke="rgba(255,203,61,0.5)" />
+            <text x="172" y="32" fill="#ffcb3d" fontFamily="IBM Plex Mono, monospace" fontSize="9">KEY STEP</text>
+          </svg>
+        </div>
+      );
+    case "build":
+      return (
+        <div className="r-art r-art-build">
+          <div className="r-art-row"><i className="g" /><span>01 · CAD &amp; parts list</span><span className="spacer" /><em>0:08</em></div>
+          <div className="r-art-row"><i className="y" /><span>02 · First prototype fail</span><span className="spacer" /><em>0:24</em></div>
+          <div className="r-art-row"><i className="b" /><span>03 · Final working demo</span><span className="spacer" /><em>0:48</em></div>
+        </div>
+      );
+    case "promo":
+      return (
+        <div className="r-art r-art-promo">
+          <span className="r-art-slam">STOP SCROLLING</span>
+          <span className="r-art-sub">HOOK · PROOF · CTA</span>
+        </div>
+      );
+    case "titles":
+      return (
+        <div className="r-art r-art-titles">
+          <span className="r-art-sub">A FILM BY YOU</span>
+          <span className="r-art-wide">HORIZON</span>
+        </div>
+      );
+    case "talking":
+      return (
+        <div className="r-art r-art-talking">
+          <div className="r-art-wave">
+            {[28, 52, 74, 44, 88, 66, 36, 78, 54, 92, 60, 40, 72, 48].map((h, i) => (
+              <span key={i} style={{ height: `${h}%` }} />
+            ))}
+          </div>
+          <div className="r-art-cap">Cut the pauses, <em>keep the punch</em></div>
+        </div>
+      );
+    case "multicam":
+      return (
+        <div className="r-art r-art-multicam">
+          <div className="r-art-cam live"><span>CAM A</span></div>
+          <div className="r-art-cam alt"><span>CAM B</span></div>
+        </div>
+      );
+    case "trip":
+    case "tribute":
+    case "photo":
+      return (
+        <div className={`r-art r-art-montage kind-${kind}`}>
+          <div className="r-art-frames">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="r-art-beats">
+            {[4, 9, 5, 10, 6, 8, 4, 10, 6, 9, 5, 7].map((h, i) => (
+              <i key={i} style={{ height: `${h}px` }} />
+            ))}
+          </div>
+        </div>
+      );
+    case "restore":
+      return (
+        <div className="r-art r-art-restore">
+          <div className="r-art-res-l"><span>VHS 480i</span></div>
+          <div className="r-art-res-r"><span>CLEAN 4K</span></div>
+          <div className="r-art-res-line" />
+        </div>
+      );
+    default:
+      return (
+        <div className={`r-art r-art-film kind-${kind}`}>
+          <div className="r-art-letterbox">
+            <div>
+              <span className="r-art-kicker">{kind === "trailer" ? "ACT II · REVEAL" : kind === "pet" ? "SCENE 04 · ALLEY" : kind === "remake" ? "STYLE TRANSFER" : "SHOT 01 · WIDE"}</span>
+              <span className="r-art-scene">{kind === "trailer" ? "ONE LAST RIDE" : kind === "pet" ? "@CAT ENTERS VAULT" : kind === "remake" ? "STOP-MOTION PASS" : "BOARDS → ROUGHS"}</span>
+            </div>
+            <span className="r-art-tag">24 FPS</span>
+          </div>
+        </div>
+      );
+  }
 }
 
 /** A project: a few of its pictures, what's in it, whose turn it is, and when it last changed. */
@@ -149,7 +375,10 @@ function ProjectCard({ p, now, onMenu }: { p: ProjectSummary; now: number; onMen
           {!posters.length && <span className="dim small">No footage yet</span>}
         </div>
         <div className="project-card-body">
-          <strong className="project-card-title">{p.title}</strong>
+          <div className="project-card-head">
+            <strong className="project-card-title">{p.title}</strong>
+            {p.recipe && <span className="project-recipe-tag">{p.recipe}</span>}
+          </div>
           <span className="dim small">{facts || "Empty"}</span>
           <span className="project-card-foot">
             {turn && (
@@ -290,7 +519,3 @@ function useNow() {
   }, []);
   return now;
 }
-
-const FolderIcon = () => <Icon name="folder" size={48} className="home-icon" />;
-
-const PlusIcon = () => <Icon name="new" size={48} className="home-icon" />;

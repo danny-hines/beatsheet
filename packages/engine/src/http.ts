@@ -7,7 +7,7 @@ import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSyn
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type Rect, type RestoreSteps } from "@beatsheet/schema";
+import { EXPORT_KINDS, PEAK_RATE, SFX_SOUNDS, slugify, type Brief, type CutSpec, type ExportKind, type Rect, type RestoreSteps, type Spine } from "@beatsheet/schema";
 import { createHash } from "node:crypto";
 import { makeFrames, makeFullPicture, makePeaks, needsConverting } from "./media.ts";
 import { cancelInstall, checkComfy, COMFY_DEFAULT, comfyUrl, connectComfy, disconnectComfy, installModels, installStatus, OWN_WORKFLOWS, recheckComfy } from "./comfy.ts";
@@ -155,6 +155,9 @@ export type NewProjectRequest = {
   id?: string;
   folder?: string;
   song?: string;
+  recipe?: string;
+  spine?: Spine;
+  style?: string;
   formats?: string[];
   brief?: Partial<Brief>;
   spec?: Partial<CutSpec>;
@@ -245,6 +248,9 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         title: body.title.trim(),
         folder: body.folder?.trim() || undefined,
         song: body.song?.trim() || undefined,
+        recipe: body.recipe?.trim() || undefined,
+        spine: body.spine,
+        style: body.style?.trim() || undefined,
         formats: body.formats,
         brief: body.brief,
         spec: body.spec,

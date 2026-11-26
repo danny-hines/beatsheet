@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { autoAssemble, formatPreset, SCHEMA_VERSION, STAGE_IDS, type Asset, type Brief, type Cut, type CutSpec, type Format, type Project, type ProjectFile } from "@beatsheet/schema";
+import { autoAssemble, formatPreset, SCHEMA_VERSION, STAGE_IDS, type Asset, type Brief, type Cut, type CutSpec, type Format, type Project, type ProjectFile, type Spine } from "@beatsheet/schema";
 import { averageColor, makeImageProxy, makePlayable, makePoster, makeStrip, makeVideoProxy, pool } from "./media.ts";
 import { analyzeMusic } from "./music.ts";
 import { assetPath, cachePaths, expandHome, originalPath, playablePath, ROOTS, samePath } from "./paths.ts";
@@ -21,6 +21,12 @@ export type ImportOptions = {
   id: string;
   title?: string;
   song?: string;
+  /** Which recipe skill drives the first cut: montage, story, film, motion. Default montage. */
+  recipe?: string;
+  /** What the first cut's timing hangs off; defaults from the recipe. */
+  spine?: Spine;
+  /** Optional visual style hint (e.g. "Photorealistic", "2D Cartoon"), saved into the project's initial look. */
+  style?: string;
   brief?: Partial<Brief>;
   /** The first cut's length and platforms. */
   spec?: Partial<CutSpec>;
@@ -56,26 +62,30 @@ export async function importFolder(opts: ImportOptions): Promise<Project> {
     return f;
   });
   const given = <T extends object>(o: T | undefined) => Object.fromEntries(Object.entries(o ?? {}).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && !v.length)));
+  const recipe = opts.recipe?.trim() || "montage";
+  const spine: Spine = opts.spine ?? (recipe === "film" ? "shots" : recipe === "story" ? "voice" : "music");
+  const style = opts.style?.trim() || undefined;
   const stages = Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])) as Cut["stages"];
   stages.brief = { status: "done" };
   stages.material = assets.length ? { status: "active", summary: `${assets.length} files imported; not logged yet` } : { status: "todo", summary: "No footage yet" };
-  stages.board = { status: "skipped", summary: "Montages go straight from music to assembly" };
+  if (recipe === "montage") stages.board = { status: "skipped", summary: "Montages go straight from music to assembly" };
   const doc: ProjectFile = {
     schema: SCHEMA_VERSION,
     id: opts.id,
     title,
     sources: folder ? [{ id: "footage", path: folder }] : [],
-    brief: { goal: `A short reel of ${title} to share`, ...given(opts.brief) },
+    ...(style ? { look: { name: style, note: `Visual style: ${style}` } } : {}),
+    brief: { goal: "", ...given(opts.brief) },
     assets,
     cuts: [
       {
         id: "main",
         name: "Main cut",
-        recipe: "montage",
-        spec: { platforms: [...new Set(formats.flatMap((f) => f.platforms ?? []))], targetLength: 30, maxLength: 60, ...given(opts.spec) },
+        recipe,
+        spec: { platforms: [...new Set(formats.flatMap((f) => f.platforms ?? []))], ...given(opts.spec) },
         formats,
         stages,
-        spine: "music",
+        spine,
         music: { cues: [] },
         tracks: [
           { id: "pic", kind: "picture", label: "Picture" },

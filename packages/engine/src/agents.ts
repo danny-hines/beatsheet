@@ -162,7 +162,8 @@ export function openingPrompt(project?: string, then?: string, cutId?: string): 
     " The footage and its logs, the brief and the look are shared by every cut.";
   const fresh = !doc.turn && !doc.assets.some((a) => a.rating || a.moments?.length) && doc.cuts.every((c) => !c.shots.length);
   if (fresh && !then) {
-    return `${head} It's new, and it's your turn: follow the recipe's first turn (look at and log all the footage, read the references properly, sharpen the brief), then hand_off with a few directions for me to choose from. The montage skill covers videos cut to music, the story skill narrated ones (showcases, explainers, launches), the film skill videos made from nothing (with the make skill for stills and clips), and the motion skill designed scenes.`;
+    const hasFootage = doc.assets.length > 0;
+    return `${head} It's new (recipe: "${cut.recipe}"), and it's your turn: call get_project to read the brief, style/look, and references, follow the "${cut.recipe}" recipe's first turn${hasFootage ? " (look at and log all the footage, read the references properly, sharpen the brief)" : " (read the brief and references properly, ask for photos/cast if needed)"}, then hand_off with a few directions for me to choose from. The montage skill covers videos cut to music, the story skill narrated ones (showcases, explainers, launches), the film skill videos made from nothing (with the make skill for stills and clips), and the motion skill designed scenes.`;
   }
   return `${head} Call get_project to see where it stands.${
     then ? `\n\n${then}` : " Then do what the turn calls for and end with hand_off. If it's my turn and nothing new has been asked of you, say where things stand in two sentences and hand_off again with the same ask."

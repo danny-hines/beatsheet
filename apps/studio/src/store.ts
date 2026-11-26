@@ -103,8 +103,8 @@ export type State = {
   /** The agent CLIs: which are installed and the models each offers. Loaded when first needed. */
   agentList?: AgentInfo[];
   newProjectOpen: boolean;
-  /** How the new project starts, when that's already chosen: from a folder (picked, or dropped on the window), or empty. */
-  newProjectStart?: { folder: string } | "scratch";
+  /** How the new project starts, when that's already chosen: a dropped folder and/or a picked recipe template. */
+  newProjectStart?: { folder?: string; recipe?: string };
   /** The person's setup: default agent, services with keys, and what those let the agent do. */
   setup?: { settings: Settings; services: ServiceInfo[]; capabilities: Capability[]; vision?: { ok: boolean; detail: string }; sam?: SamStatus };
   /** The settings have been asked for once (whether or not that worked), so first launch can be told apart. */
