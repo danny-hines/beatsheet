@@ -1310,6 +1310,20 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .look { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--line); border-radius: var(--r-2); }
 .look-head { display: flex; align-items: center; gap: 4px; }
 .look-head .nowrap { white-space: nowrap; }
+/* Model & multi-model compare toolbar right at the top of each cast look card. */
+.cast-make-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 10px; border-radius: var(--r-2); background: var(--well); border: 1px solid var(--line); }
+.cast-model-pick { max-width: 360px; }
+.cast-count { width: auto; flex: none; }
+.cast-compare-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.cast-compare-chips .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; }
+.cast-compare-chips .chip button { padding: 0; line-height: 1; color: var(--dim); }
+.cast-compare-chips .chip button:hover { color: var(--text); }
+.cast-model-row { display: flex; align-items: flex-start; gap: 6px; padding-left: 6px; border-radius: var(--r-2); }
+.cast-model-row input[type="checkbox"] { margin-top: 7px; flex: none; accent-color: var(--accent); cursor: pointer; }
+.cast-model-row > button.model-row { flex: 1; min-width: 0; }
+.cast-model-row.on { background: var(--accent-bg); box-shadow: inset 2px 0 0 var(--accent); }
+.cast-model-row.on > button.model-row:hover { background: transparent; }
+.cast-model-routes { padding-left: 28px; }
 /* A character's look in steps (CastSteps.tsx): face, wardrobe, portrait, sheet, each numbered and ticked once done. */
 .cast-steps { display: flex; flex-direction: column; gap: 4px; }
 .cast-gets { padding: 6px 10px; border-radius: var(--r-2); background: var(--raised); line-height: 1.4; }

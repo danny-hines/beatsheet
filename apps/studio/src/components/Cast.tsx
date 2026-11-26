@@ -4,12 +4,12 @@
  * describe it and make its sheet (clean views that models are given to match).
  */
 import type { MakeJob, SheetKind } from "@beatsheet/engine";
-import { castOf, lookGiven, mergeLook, PICTURES_EACH, renameCast, speakerLabel, type Asset, type CastMember, type Project } from "@beatsheet/schema";
-import { useMemo, useState, type HTMLAttributes } from "react";
+import { castOf, commercialWords, lookGiven, mergeLook, PICTURES_EACH, renameCast, speakerLabel, type Asset, type CastMember, type Choices, type Fit, type FitOk, type Project } from "@beatsheet/schema";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type HTMLAttributes } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { lineUp } from "../multicam";
 import { actions, useProject, useStore } from "../store";
-import { cost, Failed, fitLabel, fitOf, madeWith, modelLabel, money, useChoices, useMake, WhyNot } from "./Takes";
+import { cost, Failed, fitOf, madeWith, modelLabel, money, pickOf, useChoices, useMake, WhyNot } from "./Takes";
 import { Viewer } from "./Viewer";
 import { CharacterSteps, isOwnPhoto, NonHumanSteps, Picture, PICTURE_DRAG, WardrobeSteps } from "./CastSteps";
 import { PopMenu, TextField } from "./ui";
@@ -325,8 +325,8 @@ function CastPanel({ id }: { id: string }) {
   const [lookAsked, setLook] = useState<string>();
   const [adding, setAdding] = useState(false);
   const [count, setCount] = useState(2);
-  // The models pictures are made with: Auto's pick, until others are ticked to compare theirs side by side.
-  const [models, setModels] = useState<string[]>();
+  // The model(s) pictures are made with ("model" or "model@via"): undefined means Auto; ticking multiple compares side by side.
+  const [picks, setPicks] = useState<string[]>();
   const [describing, setDescribing] = useState("");
   const looks = [PLAIN, ...(m?.variants ?? []).map((v) => v.id)];
   const look = lookAsked !== undefined && looks.includes(lookAsked) ? lookAsked : looks.reduce((best, l) => ((perLook.get(l) ?? 0) > (perLook.get(best) ?? 0) ? l : best), PLAIN);
@@ -334,10 +334,14 @@ function CastPanel({ id }: { id: string }) {
   const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
   const { choices, problem } = useChoices({ op: "image", sheet, count, ...(m?.kind === "wardrobe" ? { sheetKind: "outfit-sheet" } : {}) });
   const ready = choices?.ready ?? [];
-  const picked = (models ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => ready.some((f) => f.model === x));
-  const fits = picked.map((x) => fitOf(choices, x)!);
+  const activePicks = (picks ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => !!fitOf(choices, x));
+  const fits = activePicks.map((x) => fitOf(choices, x)!);
   const price = fits.length > 1 && fits.some((f) => f.usd) ? money(fits.reduce((sum, f) => sum + (f.usd ?? 0), 0)) : fits[0] ? cost(fits[0]) : "";
-  const tick = (model: string, on: boolean) => setModels(ready.map((f) => f.model).filter((x) => (x === model ? on : picked.includes(x))));
+  const makeSummary = activePicks.length
+    ? activePicks.length === 1
+      ? `${count}× ${fits[0]!.label}${price ? ` · ${price}` : ""}`
+      : `${count} each × ${activePicks.length} models${price ? ` · ${price}` : ""}`
+    : "";
   if (!m) return <p className="dim small">That cast member is gone.</p>;
 
   const variant = look ? m.variants?.find((v) => v.id === look) : undefined;
@@ -425,7 +429,7 @@ function CastPanel({ id }: { id: string }) {
   };
   const makeIt = (sheetKind: SheetKind) => {
     const ask = { op: "image" as const, sheet, sheetKind, count, ...(sheetKind === "portrait" ? { portrait: true } : {}) };
-    void make(models ? picked.map((model) => ({ ...ask, model })) : ask);
+    void make(picks?.length ? activePicks.map((x) => ({ ...ask, ...pickOf(x) })) : ask);
   };
 
   const footage = (m.seen ?? []).map((s) => p.assets.find((a) => a.id === s.asset)).filter((a): a is Asset => !!a);
@@ -508,6 +512,39 @@ function CastPanel({ id }: { id: string }) {
           <span className="spacer" />
           <span className="dim nowrap">{nShots ? `in ${nShots} shot${nShots === 1 ? "" : "s"}` : "in no shots yet"}</span>
         </div>
+        <div className="cast-make-bar">
+          <span className="dim small">Image model</span>
+          <CastModelPicker choices={choices} picks={picks} onChange={setPicks} price={price} />
+          <select className="cast-count" value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="Takes per model" title="How many variations to generate from each selected model">
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>
+                {n} {activePicks.length > 1 ? "each" : n === 1 ? "take" : "takes"}
+              </option>
+            ))}
+          </select>
+          {activePicks.length > 1 && (
+            <span className="cast-compare-chips small">
+              {fits.map((f, i) => {
+                const raw = activePicks[i]!;
+                return (
+                  <span key={raw} className="chip">
+                    {f.label}
+                    <button
+                      className="link"
+                      aria-label={`Remove ${f.label}`}
+                      onClick={() => {
+                        const next = activePicks.filter((x) => x !== raw);
+                        setPicks(next.length ? next : undefined);
+                      }}
+                    >
+                      <Icon name="close" size={10} />
+                    </button>
+                  </span>
+                );
+              })}
+            </span>
+          )}
+        </div>
         {m.kind === "character" && m.nonHuman ? (
           <NonHumanSteps
             key={look}
@@ -516,7 +553,8 @@ function CastPanel({ id }: { id: string }) {
             variant={variant}
             plainLabel={PLAIN_LABEL[m.kind]}
             going={going.filter((j) => j.sheet === sheet)}
-            canMake={!!picked.length && !sending}
+            canMake={!!activePicks.length && !sending}
+            makeSummary={makeSummary}
             onMake={makeIt}
             edit={edit}
             describe={describeLink}
@@ -530,7 +568,8 @@ function CastPanel({ id }: { id: string }) {
             lookName={lookName}
             plainLabel={PLAIN_LABEL[m.kind]}
             going={going.filter((j) => j.sheet === sheet)}
-            canMake={!!picked.length && !sending}
+            canMake={!!activePicks.length && !sending}
+            makeSummary={makeSummary}
             onMake={makeIt}
             edit={edit}
             describe={describeLink}
@@ -543,7 +582,8 @@ function CastPanel({ id }: { id: string }) {
             variant={variant}
             plainLabel={PLAIN_LABEL[m.kind]}
             going={going.filter((j) => j.sheet === sheet)}
-            canMake={!!picked.length && !sending}
+            canMake={!!activePicks.length && !sending}
+            makeSummary={makeSummary}
             onMake={makeIt}
             edit={edit}
             describe={describeLink}
@@ -579,37 +619,13 @@ function CastPanel({ id }: { id: string }) {
               onMoveTo={moveToLook}
             />
             <div className="make-row">
-              <button className="primary" disabled={!picked.length || sending || !canMake} onClick={() => makeIt("sheet")}>
+              <button className="primary" disabled={!activePicks.length || sending || !canMake} onClick={() => makeIt("sheet")}>
                 {MAKE_WORD[m.kind]}
               </button>
+              {makeSummary && <span className="dim small">{makeSummary}</span>}
             </div>
           </>
         )}
-        <details className="make-options small">
-          <summary>
-            {count} each{picked.length ? ` from ${picked.map(modelLabel).join(", ")}` : ""}
-            {price ? ` · ${price}` : ""}
-          </summary>
-          <div className="make-row">
-            <span className="dim">How many from each model</span>
-            <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many from each model">
-              {[1, 2, 3, 4].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </div>
-          {ready.map((f) => {
-            const multiWhere = new Set(ready.flatMap((x) => [x.route, ...(x.also ?? []).map((o) => o.route)])).size > 1;
-            return (
-              <label key={f.model} className="check-row" title="Tick more than one to compare what each makes">
-                <input type="checkbox" checked={picked.includes(f.model)} onChange={(e) => tick(f.model, e.target.checked)} />
-                {fitLabel(f, multiWhere)}
-              </label>
-            );
-          })}
-        </details>
         {m.kind !== "character" && m.kind !== "wardrobe" && (
           <p className="dim small">
             {sources}. New ones wait in Kept until you drag one into a slot{given.length ? "" : " (the first goes into slot 1)"}.
@@ -707,6 +723,196 @@ function CastPanel({ id }: { id: string }) {
         </p>
       </details>
     </div>
+  );
+}
+
+/**
+ * Multi-model & route picker for generating cast portraits and sheets: click any model to use it alone, pick a route
+ * pill when a model runs on multiple providers, or tick checkboxes on 2+ models to generate and compare side by side.
+ */
+function CastModelPicker({
+  choices,
+  picks,
+  onChange,
+  price,
+}: {
+  choices: Choices | undefined;
+  picks: string[] | undefined;
+  onChange: (next: string[] | undefined) => void;
+  price: string;
+}) {
+  const [at, setAt] = useState<CSSProperties>();
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = () => setAt(undefined);
+
+  useEffect(() => {
+    if (!at) return;
+    const out = (e: Event) => !panel.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node) && close();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("pointerdown", out, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", out, true);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("resize", close);
+    };
+  }, [at]);
+
+  const open = () => {
+    const r = button.current!.getBoundingClientRect();
+    const width = Math.min(440, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    setAt(r.bottom + 360 > window.innerHeight && r.top > window.innerHeight - r.bottom ? { left, bottom: window.innerHeight - r.top + 4, width } : { left, top: r.bottom + 4, width });
+  };
+
+  const ready = choices?.ready ?? [];
+  const activePicks = (picks ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => !!fitOf(choices, x));
+  const multiWhere = new Set(ready.flatMap((x) => [x.route, ...(x.also ?? []).map((o) => o.route)])).size > 1;
+  const pickForModel = (modelId: string) => activePicks.find((x) => pickOf(x).model === modelId);
+  const isPicked = (modelId: string) => !!pickForModel(modelId);
+
+  const selectOnly = (value: string) => {
+    onChange(value ? [value] : undefined);
+    close();
+  };
+
+  const toggleModel = (modelId: string, on: boolean) => {
+    const cur = picks ?? (choices?.auto ? [choices.auto.model] : []);
+    const next = on ? [...cur.filter((x) => pickOf(x).model !== modelId), modelId] : cur.filter((x) => pickOf(x).model !== modelId);
+    if (!next.length) return;
+    onChange(next);
+  };
+
+  const setRoute = (modelId: string, route: string) => {
+    const val = `${modelId}@${route}`;
+    const cur = picks ?? (choices?.auto ? [choices.auto.model] : []);
+    if (cur.some((x) => pickOf(x).model === modelId)) {
+      onChange(cur.map((x) => (pickOf(x).model === modelId ? val : x)));
+    } else {
+      onChange([val]);
+      close();
+    }
+  };
+
+  const singleFit = activePicks.length === 1 ? fitOf(choices, activePicks[0]!) : undefined;
+  const singleSel = activePicks.length === 1 ? pickOf(activePicks[0]!) : undefined;
+  const buttonLabel = !picks?.length
+    ? choices?.auto
+      ? `Auto · ${choices.auto.label}`
+      : "Auto"
+    : activePicks.length === 1
+      ? (singleFit?.label ?? modelLabel(singleSel?.model ?? activePicks[0]!))
+      : `Compare ${activePicks.length} models`;
+  const buttonCost =
+    activePicks.length > 1
+      ? price
+      : singleFit
+        ? [(multiWhere || !!singleSel?.via || !!singleFit.also?.length) && singleFit.where, cost(singleFit)].filter(Boolean).join(" · ")
+        : "";
+
+  const settings = (pane: string, text: string) => (
+    <button className="link small" onClick={() => (close(), actions.setSettingsOpen(true, pane))}>
+      {text}
+    </button>
+  );
+  const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
+  const setup = choices?.setup ?? [];
+  const off = (f: Fit) =>
+    f.ok ? null : (
+      <div key={f.model} className="model-row off">
+        <span className="model-row-name">{f.label}</span>
+        <span className="model-row-note">{f.why.reason}</span>
+      </div>
+    );
+
+  const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, commercial: o.commercial, note: o.note, also: undefined }))];
+
+  return (
+    <>
+      <button ref={button} className={`model-pick cast-model-pick ${at ? "open" : ""}`} onClick={() => (at ? close() : open())} aria-haspopup="menu" aria-expanded={!!at} title="Choose one image model or tick multiple to compare side by side">
+        <span className="model-pick-name">{buttonLabel}</span>
+        {buttonCost && <span className="model-pick-cost">{buttonCost}</span>}
+        <Icon name="down" size={10} />
+      </button>
+      {at && (
+        <div ref={panel} className="model-menu cast-model-menu" role="menu" style={at}>
+          <button role="menuitemradio" aria-checked={!picks?.length} className={`model-row ${!picks?.length ? "on" : ""}`} onClick={() => selectOnly("")}>
+            <span className="model-row-name">Auto</span>
+            <span className="model-row-cost">{choices?.auto ? cost(choices.auto) : ""}</span>
+            <span className="model-row-note">{choices?.auto ? `Best ready for this: ${choices.auto.label} on ${choices.auto.where}` : "Nothing can make this now"}</span>
+          </button>
+          {ready.length > 0 && (
+            <h5>
+              Ready <span className="spacer" />
+              <span className="dim small" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
+                Tick multiple to compare
+              </span>
+            </h5>
+          )}
+          {ready.map((f) => {
+            const raw = pickForModel(f.model);
+            const selected = !!raw && !!picks?.length;
+            const places = placesOf(f);
+            const chosenVia = raw ? pickOf(raw).via : undefined;
+            const active = (chosenVia ? places.find((x) => x.route === chosenVia) : undefined) ?? f;
+            const showWhere = multiWhere || places.length > 1;
+            return (
+              <div key={f.model} className="model-item">
+                <div className={`cast-model-row ${selected ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={isPicked(f.model)}
+                    onChange={(e) => toggleModel(f.model, e.target.checked)}
+                    aria-label={`Include ${f.label} in comparison`}
+                    title="Tick to compare alongside other models"
+                  />
+                  <button className="model-row" onClick={() => selectOnly(raw ?? f.model)} title={`Use only ${f.label}`}>
+                    <span className="model-row-name">
+                      {active.label}
+                      {showWhere && <span className="dim"> · {active.where}</span>}
+                    </span>
+                    <span className="model-row-cost">{cost(active)}</span>
+                    {(active.note || active.commercial) && <span className="model-row-note">{[active.commercial && commercialWords(active.commercial), active.note].filter(Boolean).join(". ")}</span>}
+                  </button>
+                </div>
+                {places.length > 1 && (
+                  <div className="model-routes cast-model-routes" role="group" aria-label={`Where to run ${f.label}`}>
+                    {places.map((x) => {
+                      const on = isPicked(f.model) && active.route === x.route;
+                      const tip = [x.commercial && commercialWords(x.commercial), x.note].filter(Boolean).join(". ") || undefined;
+                      return (
+                        <button key={x.route} type="button" className={`chip model-route ${on ? "on" : ""}`} onClick={() => setRoute(f.model, x.route)} title={tip}>
+                          {x.where}
+                          {x.usd !== undefined ? ` · ${cost(x)}` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {setup.length > 0 && (
+            <>
+              <h5>
+                Needs a key, a connection or an install <span className="spacer" />
+                {setup.some((f) => !onComfy(f)) && settings("services", "Media services")}
+                {setup.some(onComfy) && settings("make", "ComfyUI")}
+              </h5>
+              {setup.map(off)}
+            </>
+          )}
+          {!!choices?.unfit.length && (
+            <>
+              <h5>Can&apos;t make this</h5>
+              {choices.unfit.map(off)}
+            </>
+          )}
+        </div>
+      )}
+    </>
   );
 }
 

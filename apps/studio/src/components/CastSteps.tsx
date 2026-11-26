@@ -69,6 +69,7 @@ export function CharacterSteps({
   plainLabel,
   going,
   canMake,
+  makeSummary,
   onMake,
   edit,
   describe,
@@ -82,6 +83,8 @@ export function CharacterSteps({
   going: MakeJob[];
   /** Whether making can start: a model is ready and nothing's being sent. */
   canMake: boolean;
+  /** Short readout of the selected model(s) and count (e.g. "2× Nano Banana 2.1 · ~$0.08"). */
+  makeSummary?: string;
   onMake: (sheetKind: SheetKind) => void;
   edit: (fn: (m: CastMember) => void) => void;
   /** Writing who they are from their pictures (a link), under the words. */
@@ -413,6 +416,7 @@ export function CharacterSteps({
             <button className={!look.portrait && !(variant && headwear !== "face" && m.portrait) ? "primary" : ""} disabled={!canMake} onClick={() => onMake("portrait")} title="Head-and-shoulders likeness anchor (bare shoulders unless headwear is attached to face)">
               Make portraits
             </button>
+            {makeSummary && <span className="dim small">{makeSummary}</span>}
           </div>
         </div>
       </Step>
@@ -434,7 +438,7 @@ export function CharacterSteps({
           >
             Make 360° face sheet
           </button>
-          {!sheetFace && <span className="dim small">Choose a portrait first so all 6 angles match it.</span>}
+          {!sheetFace ? <span className="dim small">Choose a portrait first so all 6 angles match it.</span> : makeSummary && <span className="dim small">{makeSummary}</span>}
         </div>
       </Step>
 
@@ -580,7 +584,7 @@ export function CharacterSteps({
               >
                 Make outfit sheet
               </button>
-              {!canMakeOutfit && <span className="dim small">Describe what they wear or drop a wardrobe photo first.</span>}
+              {!canMakeOutfit ? <span className="dim small">Describe what they wear or drop a wardrobe photo first.</span> : makeSummary && <span className="dim small">{makeSummary}</span>}
             </div>
           </>
         )}
@@ -596,7 +600,7 @@ export function CharacterSteps({
           <button disabled={!canMake || !sheetFace} onClick={() => onMake("sheet")} title="Legacy 16:9 sheet: close-up face + front body (cropped at neck) + back body">
             Make combined sheet
           </button>
-          {!sheetFace && <span className="dim small">Choose a portrait first.</span>}
+          {!sheetFace ? <span className="dim small">Choose a portrait first.</span> : makeSummary && <span className="dim small">{makeSummary}</span>}
         </div>
       </details>
 
@@ -676,6 +680,7 @@ export function WardrobeSteps({
   plainLabel,
   going,
   canMake,
+  makeSummary,
   onMake,
   edit,
   describe,
@@ -686,6 +691,7 @@ export function WardrobeSteps({
   plainLabel: string;
   going: MakeJob[];
   canMake: boolean;
+  makeSummary?: string;
   onMake: (sheetKind: SheetKind) => void;
   edit: (fn: (m: CastMember) => void) => void;
   describe?: ReactNode;
@@ -861,6 +867,7 @@ export function WardrobeSteps({
           <button className={!chosen && canMakeOutfit ? "primary" : ""} disabled={!canMake || !canMakeOutfit} onClick={() => onMake("outfit-sheet")}>
             Make outfit sheet
           </button>
+          {makeSummary && <span className="dim small">{makeSummary}</span>}
           {variant && m.outfitSheet && <span className="dim small">Edits directly from {plainLabel}&apos;s outfit sheet to preserve cut &amp; seams.</span>}
         </div>
       </Step>
@@ -907,6 +914,7 @@ export function NonHumanSteps({
   plainLabel,
   going,
   canMake,
+  makeSummary,
   onMake,
   edit,
   describe,
@@ -917,6 +925,7 @@ export function NonHumanSteps({
   plainLabel: string;
   going: MakeJob[];
   canMake: boolean;
+  makeSummary?: string;
   onMake: (sheetKind: SheetKind) => void;
   edit: (fn: (m: CastMember) => void) => void;
   describe?: ReactNode;
@@ -1150,6 +1159,7 @@ export function NonHumanSteps({
           <button disabled={!canMake || !canGenerate} onClick={() => onMake("portrait")} title="Full-figure 1:1 three-quarter hero study on neutral mid-gray">
             Make hero stills
           </button>
+          {makeSummary && <span className="dim small">{makeSummary}</span>}
         </div>
       </Step>
 
@@ -1167,7 +1177,7 @@ export function NonHumanSteps({
           <button className={canGenerate && !look.sheet ? "primary" : ""} disabled={!canMake || !canGenerate} onClick={() => onMake("sheet")} title="Multi-angle full-body turnaround sheet (front, 3/4, side profile, back) on neutral mid-gray">
             Make turnaround sheet
           </button>
-          {!canGenerate && <span className="dim small">Add a description or reference photo first.</span>}
+          {!canGenerate ? <span className="dim small">Add a description or reference photo first.</span> : makeSummary && <span className="dim small">{makeSummary}</span>}
         </div>
       </Step>
 

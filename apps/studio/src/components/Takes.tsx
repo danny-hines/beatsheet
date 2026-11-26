@@ -18,8 +18,12 @@ const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 export const money = (usd?: number) => (usd === undefined ? "" : `~$${usd.toFixed(2)}`);
 /** A catalog model by name, from its id or (as older takes recorded it) one of its endpoints. */
 export const modelLabel = (id: string) => (CATALOG.find((c) => c.id === id) ?? CATALOG.find((c) => c.routes.some((r) => Object.values(r.endpoints).includes(id))))?.label ?? id;
-/** The model a picture was made with, by name, when it was made. */
-export const madeWith = (a: Asset | undefined) => (a?.provenance?.source === "generated" && a.provenance.model ? modelLabel(a.provenance.model) : undefined);
+/** The model a picture was made with, by name, when it was made. Prefers the catalog model id recorded in params. */
+export const madeWith = (a: Asset | undefined) => {
+  if (a?.provenance?.source !== "generated") return undefined;
+  const id = (typeof a.provenance.params?.model === "string" ? a.provenance.params.model : undefined) ?? a.provenance.model;
+  return id ? modelLabel(id) : undefined;
+};
 /** What it costs where it runs: a plan's allowance, or the person's own graphics card, rather than money. */
 export const cost = (f: { usd?: number; route?: string }) => (f.route === "comfy" ? "on your graphics card" : f.usd === 0 ? "on your plan" : money(f.usd));
 const wait = (s?: number) => (s === undefined ? "" : s < 90 ? `~${Math.max(10, Math.round(s / 10) * 10)}s` : `~${Math.round(s / 60)} min`);
