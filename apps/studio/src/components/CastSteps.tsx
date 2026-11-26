@@ -92,6 +92,8 @@ export function AddPhotoTile({
   const p = useProject();
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   const [libAt, setLibAt] = useState<CSSProperties>();
+  const [libTab, setLibTab] = useState<"photos" | "generated" | "all">("photos");
+  const [libQuery, setLibQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
@@ -101,7 +103,13 @@ export function AddPhotoTile({
   const libraryImages = p.assets
     .filter((a) => a.kind === "image" && !a.cutout)
     .sort((a, b) => Number(isOwnPhoto(b)) - Number(isOwnPhoto(a)));
+  const ownImages = libraryImages.filter((a) => isOwnPhoto(a));
+  const generatedImages = libraryImages.filter((a) => !isOwnPhoto(a));
   const hasLibraryChoices = libraryImages.some((a) => !existing.includes(a.id));
+  const q = libQuery.trim().toLowerCase();
+  const shownImages = (libTab === "photos" ? ownImages : libTab === "generated" ? generatedImages : libraryImages).filter(
+    (a) => !q || a.id.toLowerCase().includes(q) || (a.label ?? "").toLowerCase().includes(q) || (a.tags ?? []).some((t) => t.toLowerCase().includes(q)),
+  );
 
   useEffect(() => {
     if (!libAt) return;
@@ -153,11 +161,17 @@ export function AddPhotoTile({
 
   const openLibrary = () => {
     setMenu(undefined);
+    setLibTab(ownImages.length ? "photos" : "all");
+    setLibQuery("");
     const r = btnRef.current?.getBoundingClientRect();
     if (!r) return;
-    const width = Math.min(420, window.innerWidth - 16);
-    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
-    setLibAt(r.bottom + 320 > window.innerHeight && r.top > window.innerHeight - r.bottom ? { left, bottom: window.innerHeight - r.top + 6, width } : { left, top: r.bottom + 6, width });
+    const width = Math.min(540, window.innerWidth - 24);
+    const left = Math.max(12, Math.min(r.left, window.innerWidth - width - 12));
+    const spaceBelow = window.innerHeight - r.bottom - 16;
+    const spaceAbove = r.top - 16;
+    const openAbove = spaceBelow < 320 && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(220, Math.min(460, openAbove ? spaceAbove : spaceBelow));
+    setLibAt(openAbove ? { left, bottom: window.innerHeight - r.top + 6, width, maxHeight } : { left, top: r.bottom + 6, width, maxHeight });
   };
 
   const onClick = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -215,8 +229,29 @@ export function AddPhotoTile({
               Done
             </button>
           </div>
+          <div className="cast-lib-bar">
+            <div className="segmented small" role="tablist" aria-label="Filter library images">
+              <button type="button" role="tab" aria-selected={libTab === "photos"} className={libTab === "photos" ? "on" : ""} onClick={() => setLibTab("photos")}>
+                Photos ({ownImages.length})
+              </button>
+              <button type="button" role="tab" aria-selected={libTab === "generated"} className={libTab === "generated" ? "on" : ""} onClick={() => setLibTab("generated")}>
+                Generated ({generatedImages.length})
+              </button>
+              <button type="button" role="tab" aria-selected={libTab === "all"} className={libTab === "all" ? "on" : ""} onClick={() => setLibTab("all")}>
+                All ({libraryImages.length})
+              </button>
+            </div>
+            <input
+              type="search"
+              className="cast-lib-search small"
+              placeholder="Filter by name or tag…"
+              value={libQuery}
+              onChange={(e) => setLibQuery(e.target.value)}
+              aria-label="Filter library images"
+            />
+          </div>
           <div className="cast-lib-grid">
-            {libraryImages.map((a) => {
+            {shownImages.map((a) => {
               const has = existing.includes(a.id);
               const by = madeWith(a) ?? (isOwnPhoto(a) ? "Photo" : undefined);
               return (
@@ -228,7 +263,7 @@ export function AddPhotoTile({
                   disabled={has}
                   title={has ? `${a.label ?? a.id} (already added)` : `Add ${a.label ?? a.id}`}
                 >
-                  <img src={posterUrl(projectId, a.id)} alt="" onError={hideBroken} />
+                  <img src={posterUrl(projectId, a.id)} alt="" loading="lazy" onError={hideBroken} />
                   {by && <span className="badge">{by}</span>}
                   {has && (
                     <span className="cast-lib-check" aria-hidden="true">
@@ -238,6 +273,11 @@ export function AddPhotoTile({
                 </button>
               );
             })}
+            {!shownImages.length && (
+              <span className="dim small cast-lib-empty">
+                {q ? "No images match that filter." : libTab === "photos" ? "No imported photos yet — use From computer… or switch to Generated." : "No images here."}
+              </span>
+            )}
           </div>
         </div>
       )}
