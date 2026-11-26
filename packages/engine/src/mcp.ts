@@ -36,6 +36,7 @@ import {
   lineVoice,
   whoSpeaks,
   MAKE_OPS,
+  providersOf,
   SFX_SOUNDS,
   followTakes,
   resolveTimeline,
@@ -57,7 +58,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, providerInUse, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, preferredProvider, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -780,7 +781,7 @@ server.registerTool(
   "list_models",
   {
     description:
-      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against the one service the person has chosen for stills or for video (and their own graphics card, which runs alongside it): the ones ready to use with what each would cost and how long it takes (and when what it makes there isn't free to use commercially, under its license), the ones that need something from the person (a key, or switching to another service they've connected: only they switch, so ask in hand_off rather than working around it), and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one unless you name another.",
+      "Which models could make a picture or a clip (for a shot, a sheet, or as described), checked against every connected service and the person's own graphics card: the ones ready to use with where they run, what each would cost and how long it takes (and when what it makes there isn't free to use commercially, under its license), the ones that need a key or an install, and the ones that can't make this (too short, the wrong shape, no start frame) with why. With shots, what a whole pass would cost with each model. generate uses the first ready one (respecting the person's preferred service if set, else the best model and cheapest or free route) unless you name a model or via.",
     inputSchema: { ...makeArgs, count: z.number().int().min(1).max(4).optional().describe("How many takes, for the estimate (default 1)") },
   },
   async ({ project: id, ...args }) => {
@@ -804,14 +805,24 @@ server.registerTool(
     }
     const { req, choices } = makeChoices(id, asks[0]!);
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
     ];
     out.push(...absent);
-    const using = providerInUse(req.op);
-    const kind = req.op === "image" ? "Stills" : "Video";
-    out.push(using ? `${kind} ${req.op === "image" ? "are" : "is"} made on ${connectedStates()[using]!.label}, the person's choice in Settings → Making, and on their own graphics card where it's connected. Nothing is made on another service until they switch to it.` : `No service is connected for ${kind.toLowerCase()} yet.`);
+    const states = connectedStates();
+    const pref = preferredProvider(req.op, states);
+    const kind = req.op === "image" ? "stills" : "video";
+    const readyProviders = providersOf(CATALOG, req.op)
+      .filter((p) => states[p.id]?.state === "ready")
+      .map((p) => states[p.id]!.label);
+    if (states.comfy?.state === "ready") readyProviders.push(states.comfy.label);
+    if (readyProviders.length) {
+      const prefNote = pref ? ` Preferred default: ${states[pref]!.label} (Settings → Making).` : "";
+      out.push(`Connected for ${kind}: ${readyProviders.join(", ")}.${prefNote} Every connected service is ready—pick the best model and route (via) for the shot, or suggest options in hand_off.`);
+    } else {
+      out.push(`No service is connected for ${kind} yet.`);
+    }
     if (choices.ready.length) out.push("Ready:", ...choices.ready.map(fitLine));
-    if (choices.setup.length) out.push("Needs something from the person (switching the service in use, or connecting ComfyUI, in Settings → Making; a key in Settings → Media services):", ...choices.setup.map(fitLine));
+    if (choices.setup.length) out.push("Needs something from the person (a key in Settings → Media services, or ComfyUI in Settings → Making):", ...choices.setup.map(fitLine));
     if (choices.unfit.length) out.push("Can't make this:", ...choices.unfit.map(fitLine));
     return text(out.join("\n"));
   },
@@ -830,7 +841,7 @@ server.registerTool(
         .array(z.string())
         .optional()
         .describe("Several model ids from list_models instead of model: the same request made with each, count takes apiece, to compare (a cast member's sheets from two or three still models) and keep the best"),
-      via: z.string().optional().describe('Where to make it, when list_models says a model runs in two places: the service in use, or "comfy" for the person\'s own graphics card (the default when it can make it, as it costs nothing). Another connected service isn\'t used until the person switches to it'),
+      via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one ready place (e.g. "fal", "tein", "runway", "higgsfield", "openai", "chatgpt", "comfy"). Default: your own hardware when it can make it, else the person\'s preferred service if set, else the cheapest or free ready route'),
       anyway: z.boolean().optional().describe("Make a clip that was held because a character it's about isn't in its frames: you've looked and they are there (an edit that didn't name them), or they aren't meant to be seen"),
     },
   },

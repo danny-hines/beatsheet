@@ -27,10 +27,9 @@ import {
   driveWindow,
   FIDELITY,
   fitModel,
-  inUse,
   missingFromFrames,
   OWN_HARDWARE,
-  pickProvider,
+  preferredOf,
   providersOf,
   realPeople,
   resolveTimeline,
@@ -258,33 +257,16 @@ export function connectedStates(): Record<string, ServiceState> {
   };
 }
 
-/** The plan that comes with each agent's sign-in, where it makes stills. */
-const AGENT_PLANS: Partial<Record<string, string>> = { codex: "chatgpt", muse: "muse-code", antigravity: "antigravity" };
-
 /**
- * The provider in use for stills or for video: the person's choice (Settings → Making) while it's still connected.
- * Until they choose, a guess that spends the least by surprise: for stills a plan they're signed in on (their agent's
- * first), then for either the key they added first.
+ * The service the person chose to prefer for stills or for video (Settings → Making), while it's still connected.
+ * Undefined when they haven't chosen one (or disconnected it): every connected service is usable either way, and Auto
+ * picks the best model and cheapest or free route across all of them.
  */
-export function providerInUse(op: MakeOp, states = connectedStates()): string | undefined {
-  const { make, services, agent } = readSettings();
-  const plans = op === "image" ? [AGENT_PLANS[agent?.id ?? ""], ...PLAN_ROUTES].filter((x): x is string => !!x && states[x]?.state === "ready") : [];
-  const keys = Object.entries(services)
-    .sort(([, a], [, b]) => a.addedAt.localeCompare(b.addedAt))
-    .map(([id]) => id);
-  return pickProvider(CATALOG, op, states, make?.provider?.[op], [...plans, ...keys]);
+export function preferredProvider(op: MakeOp, states = connectedStates()): string | undefined {
+  return preferredOf(CATALOG, op, states, readSettings().make?.provider?.[op]);
 }
 
-/**
- * The services as the fit check sees them for stills or for video: the provider in use and the person's own hardware
- * can make things; any other connected service is idle until the person switches to it.
- */
-export function serviceStates(op: MakeOp): Record<string, ServiceState> {
-  const states = connectedStates();
-  return inUse(CATALOG, op, states, providerInUse(op, states));
-}
-
-/** A service stills or video can be made on, for the picker in Settings → Making. */
+/** A service stills or video can be made on, for Settings → Making and first launch. */
 export type ProviderRow = {
   id: string;
   label: string;
@@ -293,28 +275,29 @@ export type ProviderRow = {
   state: ServiceState["state"];
   /** What checking it said: the balance on a key, or why a plan can't be used. */
   detail?: string;
-  /** The models it would offer. */
+  /** The models it offers. */
   models: string[];
   /** Where to get a key. */
   keyUrl?: string;
-  inUse: boolean;
+  /** Whether the person chose this service as their preferred one for Auto and shared models. */
+  preferred: boolean;
 };
 
-/** Every service stills or video could come from, by name, with what each would offer and which one is in use. */
+/** Every service stills or video could come from, by name, with what each offers and whether it's preferred. */
 export function providerRows(op: MakeOp): ProviderRow[] {
   const states = connectedStates();
-  const using = providerInUse(op, states);
+  const pref = preferredProvider(op, states);
   const saved = readSettings().services;
   return providersOf(CATALOG, op)
     .map(({ id, models }): ProviderRow => {
       const s = states[id] ?? { label: id, state: "missing" as const };
       const detail = s.state === "failing" ? s.detail : saved[id]?.detail;
-      return { id, label: s.label, kind: PLAN_ROUTES.includes(id) ? "plan" : "key", state: s.state, ...(detail ? { detail } : {}), models, keyUrl: SERVICES.find((x) => x.id === id)?.keyUrl, inUse: id === using };
+      return { id, label: s.label, kind: PLAN_ROUTES.includes(id) ? "plan" : "key", state: s.state, ...(detail ? { detail } : {}), models, keyUrl: SERVICES.find((x) => x.id === id)?.keyUrl, preferred: id === pref };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 }
 
-/** Chooses the service in use for stills or for video: one of the services that makes it, or null to leave it to the engine's guess again. */
+/** Sets or clears the preferred service for stills or for video (null means no preference: any connected service). */
 export function chooseProvider(op: MakeOp, id: string | null) {
   if (id !== null && !providersOf(CATALOG, op).some((p) => p.id === id)) throw new Error(`"${id}" doesn't make ${op === "image" ? "stills" : "video"}`);
   updateSettings((s) => {
@@ -703,7 +686,8 @@ export function absentFrom(projectId: string, asks: MakeAsk[]): { shot?: string;
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
 export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest; choices: Choices } {
   const req = requestFor(projectId, ask);
-  return { req, choices: chooseModels(CATALOG, req, serviceStates(req.op)) };
+  const states = connectedStates();
+  return { req, choices: chooseModels(CATALOG, req, states, [], preferredProvider(req.op, states)) };
 }
 
 /** What the agent's jobs (and the services its tools used) have cost so far in its current turn (nothing when it isn't the agent's turn). */
@@ -768,11 +752,13 @@ function plan(projectId: string, ask: MakeAsk): Plan {
     const c = project.shots.find((s) => s.id === ask.shot)!.content;
     if (c.kind !== "placeholder" && c.kind !== "generated") throw new Error(`Shot "${ask.shot}" is a ${c.kind} shot; takes are for placeholder and generated shots`);
   }
+  const states = connectedStates();
+  const preferred = preferredProvider(req.op, states);
   let fit: FitOk | undefined;
   if (ask.model) {
     const model = CATALOG.find((m) => m.id === ask.model);
     if (!model) throw new Error(`No model "${ask.model}"; list_models names them`);
-    const f = fitModel(model, req, serviceStates(req.op));
+    const f = fitModel(model, req, states, preferred);
     if (!f.ok) throw new Error(`${where}${model.label} can't make this: ${f.why.reason}`);
     fit = f;
   } else {
@@ -787,7 +773,7 @@ function plan(projectId: string, ask: MakeAsk): Plan {
   const model = CATALOG.find((m) => m.id === fit!.model)!;
   if (req.op === "image" && !ask.refs?.length && (model.takes.refs ?? 0) > fewestStillRefs(CATALOG)) {
     const more = requestFor(projectId, ask, model.takes.refs);
-    const f = fitModel(model, { ...more, via: fit!.route }, serviceStates(more.op));
+    const f = fitModel(model, { ...more, via: fit!.route }, states, preferred);
     if ((more.refs?.length ?? 0) > (req.refs?.length ?? 0) && f.ok) [full, fit] = [more, f];
   }
   const route = model.routes.find((r) => r.via === fit!.route && r.endpoints[shapeOf(full)] === fit!.endpoint)!;

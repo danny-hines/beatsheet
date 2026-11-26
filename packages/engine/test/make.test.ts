@@ -430,16 +430,17 @@ describe("Seedance 2.5 through Tein", () => {
     await make.driveJobs(PROJECT);
   };
 
-  it("runs there once Tein is the video provider, not just connected: the board sent up, the job followed, and what Tein charged kept", async () => {
+  it("runs there as soon as Tein is connected (cheaper by default, or via Tein when another is preferred): the board sent up, the job followed, and what Tein charged kept", async () => {
     await board();
     const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
     expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
-    // A key for the cheaper place changes nothing by itself: fal is still the provider in use.
+    // Once Tein is connected, it's ready right away and cheaper than fal, with fal offered alongside it.
     settings.services = { tein: { addedAt: "2026-11-19" } };
-    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
-    expect(() => make.startMake(PROJECT, { ...ask, via: "tein" })).toThrow("Runs on Tein, which is connected but not your video provider");
-    provider({ video: "tein" });
-    const { fit, jobs } = make.startMake(PROJECT, ask);
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "tein", also: [{ route: "fal" }] });
+    // Preferring fal keeps Seedance on fal by default while explicit via: "tein" still works without switching.
+    provider({ video: "fal" });
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal", also: [{ route: "tein" }] });
+    const { fit, jobs } = make.startMake(PROJECT, { ...ask, via: "tein" });
     expect(fit).toMatchObject({ model: "seedance-2.5", route: "tein", where: "Tein", endpoint: "seedance-2-5" });
     expect(fit).not.toHaveProperty("also");
     expect(fit.usd).toBeCloseTo(0.1355 * fit.seconds!, 3);
@@ -457,16 +458,15 @@ describe("Seedance 2.5 through Tein", () => {
     expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "tein", model: "seedance-2.5" });
   });
 
-  it("draws someone from the person's own photos there and nowhere else, and says so when Tein isn't connected", async () => {
+  it("draws someone from the person's own photos there and nowhere else, even when another provider is preferred", async () => {
     await board();
     // The cat's photo hasn't been looked through for faces, so the cat is taken to be a person.
     const ask = { op: "video" as const, shot: "s2", prompt: "@cat strolls down the wet street", start: "s2-take", model: "seedance-2.5" };
     expect(() => make.startMake(PROJECT, ask)).toThrow("Seedance 2.5 can't make this: With real people in it, runs only on Tein");
     settings.services = { tein: { addedAt: "2026-11-19" } };
+    provider({ video: "fal" });
     expect(() => make.startMake(PROJECT, { ...ask, via: "fal" })).toThrow("Won't draw real people on fal, and the cat is from your own photos; it does on Tein");
-    // Connected isn't in use: it says where it would run, and leaves switching to the person.
-    expect(() => make.startMake(PROJECT, ask)).toThrow("With real people in it, runs only on Tein, which is connected but not your video provider");
-    provider({ video: "tein" });
+    // Even with fal preferred, Tein is connected and handles real faces automatically without switching.
     const { fit } = make.startMake(PROJECT, ask);
     expect(fit).toMatchObject({ route: "tein" });
     expect(fit).not.toHaveProperty("also");
@@ -535,14 +535,16 @@ describe("Seedance 2.5 through Tein", () => {
 describe("Runway as the provider", () => {
   const connect = () => void (settings.services = { runway: { addedAt: "2026-11-21" } });
 
-  it("makes nothing there while another provider is in use, and a take once it's the video provider: the board sent up, the task followed, and what Runway charged kept", async () => {
+  it("is ready alongside other connected providers, respects a preferred video provider, and sends the board, follows the task, and keeps what Runway charged", async () => {
     make.startMake(PROJECT, { op: "image", shot: "s2" });
     await make.driveJobs(PROJECT);
     const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
-    // A key for it changes nothing by itself: fal, added first, is still the provider in use, and takes are made there.
+    // Once Runway is connected, it's ready right away; preferring fal keeps Auto and shared models on fal while Runway stays selectable.
     connect();
-    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
-    expect(() => make.startMake(PROJECT, { ...ask, via: "runway" })).toThrow("Runs on Runway, which is connected but not your video provider");
+    provider({ video: "fal" });
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal", also: [{ route: "runway" }] });
+    // Runway-only capabilities (Kling 3 Pro from a prompt alone) work immediately even when fal is preferred.
+    expect(make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final" }).choices.ready.find((f) => f.model === "kling-3")).toMatchObject({ route: "runway" });
     const onFal = make.startMake(PROJECT, { op: "video", shot: "s1", model: "kling-4" });
     expect(onFal.fit).toMatchObject({ route: "fal" });
     await make.driveJobs(PROJECT);
@@ -551,8 +553,7 @@ describe("Runway as the provider", () => {
 
     provider({ video: "runway" });
     const { fit, jobs } = make.startMake(PROJECT, ask);
-    expect(fit).toMatchObject({ model: "seedance-2.5", route: "runway", where: "Runway", endpoint: "seedance2_5", seconds: 4 });
-    expect(fit).not.toHaveProperty("also");
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "runway", where: "Runway", endpoint: "seedance2_5", seconds: 4, also: [{ route: "fal" }] });
     // Four seconds at 20¢ is the least Runway charges for a take.
     expect(fit.usd).toBe(0.8);
     await make.driveJobs(PROJECT);
@@ -562,7 +563,7 @@ describe("Runway as the provider", () => {
     expect(runway.submits).toEqual([
       { path: "image_to_video", body: { model: "seedance2_5", promptImage: [{ uri: "runway://upload-1", position: "first" }], promptText: "A red kite climbs over the hill", ratio: "480:854", duration: 4 } },
     ]);
-    // Nothing more went to fal: the board and the take made while it was in use.
+    // Nothing more went to fal: the board and the take made while it was preferred.
     expect(seen.submits).toHaveLength(2);
     // 64 credits, at a cent each, in place of the estimate.
     expect(make.listJobs(PROJECT).find((j) => j.id === jobs[0]!.id)).toMatchObject({ status: "done", route: "runway", charged: true, usd: 0.64, remote: { id: "task_1" } });
@@ -571,12 +572,12 @@ describe("Runway as the provider", () => {
     expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "runway", model: "seedance-2.5" });
   });
 
-  it("makes stills there once it's the stills provider, with the cast's pictures as references", async () => {
+  it("makes stills there when Runway is preferred for stills, with the cast's pictures as references", async () => {
     connect();
     expect(make.makeChoices(PROJECT, { op: "image", shot: "s2" }).choices.auto).toMatchObject({ route: "fal" });
     provider({ image: "runway" });
     const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", count: 1 });
-    expect(fit).toMatchObject({ model: "nano-banana-2.1", route: "runway", endpoint: "nano_banana_2.1", aspect: "16:9", usd: 0.04 });
+    expect(fit).toMatchObject({ model: "nano-banana-2.1", route: "runway", endpoint: "nano_banana_2.1", aspect: "16:9", usd: 0.04, also: [{ route: "fal" }] });
     await make.driveJobs(PROJECT);
 
     expect(runway.uploads).toEqual(["cat.jpg"]);
@@ -586,7 +587,7 @@ describe("Runway as the provider", () => {
     const sheet = store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-sheet")!;
     expect(sheet.provenance).toMatchObject({ provider: "runway", model: "nano_banana_2.1", costUsd: 0.04, refs: ["cat-photo"] });
     expect(readFileSync(sheet.path, "utf8")).toBe("a picture");
-    // Video is still made where it was.
+    // Video is still Auto's pick on fal.
     expect(make.makeChoices(PROJECT, { op: "video", shot: "s1" }).choices.auto).toMatchObject({ route: "fal" });
   });
 
@@ -678,21 +679,21 @@ describe("Higgsfield as the provider", () => {
   const connect = () => void (settings.services = { higgsfield: { addedAt: "2026-11-21" } });
   const job = (id: string) => make.listJobs(PROJECT).find((j) => j.id === id)!;
 
-  it("makes nothing there while another provider is in use, and a take once it's the video provider: the board put where Higgsfield says, the price it quotes kept, the job followed", async () => {
+  it("is ready alongside other connected providers, respects a preferred video provider, and sends the board, keeps the quoted price, and follows the job", async () => {
     make.startMake(PROJECT, { op: "image", shot: "s2" });
     await make.driveJobs(PROJECT);
     const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
-    // A key for it changes nothing by itself: fal, added first, is still the provider in use.
+    // Once Higgsfield is connected, it's ready right away and cheaper than fal; preferring fal keeps fal default while via: "higgsfield" still works.
     connect();
-    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal" });
-    expect(() => make.startMake(PROJECT, { ...ask, via: "higgsfield" })).toThrow("Runs on Higgsfield, which is connected but not your video provider");
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "higgsfield", also: [{ route: "fal" }] });
+    provider({ video: "fal" });
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "fal", also: [{ route: "higgsfield" }] });
     expect(higgsfield).toMatchObject({ submits: [], uploads: [] });
 
     provider({ video: "higgsfield" });
     const { fit, jobs } = make.startMake(PROJECT, ask);
     const model = "bytedance/seedance-2.5/image-to-video";
-    expect(fit).toMatchObject({ model: "seedance-2.5", route: "higgsfield", where: "Higgsfield", endpoint: model, seconds: 4 });
-    expect(fit).not.toHaveProperty("also");
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "higgsfield", where: "Higgsfield", endpoint: model, seconds: 4, also: [{ route: "fal" }] });
     // Four seconds at $0.1177.
     expect(fit.usd).toBe(0.471);
     await make.driveJobs(PROJECT);
@@ -700,7 +701,7 @@ describe("Higgsfield as the provider", () => {
     // The board went to the address Higgsfield gave for it, and the take keeps the board's shape: none is asked for.
     expect(higgsfield).toMatchObject({ uploads: ["image/jpeg"], stored: 1, estimates: [model] });
     expect(higgsfield.submits).toEqual([{ model, body: { prompt: "A red kite climbs over the hill", image_url: `${base}/out/hf-upload-1.jpg`, duration: 4, resolution: "480p" } }]);
-    // Nothing more went to fal than the board made while it was in use.
+    // Nothing more went to fal than the board.
     expect(seen.submits).toHaveLength(1);
     // What Higgsfield said the request would cost, in place of the estimate; sent under the job's own key.
     const done = job(jobs[0]!.id);
@@ -923,13 +924,12 @@ describe("keeping a blockout's camera", () => {
     const { req, choices } = make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final", camera: { cut: "blockout" } });
     expect(req).toMatchObject({ camera: { cut: "blockout", format: "vertical", from: 0, to: 7 }, seconds: 7 });
     expect(req.camera).not.toHaveProperty("shots");
-    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7 });
-    expect(choices.auto).not.toHaveProperty("also");
+    expect(choices.auto).toMatchObject({ model: "seedance-2.5", route: "tein", seconds: 7, also: [{ route: "fal" }] });
     expect(choices.auto!.usd).toBeCloseTo(14 * 0.4595, 3);
-    // The same shot with fal as the video provider, at fal's rate.
+    // The same shot with fal preferred, at fal's rate, with Tein still in also.
     provider({ video: "fal" });
     const onFal = make.makeChoices(PROJECT, { op: "video", shot: "s1", quality: "final", camera: { cut: "blockout" } }).choices.auto!;
-    expect(onFal).toMatchObject({ model: "seedance-2.5", route: "fal" });
+    expect(onFal).toMatchObject({ model: "seedance-2.5", route: "fal", also: [{ route: "tein" }] });
     expect(onFal.usd).toBeCloseTo(14 * 0.6964, 3);
     expect(choices.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't keep the camera of a clip it's given" } });
   });
@@ -1512,12 +1512,11 @@ describe("stills from services that answer in one request", () => {
     expect(shot("s2")).toMatchObject({ fidelity: "board", content: { kind: "generated", take: "s2-take", provider: "openai" } });
   });
 
-  it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and on the key once that's the provider", async () => {
+  it("makes a still on the ChatGPT plan when Codex is signed in, at no charge, and lets via or preference pick the key", async () => {
     plans.ready = ["chatgpt"];
     const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image" });
-    // Until the person chooses, stills come from the plan they're signed in on: it costs nothing more.
-    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0 });
-    expect(fit).not.toHaveProperty("also");
+    // With no preference set, the free plan comes first, with connected keys listed beside it.
+    expect(fit).toMatchObject({ route: "chatgpt", where: "ChatGPT plan", usd: 0, also: [{ route: "openai" }, { route: "fal" }] });
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(0);
     expect(plans.asks).toEqual([{ route: "chatgpt", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);
@@ -1526,12 +1525,15 @@ describe("stills from services that answer in one request", () => {
     expect(take.provenance).toMatchObject({ provider: "chatgpt", model: "gpt-image", costUsd: 0 });
     expect(take.path).toMatch(/\.png$/);
 
-    expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", via: "openai", count: 1 })).toThrow("Runs on OpenAI, which is connected but not your stills provider");
-    provider({ image: "openai" });
-    make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", count: 1 });
+    // Explicit via works immediately without switching Settings, and preferring OpenAI makes it the default.
+    const direct = make.startMake(PROJECT, { op: "image", shot: "s2", model: "gpt-image", via: "openai", count: 1 });
+    expect(direct.fit).toMatchObject({ route: "openai" });
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(1);
     expect(make.listJobs(PROJECT)[1]).toMatchObject({ status: "done", route: "openai" });
+
+    provider({ image: "openai" });
+    expect(make.makeChoices(PROJECT, { op: "image", shot: "s2" }).choices.ready.find((f) => f.model === "gpt-image")).toMatchObject({ route: "openai", also: [{ route: "chatgpt" }, { route: "fal" }] });
     expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", model: "muse-image", via: "muse-code" })).toThrow("Muse Image can't make this: Runs on Muse Code plan");
   });
 

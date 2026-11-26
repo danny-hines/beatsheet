@@ -543,12 +543,15 @@ function CastPanel({ id }: { id: string }) {
               ))}
             </select>
           </div>
-          {ready.map((f) => (
-            <label key={f.model} className="check-row" title="Tick more than one to compare what each makes">
-              <input type="checkbox" checked={picked.includes(f.model)} onChange={(e) => tick(f.model, e.target.checked)} />
-              {fitLabel(f)}
-            </label>
-          ))}
+          {ready.map((f) => {
+            const multiWhere = new Set(ready.flatMap((x) => [x.route, ...(x.also ?? []).map((o) => o.route)])).size > 1;
+            return (
+              <label key={f.model} className="check-row" title="Tick more than one to compare what each makes">
+                <input type="checkbox" checked={picked.includes(f.model)} onChange={(e) => tick(f.model, e.target.checked)} />
+                {fitLabel(f, multiWhere)}
+              </label>
+            );
+          })}
         </details>
         {m.kind !== "character" && (
           <p className="dim small">

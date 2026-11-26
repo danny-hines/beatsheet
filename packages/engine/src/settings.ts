@@ -39,12 +39,12 @@ export type Settings = {
   setupDone?: boolean;
   /** On Windows: a Hugging Face token (in Credential Manager) that can download Meta's SAM 3.1, and whose it is. */
   huggingface?: { name?: string; addedAt: string };
-  /** Making footage: the service in use for stills and for video, and what the agent may spend in a turn before asking. */
+  /** Making footage: optional preferred service for stills and for video, and what the agent may spend in a turn before asking. */
   make?: {
     /**
-     * The one service in use for stills and the one for video, of those connected (a key's service id, or a plan's:
-     * "fal", "chatgpt"). Models run there or on the person's own hardware and nowhere else, so nothing is spent on a
-     * service they didn't choose. Unset: the engine's guess (`providerInUse`), until they pick.
+     * Optional preferred service for stills and for video (a key's service id, or a plan's: "fal", "chatgpt"). Every
+     * connected service is available; setting a preference guides Auto and breaks ties when a model runs in more than
+     * one place. Unset: Auto picks the best model and cheapest or free route across all connected services.
      */
     provider?: { image?: string; video?: string };
     turnBudgetUsd?: number;

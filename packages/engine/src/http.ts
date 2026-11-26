@@ -441,8 +441,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       await agentStudio().chromeChanged();
       return json(res, 200, saved);
     }
-    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, and the one
-    // service in use for stills and for video, of every one they could come from.
+    // Making: the spending limit (and what's been spent under it), what the agent may spend in a turn, and the
+    // services stills and video can come from (every connected one is ready; an optional preference guides Auto).
     const plans = () => {
       const states = planStates();
       return PLANS.map((p) => ({ id: p.id, ...states[p.id]! }));

@@ -23,10 +23,10 @@ const ABOUT = {
   agent: "The agent edits your videos with you, on your own account. Make one the default; you can switch any time from the Agent tab.",
   mac: `Finding and following the people in your footage, and cutting people and things out of it. Free and private: these run on your ${OS.computer}, and nothing leaves it.`,
   services: WINDOWS ? "Each key you add gives the agent more to work with. Keys are checked, then kept in Windows Credential Manager." : "Each key you add gives the agent more to work with. Keys are checked, then kept in your Keychain.",
-  providers: "For shots that are made rather than filmed. Choose the service you already use; cutting your own footage needs none.",
+  providers: "For shots that are made rather than filmed. Connect whichever services you use; cutting your own footage needs none.",
   voices: "Who reads narration when a cut has a voiceover. Listen to any voice, and choose the one new narration uses.",
   abilities: "Everything the agent can do with what's set up now.",
-  make: "Which service makes your stills and which your video, and what making may spend.",
+  make: "The services that make your stills and video, your local hardware, and what making may spend.",
   transcribe: "Turning what's said in a clip into words with their times: on this computer, or a service with your key.",
   restore: "Old footage at its best: voices cleaned of hiss and hum, and the picture steadier, sharper and smoother. On this computer, or a service with your key.",
 };

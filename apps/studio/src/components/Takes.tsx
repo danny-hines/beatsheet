@@ -40,7 +40,7 @@ export const pickOf = (value: string): { model?: string; via?: string } => {
   const [model, via] = value.split("@");
   return { model, ...(via ? { via } : {}) };
 };
-/** A ready model in each place it can run: on the person's own hardware, and on the service in use. */
+/** A ready model in each connected place it can run. */
 const placesOf = (f: FitOk): FitOk[] => [f, ...(f.also ?? []).map((o) => ({ ...f, route: o.route, where: o.where, usd: o.usd, commercial: o.commercial, note: o.note, also: undefined }))];
 /** The fit for a pick (Auto when there's none), or nothing when that model can't make this now. */
 export function fitOf(choices: Choices | undefined, value: string): FitOk | undefined {
@@ -508,16 +508,13 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
   );
 }
 
-/** A model that runs on a service the person has connected but isn't using for this: theirs to switch to. */
-const elsewhere = (f: Fit) => !f.ok && f.why.kind === "switch";
-
 /** How long a take is likely to be, said beside its cost. */
 const about = (f: { usd?: number; route?: string; wait?: number }) => [cost(f), wait(f.wait)].filter(Boolean).join(" · ");
 
 /**
  * Which model makes it: a button that says the one chosen and what it costs, and a list that opens from it. Auto and
- * the ready models come first, each with where it runs, its cost and how long it takes; then the ones that can't be
- * used now, each with why, and where to go to change that.
+ * the ready models come first, each with where it runs, its cost and how long it takes (and route chips when a model
+ * runs on more than one connected service); then the ones that can't be used now, each with why.
  */
 export function ModelPicker({ choices, model, setModel }: { choices?: Choices; model: string; setModel: (m: string) => void }) {
   const button = useRef<HTMLButtonElement>(null);
@@ -545,6 +542,7 @@ export function ModelPicker({ choices, model, setModel }: { choices?: Choices; m
     setAt(r.top > window.innerHeight / 2 ? { left, bottom: window.innerHeight - r.top + 4, width } : { left, top: r.bottom + 4, width });
   };
   const chosen = fitOf(choices, model);
+  const sel = pickOf(model);
   const pick = (value: string) => {
     setModel(value);
     close();
@@ -560,16 +558,42 @@ export function ModelPicker({ choices, model, setModel }: { choices?: Choices; m
       {text}
     </button>
   );
-  const row = (f: FitOk, value: string, where: boolean) => (
-    <button key={value} role="menuitemradio" aria-checked={model === value} className={`model-row ${model === value ? "on" : ""}`} onClick={() => pick(value)}>
-      <span className="model-row-name">
-        {f.label}
-        {where && <span className="dim"> · {f.where}</span>}
-      </span>
-      <span className="model-row-cost">{about(f)}</span>
-      {(f.note || f.commercial) && <span className="model-row-note">{[f.commercial && commercialWords(f.commercial), f.note].filter(Boolean).join(". ")}</span>}
-    </button>
-  );
+  // Show where each model runs whenever more than one service is ready for this request.
+  const multiWhere = new Set(choices?.ready.flatMap((f) => [f.route, ...(f.also ?? []).map((x) => x.route)]) ?? []).size > 1;
+  const readyItem = (f: FitOk) => {
+    const selected = sel.model === f.model;
+    const places = placesOf(f);
+    const active = selected && sel.via ? (places.find((x) => x.route === sel.via) ?? f) : f;
+    const where = multiWhere || places.length > 1;
+    const main = (
+      <button role="menuitemradio" aria-checked={selected} className={`model-row ${selected ? "on" : ""}`} onClick={() => pick(f.model)}>
+        <span className="model-row-name">
+          {active.label}
+          {where && <span className="dim"> · {active.where}</span>}
+        </span>
+        <span className="model-row-cost">{about(active)}</span>
+        {(active.note || active.commercial) && <span className="model-row-note">{[active.commercial && commercialWords(active.commercial), active.note].filter(Boolean).join(". ")}</span>}
+      </button>
+    );
+    if (places.length < 2) return <div key={f.model} className="model-item">{main}</div>;
+    return (
+      <div key={f.model} className="model-item">
+        {main}
+        <div className="model-routes" role="group" aria-label={`Where to run ${f.label}`}>
+          {places.map((x) => {
+            const on = selected && active.route === x.route;
+            const tip = [x.commercial && commercialWords(x.commercial), x.note].filter(Boolean).join(". ") || undefined;
+            return (
+              <button key={x.route} type="button" className={`chip model-route ${on ? "on" : ""}`} onClick={() => pick(`${x.model}@${x.route}`)} title={tip}>
+                {x.where}
+                {x.usd !== undefined ? ` · ${cost(x)}` : ""}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
   const off = (f: Fit) =>
     f.ok ? null : (
       <div key={f.model} className="model-row off">
@@ -578,13 +602,12 @@ export function ModelPicker({ choices, model, setModel }: { choices?: Choices; m
       </div>
     );
   const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
-  const idle = choices?.setup.filter(elsewhere) ?? [];
-  const setup = choices?.setup.filter((f) => !elsewhere(f)) ?? [];
+  const setup = choices?.setup ?? [];
   return (
     <>
       <button ref={button} className={`model-pick ${at ? "open" : ""}`} onClick={() => (at ? close() : open())} aria-haspopup="menu" aria-expanded={!!at} title="Which model makes it">
-        <span className="model-pick-name">{model ? (chosen?.label ?? modelLabel(pickOf(model).model ?? model)) : chosen ? `Auto · ${chosen.label}` : "Auto"}</span>
-        {chosen && <span className="model-pick-cost">{[(model ? !!pickOf(model).via : !!chosen.also?.length) && chosen.where, about(chosen)].filter(Boolean).join(" · ")}</span>}
+        <span className="model-pick-name">{model ? (chosen?.label ?? modelLabel(sel.model ?? model)) : chosen ? `Auto · ${chosen.label}` : "Auto"}</span>
+        {chosen && <span className="model-pick-cost">{[(multiWhere || !!sel.via || !!chosen.also?.length) && chosen.where, about(chosen)].filter(Boolean).join(" · ")}</span>}
         <Icon name="down" size={10} />
       </button>
       {at && (
@@ -592,19 +615,10 @@ export function ModelPicker({ choices, model, setModel }: { choices?: Choices; m
           <button role="menuitemradio" aria-checked={!model} className={`model-row ${model ? "" : "on"}`} onClick={() => pick("")}>
             <span className="model-row-name">Auto</span>
             <span className="model-row-cost">{choices?.auto ? about(choices.auto) : ""}</span>
-            <span className="model-row-note">{choices?.auto ? `The first one ready, in your order: ${choices.auto.label} on ${choices.auto.where}` : "Nothing can make this now"}</span>
+            <span className="model-row-note">{choices?.auto ? `Best ready for this: ${choices.auto.label} on ${choices.auto.where}` : "Nothing can make this now"}</span>
           </button>
           {!!choices?.ready.length && <h5>Ready</h5>}
-          {choices?.ready.flatMap((f) => (f.also?.length ? placesOf(f).map((x) => row(x, `${x.model}@${x.route}`, true)) : [row(f, f.model, false)]))}
-          {idle.length > 0 && (
-            <>
-              <h5>
-                On a service you aren't using <span className="spacer" />
-                {settings("make", "Choose the service")}
-              </h5>
-              {idle.map(off)}
-            </>
-          )}
+          {choices?.ready.map(readyItem)}
           {setup.length > 0 && (
             <>
               <h5>
@@ -637,19 +651,13 @@ export function WhyNot({ choices: all, only }: { choices?: Choices; only?: (mode
   // ComfyUI to connect, or model files to fetch into it, are in Settings → Making; keys are in Media services.
   const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
   const comfy = choices.setup.some(onComfy);
-  const switching = choices.setup.some(elsewhere);
-  const keys = choices.setup.some((f) => !onComfy(f) && !elsewhere(f));
+  const keys = choices.setup.some((f) => !onComfy(f));
   return (
     <p className="dim small">
       {[...choices.unfit, ...choices.setup].map((f) => (!f.ok ? `${f.label}: ${f.why.reason}` : "")).join(". ")}.{" "}
       {keys && (
         <button className="link small" onClick={() => actions.setSettingsOpen(true, "services")}>
           Media services
-        </button>
-      )}{" "}
-      {switching && (
-        <button className="link small" onClick={() => actions.setSettingsOpen(true, "make")}>
-          Choose the service in use
         </button>
       )}{" "}
       {comfy && (

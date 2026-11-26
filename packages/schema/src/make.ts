@@ -141,8 +141,6 @@ export type MakeRequest = {
 export type ServiceState = { label: string; endpoints?: Record<string, Unusable> } & (
   | { state: "ready"; balanceUsd?: number }
   | { state: "missing" }
-  /** Connected, but not the provider in use for this kind of thing: the person chose another (see `inUse`). */
-  | { state: "idle" }
   | { state: "failing"; detail: string }
 );
 
@@ -153,8 +151,6 @@ export type Unusable = { kind: "install" | "machine"; reason: string };
 export type Why =
   | { kind: "fit"; reason: string; fix?: "split" | "drop-refs" | "drop-end" | "via-start-frame" }
   | { kind: "connect"; reason: string; services: string[] }
-  /** It runs on a service that's connected but isn't the one in use: the person can switch to it. */
-  | { kind: "switch"; reason: string; services: string[] }
   | { kind: "install"; reason: string; service: string }
   | { kind: "machine"; reason: string; service: string }
   | { kind: "funds"; reason: string; balanceUsd: number; needUsd: number }
@@ -167,7 +163,7 @@ export type FitOk = {
   route: string;
   /** Where it runs, for people: "fal", "ChatGPT plan". */
   where: string;
-  /** The other place it could run now: the provider in use, when the person's own hardware makes it too. */
+  /** The other connected places it could run now, in preference and cost order. */
   also?: { route: string; where: string; usd?: number; commercial?: Commercial; note?: string }[];
   /** The service's endpoint for this shape of request. */
   endpoint: string;
@@ -365,9 +361,10 @@ export function billedWithClip(seconds: number, clipSeconds: number, least = 0):
 /**
  * Whether `model` can make `req` with the services there are, and if so where, at what length and shape, and for
  * about how much. What the model can't do is checked before what isn't connected: connecting a service won't help a
- * model that can't make the shot.
+ * model that can't make the shot. When a model runs in more than one ready place, the person's own hardware comes
+ * first, then `preferred` (when set), then the cheapest or free route; the rest are listed in `also`.
  */
-export function fitModel(model: CatalogModel, req: MakeRequest, services: Record<string, ServiceState>): Fit {
+export function fitModel(model: CatalogModel, req: MakeRequest, services: Record<string, ServiceState>, preferred?: string): Fit {
   const no = (why: Why): Fit => ({ ok: false, model: model.id, label: model.label, why });
   const count = Math.max(1, req.count ?? 1);
   if (!model.ops.includes(req.op)) return no({ kind: "fit", reason: `${model.label} doesn't make ${req.op === "image" ? "images" : "video"}` });
@@ -456,10 +453,11 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (!routes.length) return no((timed[0] as { why: Why }).why);
 
   const unusable = (r: ModelRoute) => state(r).endpoints?.[r.endpoints[shape]!];
+  const rank = (via: string) => (OWN_HARDWARE.includes(via) ? 0 : preferred && via === preferred ? 1 : 2);
   const ready = routes
     .filter(({ r }) => state(r).state === "ready" && !unusable(r))
     .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count, req.quality, followed), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
-    .sort((a, b) => (a.usd ?? Infinity) - (b.usd ?? Infinity));
+    .sort((a, b) => rank(a.r.via) - rank(b.r.via) || (a.usd ?? Infinity) - (b.usd ?? Infinity));
   const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
   if (affordable.length) {
     const [best, ...rest] = affordable.map((x) => ({ ...x, where: state(x.r).label }));
@@ -493,15 +491,8 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const blocked = routes.filter(({ r }) => state(r).state === "ready" && unusable(r));
   const install = blocked.find(({ r }) => unusable(r)!.kind === "install");
   if (install) return no({ kind: "install", reason: unusable(install.r)!.reason, service: install.r.via });
-  // Said with why, when the routes in use were ruled out for the real people in it.
+  // Said with why, when the routes that refuse real people were ruled out.
   const runs = asked.length > there.length ? "With real people in it, runs only on" : "Runs on";
-  // Connected, but the person chose another provider for this kind of thing: theirs to switch, never switched for them.
-  const idle = routes.filter(({ r }) => state(r).state === "idle");
-  if (idle.length) {
-    const labels = [...new Set(idle.map(({ r }) => state(r).label))];
-    const kind = req.op === "image" ? "stills" : "video";
-    return no({ kind: "switch", reason: `${runs} ${list(labels)}, which ${labels.length === 1 ? "is" : "are"} connected but not your ${kind} provider`, services: [...new Set(idle.map(({ r }) => r.via))] });
-  }
   const missing = routes.filter(({ r }) => state(r).state === "missing");
   if (missing.length) {
     // One that isn't connected may say why this computer couldn't run it either, so the person connects another.
@@ -512,12 +503,12 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   return no({ kind: "machine", reason: unusable(blocked[0]!.r)!.reason, service: blocked[0]!.r.via });
 }
 
-/** Routes that run on the person's own machines rather than a service: they run alongside whichever provider is in use. */
+/** Routes that run on the person's own machines rather than a service: they run alongside every connected service. */
 export const OWN_HARDWARE = ["comfy"];
 
 /**
- * The services a provider of stills or of video can be chosen from: every one some model in the catalog runs on for
- * that kind of thing, apart from the person's own hardware, with the models it would offer.
+ * The services stills or video can come from: every one some model in the catalog runs on for that kind of thing,
+ * apart from the person's own hardware, with the models it offers.
  */
 export function providersOf(catalog: CatalogModel[], op: MakeOp): { id: string; models: string[] }[] {
   const out = new Map<string, string[]>();
@@ -533,26 +524,13 @@ export function providersOf(catalog: CatalogModel[], op: MakeOp): { id: string; 
 }
 
 /**
- * The provider in use for stills or for video: the one the person chose, while it's still connected; else the first
- * connected one in `order` (the engine's guess until they choose). Nothing when none is connected.
+ * The preferred service for stills or for video: `chosen` when it's a connected provider for `op`, else undefined
+ * (every connected service is available either way; a preference only guides Auto and shared models).
  */
-export function pickProvider(catalog: CatalogModel[], op: MakeOp, services: Record<string, ServiceState>, chosen: string | undefined, order: string[] = []): string | undefined {
+export function preferredOf(catalog: CatalogModel[], op: MakeOp, services: Record<string, ServiceState>, chosen: string | undefined): string | undefined {
+  if (!chosen) return undefined;
   const ids = providersOf(catalog, op).map((p) => p.id);
-  const connected = (id: string) => ids.includes(id) && services[id] !== undefined && services[id]!.state !== "missing";
-  if (chosen && connected(chosen)) return chosen;
-  return [...order, ...ids].find(connected);
-}
-
-/**
- * The services as the fit check should see them with `provider` in use for `op`: every other connected service a
- * provider could be chosen from is idle, so nothing is made there (and nothing spent) until the person switches to
- * it. Their own hardware, and services that aren't providers of this, stay as they are.
- */
-export function inUse(catalog: CatalogModel[], op: MakeOp, services: Record<string, ServiceState>, provider: string | undefined): Record<string, ServiceState> {
-  const ids = providersOf(catalog, op).map((p) => p.id);
-  return Object.fromEntries(
-    Object.entries(services).map(([id, s]) => [id, ids.includes(id) && id !== provider && s.state !== "missing" ? ({ label: s.label, state: "idle" } as ServiceState) : s]),
-  );
+  return ids.includes(chosen) && services[chosen] !== undefined && services[chosen]!.state !== "missing" ? chosen : undefined;
 }
 
 /**
@@ -563,19 +541,21 @@ export type Choices = { auto?: FitOk; ready: FitOk[]; setup: Fit[]; unfit: Fit[]
 
 /**
  * Every model that makes this kind of thing, checked against the request. Auto is the first ready one of the tier
- * asked for (a rough or a final), in `ranking` (model ids, best first), then in catalog order.
+ * asked for (a rough or a final), preferring `preferred` (and the person's own hardware) when set, then in `ranking`
+ * (model ids, best first), then in catalog order.
  */
-export function chooseModels(catalog: CatalogModel[], req: MakeRequest, services: Record<string, ServiceState>, ranking: string[] = []): Choices {
-  const order = (id: string) => {
-    const m = catalog.find((x) => x.id === id);
-    const offTier = req.quality && m?.tier && m.tier !== req.quality ? 1000 : 0;
-    const i = ranking.indexOf(id);
-    return offTier + (i === -1 ? ranking.length + catalog.indexOf(m!) : i);
+export function chooseModels(catalog: CatalogModel[], req: MakeRequest, services: Record<string, ServiceState>, ranking: string[] = [], preferred?: string): Choices {
+  const order = (f: Fit) => {
+    const m = catalog.find((x) => x.id === f.model);
+    const offTier = req.quality && m?.tier && m.tier !== req.quality ? 10000 : 0;
+    const offPreferred = preferred && f.ok && f.route !== preferred && !OWN_HARDWARE.includes(f.route) ? 1000 : 0;
+    const i = ranking.indexOf(f.model);
+    return offTier + offPreferred + (i === -1 ? ranking.length + catalog.indexOf(m!) : i);
   };
   const fits = catalog
     .filter((m) => m.ops.includes(req.op))
-    .map((m) => fitModel(m, req, services))
-    .sort((a, b) => order(a.model) - order(b.model));
+    .map((m) => fitModel(m, req, services, preferred))
+    .sort((a, b) => order(a) - order(b));
   const ready = fits.filter((f): f is FitOk => f.ok);
   return {
     auto: ready[0],

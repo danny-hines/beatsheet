@@ -1,7 +1,7 @@
 /**
  * Settings → Making: the hard limit on what making may spend in all (the person's, the agent's and any script's
- * takes alike), what the agent may spend in a turn before it asks, the one service in use for stills and the one for
- * video, and ComfyUI for the models that run on the person's own graphics card.
+ * takes alike), what the agent may spend in a turn before it asks, the services connected for stills and video (with
+ * an optional preferred service for Auto and shared models), and ComfyUI for the person's own graphics card.
  */
 import type { ComfyCheck, InstallStatus, ProviderRow } from "@beatsheet/engine";
 import type { MakeOp, ServiceState } from "@beatsheet/schema";
@@ -77,18 +77,21 @@ export function MakeSection() {
 }
 
 /**
- * Where stills and video are made: one service for each, chosen from every one they could come from. A plan can be
- * chosen once its agent is signed in; a service with a key asks for the key the first time. Nothing is made on a
- * service that isn't chosen, however many are connected.
+ * Where stills and video are made: every connected service (plan or API key) is ready to use, and the person's own
+ * hardware runs alongside. When more than one service is connected, an optional preferred service guides Auto and
+ * breaks ties for models that run in more than one place.
  */
 export function ProvidersSection({ providers, onChange }: { providers: Record<MakeOp, ProviderRow[]>; onChange?: (s: MakeSettings) => void }) {
-  const choose = (op: MakeOp, id: string) => void save({ provider: { [op]: id } }).then(onChange);
+  const choose = (op: MakeOp, id: string | null) => void save({ provider: { [op]: id } }).then(onChange);
+  const refresh = () => void fetch("/api/settings/make").then((r) => r.json() as Promise<MakeSettings>).then(onChange);
   return (
     <section>
       <h4>Where things are made</h4>
-      <p className="dim small">One service makes your stills and one your video: the ones you choose here. Nothing is made on another, or spent there, until you switch. Your own hardware runs alongside whichever you choose.</p>
-      <Providers label="Stills" op="image" rows={providers.image} choose={choose} />
-      <Providers label="Video" op="video" rows={providers.video} choose={choose} />
+      <p className="dim small">
+        Every connected service is ready to use, and your own hardware runs alongside. By default Auto picks the best model and the cheapest or free route; set a preferred service if you want Auto and shared models to use one first.
+      </p>
+      <Providers label="Stills" op="image" rows={providers.image} choose={choose} refresh={refresh} />
+      <Providers label="Video" op="video" rows={providers.video} choose={choose} refresh={refresh} />
     </section>
   );
 }
@@ -100,30 +103,63 @@ export function ProvidersSetup() {
   return s?.providers ? <ProvidersSection providers={s.providers} onChange={setS} /> : <p className="dim small">Loading…</p>;
 }
 
-function Providers({ label, op, rows, choose }: { label: string; op: MakeOp; rows: ProviderRow[]; choose: (op: MakeOp, id: string) => void }) {
+function Providers({ label, op, rows, choose, refresh }: { label: string; op: MakeOp; rows: ProviderRow[]; choose: (op: MakeOp, id: string | null) => void; refresh: () => void }) {
   /** A service whose key is being added. */
   const [adding, setAdding] = useState<string>();
+  const connectedCount = rows.filter((r) => r.state !== "missing").length;
+  const pref = rows.find((r) => r.preferred);
   return (
     <div className="make-providers">
-      <h5>{label}</h5>
+      <div className="make-providers-head">
+        <h5>{label}</h5>
+        {connectedCount > 1 && (
+          <span className="dim small">
+            {pref ? (
+              <>
+                Preferred: <strong>{pref.label}</strong>{" "}
+                <button className="link small" onClick={() => choose(op, null)}>
+                  Use any
+                </button>
+              </>
+            ) : (
+              "Auto picks best model, cheapest route"
+            )}
+          </span>
+        )}
+      </div>
       <ul>
         {rows.map((r) => {
           const connected = r.state !== "missing";
           const status = r.state === "failing" ? r.detail : connected ? (r.kind === "plan" ? "Signed in · from its allowance, a picture at a time" : (r.detail ?? "Key saved")) : r.kind === "plan" ? PLAN_NOTES[r.id] : "";
           return (
-            <li key={r.id} className={r.inUse ? "on" : ""}>
-              <label className="check-row">
-                {/* On click, not change: clicking the one beatsheet guessed keeps it as the person's choice. */}
-                <input type="radio" name={`provider-${op}`} checked={r.inUse} disabled={!connected && r.kind === "plan"} readOnly onClick={() => (connected ? choose(op, r.id) : setAdding(r.id))} />
+            <li key={r.id} className={r.preferred ? "on" : ""}>
+              <div className="make-provider-row">
+                <span className={`make-provider-mark ${r.state === "ready" ? "good" : "dim"}`}>{r.state === "ready" ? <Icon name="check" size={12} /> : null}</span>
                 <ServiceMark id={r.id} label={r.label} />
                 <span>{r.label}</span>
                 <span className="pill">{r.kind === "plan" ? "Subscription" : "API key"}</span>
                 <span className="dim small make-provider-models" title={r.models.join(", ")}>
                   {r.models.join(", ")}
                 </span>
-              </label>
+                {!connected && r.kind === "key" && (
+                  <button className="small" onClick={() => setAdding(adding === r.id ? undefined : r.id)}>
+                    {adding === r.id ? "Cancel" : "Add key"}
+                  </button>
+                )}
+                {connected && connectedCount > 1 && (
+                  r.preferred ? (
+                    <button className="chip on" onClick={() => choose(op, null)} title="Auto and shared models use this service first; click to use any connected service">
+                      Preferred
+                    </button>
+                  ) : (
+                    <button className="link small" onClick={() => choose(op, r.id)} title="Prefer this service for Auto and models that run in more than one place">
+                      Prefer
+                    </button>
+                  )
+                )}
+              </div>
               {status && <div className={`small make-provider-status ${r.state === "failing" ? "warn" : "dim"}`}>{status}</div>}
-              {adding === r.id && !connected && <ProviderKey row={r} done={() => (setAdding(undefined), choose(op, r.id))} />}
+              {adding === r.id && !connected && <ProviderKey row={r} done={() => (setAdding(undefined), refresh())} />}
             </li>
           );
         })}
@@ -133,7 +169,7 @@ function Providers({ label, op, rows, choose }: { label: string; op: MakeOp; row
   );
 }
 
-/** A key for a service picked as a provider: checked, kept in the Keychain, and then the service is the one in use. */
+/** A key for a service added here: checked, kept in the Keychain, and ready to use right away. */
 function ProviderKey({ row, done }: { row: ProviderRow; done: () => void }) {
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -155,7 +191,7 @@ function ProviderKey({ row, done }: { row: ProviderRow; done: () => void }) {
       <div className="setup-service-key">
         <input type="password" autoFocus placeholder={`Paste your ${row.label} API key`} value={key} onChange={(e) => setKey(e.target.value)} onKeyDown={(e) => e.key === "Enter" && key.trim() && void add()} />
         <button onClick={() => void add()} disabled={!key.trim() || busy}>
-          {busy ? "Checking…" : "Verify & use"}
+          {busy ? "Checking…" : "Verify & add"}
         </button>
         {row.keyUrl && (
           <a href={row.keyUrl} target="_blank" rel="noreferrer" className="small">

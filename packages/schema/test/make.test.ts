@@ -15,8 +15,7 @@ import {
   driveWindow,
   fitModel,
   followTakes,
-  inUse,
-  pickProvider,
+  preferredOf,
   providersOf,
   HANDLE,
   fewestStillRefs,
@@ -177,59 +176,64 @@ describe("whether a model can make a shot", () => {
   });
 });
 
-describe("one provider in use", () => {
+describe("multi-provider routing and optional preference", () => {
   // A model on a card of the person's own as well as on fal, and one only on their card.
-  const both: CatalogModel = { ...ranged, id: "both", label: "Both", routes: [ranged.routes[0]!, { via: "comfy", shape: "wan", endpoints: { text: "wan-t2v" }, price: { perSecond: 0 }, note: "Slower on your own card" }] };
+  const both: CatalogModel = {
+    ...ranged,
+    id: "both",
+    label: "Both",
+    routes: [ranged.routes[0]!, ranged.routes[1]!, { via: "comfy", shape: "wan", endpoints: { text: "wan-t2v" }, price: { perSecond: 0 }, note: "Slower on your own card" }],
+  };
   const catalog = [fixed, ranged, stills, both];
   const connected = { fal, replicate: { label: "Replicate", state: "ready" }, runway: { label: "Runway", state: "missing" }, comfy: { label: "Your own hardware", state: "ready" } } satisfies Record<string, ServiceState>;
 
-  it("lists the services a provider can be chosen from, with what each would offer, and never the person's own hardware", () => {
+  it("lists the services stills or video can come from, with what each offers, and never the person's own hardware", () => {
     expect(providersOf(catalog, "video")).toEqual([
       { id: "fal", models: ["Fixed", "Ranged", "Both"] },
-      { id: "replicate", models: ["Ranged"] },
+      { id: "replicate", models: ["Ranged", "Both"] },
     ]);
     expect(providersOf(catalog, "image")).toEqual([{ id: "runway", models: ["Stills"] }]);
   });
 
-  it("uses the one the person chose while it's connected, and until they choose the first connected in the order given", () => {
-    expect(pickProvider(catalog, "video", connected, "replicate")).toBe("replicate");
-    expect(pickProvider(catalog, "video", connected, undefined, ["replicate", "fal"])).toBe("replicate");
-    expect(pickProvider(catalog, "video", connected, undefined)).toBe("fal");
-    // Chosen, then disconnected: back to a connected one. One that isn't a provider of this is passed over.
-    expect(pickProvider(catalog, "video", { ...connected, replicate: { label: "Replicate", state: "missing" } }, "replicate")).toBe("fal");
-    expect(pickProvider(catalog, "video", connected, "comfy", ["runway"])).toBe("fal");
-    expect(pickProvider(catalog, "image", connected, undefined)).toBeUndefined();
+  it("keeps the person's preferred provider only while it's connected for that op, and undefined when unset", () => {
+    expect(preferredOf(catalog, "video", connected, "replicate")).toBe("replicate");
+    expect(preferredOf(catalog, "video", connected, undefined)).toBeUndefined();
+    expect(preferredOf(catalog, "video", { ...connected, replicate: { label: "Replicate", state: "missing" } }, "replicate")).toBeUndefined();
+    expect(preferredOf(catalog, "video", connected, "comfy")).toBeUndefined();
+    expect(preferredOf(catalog, "image", connected, "fal")).toBeUndefined();
   });
 
-  it("makes things on the provider in use and nowhere else, however cheap the other is", () => {
-    const states = inUse(catalog, "video", connected, "fal");
-    expect(states).toMatchObject({ fal: { state: "ready" }, replicate: { label: "Replicate", state: "idle" }, runway: { state: "missing" }, comfy: { state: "ready" } });
-    // Replicate is cheaper and connected, and it still runs on fal.
-    const fit = fitModel(ranged, { op: "video", prompt: "x", seconds: 4 }, states);
-    expect(fit).toMatchObject({ ok: true, route: "fal", usd: 0.4 });
-    expect(fit).not.toHaveProperty("also");
-    // Asking for the other by name doesn't switch to it: that's the person's to do.
-    expect(fitModel(ranged, { op: "video", prompt: "x", via: "replicate" }, states)).toMatchObject({
-      ok: false,
-      why: { kind: "switch", reason: "Runs on Replicate, which is connected but not your video provider", services: ["replicate"] },
+  it("keeps every connected service ready, while letting a preferred provider guide Auto and break ties", () => {
+    // No preference: cheapest connected route wins, with the other ready route in `also`.
+    expect(fitModel(ranged, { op: "video", prompt: "x", seconds: 4 }, connected)).toMatchObject({
+      ok: true,
+      route: "replicate",
+      usd: 0.25,
+      also: [{ route: "fal", usd: 0.4 }],
     });
-    // With Replicate in use, a model only fal has says so, and is offered as something to set up rather than as unfit.
-    const onReplicate = inUse(catalog, "video", connected, "replicate");
-    expect(fitModel(fixed, { op: "video", prompt: "x" }, onReplicate)).toMatchObject({ ok: false, why: { kind: "switch", services: ["fal"] } });
-    const choices = chooseModels(catalog, { op: "video", prompt: "x" }, onReplicate);
-    expect(choices.ready.map((f) => [f.model, f.route])).toEqual([["ranged", "replicate"], ["both", "comfy"]]);
-    expect(choices.setup.map((f) => f.model)).toEqual(["fixed"]);
+
+    // Preferring fal makes fal win over cheaper Replicate, while Replicate stays available via `also` and explicit `via`.
+    expect(fitModel(ranged, { op: "video", prompt: "x", seconds: 4 }, connected, "fal")).toMatchObject({
+      ok: true,
+      route: "fal",
+      usd: 0.4,
+      also: [{ route: "replicate", usd: 0.25 }],
+    });
+    expect(fitModel(ranged, { op: "video", prompt: "x", via: "replicate" }, connected, "fal")).toMatchObject({ ok: true, route: "replicate" });
+
+    // Preferring Replicate makes Auto pick Replicate first, while fal-only `fixed` stays ready (not blocked) and is used when a shot requires it.
+    const choices = chooseModels(catalog, { op: "video", prompt: "x" }, connected, [], "replicate");
+    expect(choices.ready.map((f) => [f.model, f.route])).toEqual([["ranged", "replicate"], ["both", "comfy"], ["fixed", "fal"]]);
+    expect(choices.auto).toMatchObject({ model: "ranged", route: "replicate" });
+    expect(choices.setup).toEqual([]);
+    // Only `fixed` takes an end frame: even with Replicate preferred, Auto falls back to fal seamlessly.
+    expect(chooseModels(catalog, { op: "video", prompt: "x", start: "a", end: "b" }, connected, [], "replicate").auto).toMatchObject({ model: "fixed", route: "fal" });
   });
 
-  it("runs the person's own hardware alongside whichever is in use, and says what to know about a model there", () => {
-    const fit = fitModel(both, { op: "video", prompt: "x", seconds: 4 }, inUse(catalog, "video", connected, "fal"));
-    expect(fit).toMatchObject({ ok: true, route: "comfy", usd: 0, note: "Slower on your own card", also: [{ route: "fal", usd: 0.4 }] });
-    expect(fitModel(both, { op: "video", prompt: "x", seconds: 4, via: "fal" }, inUse(catalog, "video", connected, "fal"))).toMatchObject({ ok: true, route: "fal" });
-  });
-
-  it("leaves services that aren't providers of this kind of thing as they are", () => {
-    // fal makes no stills here, so choosing a stills provider doesn't idle it.
-    expect(inUse(catalog, "image", connected, undefined)).toMatchObject({ fal: { state: "ready" }, replicate: { state: "ready" } });
+  it("runs the person's own hardware first on shared models, with the preferred cloud service next in also", () => {
+    const fit = fitModel(both, { op: "video", prompt: "x", seconds: 4 }, connected, "fal");
+    expect(fit).toMatchObject({ ok: true, route: "comfy", usd: 0, note: "Slower on your own card", also: [{ route: "fal", usd: 0.4 }, { route: "replicate", usd: 0.25 }] });
+    expect(fitModel(both, { op: "video", prompt: "x", seconds: 4, via: "fal" }, connected, "fal")).toMatchObject({ ok: true, route: "fal" });
   });
 });
 
