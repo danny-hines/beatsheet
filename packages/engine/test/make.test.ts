@@ -2464,4 +2464,42 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
     expect(heistReq.refs).toEqual(["mochi-sheet"]);
     expect(heistReq.sent).toContain("wearing a tiny black eye mask");
   });
+
+  it("keeps route-capped plans like Antigravity (3 refs) offered when a character has 4+ reference photos, while giving wider routes all photos", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const paths = await Promise.all(
+      [1, 2, 3, 4, 5].map(async (i) => {
+        const p = join(dir, `many-${i}.png`);
+        await sharp({ create: { width: 80, height: 80, channels: 3, background: { r: 100 + i * 20, g: 120, b: 140 } } }).png().toFile(p);
+        return p;
+      }),
+    );
+    store.updateFile(PROJECT, (d) => {
+      for (const [i, p] of paths.entries()) {
+        d.assets.push({ id: `many-${i + 1}`, kind: "image", path: p, label: `Photo ${i + 1}`, provenance: { source: "import" } });
+      }
+      d.cast!.push({
+        id: "many",
+        name: "Many Photos",
+        kind: "character",
+        about: "teen with ginger hair and goatee",
+        faces: ["many-1", "many-2", "many-3", "many-4", "many-5"],
+        seen: [1, 2, 3, 4, 5].map((i) => ({ asset: `many-${i}` })),
+      });
+    });
+    plans.ready = ["antigravity"];
+    try {
+      const { choices } = make.makeChoices(PROJECT, { op: "image", sheet: "many", sheetKind: "face-sheet" });
+      const nb = choices.ready.find((f) => f.model === "nano-banana-2.1");
+      expect(nb?.route).toBe("antigravity");
+      expect(nb?.usd).toBe(0);
+      // Antigravity gets capped to its 3-ref route limit; fal gets all 5 photos.
+      const agyPlan = make.planTake(PROJECT, { op: "image", sheet: "many", sheetKind: "face-sheet", model: "nano-banana-2.1", via: "antigravity" });
+      expect(agyPlan.pictures.map((p) => p.asset)).toEqual(["many-1", "many-2", "many-3"]);
+      const falPlan = make.planTake(PROJECT, { op: "image", sheet: "many", sheetKind: "face-sheet", model: "nano-banana-2.1", via: "fal" });
+      expect(falPlan.pictures.map((p) => p.asset)).toEqual(["many-1", "many-2", "many-3", "many-4", "many-5"]);
+    } finally {
+      plans.ready = [];
+    }
+  });
 });

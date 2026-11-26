@@ -1123,11 +1123,21 @@ export function absentFrom(projectId: string, asks: MakeAsk[]): { shot?: string;
   });
 }
 
+/** Tightest positive ref limit across still models and routes (e.g. Antigravity's 3-ref cap), so route-capped plans stay offered when refs are auto-packed. */
+function fewestStillRouteRefs(): number {
+  const caps = CATALOG.filter((m) => m.ops.includes("image")).flatMap((m) => [
+    ...(m.takes.refs && m.takes.refs > 0 ? [m.takes.refs] : []),
+    ...m.routes.map((r) => r.takes?.refs).filter((n): n is number => !!n && n > 0),
+  ]);
+  return caps.length ? Math.min(...caps) : fewestStillRefs(CATALOG);
+}
+
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
 export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest; choices: Choices } {
   const req = requestFor(projectId, ask);
+  const probe = ask.op === "image" && !ask.refs?.length ? requestFor(projectId, ask, fewestStillRouteRefs()) : req;
   const states = connectedStates();
-  return { req, choices: chooseModels(CATALOG, req, states, [], preferredProvider(req.op, states)) };
+  return { req, choices: chooseModels(CATALOG, probe, states, [], preferredProvider(req.op, states)) };
 }
 
 /** What the agent's jobs (and the services its tools used) have cost so far in its current turn (nothing when it isn't the agent's turn). */
@@ -1199,10 +1209,11 @@ function plan(projectId: string, ask: MakeAsk): Plan {
   if (ask.model) {
     const model = CATALOG.find((m) => m.id === ask.model);
     if (!model) throw new Error(`No model "${ask.model}"; list_models names them`);
-    let f = fitModel(model, full, states, preferred);
+    const probe = full.op === "image" && !ask.refs?.length ? requestFor(projectId, ask, fewestStillRouteRefs()) : full;
+    let f = fitModel(model, probe, states, preferred);
     // If a route has a tighter ref cap than the initial pack (e.g. Antigravity's 3-ref cap with 2 decoupled characters),
     // re-pack into procedural composites for that model/route before rejecting.
-    if (!f.ok && f.why.kind === "fit" && full.op === "image" && !ask.refs?.length && (full.packedRefs?.length ?? 0) > 1) {
+    if (!f.ok && f.why.kind === "fit" && full.op === "image" && !ask.refs?.length && (full.packedRefs?.length ?? full.refs?.length ?? 0) > 1) {
       const matchRoute = ask.via ? model.routes.find((r) => r.via === ask.via) : model.routes.find((r) => states[r.via]?.state === "ready");
       const cap = matchRoute?.takes?.refs ?? model.takes.refs ?? 0;
       if (cap > 0) {
