@@ -5,7 +5,7 @@
  */
 import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
-import type { Asset, CastMember, CastProposal, Format, Project, ProjectFile, ShotContent } from "./types.ts";
+import type { Asset, Blockout, CastMember, CastProposal, Format, Project, ProjectFile, Shot, ShotContent } from "./types.ts";
 
 /**
  * What can be asked for. Lip sync is video with speech (MakeRequest.speech). More join as they're wired up: extend,
@@ -200,16 +200,99 @@ export type Stretch = { asset: string; from: number; to: number };
 /** A stretch of a clip whose movement a take copies. */
 export type Drive = Stretch;
 /**
- * A stretch of a cut, in seconds of the cut in one of its formats: a blockout, drawn there as a grey set, a stand-in
- * for each person and the camera's move. `shots` are the ones it was asked by, when it was. `mode: "sheet"` renders a
- * 4×4 16-frame contact sheet and sends it as a reference picture (no video-input surcharge, and works with any multi-ref
- * model) instead of sending a reference video clip.
+ * A stretch of a legacy blockout cut, in seconds of the cut in one of its formats.
  */
-export type CutStretch = { cut: string; format: string; from: number; to: number; shots?: string[]; mode?: "video" | "sheet" };
-/** What a take keeps the camera of: a stretch of a clip, or of a cut that's rendered to one when the take is made. */
-export type Camera = Stretch | CutStretch;
+export type CutStretch = { cut: string; format: string; from: number; to: number; shots?: string[]; mode?: "video" | "sheet"; snapshot?: string; snapshotKind?: "video" | "image" };
+/**
+ * A shot-owned 3D camera blockout (`shot.blockout`), rendered directly without creating a separate cut.
+ * `snapshot` records the immutable content-addressed rendered MP4 or 4×4 sheet JPEG once generated.
+ */
+export type ShotBlockoutStretch = {
+  blockout: true;
+  shot: string;
+  cut: string;
+  from: number;
+  to: number;
+  mode?: "video" | "sheet";
+  snapshot?: string;
+  snapshotKind?: "video" | "image";
+};
+/** What a take keeps the camera of: a stretch of a clip, a shot's own blockout, or a legacy blockout cut stretch. */
+export type Camera = Stretch | CutStretch | ShotBlockoutStretch;
+/** Whether a camera reference is a 3D blockout (shot-owned or legacy cut). */
+export const isCameraBlockout = (c: Camera | undefined): c is CutStretch | ShotBlockoutStretch => !!c && ("blockout" in c || "cut" in c);
 /** Whether a camera blockout is sent as a 4×4 16-frame contact sheet image instead of a reference video. */
-export const isCameraSheet = (c: Camera | undefined): c is CutStretch => !!c && "cut" in c && c.mode === "sheet";
+export const isCameraSheet = (c: Camera | undefined): c is CutStretch | ShotBlockoutStretch => isCameraBlockout(c) && c.mode === "sheet";
+
+/** Total duration of a shot-owned blockout, in seconds. */
+export function blockoutDuration(b: Blockout): number {
+  return Math.round(b.beats.reduce((sum, beat) => sum + beat.duration, 0) * 1000) / 1000;
+}
+
+/**
+ * Synthesizes a stand-in 1-track `Project` from a shot's `blockout` in the format closest to `aspect`, so both Studio's
+ * live Remotion `<Player>` and the engine's Remotion renderer play and render shot-owned blockouts directly.
+ */
+export function blockoutProject(
+  project: Pick<Project, "id" | "title" | "sources" | "codeRoot" | "look" | "brief" | "assets" | "cast" | "formats">,
+  shotId: string,
+  blockout: Blockout,
+  aspect?: string,
+): { project: Project; format: Format; duration: number } {
+  const want = aspect ?? aspectOf(project.formats[0]!.width, project.formats[0]!.height);
+  const [w, h] = want.split(":").map(Number);
+  const targetRatio = (w || 16) / (h || 9);
+  const off = (f: { width: number; height: number }) => Math.abs(Math.log(f.width / f.height / targetRatio));
+  const best = project.formats.reduce((a, b) => (off(b) < off(a) ? b : a));
+  let format: Format = best;
+  // If no existing format matches the requested aspect closely, synthesize an even-dimensioned 30fps format of that shape.
+  if (off(best) > 0.08) {
+    const long = 1280;
+    const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+    const width = targetRatio >= 1 ? long : even(long * targetRatio);
+    const height = targetRatio >= 1 ? even(long / targetRatio) : long;
+    format = { id: `blockout-${want.replace(":", "x")}`, label: want, width, height, fps: best.fps || 30 };
+  }
+  const duration = blockoutDuration(blockout);
+  const shots: Shot[] = blockout.beats.map((b, i) => ({
+    id: b.id,
+    track: "video",
+    ...(b.label ? { label: b.label } : {}),
+    ...(i === 0 ? { start: { kind: "time" as const, t: 0 } } : {}),
+    duration: b.duration,
+    content: { kind: "coded" as const, component: b.component, ...(b.props ? { props: b.props } : {}) },
+    fidelity: "rough" as const,
+  }));
+  const virtual: Project = {
+    id: project.id,
+    title: project.title,
+    sources: project.sources,
+    ...(project.codeRoot ? { codeRoot: project.codeRoot } : {}),
+    ...(project.look ? { look: project.look } : {}),
+    brief: project.brief,
+    assets: project.assets,
+    ...(project.cast ? { cast: project.cast } : {}),
+    cut: { id: `blockout-${shotId}`, name: `Blockout · ${shotId}` },
+    recipe: "motion",
+    spec: {},
+    formats: [format],
+    stages: {
+      brief: { status: "done" },
+      material: { status: "done" },
+      structure: { status: "done" },
+      board: { status: "done" },
+      assemble: { status: "done" },
+      craft: { status: "done" },
+      sound: { status: "skipped" },
+      finish: { status: "done" },
+    },
+    spine: "shots",
+    tracks: [{ id: "video", kind: "picture", label: "Blockout" }],
+    shots,
+    notes: [],
+  };
+  return { project: virtual, format, duration };
+}
 
 /**
  * The stretch of a blockout a take follows: all of the cut, or from the first of `shots` to the last, in whichever of
@@ -947,15 +1030,131 @@ export function shotNeeds(project: Project, shotId: string, op?: MakeOp): { seco
 
 type Generated = Extract<ShotContent, { kind: "generated" }>;
 
-/** What a take kept the camera of, as a shot keeps it: the blockout by its cut and shots (found again as the cut is then), or the stretch of a clip. */
+/** What a take kept the camera of, as a shot keeps it: this shot's blockout, a legacy blockout cut, or a stretch of a clip. */
 export const cameraOnShot = (c: Camera): NonNullable<Generated["camera"]> =>
-  "cut" in c ? { cut: c.cut, ...(c.shots?.length ? { shots: c.shots } : {}), ...(c.mode ? { mode: c.mode } : {}) } : { asset: c.asset, from: c.from, to: c.to };
+  "blockout" in c
+    ? { blockout: true, ...(c.mode ? { mode: c.mode } : {}), ...(c.snapshot ? { snapshot: c.snapshot } : {}), ...(c.snapshotKind ? { snapshotKind: c.snapshotKind } : {}) }
+    : "cut" in c
+      ? { cut: c.cut, ...(c.shots?.length ? { shots: c.shots } : {}), ...(c.mode ? { mode: c.mode } : {}), ...(c.snapshot ? { snapshot: c.snapshot } : {}), ...(c.snapshotKind ? { snapshotKind: c.snapshotKind } : {}) }
+      : { asset: c.asset, from: c.from, to: c.to };
 
 /** What a take kept the camera of, from how it was asked for, as a shot keeps it; nothing for a take that kept none. */
 export const cameraOfTake = (take: Asset | undefined): NonNullable<Generated["camera"]> | undefined => {
   const kept = (take?.provenance?.params as { camera?: Camera } | undefined)?.camera;
   return kept ? cameraOnShot(kept) : undefined;
 };
+
+/**
+ * Role of a generated asset across the project, so the Media Library can hide intermediate first-frames, rejected
+ * retries and cast sheets by default, and Make → Made can group generations cleanly by shot or cast member.
+ */
+export type GeneratedRole = "chosen-clip" | "chosen-board" | "shot-alt-clip" | "shot-intermediate" | "cast" | "standalone";
+export type GeneratedClassification = {
+  role: GeneratedRole;
+  /** True when the asset is an intermediate/rejected take or cast picture that shouldn't clutter the Media Library by default. */
+  intermediate: boolean;
+  /** The shot or cast member this asset belongs to, when known. */
+  owner?: { kind: "shot"; cut: string; shot: string } | { kind: "cast"; member: string };
+};
+
+/**
+ * Classifies every generated asset in a project file into its role and owner (checking the active cut first so
+ * cross-cut shots resolve cleanly). Pure, fast, and safe on large projects with 1,000+ generated takes.
+ */
+export function classifyGeneratedAssets(doc: Pick<ProjectFile, "assets" | "cast" | "cuts">, activeCutId?: string): Map<string, GeneratedClassification> {
+  const out = new Map<string, GeneratedClassification>();
+  const castByAsset = new Map<string, string>();
+  for (const m of doc.cast ?? []) {
+    for (const l of [m, ...(m.variants ?? [])]) {
+      for (const id of lookAssets(l)) if (!castByAsset.has(id)) castByAsset.set(id, m.id);
+    }
+  }
+  // Order cuts with activeCutId first so ownership prefers the cut on screen.
+  const cuts = activeCutId ? [...doc.cuts.filter((c) => c.id === activeCutId), ...doc.cuts.filter((c) => c.id !== activeCutId)] : doc.cuts;
+  const chosenClipOwner = new Map<string, { cut: string; shot: string }>();
+  const chosenBoardOwner = new Map<string, { cut: string; shot: string }>();
+  const shotOwner = new Map<string, { cut: string; shot: string }>();
+  const assetKind = new Map(doc.assets.map((a) => [a.id, a.kind]));
+  for (const c of cuts) {
+    for (const s of c.shots) {
+      const ref = { cut: c.id, shot: s.id };
+      if (s.content.kind === "clip") {
+        if (assetKind.get(s.content.asset) === "video") {
+          if (!chosenClipOwner.has(s.content.asset)) chosenClipOwner.set(s.content.asset, ref);
+        } else if (!chosenBoardOwner.has(s.content.asset)) {
+          chosenBoardOwner.set(s.content.asset, ref);
+        }
+        if (!shotOwner.has(s.content.asset)) shotOwner.set(s.content.asset, ref);
+      } else if (s.content.kind === "generated") {
+        const active = s.content.take;
+        if (active) {
+          if (assetKind.get(active) === "video") {
+            if (!chosenClipOwner.has(active)) chosenClipOwner.set(active, ref);
+          } else if (!chosenBoardOwner.has(active)) {
+            chosenBoardOwner.set(active, ref);
+          }
+          if (!shotOwner.has(active)) shotOwner.set(active, ref);
+        }
+        for (const id of [...(s.content.takes ?? []), s.content.start, s.content.end].filter((x): x is string => !!x)) {
+          if (!shotOwner.has(id)) shotOwner.set(id, ref);
+        }
+      }
+    }
+  }
+  // Any still used as start/end of a video take belonging to a shot also belongs to that shot.
+  for (const a of doc.assets) {
+    if (a.kind !== "video" || a.provenance?.source !== "generated") continue;
+    const owner = shotOwner.get(a.id);
+    if (!owner) continue;
+    const params = (a.provenance.params ?? {}) as { start?: string; end?: string };
+    for (const id of [params.start, params.end]) if (id && !shotOwner.has(id) && !castByAsset.has(id)) shotOwner.set(id, owner);
+  }
+  const castIds = (doc.cast ?? []).map((m) => m.id).sort((a, b) => b.length - a.length);
+  for (const a of doc.assets) {
+    if (a.provenance?.source !== "generated") continue;
+    const castMember = castByAsset.get(a.id);
+    if (castMember) {
+      out.set(a.id, { role: "cast", intermediate: true, owner: { kind: "cast", member: castMember } });
+      continue;
+    }
+    if (a.tags?.includes("portrait") || a.tags?.includes("sheet")) {
+      const inferred = castIds.find((id) => a.id === id || a.id.startsWith(`${id}-`));
+      out.set(a.id, { role: "cast", intermediate: true, ...(inferred ? { owner: { kind: "cast", member: inferred } } : {}) });
+      continue;
+    }
+    const cc = chosenClipOwner.get(a.id);
+    if (cc) {
+      out.set(a.id, { role: "chosen-clip", intermediate: false, owner: { kind: "shot", ...cc } });
+      continue;
+    }
+    const cb = chosenBoardOwner.get(a.id);
+    if (cb) {
+      out.set(a.id, { role: "chosen-board", intermediate: false, owner: { kind: "shot", ...cb } });
+      continue;
+    }
+    const so = shotOwner.get(a.id);
+    if (so) {
+      out.set(a.id, {
+        role: a.kind === "video" ? "shot-alt-clip" : "shot-intermediate",
+        intermediate: true,
+        owner: { kind: "shot", ...so },
+      });
+      continue;
+    }
+    // Check if an orphaned take's id matches "<shotId>-take..." in any cut (e.g. a superseded first frame).
+    const matchShot = cuts.flatMap((c) => c.shots.map((s) => ({ cut: c.id, shot: s.id }))).find((x) => a.id.startsWith(`${x.shot}-take`));
+    if (matchShot) {
+      out.set(a.id, {
+        role: a.kind === "video" ? "shot-alt-clip" : "shot-intermediate",
+        intermediate: true,
+        owner: { kind: "shot", ...matchShot },
+      });
+      continue;
+    }
+    out.set(a.id, { role: "standalone", intermediate: false });
+  }
+  return out;
+}
 
 /** What a take says, as a shot keeps it: lines to find again where the shot plays, or a stretch of a file's sound. */
 export const speechOnShot = (s: Speech): NonNullable<Generated["speech"]> => ("lines" in s ? { lines: s.lines } : { asset: s.asset, from: s.from, to: s.to });

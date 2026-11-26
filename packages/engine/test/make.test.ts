@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -230,7 +230,7 @@ beforeAll(async () => {
           const estimate = path.startsWith("estimate/");
           const model = estimate ? path.slice("estimate/".length) : path;
           const input = JSON.parse(body) as Record<string, unknown>;
-          if (!/^(bytedance|kling-video|alibaba|marketing-studio|higgsfield-ai)\//.test(model)) return send(404, { detail: "Model not found" });
+          if (!/^(bytedance|kling-video|alibaba|sand|marketing-studio|higgsfield-ai)\//.test(model)) return send(404, { detail: "Model not found" });
           const still = /^(marketing-studio|higgsfield-ai)\//.test(model);
           if (typeof input.duration === "number" && !Number.isInteger(input.duration)) return send(422, { detail: [{ type: "int_from_float", loc: ["body", "duration"], msg: "Input should be a valid integer" }] });
           if (estimate) {
@@ -864,6 +864,30 @@ describe("Higgsfield as the provider", () => {
 
   it("asks each model for what it takes there", async () => {
     const { higgsfieldInput } = await import("../src/higgsfield.ts");
+    const { takesSeed } = await import("../src/fal.ts");
+    const magi = (kind: string) => `sand/magi-2/${kind}`;
+    // MAGI-2: 1080p only, nearest supported aspect ratio even from a picture, optional seed (including 0), and blockouts.
+    expect(takesSeed("magi-2")).toBe(true);
+    expect(higgsfieldInput("magi-2", magi("image-to-video"), { prompt: "x", seconds: 5.2, aspect: "4:5", start: "u", end: "v", seed: 0 })).toEqual({
+      model: magi("image-to-video"),
+      body: { prompt: "x", image_url: "u", end_image_url: "v", duration: 6, resolution: "1080p", aspect_ratio: "3:4", seed: 0 },
+    });
+    expect(higgsfieldInput("magi-2", magi("text-to-video"), { prompt: "x", seconds: 10, aspect: "21:9", seed: 42 }).body).toEqual({
+      prompt: "x",
+      duration: 10,
+      resolution: "1080p",
+      aspect_ratio: "21:9",
+      seed: 42,
+    });
+    expect(higgsfieldInput("magi-2", magi("reference-to-video"), { prompt: "x", seconds: 7, aspect: "9:16", refs: ["a", "b"], camera: { url: "c", blockout: true }, seed: 9 }).body).toEqual({
+      prompt: "x The 2 reference pictures show who and what is in it. The reference video is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result.",
+      duration: 7,
+      resolution: "1080p",
+      aspect_ratio: "9:16",
+      seed: 9,
+      image_urls: ["a", "b"],
+      video_urls: ["c"],
+    });
     const seedance = (kind: string) => `bytedance/seedance-2.5/${kind}`;
     // Seedance: a final at 1080p; an end frame with its start; a shape only when nothing starts it.
     expect(higgsfieldInput("seedance-2.5", seedance("image-to-video"), { prompt: "x", quality: "final", seconds: 5.2, aspect: "3:4", start: "u", end: "v", refs: ["a"] })).toEqual({
@@ -909,6 +933,53 @@ describe("Higgsfield as the provider", () => {
     expect(higgsfieldInput("soul-2", "higgsfield-ai/soul/v2/standard", { prompt: "x", aspect: "21:9" }).body).toEqual({ prompt: "x", resolution: "1080p", aspect_ratio: "16:9", enhance_prompt: false });
     expect(() => higgsfieldInput("soul", "higgsfield-ai/soul/standard", { prompt: "x" })).toThrow('no way to ask Higgsfield for "soul" models yet');
   });
+
+  it("runs MAGI-2 for a vertical board (preserving 9:16 and seed) and for a 3D blockout at flat 8¢/s", async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2" });
+    await make.driveJobs(PROJECT);
+    connect();
+    provider({ video: "higgsfield" });
+
+    // Board take: preserves the 9:16 board's shape (so Higgsfield doesn't default to 16:9) and sends a seed.
+    const boardTake = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "The cat leaps onto the brick wall", start: "s2-take", model: "magi-2" });
+    expect(boardTake.fit).toMatchObject({ model: "magi-2", route: "higgsfield", endpoint: "sand/magi-2/image-to-video", seconds: 4, usd: 0.32 });
+    await make.driveJobs(PROJECT);
+    expect(higgsfield.submits[0]).toEqual({
+      model: "sand/magi-2/image-to-video",
+      body: {
+        prompt: "The cat leaps onto the brick wall",
+        image_url: `${base}/out/hf-upload-1.jpg`,
+        duration: 4,
+        resolution: "1080p",
+        aspect_ratio: "9:16",
+        seed: boardTake.jobs[0]!.request.seed,
+      },
+    });
+    expect(boardTake.jobs[0]!.request.seed).toEqual(expect.any(Number));
+
+    // Blockout take: renders the shot's blockout MP4 and sends it as video_urls beside the board in image_urls.
+    make.setRenderStretch(async (_id, o) => void writeFileSync(o.out, readFileSync(clipMade)));
+    store.updateFile(PROJECT, (d) => {
+      const s = d.cuts[0]!.shots.find((x) => x.id === "s2")!;
+      s.blockout = { beats: [{ id: "b1", duration: 5, component: "kit:Previs", props: { move: "orbit" } }], mode: "video" };
+    });
+    const camTake = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "Smooth orbit around the alley", start: "s2-take", camera: "blockout", model: "magi-2" });
+    expect(camTake.fit).toMatchObject({ model: "magi-2", route: "higgsfield", endpoint: "sand/magi-2/reference-to-video", seconds: 5, aspect: "9:16", usd: 0.4 });
+    await make.driveJobs(PROJECT);
+    expect(higgsfield.submits[1]).toEqual({
+      model: "sand/magi-2/reference-to-video",
+      body: {
+        prompt: expect.stringContaining("The reference video is a blockout"),
+        duration: 5,
+        resolution: "1080p",
+        aspect_ratio: "9:16",
+        seed: camTake.jobs[0]!.request.seed,
+        image_urls: [`${base}/out/hf-upload-2.jpg`],
+        video_urls: [`${base}/out/hf-upload-3.mp4`],
+      },
+    });
+    expect(shot("s2").content).toMatchObject({ kind: "generated", provider: "higgsfield", model: "magi-2" });
+  });
 });
 
 describe("keeping a blockout's camera", () => {
@@ -953,14 +1024,18 @@ describe("keeping a blockout's camera", () => {
     expect(tein.submits[0]).not.toHaveProperty("first_frame");
     expect(tein.submits[0]!.prompt).toMatch(/The reference picture shows who and what is in it\. The reference video is a blockout: keep its camera exactly .* none of them appears in the result\.$/);
 
-    // What went up is what Seedance takes: the stretch, H.264, without the sound the clip came with.
-    const sent = join(process.env.BEATSHEET_PROJECTS!, PROJECT, ".cache", "camera", `${jobs[0]!.id}.mp4`);
+    // What went up is persisted as a deduplicated snapshot in made/blockouts/ (and temp .cache/camera cleaned up).
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    const camSnap = (take.provenance?.params as { camera?: { snapshot?: string; snapshotKind?: string } } | undefined)?.camera;
+    expect(camSnap?.snapshot).toMatch(/^made\/blockouts\/[a-f0-9]{16}\.mp4$/);
+    expect(camSnap?.snapshotKind).toBe("video");
+    const sent = join(process.env.BEATSHEET_PROJECTS!, PROJECT, camSnap!.snapshot!);
     const probed = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", sent], { encoding: "utf8" })) as { format: { duration: string }; streams: { codec_type: string; codec_name: string; width?: number; height?: number }[] };
     expect(Number(probed.format.duration)).toBeCloseTo(4, 1);
     expect(probed.streams).toMatchObject([{ codec_type: "video", codec_name: "h264", width: 540, height: 960 }]);
+    expect(existsSync(join(process.env.BEATSHEET_PROJECTS!, PROJECT, ".cache", "camera", `${jobs[0]!.id}.mp4`))).toBe(false);
 
-    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
-    expect(take.provenance).toMatchObject({ provider: "tein", costUsd: 0.5288, refs: ["s2-take"], params: { camera: { cut: "blockout", from: 0, to: 4 } } });
+    expect(take.provenance).toMatchObject({ provider: "tein", costUsd: 0.5288, refs: ["s2-take"], params: { camera: { cut: "blockout", from: 0, to: 4, snapshot: camSnap!.snapshot } } });
     // The take starts where the blockout does, and the shot shows it.
     expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", provider: "tein", model: "seedance-2.5" });
     expect(shot("s2").content).not.toHaveProperty("in");
@@ -1011,6 +1086,46 @@ describe("keeping a blockout's camera", () => {
     expect(tein.submits[0]!.prompt).toBe("The same move, at dawn The reference video sets the camera: keep its move, its framing, its timing and where its cuts fall.");
     const take = store.loadProject(PROJECT).project.assets.find((a) => a.provenance?.job === jobs[0]!.id)!;
     expect(take.provenance).toMatchObject({ refs: ["s2-take-2"], params: { camera: { asset: "s2-take-2", from: 1, to: 5 } } });
+  });
+
+  it("renders shot-owned blockouts directly and deduplicates snapshots across unchanged takes", async () => {
+    await board();
+    rendered.length = 0;
+    let variant = 0;
+    make.setRenderStretch(async (_id, o) => {
+      rendered.push({ cut: o.cut, format: o.format, range: o.range });
+      if (variant === 0) writeFileSync(o.out, readFileSync(clipMade));
+      else execFileSync("ffmpeg", ["-v", "error", "-y", "-i", clipMade, "-vf", "eq=brightness=0.15", "-c:v", "libx264", "-pix_fmt", "yuv420p", o.out]);
+    });
+    settings.services = { tein: { addedAt: "2026-11-19" } };
+    provider({ video: "tein" });
+    store.updateProject(PROJECT, (p) => {
+      const s = p.shots.find((x) => x.id === "s2")!;
+      s.blockout = { beats: [{ id: "orbit", label: "Orbit", duration: 4, component: "kit:Previs", props: { move: "orbit" } }], mode: "video" };
+    });
+
+    // Roll 2 takes from the same unchanged blockout: both deduplicate onto one made/blockouts/<hash>.mp4 file.
+    make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", camera: "blockout", count: 2 });
+    await make.driveJobs(PROJECT);
+    const takes1 = store.loadProject(PROJECT).project.assets.filter((a) => a.kind === "video");
+    expect(takes1).toHaveLength(2);
+    const snapA = (takes1[0]!.provenance?.params as { camera?: { blockout?: boolean; snapshot?: string } })?.camera;
+    const snapB = (takes1[1]!.provenance?.params as { camera?: { blockout?: boolean; snapshot?: string } })?.camera;
+    expect(snapA?.blockout).toBe(true);
+    expect(snapA?.snapshot).toMatch(/^made\/blockouts\/[a-f0-9]{16}\.mp4$/);
+    expect(snapB?.snapshot).toBe(snapA?.snapshot);
+
+    // Mutate the blockout (simulating "slower camera") and roll Take 3: new hash saved, old takes keep snapA.
+    variant = 1;
+    make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", camera: "blockout", count: 1 });
+    await make.driveJobs(PROJECT);
+    const takes2 = store.loadProject(PROJECT).project.assets.filter((a) => a.kind === "video");
+    expect(takes2).toHaveLength(3);
+    const snapC = (takes2[2]!.provenance?.params as { camera?: { snapshot?: string } })?.camera;
+    expect(snapC?.snapshot).toMatch(/^made\/blockouts\/[a-f0-9]{16}\.mp4$/);
+    expect(snapC?.snapshot).not.toBe(snapA?.snapshot);
+    const blockoutFiles = readdirSync(join(process.env.BEATSHEET_PROJECTS!, PROJECT, "made", "blockouts"));
+    expect(blockoutFiles).toHaveLength(2);
   });
 
   it("goes through fal when Tein isn't connected: the clip as @Video1 beside the board, billed for its seconds too", async () => {

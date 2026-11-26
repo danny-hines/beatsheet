@@ -231,6 +231,7 @@ function AgentSection({ list, setup, autonomy }: { list?: AgentInfo[]; setup: Se
                 isDefault={chosen?.id === a.id}
                 defaultModel={chosen?.id === a.id ? chosen.model : undefined}
                 defaultThinking={chosen?.id === a.id ? chosen.thinking : undefined}
+                defaultFastModel={chosen?.id === a.id ? chosen.fastModel : undefined}
               />
             ))
           : AGENT_ORDER.map((id) => (
@@ -387,7 +388,19 @@ type InstallJob = { id: string; status: "running" | "done" | "error"; log: strin
  * One agent CLI. It either works or says what's missing: not installed (Install runs the official installer), not
  * signed in (Sign in opens the CLI's own sign-in in Terminal), or something else (Check again).
  */
-function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: AgentInfo; isDefault: boolean; defaultModel?: string; defaultThinking?: string }) {
+function AgentCard({
+  info,
+  isDefault,
+  defaultModel,
+  defaultThinking,
+  defaultFastModel,
+}: {
+  info: AgentInfo;
+  isDefault: boolean;
+  defaultModel?: string;
+  defaultThinking?: string;
+  defaultFastModel?: string;
+}) {
   const stored = useStore((s) => s.setup?.settings.checks[info.id]);
   const [checking, setChecking] = useState(false);
   const [install, setInstall] = useState<InstallJob | null>(null);
@@ -396,6 +409,7 @@ function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: A
   const [signingIn, setSigningIn] = useState(false);
   const [model, setModel] = useState(defaultModel ?? info.models?.find((m) => m.default)?.id ?? info.models?.[0]?.id);
   const [thinking, setThinking] = useState(defaultThinking ?? info.thinkingLevels?.find((t) => t.default)?.id ?? info.thinkingLevels?.[0]?.id);
+  const [fastModel, setFastModel] = useState(defaultFastModel ?? "");
   // The models and thinking levels arrive after the card does; start on each default.
   useEffect(() => {
     if (!model && info.models) setModel(defaultModel ?? info.models.find((m) => m.default)?.id ?? info.models[0]?.id);
@@ -445,8 +459,13 @@ function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: A
     setSigningIn(true);
   };
 
-  const makeDefault = async (id: AgentId, m?: string, t?: string) => {
-    await post("/api/settings/agent", { id, model: m === "default" ? undefined : m, thinking: t && t !== "default" ? t : undefined });
+  const makeDefault = async (id: AgentId, m?: string, t?: string, fm?: string) => {
+    await post("/api/settings/agent", {
+      id,
+      model: m === "default" ? undefined : m,
+      thinking: t && t !== "default" ? t : undefined,
+      fastModel: fm && fm !== "default" ? fm : undefined,
+    });
     await actions.loadSettings();
   };
 
@@ -524,7 +543,7 @@ function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: A
             value={model}
             onChange={(e) => {
               setModel(e.target.value);
-              if (isDefault) void makeDefault(info.id, e.target.value, thinking);
+              if (isDefault) void makeDefault(info.id, e.target.value, thinking, fastModel);
             }}
             title="Model new sessions start on"
           >
@@ -541,7 +560,7 @@ function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: A
             value={thinking}
             onChange={(e) => {
               setThinking(e.target.value);
-              if (isDefault) void makeDefault(info.id, model, e.target.value);
+              if (isDefault) void makeDefault(info.id, model, e.target.value, fastModel);
             }}
             title="Thinking level new sessions start on"
           >
@@ -566,11 +585,33 @@ function AgentCard({ info, isDefault, defaultModel, defaultThinking }: { info: A
           )
         )}
         {ok && !isDefault && (
-          <button className="primary" onClick={() => void makeDefault(info.id, model, thinking)}>
+          <button className="primary" onClick={() => void makeDefault(info.id, model, thinking, fastModel)}>
             Use as default
           </button>
         )}
       </div>
+      {ok && isDefault && info.models && info.models.filter((m) => m.id !== "default").length > 1 && (
+        <div className="setup-agent-fast small">
+          <span className="dim">Fast model (quick planning)</span>
+          <select
+            value={fastModel}
+            onChange={(e) => {
+              setFastModel(e.target.value);
+              void makeDefault(info.id, model, thinking, e.target.value);
+            }}
+            title="Lightweight model used for quick Make planning and setup decisions"
+          >
+            <option value="">Auto (lightweight tier)</option>
+            {info.models
+              .filter((m) => m.id !== "default")
+              .map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
     </div>
   );
 }

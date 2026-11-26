@@ -1,7 +1,9 @@
 import type { Asset, HandOff, PlannedTake, ProjectFile } from "@beatsheet/schema";
+import { aspectOf } from "@beatsheet/schema";
 import { useState, type ReactNode } from "react";
 import { AGENT_NAMES, hideBroken, imageUrl, pickFootage, pickPath, posterUrl, projectFileUrl, proxyUrl, runJob, sessionActivity } from "../lib";
 import { actions, getState, setState, useStore } from "../store";
+import { BlockoutPlayer } from "./Blockout";
 import { EnlargeIcon, Viewer, type ViewerItem } from "./Viewer";
 
 /**
@@ -140,7 +142,7 @@ export function TurnCard() {
             </button>
           </div>
           <p>{t.ask.message}</p>
-          {t.ask.kind === "choose" ? <Choose ask={t.ask} /> : t.ask.kind === "review" ? <Review /> : t.ask.kind === "cast" ? <KeepCast ask={t.ask} /> : <Provide ask={t.ask} />}
+          {t.ask.kind === "choose" ? <Choose ask={t.ask} /> : t.ask.kind === "review" ? <Review ask={t.ask} /> : t.ask.kind === "cast" ? <KeepCast ask={t.ask} /> : <Provide ask={t.ask} />}
         </>
       )}
     </div>
@@ -392,13 +394,15 @@ function Sends({ planned: m, pics, onOpen }: { planned: PlannedTake; pics: SendP
   const cuts = useStore((s) => s.doc?.cuts);
   const cost = m.usd === undefined ? "" : m.usd > 0 ? `about $${m.usd.toFixed(2)}` : "no charge";
   const facts = [`${m.count} ${m.op === "image" ? "still" : "clip"}${m.count === 1 ? "" : "s"}`, m.seconds && `${round1(m.seconds)}s`, m.aspect, cost].filter(Boolean).join(" · ");
-  const blockout = m.camera && "cut" in m.camera ? m.camera : undefined;
+  const shotBlockout = m.camera && "blockout" in m.camera ? m.camera : undefined;
+  const legacyBlockout = m.camera && !shotBlockout && "cut" in m.camera ? m.camera : undefined;
+  const hasBlockout = !!shotBlockout || !!legacyBlockout;
   return (
     <span className="turn-sends">
       <span className="small">
         <strong>{m.started?.length ? "Started" : "Picking this sends"}</strong> <span className="dim">to {m.label} on {m.where} · {facts}</span>
       </span>
-      {pics.length + (blockout ? 1 : 0) > 0 ? (
+      {pics.length + (hasBlockout ? 1 : 0) > 0 ? (
         <span className="turn-sends-pics">
           {pics.map((p) => (
             <span
@@ -416,18 +420,34 @@ function Sends({ planned: m, pics, onOpen }: { planned: PlannedTake; pics: SendP
               <span className="turn-send-name">{p.name}</span>
             </span>
           ))}
-          {blockout && (
+          {shotBlockout && (
+            <span
+              className="turn-send blockout"
+              title="This shot's 3D camera blockout. Click to open the shot in Make"
+              onClick={(e) => {
+                e.stopPropagation();
+                actions.setMode("make");
+                actions.select({ kind: "shot", id: shotBlockout.shot });
+              }}
+            >
+              <span className="turn-send-part">{shotBlockout.mode === "sheet" ? "16-frame sheet" : "Blockout"}</span>
+              <span className="turn-send-name">
+                Shot {shotBlockout.shot}, {round1(shotBlockout.to - shotBlockout.from)}s
+              </span>
+            </span>
+          )}
+          {legacyBlockout && (
             <span
               className="turn-send blockout"
               title="The blockout it keeps the camera of: its move, framing and timing. Open the cut to watch it"
               onClick={(e) => {
                 e.stopPropagation();
-                actions.visitCut(blockout.cut);
+                actions.visitCut(legacyBlockout.cut);
               }}
             >
-              <span className="turn-send-part">Camera of</span>
+              <span className="turn-send-part">{legacyBlockout.mode === "sheet" ? "16-frame sheet" : "Camera of"}</span>
               <span className="turn-send-name">
-                {cuts?.find((c) => c.id === blockout.cut)?.name ?? blockout.cut}, {round1(blockout.from)}–{round1(blockout.to)}s
+                {cuts?.find((c) => c.id === legacyBlockout.cut)?.name ?? legacyBlockout.cut}, {round1(legacyBlockout.from)}–{round1(legacyBlockout.to)}s
               </span>
             </span>
           )}
@@ -519,24 +539,51 @@ function Options({ options, picked, onPick }: { options: Option[]; picked: strin
   );
 }
 
-function Review() {
+function Review({ ask }: { ask: Extract<HandOff, { kind: "review" }> }) {
   const [busy, setBusy] = useState(false);
+  const project = useStore((s) => s.project);
+  const fmt = project?.formats[0];
+  const shape = fmt ? aspectOf(fmt.width, fmt.height) : "16:9";
+  const reviewShot = ask.shot ? project?.shots.find((s) => s.id === ask.shot) : undefined;
   return (
-    <div className="turn-actions">
-      <span className="dim small">Leave notes on anything you'd change and press Send, or:</span>
-      <span className="spacer" />
-      <button
-        className="primary"
-        disabled={busy}
-        onClick={async () => {
-          setBusy(true);
-          await answer({ looksGood: true });
-          setBusy(false);
-        }}
-      >
-        Looks good
-      </button>
-    </div>
+    <>
+      {ask.blockout && reviewShot?.blockout && (
+        <div className="turn-blockout">
+          <div className="camera-preview" style={{ aspectRatio: fmt ? `${fmt.width} / ${fmt.height}` : "16 / 9" }}>
+            <BlockoutPlayer pick={{ blockout: true, shot: reviewShot.id, cut: ask.cut }} aspect={shape} />
+          </div>
+          <div className="turn-blockout-foot small">
+            <span className="dim">
+              Shot {reviewShot.label ?? reviewShot.id} blockout ({reviewShot.blockout.mode ?? "video"})
+            </span>
+            <button
+              className="link small"
+              onClick={() => {
+                actions.setMode("make");
+                actions.select({ kind: "shot", id: reviewShot.id });
+              }}
+            >
+              Open shot in Make
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="turn-actions">
+        <span className="dim small">{ask.blockout ? "Reply below to adjust the camera move, or:" : "Leave notes on anything you'd change and press Send, or:"}</span>
+        <span className="spacer" />
+        <button
+          className="primary"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await answer({ looksGood: true });
+            setBusy(false);
+          }}
+        >
+          Looks good
+        </button>
+      </div>
+    </>
   );
 }
 

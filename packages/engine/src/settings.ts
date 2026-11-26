@@ -16,8 +16,8 @@ const FILE = join(SETTINGS_DIR, "settings.json");
 const KEYCHAIN = "beatsheet";
 
 export type Settings = {
-  /** The agent new sessions use unless the person picks another, and its model (and thinking level, if any). */
-  agent?: { id: AgentId; model?: string; thinking?: string };
+  /** The agent new sessions use unless the person picks another, its model (and thinking level, if any), and optional fast model for lightweight planning. */
+  agent?: { id: AgentId; model?: string; thinking?: string; fastModel?: string };
   /** What checking each agent CLI said last time (installed, signed in as whom). */
   checks: Partial<Record<AgentId, { ok: boolean; detail: string; at: string }>>;
   /** Services with a key in the Keychain, and what checking the key said. */

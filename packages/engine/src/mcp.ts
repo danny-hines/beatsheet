@@ -13,6 +13,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
   autoAssemble,
+  blockoutDuration,
+  blockoutProject,
   branchCut,
   buildBatch,
   CATALOG,
@@ -23,6 +25,8 @@ import {
   fillerSpans,
   groupWords,
   pauseSpans,
+  PREVIS_BY_ID,
+  PREVIS_MOVES,
   removeSpans,
   spanOf,
   speakerLabel,
@@ -45,6 +49,8 @@ import {
   STAGE_IDS,
   Look,
   type Asset,
+  type Blockout,
+  type BlockoutBeat,
   type CastLook,
   type Commercial,
   type Fit,
@@ -713,13 +719,21 @@ const makeArgs = {
     .describe('For lip-sync: change the mouths in a clip instead of making a still talk. "take" is the clip the shot shows, where the shot plays it (a rough with the wrong mouths, a take that copied movement); the new take replaces it'),
   camera: z
     .union([
+      z.literal("blockout").describe("Use this shot's own 3D camera blockout (set with set_blockout)"),
       z.object({
-        cut: z.string().describe("The cut the blockout is in"),
+        blockout: z.literal(true).describe("Use this shot's own 3D camera blockout (set with set_blockout)"),
+        mode: z
+          .enum(["video", "sheet"])
+          .optional()
+          .describe('video (default): renders a reference MP4 (Seedance 2.5, bills blockout seconds too); sheet: renders a 4×4 16-frame storyboard contact sheet JPEG as a reference image (no video-input surcharge, works with Wan 3.0, MiniMax H3, HappyHorse 1.1 and Seedance)'),
+      }),
+      z.object({
+        cut: z.string().describe("Legacy: the cut the blockout is in (prefer set_blockout on the shot instead)"),
         shots: z.array(z.string()).optional().describe("From the first of these shots to the last; default the whole cut"),
         mode: z
           .enum(["video", "sheet"])
           .optional()
-          .describe('video (default): renders a reference MP4 (Seedance 2.5, bills blockout seconds too); sheet: renders a 4×4 16-frame storyboard contact sheet JPEG as a reference image (no video-input surcharge, and works with Wan 3.0, MiniMax H3, HappyHorse 1.1 and Seedance)'),
+          .describe('video (default): renders a reference MP4 (Seedance 2.5); sheet: renders a 4×4 16-frame contact sheet JPEG'),
       }),
       z.object({
         asset: z.string().describe("A clip whose camera to keep"),
@@ -730,7 +744,7 @@ const makeArgs = {
     .nullable()
     .optional()
     .describe(
-      "For video: keep another clip's camera (Seedance 2.5, through Tein or fal; Auto takes the cheaper one that's connected, and only Tein draws real people). Usually a blockout: a cut whose coded shots draw a grey set, a striped stand-in for each person and the camera's move, 2 to 30 seconds of it. It's rendered when the take is made, in that cut's format closest to this one's shape, and the take keeps its move, framing, timing and cuts and is as long as it is. The model copies everything else in a reference video too, so the prompt says what each stand-in really is (by its colour), and describes the real place in words; the engine adds that no stand-in appears. Move the camera in every shot of a blockout and hold each 2 seconds or more. A picture given as start goes as a reference instead (the board, a photo of who's in it); there's no end frame. Both bill the blockout's seconds as well as the take's, at a lower rate. Before the first take from a blockout, hand off a review of the blockout cut, so the person watches the move before it's paid for. A generated shot whose takes kept a camera keeps it again (its next rough, its final) unless this is null",
+      "For video: keep a camera move, framing and cut timing. Use \"blockout\" (or { blockout: true, mode }) to follow this shot's own 3D blockout (created with set_blockout — never create a separate cut for a blockout!). In video mode Seedance 2.5 keeps exact frame-by-frame timing and bills blockout seconds too; in sheet mode a 4×4 16-frame contact sheet goes as a reference image with no video surcharge across Wan 3.0, MiniMax H3, HappyHorse 1.1 and Seedance. An immutable deduplicated snapshot is saved on each take automatically. Before the first take from a blockout, hand off a review with shot and blockout: true (stays in this cut's conversation). A generated shot whose takes kept a camera keeps it again unless this is null",
     ),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
@@ -751,7 +765,7 @@ type MakeToolArgs = {
   drive?: { asset: string; from?: number; to?: number } | null;
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
   clip?: "take" | { asset: string; from?: number; to?: number };
-  camera?: { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
+  camera?: "blockout" | { blockout: true; mode?: "video" | "sheet" } | { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
   seconds?: number;
   aspect?: string;
   count?: number;
@@ -809,7 +823,7 @@ server.registerTool(
     }
     const { req, choices } = makeChoices(id, asks[0]!);
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"blockout" in req.camera ? `shot ${req.camera.shot}'s blockout` : "cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
     ];
     out.push(...absent);
     const states = connectedStates();
@@ -976,20 +990,151 @@ server.registerTool(
   },
 );
 
+const BlockoutBeatInput = z.object({
+  id: z.string().optional().describe("Short beat id (default b1, b2…)"),
+  label: z.string().optional(),
+  duration: z.number().positive().describe("Seconds (hold each beat >= 2s for Seedance)"),
+  component: z.string().optional().describe('Default "kit:Previs", or a custom scene like "scenes/Orbit.tsx#Orbit"'),
+  move: z.string().optional().describe(`kit:Previs camera move preset (${PREVIS_MOVES.slice(0, 8).map((m) => m.id).join(", ")}…)`),
+  look: z.enum(["pills", "sketch", "ink", "ghosts", "empty"]).optional(),
+  set: z.enum(["studio", "street", "room", "alley", "corridor", "clearing"]).optional(),
+  subjects: z.array(z.record(z.string(), z.unknown())).optional(),
+  cameraOnly: z.boolean().optional(),
+  lens: z.number().optional(),
+  distance: z.number().optional(),
+  height: z.number().optional(),
+  angle: z.number().optional(),
+  speedRamp: z.object({ at: z.number().optional(), slow: z.number().optional(), width: z.number().optional() }).optional(),
+  props: z.record(z.string(), z.unknown()).optional().describe("Props for a custom scene (or extra kit:Previs props)"),
+});
+
 server.registerTool(
-  "frame",
+  "set_blockout",
   {
-    description: "See the cut: a still of the composed frame (picture, crop, text) at a time or in the middle of a shot. The first call takes ~20 s while the renderer warms up.",
+    description:
+      "Create, update or clear a shot's 3D camera blockout right on the shot (1:1 — never create a separate cut for a blockout!). Use kit:Previs presets (pass `move` + `duration` for a single move, or `beats` for a multi-cut sequence) or a custom coded scene written with write_scene. Follow it with generate(..., camera: \"blockout\") or hand_off(kind: \"review\", shot, blockout: true) so the person watches and approves the camera move inside this cut's conversation.",
     inputSchema: {
       project: projectArg,
       cut: cutArg,
-      t: z.number().optional().describe("Seconds into the cut"),
-      shot: z.string().optional().describe("Shot id; uses its midpoint"),
+      shot: z.string().describe("Shot id to attach or update the blockout on"),
+      beats: z.array(BlockoutBeatInput).min(1).optional().describe("One or more sequential camera beats"),
+      // Single-beat shorthand for the common 1-move case:
+      move: z.string().optional().describe("Single-beat shorthand: kit:Previs move preset id (e.g. orbit, push-in, dolly-zoom, crane-up, bullet-time)"),
+      duration: z.number().positive().optional().describe("Single-beat shorthand duration in seconds (default the shot's duration or 5s)"),
+      component: z.string().optional().describe('Single-beat shorthand component (default "kit:Previs")'),
+      look: z.enum(["pills", "sketch", "ink", "ghosts", "empty"]).optional(),
+      set: z.enum(["studio", "street", "room", "alley", "corridor", "clearing"]).optional(),
+      subjects: z.array(z.record(z.string(), z.unknown())).optional(),
+      cameraOnly: z.boolean().optional(),
+      lens: z.number().optional(),
+      distance: z.number().optional(),
+      height: z.number().optional(),
+      angle: z.number().optional(),
+      speedRamp: z.object({ at: z.number().optional(), slow: z.number().optional(), width: z.number().optional() }).optional(),
+      props: z.record(z.string(), z.unknown()).optional(),
+      mode: z.enum(["video", "sheet"]).optional().describe("Default delivery mode: video (Seedance reference MP4) or sheet (4×4 16-frame contact sheet image)"),
+      note: z.string().optional().describe("Short summary of what the camera move and stand-ins represent"),
+      clear: z.boolean().optional().describe("Remove this shot's active blockout (previous takes keep their snapshotted blockout files)"),
+    },
+  },
+  async ({ project: id, cut, shot: shotId, beats, move, duration, component, look, set, subjects, cameraOnly, lens, distance, height, angle, speedRamp, props, mode, note, clear }) => {
+    const { project } = loadProject(id, cut);
+    const target = project.shots.find((s) => s.id === shotId);
+    if (!target) return text(`No shot "${shotId}" in cut "${project.cut.id}".`);
+    if (clear) {
+      updateProject(
+        id,
+        (p) => {
+          const s = p.shots.find((x) => x.id === shotId);
+          if (s) delete s.blockout;
+        },
+        project.cut.id,
+      );
+      return text(`Cleared the active blockout on shot ${shotId}.`);
+    }
+    const tl = resolveTimeline(project, project.formats[0]!.id);
+    const span = tl.shots.find((x) => x.id === shotId);
+    const shotDur = span && Number.isFinite(span.end - span.start) && span.end - span.start > 0 ? Math.round((span.end - span.start) * 100) / 100 : (target.duration ?? 5);
+    const toBeat = (b: z.infer<typeof BlockoutBeatInput>, idx: number): BlockoutBeat => {
+      const comp = b.component ?? "kit:Previs";
+      const previsProps =
+        comp === "kit:Previs"
+          ? {
+              ...(b.move ? { move: b.move } : {}),
+              ...(b.look ? { look: b.look } : {}),
+              ...(b.set ? { set: b.set } : {}),
+              ...(b.subjects ? { subjects: b.subjects } : {}),
+              ...(b.cameraOnly !== undefined ? { cameraOnly: b.cameraOnly } : {}),
+              ...(b.lens !== undefined ? { lens: b.lens } : {}),
+              ...(b.distance !== undefined ? { distance: b.distance } : {}),
+              ...(b.height !== undefined ? { height: b.height } : {}),
+              ...(b.angle !== undefined ? { angle: b.angle } : {}),
+              ...(b.speedRamp ? { speedRamp: b.speedRamp } : {}),
+            }
+          : {};
+      const merged = { ...previsProps, ...(b.props ?? {}) };
+      const preset = b.move ? PREVIS_BY_ID.get(b.move) : undefined;
+      return {
+        id: b.id ?? (idx === 0 && b.move ? b.move : `b${idx + 1}`),
+        ...(b.label || preset ? { label: b.label ?? preset?.label } : {}),
+        duration: b.duration,
+        component: comp,
+        ...(Object.keys(merged).length ? { props: merged } : {}),
+      };
+    };
+    const rawBeats = beats?.length
+      ? beats
+      : move || component || props
+        ? [{ duration: duration ?? shotDur, component, move, look, set, subjects, cameraOnly, lens, distance, height, angle, speedRamp, props }]
+        : undefined;
+    if (!rawBeats?.length) return text('Provide `beats` or a single-beat shorthand (`move` or `component`), or pass `clear: true`.');
+    const blockout: Blockout = {
+      beats: rawBeats.map(toBeat),
+      ...(mode ? { mode } : {}),
+      ...(note ? { note } : {}),
+    };
+    updateProject(
+      id,
+      (p) => {
+        const s = p.shots.find((x) => x.id === shotId);
+        if (s) s.blockout = blockout;
+      },
+      project.cut.id,
+    );
+    const total = blockoutDuration(blockout);
+    return text(
+      `Set blockout on shot ${shotId} (${total}s, ${blockout.mode ?? "video"} mode): ${blockout.beats.map((b) => `${b.label ?? b.id} (${b.duration}s)`).join(" → ")}. Inspect it with frame(shot: "${shotId}", blockout: true), hand off with hand_off(kind: "review", shot: "${shotId}", blockout: true), or generate with camera: "blockout".`,
+    );
+  },
+);
+
+server.registerTool(
+  "frame",
+  {
+    description:
+      "See the cut (or a shot's 3D blockout): a still of the composed frame at a time or in the middle of a shot. Pass `shot` with `blockout: true` to inspect frames of that shot's blockout directly. The first call takes ~20 s while the renderer warms up.",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      t: z.number().optional().describe("Seconds into the cut (or into the shot's blockout when blockout: true)"),
+      shot: z.string().optional().describe("Shot id; uses its midpoint (or its blockout when blockout: true)"),
+      blockout: z.boolean().optional().describe("Inspect the shot's own 3D blockout instead of the cut"),
       format: z.string().optional(),
     },
   },
-  async ({ project: id, cut, t, shot, format }) => {
+  async ({ project: id, cut, t, shot, blockout, format }) => {
     const { project } = loadProject(id, cut);
+    if (blockout) {
+      if (!shot) return text("Pass `shot` with `blockout: true` to inspect a shot's blockout.");
+      const target = project.shots.find((s) => s.id === shot);
+      if (!target?.blockout?.beats.length) return text(`Shot "${shot}" has no blockout yet.`);
+      const fmt = project.formats.find((f) => f.id === format) ?? project.formats[0]!;
+      const bp = blockoutProject(project, shot, target.blockout, `${fmt.width}:${fmt.height}`);
+      const time = t !== undefined ? Math.max(0, Math.min(bp.duration, t)) : bp.duration / 2;
+      const { renderFrame } = await import("./render.ts");
+      const jpg = await renderFrame(id, { cut: project.cut.id, format: bp.format.id, t: time, project: bp.project });
+      return { content: [{ type: "text" as const, text: `${id} · shot ${shot} blockout at ${formatTime(time)} / ${formatTime(bp.duration)}` }, { type: "image" as const, data: jpg.toString("base64"), mimeType: "image/jpeg" }] };
+    }
     const tl = resolveTimeline(project, format);
     let time = t ?? 0;
     if (shot) {
@@ -1862,6 +2007,8 @@ server.registerTool(
       cut: cutArg,
       kind: z.enum(["choose", "review", "provide", "cast"]),
       message: z.string().describe("What you're asking, in a sentence or two"),
+      shot: z.string().optional().describe('For "review": focus on a specific shot (e.g. with blockout: true to review that shot\'s 3D blockout in place without switching cuts)'),
+      blockout: z.boolean().optional().describe('For "review" with shot: plays that shot\'s 3D blockout right in the hand-off card inside this cut\'s conversation'),
       options: z.array(HAND_OFF_OPTION).optional().describe('For "choose"'),
       multiple: z.boolean().optional().describe('For "choose": they may pick more than one'),
       questions: z
@@ -1888,7 +2035,7 @@ server.registerTool(
         .describe('For "cast": who and what you found, each with the pictures it\'s in'),
     },
   },
-  async ({ project: id, cut, kind, message, options, multiple, questions, need, proposals }) => {
+  async ({ project: id, cut, kind, message, shot, blockout, options, multiple, questions, need, proposals }) => {
     const { project, dir } = loadProject(id, cut);
     if (kind === "choose" && (!options || options.length < 2)) return text('A "choose" hand-off needs at least two options.');
     if (kind === "cast") {
@@ -1935,7 +2082,7 @@ server.registerTool(
         ? { kind, message, multiple, options: withIds(options!, "o"), ...(questions?.length ? { questions: questions.map((q) => ({ ...q, options: withIds(q.options, `${q.id}-`) })) } : {}) }
         : kind === "provide"
           ? { kind, message, need: need! }
-          : { kind, message, cut: project.cut.id };
+          : { kind, message, cut: project.cut.id, ...(shot ? { shot } : {}), ...(blockout ? { blockout: true } : {}) };
     if (missing.length) return text(`No such picture in the project: ${missing.join(", ")}. Use the paths preview_looks gave (made/looks/…).`);
     if (unplanned.length)
       return text([`Not handed over: the take planned on ${unplanned.length === 1 ? "an option" : "some options"} can't be made as asked.`, ...unplanned.map((u) => `- ${u}`), "Fix its make and hand off again."].join("\n"));
@@ -1947,7 +2094,7 @@ server.registerTool(
         "Handed over: it's the person's turn now. Stop here; their answer comes as your next message.",
         ...planned.map(
           ({ label, make: m }) =>
-            `"${label}" shows what it sends: ${m.pictures.length ? m.pictures.map((p) => `${p.asset} (${part[p.as]})`).join(", ") : "no pictures"}${m.camera ? `, keeping the camera of ${"cut" in m.camera ? `the blockout in cut ${m.camera.cut}` : m.camera.asset} from ${m.camera.from}s to ${m.camera.to}s` : ""}, with ${m.label} on ${m.where}${m.usd ? `, about $${m.usd.toFixed(2)}` : ""}. Picking it starts it.`,
+            `"${label}" shows what it sends: ${m.pictures.length ? m.pictures.map((p) => `${p.asset} (${part[p.as]})`).join(", ") : "no pictures"}${m.camera ? `, keeping the camera of ${"blockout" in m.camera ? `shot ${m.camera.shot}'s blockout` : "cut" in m.camera ? `the blockout in cut ${m.camera.cut}` : m.camera.asset} from ${m.camera.from}s to ${m.camera.to}s` : ""}, with ${m.label} on ${m.where}${m.usd ? `, about $${m.usd.toFixed(2)}` : ""}. Picking it starts it.`,
         ),
       ].join("\n"),
     );
@@ -2022,8 +2169,9 @@ function overview(id: string, cut?: string, format?: string): string {
   for (const r of tl.shots) {
     const s = p.shots.find((x) => x.id === r.id)!;
     const clipIn = s.content.kind === "clip" && r.sourceIn !== undefined ? ` from ${r.sourceIn.toFixed(2)}s` : "";
+    const blk = s.blockout ? ` · [blockout ${blockoutDuration(s.blockout)}s ${s.blockout.mode ?? "video"}]` : "";
     lines.push(
-      `- ${s.id} · ${s.track} · ${formatTime(r.start)}–${formatTime(r.end)} · ${s.start ? describeAnchor(s.start, p) : "after previous"} · ${shotContentSummary(s, p)}${clipIn} · ${s.fidelity}${s.label ? ` · "${s.label}"` : ""}`,
+      `- ${s.id} · ${s.track} · ${formatTime(r.start)}–${formatTime(r.end)} · ${s.start ? describeAnchor(s.start, p) : "after previous"} · ${shotContentSummary(s, p)}${clipIn}${blk} · ${s.fidelity}${s.label ? ` · "${s.label}"` : ""}`,
     );
   }
   const waiting = p.notes.filter((n) => n.status === "queued" || n.status === "working");

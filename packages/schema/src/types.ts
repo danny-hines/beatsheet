@@ -604,9 +604,17 @@ export const ShotContent = z.discriminatedUnion("kind", [
     camera: z
       .union([
         z.object({
-          cut: z.string().describe("The cut the blockout is in: coded shots that draw a grey set, a stand-in for each person and the camera's move"),
+          blockout: z.literal(true).describe("Follows this shot's own 3D camera blockout (shot.blockout)"),
+          mode: z.enum(["video", "sheet"]).optional().describe("video: reference video clip (Seedance 2.5); sheet: 4×4 16-frame storyboard contact sheet sent as a reference image"),
+          snapshot: z.string().optional().describe("Content-addressed rendered snapshot file relative to the project folder (made/blockouts/<hash>.mp4 or .jpg)"),
+          snapshotKind: z.enum(["video", "image"]).optional(),
+        }),
+        z.object({
+          cut: z.string().describe("Legacy: the cut the blockout is in: coded shots that draw a grey set, a stand-in for each person and the camera's move"),
           shots: z.array(z.string()).optional().describe("From the first of these shots of that cut to the last; default the whole cut"),
           mode: z.enum(["video", "sheet"]).optional().describe("video: reference video clip (Seedance 2.5); sheet: 4×4 16-frame storyboard contact sheet sent as a reference image"),
+          snapshot: z.string().optional().describe("Content-addressed rendered snapshot file relative to the project folder"),
+          snapshotKind: z.enum(["video", "image"]).optional(),
         }),
         z.object({
           asset: z.string().describe("A clip whose camera to keep"),
@@ -615,7 +623,7 @@ export const ShotContent = z.discriminatedUnion("kind", [
         }),
       ])
       .optional()
-      .describe("For video takes that keep another clip's camera (its move, its framing, where its cuts fall): a blockout, or a stretch of a clip. The next take keeps it again"),
+      .describe("For video takes that keep another clip's camera (its move, its framing, where its cuts fall): this shot's blockout, a legacy blockout cut, or a stretch of a clip. The next take keeps it again"),
     speech: z
       .object({
         lines: z.array(z.string()).optional().describe("Voice lines of the cut it says, as they're heard while the shot plays; default every line heard then"),
@@ -666,6 +674,26 @@ export const Knob = z.object({
 });
 export type Knob = z.infer<typeof Knob>;
 
+export const BlockoutBeat = z.object({
+  id: z.string(),
+  label: z.string().optional(),
+  duration: z.number().positive(),
+  component: z.string().describe('A ready-made 3D camera blockout ("kit:Previs") or a custom coded scene (scenes/Orbit.tsx#Orbit)'),
+  props: z.record(z.string(), z.unknown()).optional(),
+});
+export type BlockoutBeat = z.infer<typeof BlockoutBeat>;
+
+/**
+ * A 3D camera blockout attached directly to a shot (1:1): one or more coded beats that draw a coarse grey set,
+ * striped stand-ins and exact camera moves/cuts. Rendered and snapshotted when a video take is generated from it.
+ */
+export const Blockout = z.object({
+  beats: z.array(BlockoutBeat).min(1),
+  mode: z.enum(["video", "sheet"]).optional().describe("video: reference video clip (Seedance 2.5); sheet: 4×4 16-frame contact sheet sent as a reference image"),
+  note: z.string().optional().describe("Short summary of what the camera move and staging do"),
+});
+export type Blockout = z.infer<typeof Blockout>;
+
 export const Shot = z.object({
   id: z.string(),
   track: z.string(),
@@ -675,6 +703,7 @@ export const Shot = z.object({
   end: Anchor.optional().describe("Default: start + duration, else the next shot's start, else the end of the cut"),
   duration: z.number().positive().optional(),
   content: ShotContent,
+  blockout: Blockout.optional().describe("3D camera blockout owned by this shot, used to direct camera moves and cuts without creating a separate cut"),
   fidelity: Fidelity,
   transition: z
     .object({
@@ -791,11 +820,30 @@ export const PlannedTake = z.object({
     .describe("Every picture that goes with it, in the order the model gets them: what it starts from, ends on, and its references"),
   camera: z
     .union([
-      z.object({ cut: z.string(), format: z.string(), from: z.number(), to: z.number(), shots: z.array(z.string()).optional(), mode: z.enum(["video", "sheet"]).optional() }),
+      z.object({
+        blockout: z.literal(true),
+        shot: z.string(),
+        cut: z.string(),
+        from: z.number(),
+        to: z.number(),
+        mode: z.enum(["video", "sheet"]).optional(),
+        snapshot: z.string().optional(),
+        snapshotKind: z.enum(["video", "image"]).optional(),
+      }),
+      z.object({
+        cut: z.string(),
+        format: z.string(),
+        from: z.number(),
+        to: z.number(),
+        shots: z.array(z.string()).optional(),
+        mode: z.enum(["video", "sheet"]).optional(),
+        snapshot: z.string().optional(),
+        snapshotKind: z.enum(["video", "image"]).optional(),
+      }),
       Stretch,
     ])
     .optional()
-    .describe("The blockout (a stretch of a cut, rendered when it's made) or clip whose camera it keeps"),
+    .describe("The blockout (a shot's blockout or legacy cut stretch, rendered when it's made) or clip whose camera it keeps"),
   drive: Stretch.optional().describe("The stretch of a clip whose movement it copies"),
   clip: Stretch.optional().describe("The stretch of a clip whose mouths it changes"),
   speech: z.union([z.object({ lines: z.array(z.string()), from: z.number(), to: z.number() }), Stretch]).optional(),
@@ -849,7 +897,13 @@ export const HandOff = z.discriminatedUnion("kind", [
       .optional()
       .describe("More questions on the same card, answered together: the look to go with the directions, say"),
   }),
-  z.object({ kind: z.literal("review"), message: z.string(), cut: z.string().optional().describe("The cut to watch; default the one on screen") }),
+  z.object({
+    kind: z.literal("review"),
+    message: z.string(),
+    cut: z.string().optional().describe("The cut to watch; default the one on screen"),
+    shot: z.string().optional().describe("Optional shot to focus on (e.g. reviewing a shot's 3D blockout)"),
+    blockout: z.boolean().optional().describe("True when reviewing a shot's blockout in place without switching cuts"),
+  }),
   z.object({
     kind: z.literal("cast"),
     message: z.string(),

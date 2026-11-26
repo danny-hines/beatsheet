@@ -6,12 +6,14 @@
  * any other asset and, when the job was for a shot, becomes one of that shot's takes.
  */
 import { execFile } from "node:child_process";
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import { promisify } from "node:util";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { extname, join } from "node:path";
 import {
   aspectOf,
+  blockoutDuration,
+  blockoutProject,
   blockoutStretch,
   cameraOfTake,
   cameraOnShot,
@@ -27,6 +29,7 @@ import {
   driveWindow,
   FIDELITY,
   fitModel,
+  isCameraBlockout,
   isCameraSheet,
   missingFromFrames,
   OWN_HARDWARE,
@@ -366,13 +369,13 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
    */
   clip?: "take" | { asset: string; from?: number; to?: number };
   /**
-   * For a clip that keeps another's camera (its move, its framing, where its cuts fall): a blockout, as a stretch of a
-   * cut (all of it, or from the first of `shots` to the last), or a stretch of a clip, from a second of it (default 0)
-   * to another (default the shot's length later). The take is as long as the stretch. A picture to start from goes as
-   * a reference instead, and there's no end frame. Without it, a generated shot whose takes kept a camera keeps it again
-   * (unless this take copies movement or lip-syncs instead); null for none.
+   * For a clip that keeps another's camera (its move, its framing, where its cuts fall): "blockout" (or `{ blockout: true }`)
+   * follows this shot's own 3D blockout (`shot.blockout`), a legacy `{ cut }` follows a cut stretch, or `{ asset }` follows
+   * a stretch of a clip. The take is as long as the stretch. A picture to start from goes as a reference instead, and there's
+   * no end frame. Without it, a generated shot whose takes kept a camera keeps it again unless this take copies movement or
+   * lip-syncs instead; null for none.
    */
-  camera?: { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
+  camera?: "blockout" | { blockout: true; mode?: "video" | "sheet" } | { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
   /** Conditioning role of the reference video (defaults to "blockout" for cuts and "clip" for assets). */
   cameraKind?: CameraKind;
   /** Local pre-processed conditioning video file sent in place of the raw asset stretch. */
@@ -464,11 +467,14 @@ function lookRefs(project: Project, member: CastMember, variantId: string | unde
   return { refs: [...f, ...w, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
 }
 
-/** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from. */
+/** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from (start, image ref, or latest still take). */
 function boardOf(project: Project, shot: Shot | undefined): string | undefined {
   const c = shot?.content;
   if (c?.kind !== "generated") return undefined;
-  return project.assets.find((a) => a.id === c.take)?.kind === "image" ? c.take : c.start;
+  const isImg = (id: string | undefined) => !!id && project.assets.find((a) => a.id === id)?.kind === "image";
+  if (isImg(c.take)) return c.take;
+  if (isImg(c.start)) return c.start;
+  return c.refs?.find(isImg) ?? [...(c.takes ?? [])].reverse().find(isImg);
 }
 
 /**
@@ -506,7 +512,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   const shown = shot?.content.kind === "generated" ? shot.content : undefined;
   const lastCamera = shown && !ask.drive && !ask.speech && !ask.clip ? (shown.camera ?? cameraOfTake(project.assets.find((a) => a.id === shown.take))) : undefined;
   const keeps = ask.camera === undefined ? lastCamera : ask.camera;
-  const camera = ask.op === "video" && keeps ? cameraFor(projectId, project, keeps, needs?.seconds, ask.aspect) : undefined;
+  const camera = ask.op === "video" && keeps ? cameraFor(projectId, project, shot, keeps, needs?.seconds, ask.aspect) : undefined;
   const said = ask.speech !== undefined ? ask.speech : shot?.content.kind === "generated" && shot.content.speech ? shot.content.speech : clip ? {} : undefined;
   const speech =
     ask.op === "video" && said
@@ -610,11 +616,25 @@ function driveFor(project: Project, ask: { asset: string; from?: number; to?: nu
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
 
 /**
- * What a take keeps the camera of, in full. A stretch of a clip, as driveFor gives it. Or a blockout: a stretch of a
- * cut (all of it, or from the first of the shots named to the last), in whichever of that cut's formats is closest in
- * shape to what's being made, so a vertical take follows the blockout drawn vertical.
+ * What a take keeps the camera of, in full. "blockout" / `{ blockout: true }` follows this shot's own `shot.blockout`.
+ * `{ asset }` follows a stretch of a clip. Legacy `{ cut }` follows a stretch of another cut.
  */
-function cameraFor(projectId: string, project: Project, ask: NonNullable<MakeAsk["camera"]>, shotSeconds: number | undefined, aspect: string | undefined): Camera {
+function cameraFor(
+  projectId: string,
+  project: Project,
+  shot: Shot | undefined,
+  ask: NonNullable<MakeAsk["camera"]>,
+  shotSeconds: number | undefined,
+  aspect: string | undefined,
+): Camera {
+  if (ask === "blockout" || (typeof ask === "object" && "blockout" in ask)) {
+    if (!shot) throw new Error('Say which shot\'s blockout to follow (camera "blockout" uses a shot\'s own blockout)');
+    if (!shot.blockout?.beats.length) throw new Error(`Shot "${shot.id}" has no blockout yet: set one with set_blockout first`);
+    const dur = blockoutDuration(shot.blockout);
+    if (!(dur >= 0.1)) throw new Error(`Shot "${shot.id}"'s blockout has no duration`);
+    const mode = (typeof ask === "object" ? ask.mode : undefined) ?? shot.blockout.mode;
+    return { blockout: true, shot: shot.id, cut: project.cut.id, from: 0, to: r3(dur), ...(mode ? { mode } : {}) };
+  }
   if ("asset" in ask) return driveFor(project, ask, shotSeconds)!;
   let blockout: Project;
   try {
@@ -925,7 +945,7 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     start: r.start && tag(r.start),
     end: r.end && tag(r.end),
     refs: sheet ? ["beatsheet:camera-sheet", ...(r.refs?.map(tag) ?? [])] : r.refs?.map(tag),
-    camera: r.camera && !sheet ? { url: "beatsheet:camera", blockout: "cut" in r.camera, ...(ask.cameraKind ? { kind: ask.cameraKind } : {}) } : undefined,
+    camera: r.camera && !sheet ? { url: "beatsheet:camera", blockout: isCameraBlockout(r.camera), ...(ask.cameraKind ? { kind: ask.cameraKind } : {}) } : undefined,
     video: r.drive || r.clip ? "beatsheet:clip" : undefined,
     audio: r.speech ? "beatsheet:sound" : undefined,
   };
@@ -1379,6 +1399,10 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
     const upload = (id: string) => higgsfieldUpload(key, assetPath(project, dir, picture(id)));
     // A cast member's own photos go cut out, when that can be done here.
     const uploadRef = async (id: string) => higgsfieldUpload(key, await refFile(project, dir, picture(id).id, r.cast));
+    // Give models whose image-to-video defaults to 16:9 (MAGI-2) the board's own shape when aspect was left to the start frame.
+    const first = r.start ? picture(r.start) : undefined;
+    const format = project.formats[0]!;
+    const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
     // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
     const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => higgsfieldUpload(key, f), baseRefs);
@@ -1386,7 +1410,8 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
       prompt: cam.prompt,
       quality: job.quality,
       seconds: r.seconds,
-      aspect: r.aspect,
+      aspect: r.aspect ?? boardAspect,
+      seed: r.seed,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
       refs: cam.refs,
@@ -1531,6 +1556,28 @@ export function cameraSize(width: number, height: number): { width: number; heig
   return { width: even(width), height: even(height) };
 }
 
+/**
+ * Persists a rendered blockout MP4 or 4×4 contact-sheet JPEG under `made/blockouts/<sha256>.<ext>` (content-addressed,
+ * deduplicated across takes rolled from the same blockout) and records the immutable snapshot path on the job so every
+ * generated take remembers the exact blockout that created it even if the shot's working blockout changes later.
+ */
+function persistBlockoutSnapshot(projectId: string, dir: string, job: MakeJob, srcFile: string, kind: "video" | "image"): string {
+  const ext = kind === "video" ? ".mp4" : ".jpg";
+  const hash = createHash("sha256").update(readFileSync(srcFile)).digest("hex").slice(0, 16);
+  const folder = join(dir, "made", "blockouts");
+  mkdirSync(folder, { recursive: true });
+  const rel = `made/blockouts/${hash}${ext}`;
+  const abs = join(folder, `${hash}${ext}`);
+  if (!existsSync(abs)) copyFileSync(srcFile, abs);
+  const cam = job.request.camera;
+  if (cam && isCameraBlockout(cam)) {
+    const nextCam = { ...cam, snapshot: rel, snapshotKind: kind };
+    job.request.camera = nextCam;
+    updateJob(projectId, job, { request: { ...(readJob(projectId, job.id)?.request ?? job.request), camera: nextCam } });
+  }
+  return abs;
+}
+
 /** Prepares camera/conditioning video or 4×4 16-frame contact sheet for any video provider. */
 async function cameraArgs(
   projectId: string,
@@ -1548,19 +1595,20 @@ async function cameraArgs(
     return { prompt: `${basePrompt}${SHEET_LINE}`, refs: [sheetUrl, ...(refs ?? [])], camera: undefined };
   }
   const clipUrl = await upload(await cameraClip(projectId, project, dir, job));
-  return { prompt: basePrompt, refs, camera: { url: clipUrl, blockout: "cut" in r.camera, ...(r.cameraKind ? { kind: r.cameraKind } : {}) } };
+  return { prompt: basePrompt, refs, camera: { url: clipUrl, blockout: isCameraBlockout(r.camera), ...(r.cameraKind ? { kind: r.cameraKind } : {}) } };
 }
 
 /**
- * The clip a take keeps the camera of (or a pre-built conditioning video), as a file to upload. A blockout is rendered
- * first: the stretch of its cut, in the format the request settled on. Then it's made what Seedance takes as a
- * reference video: H.264 in an MP4, 24 to 60 frames a second, without sound, within its sizes, and small enough to send.
+ * The clip a take keeps the camera of (or a pre-built conditioning video), as a file to upload. A blockout (shot-owned
+ * or legacy cut) is rendered first, transcoded to what Seedance takes (H.264 MP4, 24–60 fps, silent, within size
+ * limits), and saved as a content-addressed snapshot in `made/blockouts/<hash>.mp4` with temp cache files cleaned up.
  */
 async function cameraClip(projectId: string, project: Project, dir: string, job: MakeJob): Promise<string> {
   const c = job.request.camera!;
   const work = join(dir, ".cache", "camera");
   mkdirSync(work, { recursive: true });
   let src: string;
+  let renderedTemp = false;
   let from = c.from;
   let to = c.to;
   if (job.request.cameraFile) {
@@ -1568,8 +1616,22 @@ async function cameraClip(projectId: string, project: Project, dir: string, job:
     src = job.request.cameraFile;
     const info = await probe(src);
     [from, to] = [0, Math.min(info.duration ?? c.to - c.from, c.to - c.from)];
+  } else if ("blockout" in c) {
+    const owner = loadProject(projectId, c.cut).project;
+    const shot = owner.shots.find((s) => s.id === c.shot);
+    if (!shot?.blockout?.beats.length) throw new FalError(`Shot "${c.shot}" no longer has a blockout to render`, true);
+    const bp = blockoutProject(owner, shot.id, shot.blockout, job.request.aspect);
+    src = join(work, `${job.id}-blockout.mp4`);
+    renderedTemp = true;
+    try {
+      await renderStretch(projectId, { cut: c.cut, format: bp.format.id, range: { from: 0, to: bp.duration }, out: src, project: bp.project });
+    } catch (err) {
+      throw new FalError(`Shot "${c.shot}"'s blockout couldn't be rendered: ${err instanceof Error ? err.message : String(err)}`, true);
+    }
+    [from, to] = [0, bp.duration];
   } else if ("cut" in c) {
     src = join(work, `${job.id}-blockout.mp4`);
+    renderedTemp = true;
     try {
       await renderStretch(projectId, { cut: c.cut, format: c.format, range: { from: c.from, to: c.to }, out: src });
     } catch (err) {
@@ -1587,43 +1649,68 @@ async function cameraClip(projectId: string, project: Project, dir: string, job:
   const fps = Math.min(CAMERA_FPS.max, Math.max(CAMERA_FPS.min, Math.round(info.fps ?? 30)));
   const file = join(work, `${job.id}.mp4`);
   const { most, said } = CAMERA_BYTES[job.route] ?? CAMERA_BYTES.tein!;
-  for (const crf of [20, 28, 34]) {
-    await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-an", "-vf", `scale=${size.width}:${size.height}:flags=lanczos,fps=${fps}`, "-c:v", "libx264", "-crf", String(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
-    if (statSync(file).size <= most) return file;
+  try {
+    for (const crf of [20, 28, 34]) {
+      await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-an", "-vf", `scale=${size.width}:${size.height}:flags=lanczos,fps=${fps}`, "-c:v", "libx264", "-crf", String(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);
+      if (statSync(file).size <= most) {
+        if (isCameraBlockout(c) && !job.request.cameraFile) {
+          const snap = persistBlockoutSnapshot(projectId, dir, job, file, "video");
+          rmSync(file, { force: true });
+          return snap;
+        }
+        return file;
+      }
+    }
+    throw new FalError(`The clip to follow is ${(statSync(file).size / 1024 / 1024).toFixed(1)} MB even made small, more than ${said}. A shorter stretch would do.`, true);
+  } finally {
+    if (renderedTemp) rmSync(src, { force: true });
   }
-  throw new FalError(`The clip to follow is ${(statSync(file).size / 1024 / 1024).toFixed(1)} MB even made small, more than ${said}. A shorter stretch would do.`, true);
 }
 
 /**
- * Renders 16 evenly spaced frames of a blockout cut and tiles them into a 4×4 storyboard contact sheet JPEG, sent as
- * the first reference picture (`mode: "sheet"`). Much cheaper than reference video and compatible with multi-ref models.
+ * Renders 16 evenly spaced frames of a blockout (shot-owned or legacy cut) and tiles them into a 4×4 storyboard
+ * contact sheet JPEG, saved as a deduplicated snapshot in `made/blockouts/<hash>.jpg` and sent as the first reference.
  */
 async function blockoutSheet(projectId: string, dir: string, job: MakeJob): Promise<string> {
   const c = job.request.camera;
-  if (!c || !("cut" in c)) throw new FalError("A contact sheet needs a blockout cut", true);
+  if (!c || !isCameraBlockout(c)) throw new FalError("A contact sheet needs a blockout", true);
   const work = join(dir, ".cache", "camera", `${job.id}-sheet`);
   mkdirSync(work, { recursive: true });
-  const span = Math.max(0.05, c.to - c.from);
-  const times = Array.from({ length: 16 }, (_, i) => c.from + (span * i) / 15);
-  try {
-    await renderBlockoutStills(projectId, { cut: c.cut, format: c.format, times, scale: 0.35, dir: work });
-  } catch (err) {
-    throw new FalError(`The blockout sheet (cut "${c.cut}") couldn't be rendered: ${err instanceof Error ? err.message : String(err)}`, true);
-  }
   const out = join(dir, ".cache", "camera", `${job.id}-sheet.jpg`);
-  await exec("ffmpeg", ["-v", "error", "-y", "-i", join(work, "still-%03d.jpg"), "-vf", "tile=4x4:padding=4:color=white", "-frames:v", "1", "-q:v", "3", out]);
-  return out;
+  try {
+    if ("blockout" in c) {
+      const owner = loadProject(projectId, c.cut).project;
+      const shot = owner.shots.find((s) => s.id === c.shot);
+      if (!shot?.blockout?.beats.length) throw new FalError(`Shot "${c.shot}" no longer has a blockout to render`, true);
+      const bp = blockoutProject(owner, shot.id, shot.blockout, job.request.aspect);
+      const span = Math.max(0.05, bp.duration);
+      const times = Array.from({ length: 16 }, (_, i) => (span * i) / 15);
+      await renderBlockoutStills(projectId, { cut: c.cut, format: bp.format.id, times, scale: 0.35, dir: work, project: bp.project });
+    } else {
+      const span = Math.max(0.05, c.to - c.from);
+      const times = Array.from({ length: 16 }, (_, i) => c.from + (span * i) / 15);
+      await renderBlockoutStills(projectId, { cut: c.cut, format: c.format, times, scale: 0.35, dir: work });
+    }
+    await exec("ffmpeg", ["-v", "error", "-y", "-i", join(work, "still-%03d.jpg"), "-vf", "tile=4x4:padding=4:color=white", "-frames:v", "1", "-q:v", "3", out]);
+    return persistBlockoutSnapshot(projectId, dir, job, out, "image");
+  } catch (err) {
+    if (err instanceof FalError) throw err;
+    throw new FalError(`The blockout sheet couldn't be rendered: ${err instanceof Error ? err.message : String(err)}`, true);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+    rmSync(out, { force: true });
+  }
 }
 
-/** Renders a stretch of a cut to a file, without the sound pass (set by tests to stand in for the renderer). */
-let renderStretch = async (projectId: string, opts: { cut: string; format: string; range: { from: number; to: number }; out: string }): Promise<void> => {
+/** Renders a stretch of a cut (or stand-in `project`) to a file, without the sound pass (set by tests to stand in for the renderer). */
+let renderStretch = async (projectId: string, opts: { cut: string; format: string; range: { from: number; to: number }; out: string; project?: Project }): Promise<void> => {
   const { renderProject } = await import("./render.ts");
   await renderProject(projectId, { ...opts, quality: "original", master: false });
 };
 export const setRenderStretch = (fn: typeof renderStretch) => void (renderStretch = fn);
 
-/** Renders stills of a blockout cut for 4×4 contact-sheet mode (set by tests to stand in for the renderer). */
-let renderBlockoutStills = async (projectId: string, opts: { cut: string; format: string; times: number[]; scale: number; dir: string }): Promise<string[]> => {
+/** Renders stills of a blockout (cut or stand-in `project`) for 4×4 contact-sheet mode (set by tests to stand in for the renderer). */
+let renderBlockoutStills = async (projectId: string, opts: { cut: string; format: string; times: number[]; scale: number; dir: string; project?: Project }): Promise<string[]> => {
   const { renderStills } = await import("./render.ts");
   return renderStills(projectId, opts);
 };

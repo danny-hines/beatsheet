@@ -31,6 +31,7 @@ import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
 import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, startPicked, turnBudget, type MakeAsk } from "./make.ts";
+import { prepareMake } from "./prepare.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
 import { addRecording, incomingPath, type RecordingKind } from "./record.ts";
@@ -347,7 +348,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, { ok: true });
   }
   if (section === "settings") {
-    const body = req.method === "POST" ? (JSON.parse((await readBody(req)) || "{}") as { id?: string; model?: string; thinking?: string; key?: string; level?: string; on?: boolean }) : {};
+    const body = req.method === "POST" ? (JSON.parse((await readBody(req)) || "{}") as { id?: string; model?: string; fastModel?: string; thinking?: string; key?: string; level?: string; on?: boolean }) : {};
     if (!id && req.method === "GET") {
       await findSavedKeys();
       return json(res, 200, { settings: readSettings(), services: listServices(), capabilities: capabilities(), vision: await visionStatus(), sam: samStatus() });
@@ -465,10 +466,19 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (id === "agent" && req.method === "POST") {
       if (!AGENT_IDS.includes(body.id as AgentId)) return json(res, 400, { error: "Which agent?" });
       if (body.thinking && !/^[\w.:/-]+$/.test(body.thinking)) return json(res, 400, { error: `Unknown thinking level "${body.thinking}"` });
+      if (body.fastModel && !/^[\w.:/-]+$/.test(body.fastModel)) return json(res, 400, { error: `Unknown fast model "${body.fastModel}"` });
       return json(
         res,
         200,
-        updateSettings((s) => void (s.agent = { id: body.id as AgentId, model: body.model, ...(body.thinking ? { thinking: body.thinking } : {}) })),
+        updateSettings(
+          (s) =>
+            void (s.agent = {
+              id: body.id as AgentId,
+              model: body.model,
+              ...(body.thinking ? { thinking: body.thinking } : {}),
+              ...(body.fastModel ? { fastModel: body.fastModel } : {}),
+            }),
+        ),
       );
     }
     if (id === "done" && req.method === "POST") return json(res, 200, updateSettings((s) => void (s.setupDone = true)));
@@ -637,11 +647,20 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // speechFrom to speechTo), or "none"; and clip "take" to change the mouths in the clip the shot shows.
     const says = q.get("speech");
     const lines = q.get("lines")?.split(",").filter(Boolean);
-    // The blockout a take keeps the camera of: camera (a cut's id, or "none" for none), cameraShots (its shots), and cameraMode ("video" or "sheet").
+    // The blockout a take keeps the camera of: "blockout" (shot's own blockout), a legacy cut id, or "none"; plus cameraShots and cameraMode.
     const keeps = q.get("camera");
     const cameraShots = q.get("cameraShots")?.split(",").filter(Boolean);
     const cameraMode = q.get("cameraMode") === "sheet" ? ("sheet" as const) : q.get("cameraMode") === "video" ? ("video" as const) : undefined;
+    const refs = q.get("refs")?.split(",").filter(Boolean);
     const speech = says === "none" ? { speech: null } : says === "lines" ? { speech: lines?.length ? { lines } : {} } : says ? { speech: { asset: says, from: at("speechFrom"), to: at("speechTo") } } : {};
+    const cameraAsk =
+      keeps === "none"
+        ? { camera: null }
+        : keeps === "blockout"
+          ? { camera: { blockout: true as const, ...(cameraMode ? { mode: cameraMode } : {}) } }
+          : keeps
+            ? { camera: { cut: keeps, ...(cameraShots?.length ? { shots: cameraShots } : {}), ...(cameraMode ? { mode: cameraMode } : {}) } }
+            : {};
     try {
       return json(
         res,
@@ -654,9 +673,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(q.get("portrait") === "1" ? { portrait: true } : {}),
           start: q.get("start") ?? undefined,
           ...(q.get("end") === "none" ? { end: null } : q.get("end") ? { end: q.get("end")! } : {}),
+          ...(refs?.length ? { refs } : {}),
           ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
           ...speech,
-          ...(keeps === "none" ? { camera: null } : keeps ? { camera: { cut: keeps, ...(cameraShots?.length ? { shots: cameraShots } : {}), ...(cameraMode ? { mode: cameraMode } : {}) } } : {}),
+          ...cameraAsk,
           ...(q.get("clip") === "take" ? { clip: "take" as const } : {}),
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,
@@ -666,6 +686,16 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(seconds > 0 ? { seconds } : {}),
         }),
       );
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  // Smart Prep: lightweight fast-model planning that turns a short description into a pre-filled Creation Screen plan.
+  if (section === "projects" && id && action === "make" && parts[3] === "prepare" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { cut?: string; shot?: string; intent?: string };
+    if (!body.intent?.trim()) return json(res, 400, { error: "Describe what you want to make" });
+    try {
+      return json(res, 200, await prepareMake(id, { cut: body.cut, shot: body.shot, intent: body.intent.trim() }));
     } catch (err) {
       return json(res, 400, { error: said(err) });
     }

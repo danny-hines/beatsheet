@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { aspectOf, cameraOfTake, CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { aspectOf, blockoutDuration, cameraOfTake, CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { blockoutCuts, BlockoutPlayer, useBlockout, type BlockoutPick } from "./Blockout";
@@ -168,8 +168,14 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
   const board = showing?.kind === "image" ? showing.id : c.kind === "generated" ? c.start : undefined;
   const format = p.formats[0]!;
 
-  // The camera its takes kept: what the shot says, or for a shot that doesn't, what the take it shows was asked to keep.
-  const lastCamera = c.kind === "generated" ? (c.camera ?? cameraOfTake(showing)) : undefined;
+  // The camera its takes kept: what the shot says, its shot-owned blockout, or what the take it shows was asked to keep.
+  const hasShotBlockout = !!shot.blockout?.beats.length;
+  const lastCamera =
+    c.kind === "generated"
+      ? (c.camera ?? cameraOfTake(showing) ?? (hasShotBlockout ? { blockout: true as const, ...(shot.blockout?.mode ? { mode: shot.blockout.mode } : {}) } : undefined))
+      : hasShotBlockout
+        ? { blockout: true as const, ...(shot.blockout?.mode ? { mode: shot.blockout.mode } : {}) }
+        : undefined;
   const [op, setOp] = useState<MakeOp>(board || lastCamera ? "video" : "image");
   // A still is told what's in the frame and a clip what moves. A clip has the still's words until it has its own.
   const prompt = c.kind === "placeholder" ? c.description : ((op === "video" ? c.clipPrompt : undefined) ?? c.prompt);
@@ -206,22 +212,31 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
   const start = op === "video" && fromBoard && !changing ? board : undefined;
   // The frame its clips ended on, which a new one ends on too; one that copies movement or says a line doesn't take one.
   const keeping = op === "video" && !speaking && !follow ? cam : undefined;
+  const shotBlockout = keeping && "blockout" in keeping && hasShotBlockout ? keeping : undefined;
   const blockout = keeping && "cut" in keeping ? keeping : undefined;
+  const blockoutPick: BlockoutPick | undefined = shotBlockout
+    ? { blockout: true, shot: shot.id, cut: cutId, mode: shotBlockout.mode }
+    : blockout;
   const shape = aspectOf(format.width, format.height);
-  const stretch = useBlockout(blockout, shape);
-  useEffect(() => onCamera?.(blockout), [blockout?.cut, blockout?.shots?.join()]); // eslint-disable-line react-hooks/exhaustive-deps
+  const stretch = useBlockout(blockoutPick, shape);
+  useEffect(
+    () => onCamera?.(blockoutPick),
+    [shotBlockout?.mode, blockout?.cut, blockout?.shots?.join(), shot.id, hasShotBlockout], // eslint-disable-line react-hooks/exhaustive-deps
+  );
   const endFrame = start && !speaking && !follow && !keeping && c.kind === "generated" ? c.end : undefined;
   const end = endFrame && toEnd ? endFrame : undefined;
   const length = seconds && Number.isFinite(seconds) ? round2(seconds) : undefined;
   const drive = op === "video" ? (follow && !speaking ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
   const lipsync = op === "video" ? (speaking ? { speech: "lines", ...(changing ? { clip: "take" } : {}) } : { speech: "none" }) : {};
-  // The stretch of a clip a take keeps the camera of is the shot's own (the agent set it); the form picks blockouts.
+  // Shot-owned blockout ("blockout"), legacy cut blockout, or clip camera stretch.
   const camera =
     op === "video"
       ? keeping
-        ? "cut" in keeping
-          ? { camera: keeping.cut, cameraShots: keeping.shots?.join(","), ...(keeping.mode ? { cameraMode: keeping.mode } : {}) }
-          : {}
+        ? "blockout" in keeping
+          ? { camera: "blockout", ...(keeping.mode ? { cameraMode: keeping.mode } : {}) }
+          : "cut" in keeping
+            ? { camera: keeping.cut, cameraShots: keeping.shots?.join(","), ...(keeping.mode ? { cameraMode: keeping.mode } : {}) }
+            : {}
         : { camera: "none" }
       : {};
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
@@ -409,16 +424,58 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
           )}
         </>
       )}
-      {op === "video" && (blockouts.length > 0 || !!cam) && !speaking && !follow && (
+      {op === "video" && (hasShotBlockout || blockouts.length > 0 || !!cam) && !speaking && !follow && (
         <>
-          <label className="check-row small" title="The take keeps the camera of a blockout: its move, its framing, its timing and where its cuts fall. A blockout is another cut that draws them: a grey set, a stand-in for each person, and the camera's move">
-            <input type="checkbox" checked={!!cam} onChange={(e) => setCam(e.target.checked ? { cut: blockouts[0]!.id } : undefined)} />
-            Keep a blockout's camera
+          <label className="check-row small" title="The take keeps the camera of this shot's 3D blockout (or a legacy blockout cut): its move, framing, timing and cuts">
+            <input
+              type="checkbox"
+              checked={!!cam}
+              onChange={(e) =>
+                setCam(
+                  e.target.checked
+                    ? hasShotBlockout
+                      ? { blockout: true, ...(shot.blockout?.mode ? { mode: shot.blockout.mode } : {}) }
+                      : { cut: blockouts[0]!.id }
+                    : undefined,
+                )
+              }
+            />
+            Keep {hasShotBlockout ? "this shot's blockout camera" : "a blockout's camera"}
           </label>
           {cam && "asset" in cam && (
             <p className="dim small">
               The camera of {p.assets.find((a) => a.id === cam.asset)?.label ?? cam.asset}, from {cam.from}s{cam.to !== undefined ? ` to ${cam.to}s` : ""}.
             </p>
+          )}
+          {shotBlockout && blockoutPick && (
+            <div className="camera-pick">
+              <div className="make-row small">
+                <div className="segmented" role="group" aria-label="How the blockout is sent">
+                  <button
+                    className={(shotBlockout.mode ?? "video") === "video" ? "on" : ""}
+                    onClick={() => setCam({ blockout: true })}
+                    title="Send the rendered blockout clip as reference video (Seedance 2.5 exact timing; bills blockout seconds too)"
+                  >
+                    Reference clip
+                  </button>
+                  <button
+                    className={shotBlockout.mode === "sheet" ? "on" : ""}
+                    onClick={() => setCam({ blockout: true, mode: "sheet" })}
+                    title="Render a 4×4 16-frame contact sheet sent as a reference image (no video surcharge)"
+                  >
+                    16-frame sheet
+                  </button>
+                </div>
+              </div>
+              {strip && (
+                <div className="camera-preview" style={{ aspectRatio: stretch ? `${stretch.format.width} / ${stretch.format.height}` : "16 / 9" }}>
+                  <BlockoutPlayer pick={blockoutPick} aspect={shape} />
+                </div>
+              )}
+              <p className="dim small">
+                Shot {shot.id}'s blockout ({blockoutDuration(shot.blockout!)}s) · saved as an immutable snapshot with this take.
+              </p>
+            </div>
           )}
           {blockout && (
             <div className="camera-pick">
@@ -498,8 +555,8 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
           )}
         </>
       )}
-      {!strip && op === "video" && !blockouts.length && !cam && (
-        <p className="dim small">To direct the camera (an orbit, a push in, a cut on a beat), ask the agent for a blockout of this shot: a cut that draws the move, which a take then keeps.</p>
+      {!strip && op === "video" && !hasShotBlockout && !blockouts.length && !cam && (
+        <p className="dim small">To direct the camera (an orbit, a push in, a cut on a beat), attach a blockout preset in Make or ask the agent to block out this shot.</p>
       )}
       <WhyNot
         choices={choices}
@@ -509,7 +566,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
             : follow
               ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive
               : keeping
-                ? "cut" in keeping && keeping.mode === "sheet"
+                ? ("blockout" in keeping || "cut" in keeping) && keeping.mode === "sheet"
                   ? (id) => (CATALOG.find((m) => m.id === id)?.takes.refs ?? 0) > 0
                   : (id) => !!CATALOG.find((m) => m.id === id)?.takes.camera
                 : undefined
@@ -531,7 +588,22 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
               shot: shot.id,
               prompt,
               count,
-              ...(op === "video" ? { quality, end: end ?? null, drive: speaking ? null : (follow ?? null), camera: keeping ?? null, speech: speaking ? {} : null, ...(changing ? { clip: "take" as const } : {}) } : {}),
+              ...(op === "video"
+                ? {
+                    quality,
+                    end: end ?? null,
+                    drive: speaking ? null : (follow ?? null),
+                    camera: keeping
+                      ? "blockout" in keeping
+                        ? { blockout: true as const, ...(keeping.mode ? { mode: keeping.mode } : {}) }
+                        : "cut" in keeping
+                          ? { cut: keeping.cut, ...(keeping.shots?.length ? { shots: keeping.shots } : {}), ...(keeping.mode ? { mode: keeping.mode } : {}) }
+                          : keeping
+                      : null,
+                    speech: speaking ? {} : null,
+                    ...(changing ? { clip: "take" as const } : {}),
+                  }
+                : {}),
               ...pickOf(model),
               ...(start ? { start } : {}),
               ...(length ? { seconds: length } : {}),

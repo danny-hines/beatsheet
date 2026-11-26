@@ -167,9 +167,9 @@ export async function renderStills(
   return files;
 }
 
-/** A JPEG of the cut at time t, for the agent to look at its own work. */
-export async function renderFrame(id: string, opts: { cut?: string; format?: string; t: number; scale?: number }): Promise<Buffer> {
-  const { url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "proxy");
+/** A JPEG of the cut (or stand-in `project`, e.g. a shot's blockout) at time t, for the agent to look at its own work. */
+export async function renderFrame(id: string, opts: { cut?: string; format?: string; t: number; scale?: number; project?: Project }): Promise<Buffer> {
+  const { url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "proxy", opts.project);
   const frame = Math.min(composition.durationInFrames - 1, Math.max(0, Math.round(opts.t * composition.fps)));
   const dir = join(tmpdir(), "beatsheet-stills");
   mkdirSync(dir, { recursive: true });

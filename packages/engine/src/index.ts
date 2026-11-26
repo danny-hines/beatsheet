@@ -15,6 +15,8 @@ export { serveApp } from "./app-server.ts";
 export type { VoiceInfo, VoicesInfo } from "./voices.ts";
 export { KOKORO_VOICES, kokoroReady, kokoroStatus, type KokoroStatus } from "./kokoro.ts";
 export type { MakeAsk, MakeJob, ProviderRow } from "./make.ts";
+export { pickFastModel } from "./agent/fast.ts";
+export type { MakeDraft, MakeInputMode, MakePlan, MakePlanStep } from "./prepare.ts";
 export type { ModelSize, WhisperStatus } from "./whispercpp.ts";
 export type { ToolId, ToolStatus } from "./fixtools.ts";
 export type { ComfyCheck, InstallStatus } from "./comfy.ts";

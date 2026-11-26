@@ -5,6 +5,7 @@ import { hideBroken, imageUrl, posterUrl, proxyUrl, RANGE_DRAG, runJob, stripUrl
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
 import { CleanSound, RestoreClip, useCleanSound } from "./Restore";
 import { ExtractSphere, PerformClip, RelightClip, StemsAndPitch, SwapClip } from "./ChangeClip";
+import { guideOfAsset } from "./GuideCompare";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { PopMenu, Stars, TextField } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
@@ -65,6 +66,8 @@ export function AssetView({ a }: { a: Asset }) {
   }, [a.id]);
 
   const isVideo = a.kind === "video";
+  const guide = guideOfAsset(projectId, doc, cutId, a);
+  const mode = useStore((s) => s.mode);
   const duration = a.duration ?? 0;
   const seek = (to: number) => {
     const v = video.current;
@@ -244,6 +247,23 @@ export function AssetView({ a }: { a: Asset }) {
       )}
       {(a.kind === "audio" || a.kind === "voice" || a.kind === "music") && (
         <audio key={a.id} className="asset-audio" controls preload="metadata" src={`/media/${projectId}/asset/${a.id}/original`} />
+      )}
+      {guide && mode !== "make" && (
+        <div className="asset-guide-banner small">
+          <span className="dim">Guided by {guide.label}</span>
+          <span className="spacer" />
+          <button
+            className="link small"
+            onClick={() => {
+              const guideShot = "shot" in guide ? guide.shot : undefined;
+              actions.setMode("make");
+              actions.select(guideShot && project.shots.some((s) => s.id === guideShot) ? { kind: "shot", id: guideShot } : { kind: "asset", id: a.id });
+            }}
+            title="Open side-by-side and wipe comparison in Make"
+          >
+            Compare side by side
+          </button>
+        </div>
       )}
       {a.version && (
         <p className="dim small">

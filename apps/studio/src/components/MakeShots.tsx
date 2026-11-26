@@ -1,19 +1,37 @@
 /**
  * Make's Shots page: the cut as the shots still to be made, a card each, with how far along each one is; and one shot
- * opened large: the take being looked at, the rest of its takes under it, and making more beside it. A pass makes
- * takes for every shot that needs one, priced first.
+ * opened large: the take being looked at (with unified side-by-side/wipe compare whenever guided by a blockout, motion
+ * clip, or source version), clips separated from intermediate first frames under it, and the shot's recipe + 1:1
+ * camera blockout beside it.
  */
-import { useEffect, useRef, useState } from "react";
-import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { aspectOf, cameraOfTake, CATALOG, FIDELITY, type Asset, type Fidelity, type MakeOp, type Project, type Quality, type Shot } from "@beatsheet/schema";
-import { ASSET_DRAG, FIDELITY_LABEL, hideBroken, imageUrl, posterUrl, proxyUrl, putInShot, round2, timeAgo } from "../lib";
+import { useEffect, useState } from "react";
+import type { MakeAsk, MakeDraft, MakeJob } from "@beatsheet/engine";
+import {
+  aspectOf,
+  blockoutDuration,
+  CATALOG,
+  FIDELITY,
+  PREVIS_BY_ID,
+  PREVIS_MOVES,
+  type Asset,
+  type Camera,
+  type Fidelity,
+  type MakeOp,
+  type Project,
+  type Quality,
+  type Shot,
+} from "@beatsheet/schema";
+import { ASSET_DRAG, FIDELITY_LABEL, hideBroken, posterUrl, projectFileUrl, proxyUrl, putInShot, round2, timeAgo } from "../lib";
 import { actions, useProject, useStore, useTimeline } from "../store";
-import { BlockoutPlayer, BlockoutWipe, useBlockout, type BlockoutHandle, type BlockoutPick } from "./Blockout";
+import { BlockoutPlayer } from "./Blockout";
+import type { CreateLaunch } from "./CreatePage";
+import { GuideCompare, guideOfAsset } from "./GuideCompare";
+import { Icon } from "./Icon";
 import { NotesFor } from "./Side";
-import { madeWith, money, pickOf, pickTake, Takes } from "./Takes";
+import { madeWith, money, pickOf, pickTake } from "./Takes";
+import { answer } from "./Turn";
 import { FidelityPill } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
-import { Icon } from "./Icon";
 
 export const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "running";
 
@@ -21,9 +39,89 @@ export const isOpen = (j: MakeJob) => j.status === "queued" || j.status === "run
 export function shotsToMake(p: Project): Shot[] {
   return p.shots.filter((s) => s.content.kind === "placeholder" || s.content.kind === "generated");
 }
-export const shotPrompt = (s: Shot, op?: MakeOp) => (s.content.kind === "placeholder" ? s.content.description : s.content.kind === "generated" ? ((op === "video" ? s.content.clipPrompt : undefined) ?? s.content.prompt) : "");
+export const shotPrompt = (s: Shot, op?: MakeOp) =>
+  s.content.kind === "placeholder" ? s.content.description : s.content.kind === "generated" ? ((op === "video" ? s.content.clipPrompt : undefined) ?? s.content.prompt) : "";
+
 /** A shot's takes, as the files they are. */
-const takesOf = (p: Project, s: Shot): Asset[] => (s.content.kind === "generated" ? (s.content.takes ?? (s.content.take ? [s.content.take] : [])) : []).flatMap((id) => p.assets.find((a) => a.id === id) ?? []);
+const takesOf = (p: Project, s: Shot): Asset[] =>
+  (s.content.kind === "generated" ? (s.content.takes ?? (s.content.take ? [s.content.take] : [])) : []).flatMap((id) => p.assets.find((a) => a.id === id) ?? []);
+
+/** Converts a completed asset or MakeJob into a Creation Screen launch draft (for Vary / Re-create). */
+export function draftFromAssetOrJob(a?: Asset, job?: MakeJob, shotId?: string): CreateLaunch {
+  const op: MakeOp = job?.op ?? (a?.kind === "video" ? "video" : "image");
+  const params = (a?.provenance?.params ?? {}) as {
+    prompt?: string;
+    model?: string;
+    quality?: Quality;
+    start?: string;
+    end?: string;
+    camera?: Camera;
+    drive?: { asset: string; from: number; to?: number };
+    speech?: unknown;
+    clip?: unknown;
+  };
+  const prompt = job?.request.prompt ?? params.prompt ?? a?.provenance?.prompt ?? "";
+  const model = job?.model ?? params.model;
+  const via = job?.route ?? a?.provenance?.provider;
+  const quality: Quality = job?.quality ?? params.quality ?? "rough";
+  const shot = job?.shot ?? shotId;
+  const camera = job?.request.camera ?? params.camera;
+  const drive = job?.request.drive ?? params.drive;
+  const speech = job?.request.speech ?? params.speech;
+  const clip = job?.request.clip ?? params.clip;
+  const start = job?.request.start ?? params.start;
+  const end = job?.request.end ?? params.end;
+  const refs = job?.request.refs ?? a?.provenance?.refs;
+
+  let inputMode: MakeDraft["inputMode"] = op === "image" ? (refs?.length ? "refs" : "text") : "board";
+  let useBlockout = false;
+  let blockoutMode: "video" | "sheet" | undefined;
+  let legacyCut: string | undefined;
+  if (op === "video") {
+    if (camera && "blockout" in camera) {
+      inputMode = "blockout";
+      useBlockout = true;
+      blockoutMode = camera.mode ?? "video";
+    } else if (camera && "cut" in camera) {
+      inputMode = "blockout";
+      blockoutMode = camera.mode ?? "video";
+      legacyCut = camera.cut;
+    } else if (drive) {
+      inputMode = "drive";
+    } else if (speech) {
+      inputMode = "speech";
+    } else if (start) {
+      inputMode = "board";
+    } else if (refs?.length) {
+      inputMode = "refs";
+    } else {
+      inputMode = "text";
+    }
+  }
+
+  return {
+    draft: {
+      op,
+      quality,
+      model,
+      via,
+      inputMode,
+      prompt,
+      shot,
+      ...(start ? { start } : {}),
+      ...(end ? { end } : {}),
+      ...(refs?.length ? { refs } : {}),
+      ...(useBlockout ? { useBlockout } : {}),
+      ...(blockoutMode ? { blockoutMode } : {}),
+      ...(drive ? { drive } : {}),
+      ...(speech ? { speech: true, speechDub: !!clip } : {}),
+      ...(job?.request.seconds ? { seconds: job.request.seconds } : a?.duration ? { seconds: Math.round(a.duration) } : {}),
+      ...(job?.request.aspect ? { aspect: job.request.aspect } : {}),
+      count: 1,
+    },
+    ...(legacyCut ? { legacyCut } : {}),
+  };
+}
 
 /**
  * The shots a pass makes takes for: for stills, the ones with no still yet; for clips, the ones with a still to start
@@ -35,7 +133,7 @@ export function passShots(p: Project, op: MakeOp, quality: Quality): Shot[] {
     const c = s.content;
     const takes = takesOf(p, s);
     if (op === "image") return !takes.some((a) => a.kind === "image");
-    const board = c.kind === "generated" && (kindOf(c.take)?.kind === "image" || !!c.start);
+    const board = c.kind === "generated" && (kindOf(c.take)?.kind === "image" || !!c.start || !!c.refs?.some((id) => kindOf(id)?.kind === "image"));
     const clips = takes.filter((a) => a.kind === "video");
     return board && (quality === "final" ? !clips.some((a) => a.provenance?.params?.quality === "final") : !clips.length);
   });
@@ -189,7 +287,9 @@ export function ShotsPage({ jobs, onStarted }: { jobs: MakeJob[]; onStarted: (jo
   const cutId = useStore((s) => s.cutId);
   const [pass, setPass] = useState<{ op: MakeOp; quality: Quality }>();
   const shots = shotsToMake(p);
-  const others = p.shots.filter((s) => p.tracks.find((t) => t.id === s.track)?.kind === "picture").length - shots.filter((s) => p.tracks.find((t) => t.id === s.track)?.kind === "picture").length;
+  const others =
+    p.shots.filter((s) => p.tracks.find((t) => t.id === s.track)?.kind === "picture").length -
+    shots.filter((s) => p.tracks.find((t) => t.id === s.track)?.kind === "picture").length;
   if (!shots.length) {
     return (
       <div className="make-empty">
@@ -197,7 +297,7 @@ export function ShotsPage({ jobs, onStarted }: { jobs: MakeJob[]; onStarted: (jo
         <p className="dim">
           Shots that are made rather than filmed show up here: placeholders the agent writes into the cut from your brief, and any you add in Edit. Each gets stills first, then a clip from the one you choose.
         </p>
-        <p className="dim small">Meanwhile, describe a picture below and it goes to the Library, or build the cast first.</p>
+        <p className="dim small">Meanwhile, describe what you want to make below or open the Creator to start a standalone still or clip.</p>
       </div>
     );
   }
@@ -255,6 +355,8 @@ export function ShotsPage({ jobs, onStarted }: { jobs: MakeJob[]; onStarted: (jo
 /** One shot on the Shots page: the take it shows (playing under the pointer), or what it's to be, and how far along it is. */
 function ShotCard({ shot, n, seconds, aspect, going }: { shot: Shot; n: number; seconds?: number; aspect: string; going: number }) {
   const projectId = useStore((s) => s.projectId)!;
+  const doc = useStore((s) => s.doc);
+  const cutId = useStore((s) => s.cutId);
   const p = useProject();
   const [hover, setHover] = useState(false);
   const [over, setOver] = useState(false);
@@ -264,13 +366,16 @@ function ShotCard({ shot, n, seconds, aspect, going }: { shot: Shot; n: number; 
   const stills = takes.filter((a) => a.kind === "image").length;
   const clips = takes.length - stills;
   const text = shotPrompt(shot);
+  const hasBlockout = !!shot.blockout?.beats.length || !!(c.kind === "generated" && c.camera && ("blockout" in c.camera || "cut" in c.camera));
+  const hasDrive = !!(c.kind === "generated" && c.drive);
+  const hasSpeech = !!(c.kind === "generated" && c.speech);
+  const takeGuide = take ? guideOfAsset(projectId, doc, cutId, take) : undefined;
   return (
     <button
       className={`shot-card ${over ? "over" : ""}`}
       onClick={() => actions.select({ kind: "shot", id: shot.id })}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      // A picture from the Library or the Made page, dropped here, becomes the take the shot shows.
       onDragOver={(e) => {
         if (!e.dataTransfer.types.includes(ASSET_DRAG)) return;
         e.preventDefault();
@@ -308,8 +413,19 @@ function ShotCard({ shot, n, seconds, aspect, going }: { shot: Shot; n: number; 
       <span className="shot-card-body">
         <span className="shot-card-label">{shot.label ?? shot.id}</span>
         {take && <span className="shot-card-text dim small">{text}</span>}
-        <span className="dim small">
-          {[stills && `${stills} still${stills === 1 ? "" : "s"}`, clips && `${clips} clip${clips === 1 ? "" : "s"}`].filter(Boolean).join(" · ") || "No takes yet"}
+        <span className="shot-guide-badges dim small">
+          <span>{[clips && `${clips} clip${clips === 1 ? "" : "s"}`, stills && `${stills} still${stills === 1 ? "" : "s"}`].filter(Boolean).join(" · ") || "No takes yet"}</span>
+          {(hasBlockout || takeGuide?.kind === "snapshot-video" || takeGuide?.kind === "snapshot-sheet" || takeGuide?.kind === "live-blockout") && (
+            <span className="pill small" title="Has a 3D camera blockout">
+              <Icon name="camera" size={10} /> Blockout
+            </span>
+          )}
+          {(hasDrive || (takeGuide?.kind === "clip" && takeGuide.role === "drive")) && (
+            <span className="pill small" title="Motion-copy guided">
+              Motion copy
+            </span>
+          )}
+          {hasSpeech && <span className="pill small">Lip sync</span>}
         </span>
       </span>
     </button>
@@ -317,22 +433,45 @@ function ShotCard({ shot, n, seconds, aspect, going }: { shot: Shot; n: number; 
 }
 
 /**
- * One shot, large: the take being looked at, every take it has under it (the one the cut shows marked), and making
- * more beside it. Looking at a take doesn't change the cut; Use this take does. When a take is to keep a blockout's
- * camera, the blockout plays beside the take, and the two can be played together.
+ * One shot, large: unified GuideCompare stage (works for saved blockout snapshots, 16-frame contact sheets,
+ * legacy blockout cuts, motion-copy clips, and versions), clean Clips vs Boards tray under it, and a streamlined
+ * Shot Recipe + 1:1 Camera Blockout panel beside it with 1-click Make take… into the full Creation Screen.
  */
-export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: MakeJob[]; back: () => void; backLabel: string }) {
+export function ShotPage({
+  shot,
+  jobs,
+  back,
+  backLabel,
+  onCreate,
+  onStarted,
+}: {
+  shot: Shot;
+  jobs: MakeJob[];
+  back: () => void;
+  backLabel: string;
+  onCreate: (launch: CreateLaunch) => void;
+  onStarted: (jobs: MakeJob[]) => void;
+}) {
   const projectId = useStore((s) => s.projectId)!;
   const cutId = useStore((s) => s.cutId);
+  const doc = useStore((s) => s.doc);
   const p = useProject();
   const tl = useTimeline();
   const r = tl.shots.find((x) => x.id === shot.id);
   const seconds = r && Number.isFinite(r.end - r.start) ? round2(r.end - r.start) : undefined;
   const c = shot.content;
   const takes = takesOf(p, shot);
+  const clips = takes.filter((a) => a.kind === "video");
+  const stills = takes.filter((a) => a.kind === "image");
   const showing = c.kind === "generated" ? c.take : undefined;
   const [looking, setLooking] = useState<string>();
   const [large, setLarge] = useState(false);
+  const [showAllStills, setShowAllStills] = useState(false);
+  const [presetPick, setPresetPick] = useState("orbit");
+  const [tweakNote, setTweakNote] = useState("");
+  const [rerolling, setRerolling] = useState(false);
+  const [rerollError, setRerollError] = useState("");
+
   // A take that's just arrived is the one to look at.
   const last = takes.at(-1)?.id;
   const [seen, setSeen] = useState(takes.length);
@@ -340,28 +479,129 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
     if (takes.length > seen && last) setLooking(last);
     setSeen(takes.length);
   }, [takes.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const look = takes.find((a) => a.id === looking) ?? takes.find((a) => a.id === showing) ?? takes.at(-1);
+  const lookJob = look ? jobs.find((j) => j.asset === look.id) : undefined;
+  const guide = guideOfAsset(projectId, doc, cutId, look);
   const going = jobs.filter((j) => isOpen(j) && j.shot === shot.id && (!j.cut || j.cut === cutId));
+  const goingClips = going.filter((j) => j.op === "video");
+  const goingStills = going.filter((j) => j.op === "image");
   const list = shotsToMake(p);
   const at = list.indexOf(shot);
   const go = (s: Shot | undefined) => s && actions.select({ kind: "shot", id: s.id });
   const format = p.formats[0]!;
   const aspect = `${format.width} / ${format.height}`;
+  const shape = aspectOf(format.width, format.height);
   const editShot = (fn: (s: Shot) => void) => actions.edit((d) => fn(d.shots.find((s) => s.id === shot.id)!));
   const kind = (a: Asset) => (a.kind === "video" ? (a.provenance?.params?.quality === "final" ? "Final" : "Rough clip") : "Still");
-  // The blockout beside the take: the one the make form is set to keep the camera of (the stretch the engine would
-  // render and send), else the one the take being looked at kept, as that cut is now. It can be put away.
-  const [picked, setPicked] = useState<BlockoutPick>();
-  const [away, setAway] = useState(false);
-  const [compare, setCompare] = useState<"side" | "wipe">("side");
-  const followed = cameraOfTake(look);
-  const its = picked ?? (followed && "cut" in followed ? followed : undefined);
-  const cam = away ? undefined : its;
-  const blockout = useBlockout(cam, aspectOf(format.width, format.height));
-  const video = useRef<HTMLVideoElement>(null);
-  const drawn = useRef<BlockoutHandle>(null);
-  const kept = look?.provenance?.params?.camera as { cut?: string } | undefined;
-  const doc = useStore((s) => s.doc);
+
+  // Active board still for this shot (used to launch video generation and keep the tray tidy once clips exist).
+  const isImg = (id: string | undefined) => !!id && stills.some((s) => s.id === id);
+  const activeBoardId =
+    (c.kind === "generated" && isImg(c.take) ? c.take : undefined) ??
+    (c.kind === "generated" && isImg(c.start) ? c.start : undefined) ??
+    (c.kind === "generated" ? c.refs?.find(isImg) : undefined) ??
+    stills.at(-1)?.id;
+  const activeBoard = activeBoardId ? stills.find((s) => s.id === activeBoardId) : undefined;
+
+  const hasBlockout = !!shot.blockout?.beats.length;
+  const currentPrevisMove = shot.blockout?.beats.length === 1 && shot.blockout.beats[0]?.component === "kit:Previs" ? (shot.blockout.beats[0]?.props?.move as string | undefined) : undefined;
+
+  const attachPreset = (presetId: string) => {
+    const preset = PREVIS_BY_ID.get(presetId) ?? PREVIS_MOVES[0]!;
+    const dur = Math.max(2, Math.min(15, Math.round(seconds ?? 5)));
+    editShot((s) => {
+      s.blockout = {
+        beats: [{ id: preset.id, label: preset.label, duration: dur, component: "kit:Previs", props: { move: preset.id } }],
+        mode: s.blockout?.mode ?? "video",
+        note: preset.summary,
+      };
+    });
+  };
+
+  const askAgentBlockout = (note?: string) => {
+    const text = note?.trim();
+    setTweakNote("");
+    void answer({
+      text: text
+        ? `On shot ${shot.id}'s 3D camera blockout: ${text}. Update it using set_blockout (never create a separate cut) and hand off a blockout review.`
+        : `Design a 3D camera blockout for shot ${shot.id} (${shot.label ?? shotPrompt(shot)}) using set_blockout (never create a separate cut), and hand off a blockout review so I can check the move before generating video.`,
+    });
+  };
+
+  // Smart default launch into Creation Screen based on shot stage.
+  const openMakeTake = (override?: Partial<MakeDraft>) => {
+    const defaultOp: MakeOp = override?.op ?? (activeBoard || hasBlockout ? "video" : "image");
+    const defaultInputMode: MakeDraft["inputMode"] =
+      override?.inputMode ?? (defaultOp === "image" ? "refs" : hasBlockout ? "blockout" : activeBoard ? "board" : "board");
+    onCreate({
+      backLabel: `Shot ${shot.id}`,
+      draft: {
+        shot: shot.id,
+        op: defaultOp,
+        quality: clips.length ? "final" : "rough",
+        inputMode: defaultInputMode,
+        prompt: shotPrompt(shot, defaultOp),
+        ...(defaultOp === "video" && activeBoard && defaultInputMode === "board" ? { start: activeBoard.id } : {}),
+        ...(defaultOp === "video" && activeBoard && defaultInputMode === "blockout" ? { refs: [activeBoard.id] } : {}),
+        ...(hasBlockout && defaultInputMode === "blockout" ? { useBlockout: true, blockoutMode: shot.blockout?.mode ?? "video" } : {}),
+        ...(seconds ? { seconds } : {}),
+        count: defaultOp === "image" ? 2 : 1,
+        ...override,
+      },
+    });
+  };
+
+  // 1-click re-roll of the currently viewed take using its exact job/provenance recipe.
+  const rerollLook = async () => {
+    if (!look) return;
+    setRerollError("");
+    setRerolling(true);
+    try {
+      const launch = draftFromAssetOrJob(look, lookJob, shot.id);
+      const d = launch.draft!;
+      const ask: MakeAsk = {
+        op: d.op!,
+        cut: cutId,
+        shot: shot.id,
+        prompt: d.prompt || shotPrompt(shot, d.op),
+        count: 1,
+        ...(d.model ? { model: d.model } : {}),
+        ...(d.via ? { via: d.via } : {}),
+        ...(d.refs?.length ? { refs: d.refs } : {}),
+        ...(d.op === "video"
+          ? {
+              quality: d.quality ?? "rough",
+              ...(d.start ? { start: d.start } : {}),
+              end: d.end ?? null,
+              drive: d.drive ?? null,
+              speech: d.speech ? {} : null,
+              ...(d.speech && d.speechDub ? { clip: "take" as const } : {}),
+              camera: d.useBlockout
+                ? { blockout: true, ...(d.blockoutMode ? { mode: d.blockoutMode } : {}) }
+                : launch.legacyCut
+                  ? { cut: launch.legacyCut, ...(d.blockoutMode ? { mode: d.blockoutMode } : {}) }
+                  : null,
+              ...(seconds ? { seconds } : {}),
+            }
+          : {}),
+      };
+      const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ask) });
+      const j = (await res.json()) as { jobs?: MakeJob[]; error?: string };
+      if (!res.ok || !j.jobs) throw new Error(j.error ?? `${res.status}`);
+      onStarted(j.jobs);
+    } catch (e) {
+      setRerollError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRerolling(false);
+    }
+  };
+
+  // When clips exist, keep the primary still visible and fold earlier first-frame attempts behind a toggle.
+  const hasClipsOrGoing = clips.length > 0 || goingClips.length > 0;
+  const pinnedStills = hasClipsOrGoing && !showAllStills ? stills.filter((s) => s.id === activeBoardId || s.id === look?.id || s.id === showing) : stills;
+  const hiddenStillsCount = stills.length - pinnedStills.length;
+
   return (
     <div className="make-page shot-page">
       <header className="page-head">
@@ -400,82 +640,59 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
       </header>
       <div className="shot-cols">
         <section className="shot-stage-col">
-          {cam && look && compare === "wipe" ? (
-            <BlockoutWipe
-              pick={cam}
-              aspect={look.width && look.height ? `${look.width} / ${look.height}` : aspect}
-              label={blockout ? `${blockout.name} · ${round2(blockout.to - blockout.from)}s` : undefined}
-              blockoutRef={drawn}
-            >
-              {look.kind === "video" ? (
-                <video ref={video} key={look.id} src={proxyUrl(projectId, look.id)} poster={posterUrl(projectId, look.id)} controls loop playsInline />
-              ) : (
-                <img key={look.id} src={imageUrl(projectId, look.id)} alt="" onError={hideBroken} />
-              )}
-            </BlockoutWipe>
+          {look ? (
+            <GuideCompare asset={look} guide={guide} aspect={aspect} onEnlarge={() => setLarge(true)} />
+          ) : hasBlockout ? (
+            <div className="stage blockout" style={{ aspectRatio: aspect }}>
+              <BlockoutPlayer pick={{ blockout: true, shot: shot.id, cut: cutId }} aspect={shape} />
+              <span className="stage-tag">Blockout · {blockoutDuration(shot.blockout!)}s</span>
+            </div>
           ) : (
-            <div className={`stage-pair ${cam ? "two" : ""}`}>
-              <div className={`stage ${look ? "" : "empty"}`} style={{ aspectRatio: look?.width && look.height ? `${look.width} / ${look.height}` : aspect }}>
-                {cam && look && <span className="stage-tag">Take</span>}
-                {look ? (
-                  look.kind === "video" ? (
-                    <video ref={video} key={look.id} src={proxyUrl(projectId, look.id)} poster={posterUrl(projectId, look.id)} controls loop playsInline />
-                  ) : (
-                    <img key={look.id} src={imageUrl(projectId, look.id)} alt="" onClick={() => setLarge(true)} onError={hideBroken} />
-                  )
-                ) : (
-                  <div className="stage-idea">
-                    <p>{shotPrompt(shot) || "Nothing written for this shot yet."}</p>
-                    <p className="dim small">{going.length ? "Its first takes are on the way." : "No takes yet. Make a few stills to settle the shot, then a clip from the one you like."}</p>
-                  </div>
+            <div className="stage empty" style={{ aspectRatio: aspect }}>
+              <div className="stage-idea">
+                <p>{shotPrompt(shot) || "Nothing written for this shot yet."}</p>
+                <p className="dim small">
+                  {going.length ? "Its first takes are on the way." : "No takes yet. Settle a cheap board still first, attach a camera blockout if needed, then generate video."}
+                </p>
+                {!going.length && (
+                  <button className="primary" onClick={() => openMakeTake({ op: "image" })}>
+                    Make first stills…
+                  </button>
                 )}
               </div>
-              {cam && (
-                <div className="stage blockout" style={{ aspectRatio: blockout ? `${blockout.format.width} / ${blockout.format.height}` : aspect }}>
-                  <BlockoutPlayer ref={drawn} pick={cam} aspect={aspectOf(format.width, format.height)} />
-                  <span className="stage-tag">
-                    Blockout{blockout ? ` · ${blockout.name} · ${round2(blockout.to - blockout.from)}s` : ""}
-                  </span>
-                </div>
-              )}
             </div>
           )}
+
           {look && (
             <div className="stage-bar">
               <span className="small">
                 {kind(look)}
-                <span className="dim">{[madeWith(look), look.duration ? `${look.duration.toFixed(1)}s` : "", look.provenance?.costUsd !== undefined ? `$${look.provenance.costUsd.toFixed(2)}` : "", look.provenance?.createdAt ? timeAgo(look.provenance.createdAt) : ""].filter(Boolean).map((x) => ` · ${x}`)}</span>
+                <span className="dim">
+                  {[
+                    madeWith(look),
+                    look.duration ? `${look.duration.toFixed(1)}s` : "",
+                    look.provenance?.costUsd !== undefined ? `$${look.provenance.costUsd.toFixed(2)}` : "",
+                    look.provenance?.createdAt ? timeAgo(look.provenance.createdAt) : "",
+                  ]
+                    .filter(Boolean)
+                    .map((x) => ` · ${x}`)}
+                </span>
               </span>
-              {kept?.cut && <span className="dim small">· kept the camera of {doc?.cuts.find((x) => x.id === kept.cut)?.name ?? kept.cut}</span>}
+              {(guide?.kind === "snapshot-video" || guide?.kind === "snapshot-sheet") && (
+                <span className="pill small" title="Exact blockout snapshot saved when this take was generated">
+                  Saved blockout snapshot
+                </span>
+              )}
               <span className="spacer" />
-              {cam && (
-                <div className="segmented" role="group" aria-label="Blockout view">
-                  <button className={compare === "side" ? "on" : ""} onClick={() => setCompare("side")} title="Show the take and the blockout side by side">
-                    Side by side
+              {look.provenance?.source === "generated" && (
+                <>
+                  <button disabled={rerolling} onClick={() => void rerollLook()} title="Generate 1 more take with the exact same settings">
+                    {rerolling ? "Starting…" : "Re-roll"}
                   </button>
-                  <button className={compare === "wipe" ? "on" : ""} onClick={() => setCompare("wipe")} title="Drag a divider across the take and the blockout">
-                    Wipe
+                  <button onClick={() => onCreate({ backLabel: `Shot ${shot.id}`, ...draftFromAssetOrJob(look, lookJob, shot.id) })} title="Open this take's settings in the full Creation Screen">
+                    Vary…
                   </button>
-                </div>
-              )}
-              {its && (
-                <button onClick={() => setAway(!away)} title={away ? "Play the blockout beside the take" : "Give the take the whole stage"}>
-                  {away ? "Show the blockout" : "Hide the blockout"}
-                </button>
-              )}
-              {cam && look.kind === "video" && (
-                <button
-                  onClick={() => {
-                    if (video.current) {
-                      video.current.currentTime = 0;
-                      void video.current.play();
-                    }
-                    drawn.current?.restart();
-                  }}
-                  title="Play the take and the blockout from their starts together, to compare the move, the framing and where the cuts fall"
-                >
-                  Play both
-                </button>
+                </>
               )}
               {look.id === showing ? (
                 <span className="in-cut small">
@@ -491,27 +708,207 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
               </button>
             </div>
           )}
+          {rerollError && <p className="warn small">{rerollError}</p>}
           {look && <Given a={look} />}
-          {takes.length + going.length > 0 && (
-            <div className="take-tray">
-              {takes.map((a) => (
-                <TrayTake key={a.id} a={a} projectId={projectId} looking={a.id === look?.id} showing={a.id === showing} badge={kind(a)} onLook={() => setLooking(a.id)} onUse={() => pickTake(shot.id, a.id, seconds)} />
-              ))}
-              {going.map((j) => (
-                <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title={j.op === "image" ? "A still on its way" : "A clip on its way"}>
-                  {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
-                </div>
-              ))}
+
+          {/* Video takes (hero tray) */}
+          {hasClipsOrGoing && (
+            <div className="tray-section">
+              <div className="tray-head small dim">
+                <span>
+                  Clips ({clips.length}
+                  {goingClips.length ? ` + ${goingClips.length} making` : ""})
+                </span>
+              </div>
+              <div className="take-tray">
+                {clips.map((a) => (
+                  <TrayTake
+                    key={a.id}
+                    a={a}
+                    projectId={projectId}
+                    looking={a.id === look?.id}
+                    showing={a.id === showing}
+                    guided={!!guideOfAsset(projectId, doc, cutId, a)}
+                    badge={kind(a)}
+                    onLook={() => setLooking(a.id)}
+                    onUse={() => pickTake(shot.id, a.id, seconds)}
+                  />
+                ))}
+                {goingClips.map((j) => (
+                  <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title="A clip on its way">
+                    {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
+
+          {/* Boards / first frames (collapses earlier attempts once clips exist) */}
+          {(stills.length > 0 || goingStills.length > 0) && (
+            <div className="tray-section">
+              <div className="tray-head small dim">
+                <span>
+                  {hasClipsOrGoing ? "Boards / first frames" : `Stills (${stills.length}${goingStills.length ? ` + ${goingStills.length} making` : ""})`}
+                </span>
+                {hiddenStillsCount > 0 && (
+                  <button className="link small tray-fold" onClick={() => setShowAllStills(true)}>
+                    + {hiddenStillsCount} earlier still{hiddenStillsCount === 1 ? "" : "s"}
+                  </button>
+                )}
+                {hasClipsOrGoing && showAllStills && stills.length > 1 && (
+                  <button className="link small tray-fold" onClick={() => setShowAllStills(false)}>
+                    Collapse earlier stills
+                  </button>
+                )}
+              </div>
+              <div className="take-tray">
+                {pinnedStills.map((a) => (
+                  <TrayTake
+                    key={a.id}
+                    a={a}
+                    projectId={projectId}
+                    looking={a.id === look?.id}
+                    showing={a.id === showing}
+                    badge={a.id === activeBoardId && hasClipsOrGoing ? "Board" : "Still"}
+                    onLook={() => setLooking(a.id)}
+                    onUse={() => pickTake(shot.id, a.id, seconds)}
+                  />
+                ))}
+                {goingStills.map((j) => (
+                  <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title="A still on its way">
+                    {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {shot.intent && shot.intent !== shot.label && (
             <p className="dim small">
               <strong>What it's for.</strong> {shot.intent}
             </p>
           )}
         </section>
+
+        {/* Right column: streamlined Shot Recipe + 1:1 Camera Blockout + Notes */}
         <aside className="shot-make-col inspector">
-          <Takes key={shot.id} shot={shot} seconds={seconds} strip={false} onCamera={setPicked} />
+          <div className="shot-recipe">
+            <h4>Make for this shot</h4>
+            <p className="small dim shot-recipe-prompt">{shotPrompt(shot) || "No prompt written yet."}</p>
+            <div className="shot-recipe-actions">
+              <button className="primary" onClick={() => openMakeTake()}>
+                <Icon name="add" size={12} /> {activeBoard || hasBlockout ? "Make video take…" : "Make board stills…"}
+              </button>
+              <div className="make-row">
+                {(activeBoard || hasBlockout) && (
+                  <button className="small" onClick={() => openMakeTake({ op: "image" })} title="Generate fresh board stills for this shot">
+                    New board stills…
+                  </button>
+                )}
+                {look?.kind === "image" && (
+                  <button className="small" onClick={() => openMakeTake({ op: "video", inputMode: hasBlockout ? "blockout" : "board", start: look.id, refs: hasBlockout ? [look.id] : undefined })} title="Animate this exact still into a video clip">
+                    Animate this still…
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="shot-blockout-card">
+            <div className="make-row">
+              <h4>Camera blockout</h4>
+              <span className="spacer" />
+              {hasBlockout && <span className="mono dim small">{blockoutDuration(shot.blockout!)}s</span>}
+            </div>
+            {hasBlockout ? (
+              <>
+                <div className="camera-preview" style={{ aspectRatio: aspect }}>
+                  <BlockoutPlayer pick={{ blockout: true, shot: shot.id, cut: cutId }} aspect={shape} />
+                </div>
+                <p className="dim small">
+                  {shot.blockout!.beats.map((b) => b.label ?? b.id).join(" → ")}
+                  {shot.blockout!.note ? ` · ${shot.blockout!.note}` : ""}
+                </p>
+                <div className="make-row small">
+                  <div className="segmented" role="group" aria-label="Default delivery mode">
+                    <button
+                      className={(shot.blockout!.mode ?? "video") === "video" ? "on" : ""}
+                      onClick={() => editShot((s) => s.blockout && void (s.blockout.mode = "video"))}
+                      title="Send rendered MP4 reference video (Seedance 2.5 exact timing)"
+                    >
+                      Reference clip
+                    </button>
+                    <button
+                      className={shot.blockout!.mode === "sheet" ? "on" : ""}
+                      onClick={() => editShot((s) => s.blockout && void (s.blockout.mode = "sheet"))}
+                      title="Send 4×4 16-frame contact sheet as reference image (no video surcharge)"
+                    >
+                      16-frame sheet
+                    </button>
+                  </div>
+                </div>
+                <div className="make-row small">
+                  <select
+                    value={currentPrevisMove ?? ""}
+                    onChange={(e) => e.target.value && attachPreset(e.target.value)}
+                    aria-label="Swap camera preset"
+                    title="Replace with a quick 3D camera preset"
+                  >
+                    <option value="">{currentPrevisMove ? "Swap preset…" : "Custom blockout (swap preset…)"}</option>
+                    {PREVIS_MOVES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="make-row">
+                  <input
+                    className="slot-tweak-input"
+                    value={tweakNote}
+                    onChange={(e) => setTweakNote(e.target.value)}
+                    placeholder='Ask agent to tweak (e.g. "slower orbit")…'
+                    onKeyDown={(e) => e.key === "Enter" && tweakNote.trim() && askAgentBlockout(tweakNote)}
+                  />
+                  <button className="small" disabled={!tweakNote.trim()} onClick={() => askAgentBlockout(tweakNote)}>
+                    Send
+                  </button>
+                </div>
+                <div className="make-row">
+                  <button
+                    className="small"
+                    onClick={() => openMakeTake({ op: "video", inputMode: "blockout", useBlockout: true, blockoutMode: shot.blockout?.mode ?? "video" })}
+                  >
+                    Generate from blockout…
+                  </button>
+                  <span className="spacer" />
+                  <button className="link danger small" onClick={() => editShot((s) => void delete s.blockout)}>
+                    Remove
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="dim small">1:1 3D camera guide for this shot (no separate cut). Pick a shot-type preset or ask the agent to block it out.</p>
+                <div className="make-row small">
+                  <select value={presetPick} onChange={(e) => setPresetPick(e.target.value)} aria-label="Camera preset">
+                    {PREVIS_MOVES.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                  <button className="small" onClick={() => attachPreset(presetPick)}>
+                    Use preset
+                  </button>
+                </div>
+                <button className="small" onClick={() => askAgentBlockout()}>
+                  Ask agent to block it out
+                </button>
+              </>
+            )}
+          </div>
+
           <NotesFor />
         </aside>
       </div>
@@ -529,25 +926,71 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
 }
 
 /**
- * What a take was made from, for one that came out wrong to be traced to what went in: every picture and clip it was
- * given, each named for the part it played (what it starts from, ends on, a reference), and the words it was told.
- * These are the agent's choices as much as the person's; the make form doesn't set references.
+ * What a take was made from, for one that came out wrong to be traced to what went in: every picture, driving clip,
+ * and camera blockout snapshot it was given, each named for the part it played, plus the words it was told.
  */
 export function Given({ a }: { a: Asset }) {
   const projectId = useStore((s) => s.projectId)!;
+  const doc = useStore((s) => s.doc);
   const p = useProject();
   const made = a.provenance;
   if (made?.source !== "generated") return null;
-  const asked = (made.params ?? {}) as { prompt?: string; start?: string; end?: string; drive?: { asset?: string }; clip?: { asset?: string }; camera?: { asset?: string } };
-  const part = (id: string) => (id === asked.start ? "Starts from" : id === asked.end ? "Ends on" : id === asked.drive?.asset ? "Moves like" : id === asked.clip?.asset ? "Mouths changed in" : id === asked.camera?.asset ? "Camera of" : "Reference");
-  const from = [...new Set([asked.start, asked.end, ...(made.refs ?? [])].filter((id): id is string => !!id))];
+  const asked = (made.params ?? {}) as {
+    prompt?: string;
+    start?: string;
+    end?: string;
+    drive?: { asset?: string };
+    clip?: { asset?: string };
+    camera?: Camera & { snapshot?: string; snapshotKind?: "video" | "image" };
+  };
+  const camAsset = asked.camera && "asset" in asked.camera ? asked.camera.asset : undefined;
+  const part = (id: string) =>
+    id === asked.start
+      ? "Starts from"
+      : id === asked.end
+        ? "Ends on"
+        : id === asked.drive?.asset
+          ? "Moves like"
+          : id === asked.clip?.asset
+            ? "Mouths changed in"
+            : id === camAsset
+              ? "Camera of"
+              : "Reference";
+  const from = [...new Set([asked.start, asked.end, asked.drive?.asset, asked.clip?.asset, camAsset, ...(made.refs ?? [])].filter((id): id is string => !!id))];
+  const camBlockout = asked.camera && ("blockout" in asked.camera || "cut" in asked.camera) ? asked.camera : undefined;
   const told = asked.prompt ?? made.prompt;
-  if (!from.length && !told) return null;
+  if (!from.length && !camBlockout && !told) return null;
   return (
     <div className="given">
-      {from.length > 0 && (
+      {(from.length > 0 || camBlockout) && (
         <div className="given-pics">
           <span className="dim small">Made from</span>
+          {camBlockout && (
+            <button
+              className="given-pic blockout"
+              onClick={() => {
+                if ("blockout" in camBlockout && p.shots.some((s) => s.id === camBlockout.shot)) actions.select({ kind: "shot", id: camBlockout.shot });
+                else if ("cut" in camBlockout && doc?.cuts.some((c) => c.id === camBlockout.cut)) {
+                  actions.visitCut(camBlockout.cut);
+                  actions.setMode("edit");
+                }
+              }}
+              title={
+                "blockout" in camBlockout
+                  ? `Blockout of shot ${camBlockout.shot}${camBlockout.snapshot ? ` (snapshot saved)` : ""}`
+                  : `Legacy blockout cut: ${doc?.cuts.find((c) => c.id === camBlockout.cut)?.name ?? camBlockout.cut}`
+              }
+            >
+              {camBlockout.snapshot && (camBlockout.snapshotKind === "image" || camBlockout.mode === "sheet") ? (
+                <img src={projectFileUrl(projectId, camBlockout.snapshot)} loading="lazy" alt="" onError={hideBroken} />
+              ) : (
+                <span className="given-pic-icon">
+                  <Icon name="camera" size={16} />
+                </span>
+              )}
+              <span>{camBlockout.mode === "sheet" ? "Blockout sheet" : "Blockout"}</span>
+            </button>
+          )}
           {from.map((id) => {
             const x = p.assets.find((y) => y.id === id);
             return (
@@ -570,7 +1013,25 @@ export function Given({ a }: { a: Asset }) {
 }
 
 /** A take in a shot's tray: click to look at it, double-click to use it. */
-function TrayTake({ a, projectId, looking, showing, badge, onLook, onUse }: { a: Asset; projectId: string; looking: boolean; showing: boolean; badge: string; onLook: () => void; onUse: () => void }) {
+function TrayTake({
+  a,
+  projectId,
+  looking,
+  showing,
+  guided,
+  badge,
+  onLook,
+  onUse,
+}: {
+  a: Asset;
+  projectId: string;
+  looking: boolean;
+  showing: boolean;
+  guided?: boolean;
+  badge: string;
+  onLook: () => void;
+  onUse: () => void;
+}) {
   const [hover, setHover] = useState(false);
   const video = a.kind === "video";
   return (
@@ -591,6 +1052,12 @@ function TrayTake({ a, projectId, looking, showing, badge, onLook, onUse }: { a:
       {video && hover ? <video src={proxyUrl(projectId, a.id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, a.id)} loading="lazy" alt="" onError={hideBroken} />}
       <span className="badge">
         {video && <Icon name="play" size={8} />} {badge}
+        {guided && (
+          <>
+            {" "}
+            <Icon name="camera" size={9} />
+          </>
+        )}
       </span>
       {showing && (
         <span className="tray-in" title="The take the cut shows">

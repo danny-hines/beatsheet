@@ -3,10 +3,11 @@
  * resolved, so the agent opens only what it needs instead of re-reading the whole project.
  */
 import { describeAnchor, describeTarget, formatTime } from "./describe.ts";
+import { blockoutDuration } from "./make.ts";
 import { resolveTimeline, type ResolvedShot, type Timeline } from "./resolve.ts";
 import { noteShots, type Note, type Project, type Shot } from "./types.ts";
 
-export type BatchShot = { id: string; label?: string; kind: string; fidelity: string; plays?: string; startsOn: string; content: string; intent?: string };
+export type BatchShot = { id: string; label?: string; kind: string; fidelity: string; plays?: string; startsOn: string; content: string; intent?: string; blockout?: string };
 
 export type BatchNote = {
   id: string;
@@ -73,6 +74,11 @@ export function buildBatch(p: Project, notes: Note[], opts: { file?: string } = 
           startsOn: s.start ? describeAnchor(s.start, p) : "end of previous shot",
           content: shotContentSummary(s, p),
           intent: s.intent,
+          ...(s.blockout
+            ? {
+                blockout: `${blockoutDuration(s.blockout)}s · ${s.blockout.mode ?? "video"} · ${s.blockout.beats.map((b) => `${b.label ?? b.id} (${b.component === "kit:Previs" ? String((b.props as { move?: string } | undefined)?.move ?? "push-in") : b.component}, ${b.duration}s)`).join(" → ")}${s.blockout.note ? ` — ${s.blockout.note}` : ""}`,
+              }
+            : {}),
         }));
       if (shots.length > 1) out.shots = shots;
       else if (shots[0]) out.shot = shots[0];

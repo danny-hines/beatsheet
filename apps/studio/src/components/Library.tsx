@@ -1,4 +1,4 @@
-import { formatTime, type Asset, type Project } from "@beatsheet/schema";
+import { classifyGeneratedAssets, formatTime, type Asset, type Project } from "@beatsheet/schema";
 import { useEffect, useMemo, useState } from "react";
 import { ASSET_DRAG, desktop, FOLDERS_APART, hideBroken, pickFootage, posterUrl, stripUrl, pathParts } from "../lib";
 import type { RecordKind } from "../record";
@@ -31,10 +31,14 @@ function usedIn(p: Project): Set<string> {
 /** The project's footage and music: what the agent made of each file, and whether this cut uses it. */
 export function Library() {
   const p = useProject();
+  const doc = useStore((s) => s.doc);
+  const cutId = useStore((s) => s.cutId);
   const projectId = useStore((s) => s.projectId)!;
   const selection = useStore((s) => s.selection);
   const [filter, setFilter] = useState<Filter>("all");
+  const [showIntermediates, setShowIntermediates] = useState(false);
   const used = useMemo(() => usedIn(p), [p]);
+  const classified = useMemo(() => (doc ? classifyGeneratedAssets(doc, cutId) : new Map()), [doc, cutId]);
   const [hover, setHover] = useState<{ a: Asset; top: number; fx: number } | null>(null);
   const [recording, setRecording] = useState<RecordKind | null>(null);
   const [menu, setMenu] = useState<{ as: Asset[]; x: number; y: number }>();
@@ -64,14 +68,22 @@ export function Library() {
   const recorded = (a: Asset) => a.provenance?.source === "recorded";
   const madeHere = (a: Asset) => !!a.cutout || (!!a.provenance && !["import", "capture", "recorded"].includes(a.provenance.source));
   const imported = footage.filter((a) => !madeHere(a) && !recorded(a));
+  const allMade = footage.filter((a) => madeHere(a) && !a.cutout && keep(a));
+  const isHiddenIntermediate = (a: Asset) => {
+    if (showIntermediates || filter === "rejected" || filter === "used") return false;
+    const cls = classified.get(a.id);
+    return !!cls?.intermediate && (a.rating ?? 0) < 3;
+  };
+  const visibleMade = allMade.filter((a) => !isHiddenIntermediate(a));
+  const hiddenMadeCount = allMade.length - visibleMade.length;
   const groups = [
     ...(p.sources.length > 1
       ? p.sources.map((s) => ({ key: s.id, label: s.label ?? pathParts(s.path).filter(Boolean).pop() ?? s.path, items: imported.filter((a) => (a.source ?? p.sources[0]!.id) === s.id && keep(a)) }))
       : [{ key: "all", label: "", items: imported.filter(keep) }]),
     { key: "recordings", label: "Recordings", items: footage.filter((a) => recorded(a) && keep(a)) },
     { key: "cutouts", label: "Cut-outs", items: footage.filter((a) => a.cutout && keep(a)) },
-    { key: "made", label: "Made here", items: footage.filter((a) => madeHere(a) && !a.cutout && keep(a)) },
-  ].filter((g) => (g.key === "all" && imported.length) || g.items.length);
+    { key: "made", label: "Made here", items: visibleMade, hidden: hiddenMadeCount },
+  ].filter((g) => (g.key === "all" && imported.length) || g.items.length || ("hidden" in g && (g.hidden ?? 0) > 0));
   const order = groups.flatMap((g) => g.items.map((a) => a.id));
   const pick = (a: Asset, e: React.MouseEvent) => {
     const shown = selection?.kind === "asset" ? selection.id : undefined;
@@ -119,7 +131,20 @@ export function Library() {
         {(footage.length > 0 || !!p.cast?.length) && <CastList />}
         {groups.map((g) => (
           <div key={g.key}>
-            {g.label && <div className="library-group dim small">{g.label}</div>}
+            {g.label && (
+              <div className="library-group dim small">
+                <span>{g.label}</span>
+                {g.key === "made" && (hiddenMadeCount > 0 || showIntermediates) && (
+                  <button
+                    className="link small library-more"
+                    onClick={() => setShowIntermediates((v) => !v)}
+                    title={showIntermediates ? "Hide intermediate stills, unused alt takes, and cast sheets" : "Show hidden intermediate stills, unused alt takes, and cast sheets"}
+                  >
+                    {showIntermediates ? "Hide intermediates" : `+${hiddenMadeCount} hidden`}
+                  </button>
+                )}
+              </div>
+            )}
             {g.items.map((a) => (
               <AssetRow
                 key={a.id}
@@ -141,7 +166,7 @@ export function Library() {
             ))}
           </div>
         ))}
-        {footage.length > 0 && groups.every((g) => !g.items.length) && <p className="dim small library-empty">Nothing here.</p>}
+        {footage.length > 0 && groups.every((g) => !g.items.length && !("hidden" in g && (g.hidden ?? 0) > 0)) && <p className="dim small library-empty">Nothing here.</p>}
         {!footage.length && <AddFootage big onRecord={setRecording} />}
         {music.length > 0 && filter !== "unrated" && filter !== "rejected" && (
           <div>
