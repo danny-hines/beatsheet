@@ -259,7 +259,7 @@ export function connectedStates(): Record<string, ServiceState> {
 }
 
 /** The plan that comes with each agent's sign-in, where it makes stills. */
-const AGENT_PLANS: Partial<Record<string, string>> = { codex: "chatgpt", muse: "muse-code" };
+const AGENT_PLANS: Partial<Record<string, string>> = { codex: "chatgpt", muse: "muse-code", antigravity: "antigravity" };
 
 /**
  * The provider in use for stills or for video: the person's choice (Settings → Making) while it's still connected.

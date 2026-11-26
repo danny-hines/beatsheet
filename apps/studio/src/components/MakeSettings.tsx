@@ -17,6 +17,7 @@ type MakeSettings = { limit?: { usd: number; since: string }; turnBudgetUsd: num
 const PLAN_NOTES: Record<string, string> = {
   chatgpt: "Sign in to Codex with ChatGPT (Settings → Agent) to use it.",
   "muse-code": "Sign in to Muse Code on a subscription (Settings → Agent) to use it.",
+  antigravity: "Sign in to Antigravity with Google (Settings → Agent) to use it.",
 };
 
 async function save(change: Record<string, unknown>): Promise<MakeSettings> {

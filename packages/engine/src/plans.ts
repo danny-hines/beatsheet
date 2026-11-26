@@ -1,26 +1,31 @@
 /**
- * Stills made on the person's own plan rather than by a key: GPT Image through Codex (a ChatGPT sign-in) and Muse
- * Image through Muse Code (a Muse subscription). Neither has an images endpoint for a plan, so each is one short,
- * throwaway agent turn in an empty folder that asks for one picture with the agent's own image tool and nothing else:
- * no beatsheet tools, no writes, and anything else it asks to do is refused. The picture comes back as a file.
- * Sign-ins stay in the CLIs; beatsheet only looks at whether there is one.
+ * Stills made on the person's own plan rather than by a key: GPT Image through Codex (a ChatGPT sign-in), Muse
+ * Image through Muse Code (a Muse subscription), and Nano Banana through Antigravity (a Google account). None has an
+ * images endpoint for a plan, so each is one short, throwaway agent turn in an empty folder that asks for one picture
+ * with the agent's own image tool and nothing else: no beatsheet tools, no writes, and anything else it asks to do is
+ * refused. The picture comes back inline or as a file. Sign-ins stay in the CLIs; beatsheet only looks at whether there
+ * is one.
  */
-import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import type { ServiceState } from "@beatsheet/schema";
+import { antigravityServer } from "./agent/antigravity-server.ts";
+import { authType, thinkingOf } from "./agent/antigravity.ts";
 import { cliEnv, findCli } from "./agent/cli.ts";
-import { StdioRpc, uuid7 } from "./agent/rpc.ts";
+import { StdioRpc, uuid7, type RpcId } from "./agent/rpc.ts";
 import { FalError } from "./fal.ts";
 
 export const PLANS = [
   { id: "chatgpt", label: "ChatGPT plan", cli: "codex" as const },
   { id: "muse-code", label: "Muse Code plan", cli: "muse" as const },
+  { id: "antigravity", label: "Antigravity plan", cli: "antigravity" as const },
 ];
 /** The routes this module runs. */
 export const PLAN_ROUTES = PLANS.map((p) => p.id);
 
 const codexHome = () => process.env.CODEX_HOME ?? join(homedir(), ".codex");
+const geminiHome = () => process.env.GEMINI_HOME ?? join(homedir(), ".gemini");
 const museConfig = () => join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "muse");
 const museData = () => join(process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "muse");
 
@@ -34,18 +39,21 @@ const readJson = (file: string): Record<string, unknown> | undefined => {
 
 /**
  * Whether each plan can make stills now, from the CLIs' own files (no request): Codex signed in with ChatGPT rather
- * than a key, and Muse Code signed in on a subscription that Meta has given the image tool to.
+ * than a key, Muse Code signed in on a subscription that Meta has given the image tool to, and Antigravity's ACP
+ * server installed and signed in with Google.
  */
 export function planStates(): Record<string, ServiceState> {
   const codex = readJson(join(codexHome(), "auth.json"));
   const muse = (readJson(join(museConfig(), "auth.json"))?.providers as { meta?: { subs_active?: boolean } } | undefined)?.meta;
+  const agyAuth = authType();
+  const agyReady = !!antigravityServer() && (agyAuth === "oauth-personal" || agyAuth === "oauth-business");
   // Meta turns Muse Code's image tool on account by account; Muse keeps the switches it was given in feature-config.
   const gates = (() => {
     const dir = join(museData(), "feature-config");
     if (!existsSync(dir)) return {};
     return Object.assign({}, ...readdirSync(dir).map((f) => (readJson(join(dir, f))?.gates as Record<string, boolean> | undefined) ?? {})) as Record<string, boolean>;
   })();
-  const [chatgpt, museCode] = PLANS.map((p) => p.label) as [string, string];
+  const [chatgpt, museCode, antigravity] = PLANS.map((p) => p.label) as [string, string, string];
   return {
     chatgpt: codex?.auth_mode === "chatgpt" ? { label: chatgpt, state: "ready" } : { label: chatgpt, state: "missing" },
     "muse-code": !muse?.subs_active
@@ -53,6 +61,7 @@ export function planStates(): Record<string, ServiceState> {
       : gates.meta_image_generation_plugin
         ? { label: museCode, state: "ready" }
         : { label: museCode, state: "failing", detail: "Meta hasn't turned on Muse Code's image tool for this account yet" },
+    antigravity: agyReady ? { label: antigravity, state: "ready" } : { label: antigravity, state: "missing" },
   };
 }
 
@@ -84,6 +93,7 @@ export async function planImage(route: string, a: Ask): Promise<PlanImage> {
   try {
     if (route === "chatgpt") return await viaCodex(work, a);
     if (route === "muse-code") return await viaMuse(work, a);
+    if (route === "antigravity") return await viaAntigravity(work, a);
     throw new FalError(`No plan "${route}"`, true);
   } finally {
     // The CLI can take a moment to let go of its folder on Windows; a folder left in the temp dir is no reason to lose the picture.
@@ -215,4 +225,132 @@ async function viaMuse(work: string, a: Ask): Promise<PlanImage> {
   ];
   await rpc.request("turn/start", { commandId: uuid7(), sessionId, input });
   return turn(rpc, "Muse Code", done);
+}
+
+const AGY_ASPECTS = ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"] as const;
+
+/** Maps any requested aspect ratio ("4:5", "21:9"…) to the closest one Antigravity's `generate_image` accepts. */
+export function antigravityAspect(aspect = "1:1"): string {
+  if ((AGY_ASPECTS as readonly string[]).includes(aspect)) return aspect;
+  const [w, h] = aspect.split(":").map(Number);
+  if (!w || !h) return "1:1";
+  const want = w / h;
+  return [...AGY_ASPECTS].sort((a, b) => {
+    const [aw, ah] = a.split(":").map(Number) as [number, number];
+    const [bw, bh] = b.split(":").map(Number) as [number, number];
+    return Math.abs(Math.log(aw / ah / want)) - Math.abs(Math.log(bw / bh / want));
+  })[0]!;
+}
+
+type AgyContent = { content?: { type?: string; data?: string; mimeType?: string; text?: string } }[];
+
+/** Pulls the inline base64 image out of an Antigravity `tool_call_update` payload, if present. */
+export function extractAntigravityImage(content?: AgyContent): PlanImage | undefined {
+  for (const item of content ?? []) {
+    const c = item.content;
+    if (c?.data) return { bytes: Buffer.from(c.data, "base64"), contentType: c.mimeType ?? "image/jpeg" };
+  }
+  return undefined;
+}
+
+const AGY_ONLY =
+  "You make exactly one picture with the generate_image tool and nothing else: no shell commands, no other files, no other tools, no questions. Afterwards reply with one word: done.";
+
+async function viaAntigravity(work: string, a: Ask): Promise<PlanImage> {
+  const server = antigravityServer();
+  if (!server) throw new FalError("Antigravity isn't installed, so the Antigravity plan can't make pictures. Settings → Agent installs it.", true);
+  // Copy up to 3 reference images inside the throwaway workspace so generate_image can read them without sandbox issues.
+  const stagedRefs: string[] = [];
+  if (a.refs?.length) {
+    const refDir = join(work, "refs");
+    mkdirSync(refDir, { recursive: true });
+    for (const [i, src] of a.refs.slice(0, 3).entries()) {
+      const ext = extname(src).toLowerCase() || ".jpg";
+      const dest = join(refDir, `ref_${i + 1}${ext}`);
+      copyFileSync(src, dest);
+      stagedRefs.push(dest);
+    }
+  }
+  const rpc = new StdioRpc("Antigravity");
+  let sessionId = "";
+  let said = "";
+  let image: PlanImage | undefined;
+  let toolError = "";
+  const genCallIds = new Set<string>();
+  const isGenImage = (call?: { title?: string; rawInput?: unknown }) => {
+    if (!call) return false;
+    if (/generate_image/i.test(call.title ?? "")) return true;
+    const raw = call.rawInput && typeof call.rawInput === "object" ? (call.rawInput as Record<string, unknown>) : undefined;
+    return !!(raw && "Prompt" in raw && "ImageName" in raw);
+  };
+  const brainImage = (): PlanImage | undefined => {
+    if (!sessionId) return undefined;
+    const dir = join(geminiHome(), "antigravity-acp", "brain", sessionId);
+    if (!existsSync(dir)) return undefined;
+    const file = readdirSync(dir)
+      .filter((f) => TYPES[extname(f).toLowerCase()])
+      .map((f) => join(dir, f))
+      .sort((x, y) => statSync(y).mtimeMs - statSync(x).mtimeMs)[0];
+    return file ? { bytes: readFileSync(file), contentType: typeOf(file) } : undefined;
+  };
+  rpc.on("notification", (m: string, p: { sessionId?: string; update?: { sessionUpdate: string; toolCallId?: string; title?: string; status?: string; rawInput?: unknown; content?: { text?: string } | AgyContent } }) => {
+    if (m !== "session/update" || (p.sessionId && p.sessionId !== sessionId)) return;
+    const u = p.update;
+    if (!u) return;
+    if (u.sessionUpdate === "agent_message_chunk") {
+      const text = (u.content as { text?: string } | undefined)?.text;
+      if (text) said += text;
+    } else if (u.sessionUpdate === "tool_call" && u.toolCallId && isGenImage(u)) {
+      genCallIds.add(u.toolCallId);
+    } else if (u.sessionUpdate === "tool_call_update" && u.toolCallId && (genCallIds.has(u.toolCallId) || isGenImage(u))) {
+      genCallIds.add(u.toolCallId);
+      const list = Array.isArray(u.content) ? u.content : undefined;
+      if (u.status === "completed") image ??= extractAntigravityImage(list);
+      else if (u.status === "failed") {
+        const msg = (list ?? []).map((x) => x.content?.text ?? "").filter(Boolean).join(" ").trim();
+        if (msg) toolError = msg;
+      }
+    }
+  });
+  rpc.on("request", (id: RpcId, m: string, p: { toolCall?: { toolCallId?: string; title?: string; rawInput?: unknown }; options?: { optionId: string; kind: string }[] }) => {
+    if (m !== "session/request_permission") return rpc.refuse(id);
+    const allow = isGenImage(p.toolCall);
+    if (allow && p.toolCall?.toolCallId) genCallIds.add(p.toolCall.toolCallId);
+    const opt = (p.options ?? []).find((o) => o.kind === (allow ? "allow_once" : "reject_once"));
+    rpc.respond(id, opt ? { outcome: { outcome: "selected", optionId: opt.optionId } } : { outcome: { outcome: "cancelled" } });
+  });
+
+  const runTurn = (async (): Promise<PlanImage> => {
+    rpc.spawn(server.command, server.args, { cwd: work, env: await cliEnv() });
+    await rpc.request(
+      "initialize",
+      { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "beatsheet_studio", title: "beatsheet studio", version: "0.1.0" } },
+      60_000,
+    );
+    const s = await rpc.request<{ sessionId?: string; configOptions?: { id: string; currentValue: string; options: { value: string; name: string; description?: string }[] }[] }>(
+      "session/new",
+      { cwd: work, mcpServers: [], _meta: { antigravity: { systemPrompt: { append: AGY_ONLY } } } },
+      60_000,
+    );
+    sessionId = s.sessionId ?? "";
+    if (!sessionId) throw new FalError("Antigravity didn't start a session", false);
+    const low = thinkingOf(s).find((t) => t.id === "low");
+    if (low && !low.default) await rpc.request("session/set_config_option", { sessionId, configId: "thinking_level", value: "low" }).catch(() => {});
+
+    const ratio = antigravityAspect(a.aspect);
+    const refs = stagedRefs.length ? ` Pass these exact reference image paths in ImagePaths in order: ${JSON.stringify(stagedRefs)}.` : "";
+    const ask = `Call generate_image once with AspectRatio "${ratio}", ImageName "beatsheet_still",${refs} and this Prompt (keep every detail):\n\n${a.prompt}`;
+    await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: ask }] }, TURN_MS);
+    image ??= brainImage();
+    if (image) return image;
+    if (!toolError) {
+      await rpc.request("session/prompt", { sessionId, prompt: [{ type: "text", text: "You haven't made the picture yet. Call generate_image now." }] }, TURN_MS);
+      image ??= brainImage();
+      if (image) return image;
+    }
+    const reason = toolError || said.trim().slice(0, 200);
+    const transient = /timeout|temporar|unavailable|503|502|500|network|econn/i.test(reason);
+    throw new FalError(reason ? `Antigravity: ${reason}` : "Antigravity didn't make a picture", !transient);
+  })();
+  return turn(rpc, "Antigravity", runTurn);
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cutView, parseFile, SCHEMA_V1, STAGE_IDS, type Project, type Shot } from "@beatsheet/schema";
-import { designChecks, reviewPaths } from "../src/review.ts";
+import { cutView, parseFile, resolveTimeline, SCHEMA_V1, STAGE_IDS, type Project, type Shot } from "@beatsheet/schema";
+import { designChecks, reviewPaths, reviewRange } from "../src/review.ts";
 
 const project = (shots: Shot[], look?: Project["look"]): Project => {
   const r = parseFile({
@@ -57,5 +57,32 @@ describe("where review_cut keeps its preview video and sheets", () => {
     expect(p.sheet).toBe("/ws/projects/demo/.cache/review/teaser-vertical-sheet.jpg");
     expect(p.designs).toBe("/ws/projects/demo/.cache/review/teaser-vertical-designs.jpg");
     expect(reviewPaths("/ws/projects/demo", "../bad cut", "9:16").video).toBe("/ws/projects/demo/.cache/review/-bad-cut-9-16.mp4");
+    expect(reviewPaths("/ws/projects/demo", "main", "wide", { from: 60, to: 74.8 }).video).toBe("/ws/projects/demo/.cache/review/main-wide-60s-74_8s.mp4");
+  });
+});
+
+describe("reviewRange", () => {
+  const timed = () =>
+    resolveTimeline(
+      project([
+        { id: "s1", track: "pic", fidelity: "rough", start: { kind: "time", t: 0 }, duration: 5, content: { kind: "text", text: "One" } },
+        { id: "s2", track: "pic", fidelity: "rough", start: { kind: "time", t: 5 }, duration: 8, content: { kind: "text", text: "Two" } },
+        { id: "s3", track: "pic", fidelity: "rough", start: { kind: "time", t: 13 }, duration: 7, content: { kind: "text", text: "Three" } },
+      ]),
+    );
+
+  it("defaults to the full cut and resolves explicit times or shot lists", () => {
+    const tl = timed();
+    expect(reviewRange(tl)).toEqual({ from: 0, to: 20, ranged: false });
+    expect(reviewRange(tl, { from: 12, to: 25 })).toEqual({ from: 12, to: 20, ranged: true });
+    expect(reviewRange(tl, { shots: ["s2", "s3"] })).toEqual({ from: 5, to: 20, ranged: true });
+    expect(reviewRange(tl, { shots: ["s1", "s3"] })).toEqual({ from: 0, to: 20, ranged: false });
+  });
+
+  it("refuses unknown shots or an empty range", () => {
+    const tl = timed();
+    expect(() => reviewRange(tl, { shots: ["nope"] })).toThrow(/nope/);
+    expect(() => reviewRange(tl, { from: 15, to: 10 })).toThrow(/Nothing to review/);
+    expect(() => reviewRange(tl, { from: 25 })).toThrow(/Nothing to review/);
   });
 });

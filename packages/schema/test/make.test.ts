@@ -149,6 +149,12 @@ describe("whether a model can make a shot", () => {
     const gated = { meta: { label: "Meta", state: "ready" }, "muse-code": { label: "Muse Code plan", state: "failing", detail: "not on yet" } } satisfies Record<string, ServiceState>;
     expect(fitModel(muse, { op: "image", prompt: "x" }, gated)).toMatchObject({ ok: true, route: "meta", usd: 0.01 });
     expect(fitModel(muse, { op: "image", prompt: "x" }, gated)).not.toHaveProperty("also");
+    // Nano Banana 2.1 on the Antigravity plan: free, up to 3 references (more refs need fal/Gemini/Runway).
+    const banana = CATALOG.find((m) => m.id === "nano-banana-2.1")!;
+    const agy = { antigravity: { label: "Antigravity plan", state: "ready" } } satisfies Record<string, ServiceState>;
+    expect(fitModel(banana, { op: "image", prompt: "x", aspect: "9:16", refs: ["a", "b", "c"] }, agy)).toMatchObject({ ok: true, route: "antigravity", where: "Antigravity plan", usd: 0 });
+    expect(fitModel(banana, { op: "image", prompt: "x", refs: ["a", "b", "c", "d"] }, agy)).toMatchObject({ ok: false, why: { kind: "connect" } });
+    expect(fitModel(banana, { op: "image", prompt: "x", via: "antigravity", refs: ["a", "b", "c", "d"] }, agy)).toMatchObject({ ok: false, why: { kind: "fit", fix: "drop-refs" } });
   });
 
   it("says which services would run it, or why the one there is can't", () => {

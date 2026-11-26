@@ -102,7 +102,7 @@ Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLa
 
 Notes: the person pins notes on a cut and sends them as a batch. Call get_batch, handle each note with scoped edits, look at the result with frame when it's visual, resolve_note with a one-line reply saying what changed, then hand_off for a review.
 
-Video and audio files: if your runtime can read video or audio files directly (not only images), watch the preview MP4 that review_cut saves to judge motion, pacing, audio mix, ducking and lip-sync first-hand; watch a clip's proxy MP4 (listed by look_at_assets) when exact action timing or delivery matters, and listen to the song file to feel its phrasing and drops.
+Video and audio files: if your runtime can read video or audio files directly (not only images), watch the preview MP4 that review_cut saves to judge motion, pacing, audio mix, ducking and lip-sync first-hand (pass from/to or shots to review_cut for a fast targeted check of a single stretch); use clip_preview to slice and watch any stretch (up to 60s) of a long clip, tape or song, or read a short clip's proxy MP4 directly.
 
 When a message arrives saying the person sent beatsheet notes, they just pressed Send in the studio: call get_batch for that project and cut and handle the notes right away.`;
 
@@ -239,6 +239,36 @@ server.registerTool(
       } catch {
         content.push({ type: "text", text: `${assetId}: no thumbnail yet (run \`npm run beatsheet -- cache ${id}\`)${paths ? ` [${paths}]` : ""}` });
       }
+    }
+    return { content };
+  },
+);
+
+server.registerTool(
+  "clip_preview",
+  {
+    description:
+      "Slice a compact, watchable preview (low-res MP4 with sound, or M4A for audio/music, up to 60s) of a stretch of a clip or song into .cache/preview/, plus a zoomed 8-frame filmstrip for video. Use this to inspect exact moments of long tapes, interviews, fast action or songs without reading a whole long file.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string().describe("Video or audio asset id"),
+      from: z.number().nonnegative().optional().describe("Seconds into the file; default 0"),
+      to: z.number().positive().optional().describe("Seconds into the file (at most 60s after from); default 30s or the file's end"),
+    },
+  },
+  async ({ project: id, asset, from, to }) => {
+    const { clipPreview } = await import("./frames.ts");
+    const r = await clipPreview(id, asset, { from, to });
+    const rel = inWorkspace(r.file);
+    const label = r.kind === "video" ? "Preview clip (with sound)" : "Preview audio";
+    const span = `${r.from.toFixed(1)}s–${r.to.toFixed(1)}s (${r.duration.toFixed(1)}s)`;
+    const content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[] = [];
+    if (r.kind === "video" && r.strip) {
+      const times = Array.from({ length: 8 }, (_, i) => (r.from + ((i + 0.5) * r.duration) / 8).toFixed(1)).join(", ");
+      content.push({ type: "text", text: `${label}: ${rel} · ${span} · strip: ${inWorkspace(r.strip)} (frames at ${times}s)` });
+      content.push({ type: "image", data: readFileSync(r.strip).toString("base64"), mimeType: "image/jpeg" });
+    } else {
+      content.push({ type: "text", text: `${label}: ${rel} · ${span}` });
     }
     return { content };
   },
@@ -473,15 +503,26 @@ server.registerTool(
   "review_cut",
   {
     description:
-      "Look over the whole cut before handing it back: saves a low-res preview MP4 (with sound) under .cache/review/ for agents that can watch video, returns a contact sheet (one frame every second or two, read left to right, row by row) and notes on what a viewer would notice: pictures that sit still too long, silence, uncropped footage, narration without captions, no sound design, the length. Then the design pass: the designed shots larger (entering, midway, settled) to critique as a design lead would. Takes a minute or two. Fix what matters, then hand off.",
-    inputSchema: { project: projectArg, cut: cutArg, format: z.string().optional() },
+      "Look over the whole cut (or just a stretch with from/to or shots) before handing it back: saves a low-res preview MP4 (with sound) under .cache/review/ for agents that can watch video, returns a contact sheet and notes on what a viewer would notice (pictures sitting still, silence, uncropped footage, missing captions or sound, length). Then the design pass: designed shots larger (entering, midway, settled). Pass from/to or shots for a quick targeted polish check without re-rendering the whole cut.",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      format: z.string().optional(),
+      from: z.number().nonnegative().optional().describe("Only review from this second into the cut"),
+      to: z.number().positive().optional().describe("Only review up to this second into the cut"),
+      shots: z.array(z.string()).min(1).optional().describe("Only review the span covering these shot ids"),
+    },
   },
-  async ({ project: id, cut, format }) => {
-    const r = await reviewCut(id, { cut, format });
+  async ({ project: id, cut, format, from, to, shots }) => {
+    const r = await reviewCut(id, { cut, format, from, to, shots });
     const videoRel = inWorkspace(r.videoFile);
     const sheetRel = inWorkspace(r.sheetFile);
+    const firstRowEnd = Math.min(r.to, r.from + r.every * r.columns);
+    const rangeLine = r.ranged
+      ? `Reviewed ${formatTime(r.from)}–${formatTime(r.to)} of ${formatTime(r.duration)}.`
+      : `The cut runs ${formatTime(r.duration)}.`;
     const head = [
-      `Contact sheet: one frame every ${r.every}s, ${r.columns} to a row (the first row is 0:00–${formatTime(r.every * r.columns)}). The cut runs ${formatTime(r.duration)}.`,
+      `Contact sheet: one frame every ${r.every}s, ${r.columns} to a row (the first row is ${formatTime(r.from)}–${formatTime(firstRowEnd)}). ${rangeLine}`,
       `Preview video (with sound): ${videoRel} · Contact sheet: ${sheetRel} — if you can read video files, watch ${videoRel} directly to judge motion, pacing, audio mix and lip-sync.`,
     ].join("\n");
     const content: ({ type: "image"; data: string; mimeType: string } | { type: "text"; text: string })[] = [

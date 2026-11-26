@@ -35,6 +35,14 @@ export const CATALOG: CatalogModel[] = [
     routes: [
       { via: "fal", shape: "nano-banana", endpoints: { text: "google/nano-banana-2.1", refs: "google/nano-banana-2.1/edit" }, price: { perImage: 0.04 } },
       { via: "gemini", shape: "gemini-image", endpoints: { text: "gemini-nano-banana-2.1", refs: "gemini-nano-banana-2.1" }, price: { perImage: 0.034 } },
+      {
+        via: "antigravity",
+        shape: "plan",
+        endpoints: { text: "nano-banana-2.1", refs: "nano-banana-2.1" },
+        price: { perImage: 0 },
+        takes: { refs: 3 },
+        note: "Through Antigravity on your Google account; up to 3 reference pictures.",
+      },
       // Runway: 4 credits at 1K.
       { via: "runway", shape: "nano_banana_2.1", endpoints: { text: "nano_banana_2.1", refs: "nano_banana_2.1" }, price: { perImage: 0.04 } },
     ],

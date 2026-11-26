@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { parseRegistryVersion, pickBuild, platformKey } from "../src/agent/antigravity-server.ts";
 import { AntigravityAdapter, autoApprove, housekeeping, indexedSessions, isSafeReadCommand, modelsOf, scope, thinkingOf, toolName, type ToolCall } from "../src/agent/antigravity.ts";
 import { touchesKeys } from "../src/agent/session.ts";
+import { antigravityAspect, extractAntigravityImage } from "../src/plans.ts";
 
 /** An Antigravity adapter on a session, wired to a fake ACP server, to see what reaches the person and what goes back. */
 function harness(Adapter = AntigravityAdapter) {
@@ -298,5 +299,23 @@ describe("installing Google's ACP server", () => {
     expect(parseRegistryVersion(entry, "windows-x86_64")).toBe("1.4.4");
     expect(parseRegistryVersion(entry, "linux-x86_64")).toBeUndefined();
     expect(parseRegistryVersion(entry, "darwin-aarch64")).toBeUndefined();
+  });
+});
+
+describe("Antigravity plan stills helpers", () => {
+  it("maps aspect ratios to the closest one generate_image accepts", () => {
+    expect(antigravityAspect("9:16")).toBe("9:16");
+    expect(antigravityAspect("16:9")).toBe("16:9");
+    expect(antigravityAspect("4:5")).toBe("3:4");
+    expect(antigravityAspect("5:4")).toBe("4:3");
+    expect(antigravityAspect("21:9")).toBe("16:9");
+    expect(antigravityAspect(undefined)).toBe("1:1");
+  });
+
+  it("extracts an inline base64 image from a tool_call_update payload", () => {
+    const raw = Buffer.from("fake-jpeg-bytes");
+    const img = extractAntigravityImage([{ content: { type: "image", data: raw.toString("base64"), mimeType: "image/jpeg" } }]);
+    expect(img).toEqual({ bytes: raw, contentType: "image/jpeg" });
+    expect(extractAntigravityImage([{ content: { type: "text", text: "done" } }])).toBeUndefined();
   });
 });

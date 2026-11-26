@@ -12,18 +12,41 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { formatTime, resolveTimeline, type Project } from "@beatsheet/schema";
+import { formatTime, resolveTimeline, type Project, type Timeline } from "@beatsheet/schema";
 import { replaceFile } from "./platform.ts";
 import { loadProject } from "./store.ts";
 
 const run = promisify(execFile);
 const ffmpegLog = (args: string[]) => run("ffmpeg", ["-hide_banner", "-nostats", ...args], { maxBuffer: 1 << 25 }).then((r) => r.stderr, (err: { stderr?: string }) => err.stderr ?? "");
 const safeSlug = (s: string) => s.replace(/[^a-z0-9_-]+/gi, "-") || "cut";
+const stamp = (s: number) => `${Math.round(s * 10) / 10}s`.replace(".", "_");
+
+/** Resolves an optional time range or shot list against a timeline, clamped to the cut. */
+export function reviewRange(tl: Timeline, opts: { from?: number; to?: number; shots?: string[] } = {}): { from: number; to: number; ranged: boolean } {
+  const dur = Number.isFinite(tl.duration) && tl.duration > 0 ? tl.duration : 0;
+  let from = opts.from;
+  let to = opts.to;
+  if (opts.shots?.length) {
+    const picked = opts.shots.map((id) => {
+      const r = tl.shots.find((s) => s.id === id);
+      if (!r || !Number.isFinite(r.start) || !Number.isFinite(r.end)) throw new Error(`Shot "${id}" isn't in this format or has unresolved timing`);
+      return r;
+    });
+    from ??= Math.min(...picked.map((r) => r.start));
+    to ??= Math.max(...picked.map((r) => r.end));
+  }
+  if (from === undefined && to === undefined) return { from: 0, to: dur, ranged: false };
+  const start = Math.max(0, from ?? 0);
+  const end = Math.min(dur, to ?? dur);
+  if (end <= start) throw new Error(`Nothing to review between ${formatTime(start)} and ${formatTime(end)} (cut runs ${formatTime(dur)})`);
+  return { from: start, to: end, ranged: start > 0.05 || end < dur - 0.05 };
+}
 
 /** Where review_cut keeps its latest low-res preview video and contact sheets inside the project's .cache/. */
-export function reviewPaths(projectDir: string, cutId: string, formatId: string) {
+export function reviewPaths(projectDir: string, cutId: string, formatId: string, range?: { from: number; to: number }) {
   const base = join(projectDir, ".cache", "review");
-  const stem = `${safeSlug(cutId)}-${safeSlug(formatId)}`;
+  const span = range ? `-${stamp(range.from)}-${stamp(range.to)}` : "";
+  const stem = `${safeSlug(cutId)}-${safeSlug(formatId)}${span}`;
   return {
     video: join(base, `${stem}.mp4`),
     sheet: join(base, `${stem}-sheet.jpg`),
@@ -49,6 +72,10 @@ export type Review = {
   columns: number;
   notes: string[];
   duration: number;
+  /** The stretch reviewed, in seconds into the cut (0..duration for a full review). */
+  from: number;
+  to: number;
+  ranged: boolean;
   /** The low-res preview MP4 (with sound) kept in the project's .cache/review/, for agents that can watch video. */
   videoFile: string;
   /** The contact sheet saved beside the preview MP4. */
@@ -61,23 +88,33 @@ export type Review = {
   designNotes: string[];
 };
 
-export async function reviewCut(projectId: string, opts: { cut?: string; format?: string } = {}): Promise<Review> {
+export async function reviewCut(projectId: string, opts: { cut?: string; format?: string; from?: number; to?: number; shots?: string[] } = {}): Promise<Review> {
   const { project, dir: projDir } = loadProject(projectId, opts.cut);
   const fmt = project.formats.find((f) => f.id === opts.format) ?? project.formats[0]!;
   const tl = resolveTimeline(project, fmt.id);
-  const kept = reviewPaths(projDir, project.cut.id, fmt.id);
+  const { from, to, ranged } = reviewRange(tl, opts);
+  const kept = reviewPaths(projDir, project.cut.id, fmt.id, ranged ? { from, to } : undefined);
   const dir = join(tmpdir(), `beatsheet-review-${process.pid}-${Date.now().toString(36)}`);
   mkdirSync(dir, { recursive: true });
   try {
     const { renderProject } = await import("./render.ts");
-    const video = await renderProject(projectId, { cut: project.cut.id, format: fmt.id, quality: "proxy", scale: 0.3, out: join(dir, "review.mp4"), master: false });
+    const video = await renderProject(projectId, {
+      cut: project.cut.id,
+      format: fmt.id,
+      quality: "proxy",
+      scale: 0.3,
+      out: join(dir, "review.mp4"),
+      master: false,
+      ...(ranged ? { range: { from, to } } : {}),
+    });
     const duration = tl.duration;
-    const every = duration > 90 ? 2 : 1;
+    const span = Math.max(0.5, to - from);
+    const every = span > 90 ? 2 : ranged && span <= 15 ? 0.5 : 1;
     const vertical = fmt.height > fmt.width;
     const columns = vertical ? 10 : 6;
     const tile = vertical ? "216:384" : "320:180";
-    const frames = Math.ceil(duration / every);
-    const rows = Math.ceil(frames / columns);
+    const frames = Math.max(1, Math.ceil(span / every));
+    const rows = Math.max(1, Math.ceil(frames / columns));
     const sheetFile = join(dir, "sheet.jpg");
     await run("ffmpeg", ["-v", "error", "-y", "-i", video, "-vf", `fps=1/${every},scale=${tile},tile=${columns}x${rows}:padding=4:color=gray`, "-frames:v", "1", "-q:v", "4", sheetFile], { maxBuffer: 1 << 24 });
 
@@ -87,24 +124,25 @@ export async function reviewCut(projectId: string, opts: { cut?: string; format?
     const starts = [...freeze.matchAll(/freeze_start: ([\d.]+)/g)].map((m) => Number(m[1]));
     const lengths = [...freeze.matchAll(/freeze_duration: ([\d.]+)/g)].map((m) => Number(m[1]));
     for (const [i, s] of starts.entries()) {
-      const len = lengths[i] ?? duration - s;
-      const shots = tl.shots.filter((r) => r.start < s + len && r.end > s && project.tracks.find((t) => t.id === r.track)?.kind === "picture").map((r) => r.id);
-      notes.push(`Nothing moves for ${len.toFixed(1)}s at ${formatTime(s)}${shots.length ? ` (${shots.join(", ")})` : ""}: cut sooner, add motion (content.motion), or put something on top.`);
+      const cutAt = from + s;
+      const len = lengths[i] ?? span - s;
+      const shots = tl.shots.filter((r) => r.start < cutAt + len && r.end > cutAt && project.tracks.find((t) => t.id === r.track)?.kind === "picture").map((r) => r.id);
+      notes.push(`Nothing moves for ${len.toFixed(1)}s at ${formatTime(cutAt)}${shots.length ? ` (${shots.join(", ")})` : ""}: cut sooner, add motion (content.motion), or put something on top.`);
     }
     // Silence: no music, voice or sound for over a second.
     const quiet = await ffmpegLog(["-i", video, "-af", "silencedetect=noise=-45dB:d=1.2", "-vn", "-f", "null", "-"]);
-    for (const m of quiet.matchAll(/silence_start: ([\d.]+)[\s\S]*?silence_duration: ([\d.]+)/g)) notes.push(`Silent for ${Number(m[2]).toFixed(1)}s at ${formatTime(Number(m[1]))}.`);
+    for (const m of quiet.matchAll(/silence_start: ([\d.]+)[\s\S]*?silence_duration: ([\d.]+)/g)) notes.push(`Silent for ${Number(m[2]).toFixed(1)}s at ${formatTime(from + Number(m[1]))}.`);
     const loud = await ffmpegLog(["-i", video, "-af", "ebur128=peak=true", "-f", "null", "-"]);
     const lufs = Number(/I:\s*(-?[\d.]+) LUFS/.exec(loud.slice(loud.lastIndexOf("Summary")))?.[1]);
     if (Number.isFinite(lufs)) notes.push(`Mix loudness ${lufs.toFixed(1)} LUFS before mastering (exports are mastered to -14).`);
 
-    notes.push(...checks(project, tl, fmt.id, fmt.width, fmt.height));
+    notes.push(...checks(project, tl, fmt.id, fmt.width, fmt.height, ranged ? { from, to } : undefined));
 
     // The designed shots, bigger: the picture track's first, then overlays, longest first, up to ten.
     const tracks = new Map(project.tracks.map((t) => [t.id, t]));
     const shots = new Map(project.shots.map((s) => [s.id, s]));
     const designed = tl.shots
-      .filter((r) => shots.get(r.id)?.content.kind === "coded" && Number.isFinite(r.start) && r.end > r.start)
+      .filter((r) => shots.get(r.id)?.content.kind === "coded" && Number.isFinite(r.start) && r.end > r.start && (!ranged || (r.end > from && r.start < to)))
       .sort((a, b) => Number(tracks.get(b.track)?.kind === "picture") - Number(tracks.get(a.track)?.kind === "picture") || b.end - b.start - (a.end - a.start))
       .slice(0, 10)
       .sort((a, b) => a.start - b.start);
@@ -132,7 +170,7 @@ export async function reviewCut(projectId: string, opts: { cut?: string; format?
     }
     keepFile(video, kept.video);
     keepFile(sheetFile, kept.sheet);
-    return { sheet: readFileSync(sheetFile), every, columns, notes, duration, videoFile: kept.video, sheetFile: kept.sheet, designs, designsFile, designRows, designNotes: designChecks(project) };
+    return { sheet: readFileSync(sheetFile), every, columns, notes, duration, from, to, ranged, videoFile: kept.video, sheetFile: kept.sheet, designs, designsFile, designRows, designNotes: designChecks(project) };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -163,17 +201,20 @@ export function designChecks(p: Project): string[] {
 }
 
 /** What's worth fixing, from the project itself. */
-function checks(p: Project, tl: ReturnType<typeof resolveTimeline>, format: string, width: number, height: number): string[] {
+function checks(p: Project, tl: ReturnType<typeof resolveTimeline>, format: string, width: number, height: number, range?: { from: number; to: number }): string[] {
   const out: string[] = [];
   const shots = new Map(p.shots.map((s) => [s.id, s]));
   const assets = new Map(p.assets.map((a) => [a.id, a]));
-  if (p.spec.targetLength && Math.abs(tl.duration - p.spec.targetLength) > Math.max(3, p.spec.targetLength * 0.15))
-    out.push(`It runs ${formatTime(tl.duration)}; the target is ${p.spec.targetLength}s.`);
-  if (p.spec.maxLength && tl.duration > p.spec.maxLength) out.push(`It's over the ${p.spec.maxLength}s limit.`);
-  if (tl.lines.length && !p.captions) out.push("There's narration but no captions: most people watch with the sound off. Turn them on with /captions.");
-  if (!tl.sfx.length && tl.shots.length > 6) out.push("No sound effects: a whoosh or pop on the big cuts, a shutter or tick where something happens, makes it feel made.");
+  if (!range) {
+    if (p.spec.targetLength && Math.abs(tl.duration - p.spec.targetLength) > Math.max(3, p.spec.targetLength * 0.15))
+      out.push(`It runs ${formatTime(tl.duration)}; the target is ${p.spec.targetLength}s.`);
+    if (p.spec.maxLength && tl.duration > p.spec.maxLength) out.push(`It's over the ${p.spec.maxLength}s limit.`);
+    if (tl.lines.length && !p.captions) out.push("There's narration but no captions: most people watch with the sound off. Turn them on with /captions.");
+    if (!tl.sfx.length && tl.shots.length > 6) out.push("No sound effects: a whoosh or pop on the big cuts, a shutter or tick where something happens, makes it feel made.");
+  }
   const frameAspect = width / height;
   for (const r of tl.shots) {
+    if (range && (r.end <= range.from || r.start >= range.to)) continue;
     const s = shots.get(r.id);
     if (!s || s.content.kind !== "clip") continue;
     const a = assets.get(s.content.asset);
@@ -185,7 +226,7 @@ function checks(p: Project, tl: ReturnType<typeof resolveTimeline>, format: stri
     if (a.kind === "image" && r.end - r.start > 3.5 && !s.content.motion) out.push(`${r.id} holds a photo for ${(r.end - r.start).toFixed(1)}s: give it motion or cut sooner.`);
   }
   const designed = p.shots.filter((s) => s.content.kind === "coded").length;
-  if (tl.duration > 20 && designed === 0) out.push("Every shot is footage: a designed scene or two (a title, a stat, a before/after, labelled parts) would lift it.");
+  if (!range && tl.duration > 20 && designed === 0) out.push("Every shot is footage: a designed scene or two (a title, a stat, a before/after, labelled parts) would lift it.");
   if (tl.diagnostics.length) out.push(`Timing problems: ${tl.diagnostics.map((d) => `${d.where}: ${d.message}`).join("; ")}`);
   return out;
 }

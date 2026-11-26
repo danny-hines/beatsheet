@@ -1535,6 +1535,17 @@ describe("stills from services that answer in one request", () => {
     expect(() => make.startMake(PROJECT, { op: "image", shot: "s2", model: "muse-image", via: "muse-code" })).toThrow("Muse Image can't make this: Runs on Muse Code plan");
   });
 
+  it("makes Nano Banana 2.1 stills on the Antigravity plan at no charge when Antigravity is signed in", async () => {
+    plans.ready = ["antigravity"];
+    const { fit } = make.startMake(PROJECT, { op: "image", shot: "s2" });
+    expect(fit).toMatchObject({ model: "nano-banana-2.1", route: "antigravity", where: "Antigravity plan", usd: 0 });
+    await make.driveJobs(PROJECT);
+    expect(plans.asks).toEqual([{ route: "antigravity", prompt: "The cat strolls down the alley like it owns it", aspect: "9:16", refs: undefined }]);
+    expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", route: "antigravity", usd: 0, asset: "s2-take" });
+    const take = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take")!;
+    expect(take.provenance).toMatchObject({ provider: "antigravity", model: "nano-banana-2.1", costUsd: 0 });
+  });
+
   it("brings a sheet in as the renamed one's when its cast member is renamed while it's made", async () => {
     // Nano Banana on fal: it waits in the queue a while.
     make.startMake(PROJECT, { op: "image", sheet: "cat", model: "nano-banana", count: 1 });

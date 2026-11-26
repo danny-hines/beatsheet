@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -27,13 +27,16 @@ vi.mock("../src/ingest.ts", async () => {
 });
 
 let stillFromClip: typeof import("../src/frames.ts").stillFromClip;
+let clipPreview: typeof import("../src/frames.ts").clipPreview;
 const dir = join(process.env.BEATSHEET_PROJECTS!, "walk");
 
 beforeAll(async () => {
-  ({ stillFromClip } = await import("../src/frames.ts"));
+  ({ stillFromClip, clipPreview } = await import("../src/frames.ts"));
   mkdirSync(dir, { recursive: true });
   // Two seconds: red for the first, blue for the second.
   execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "color=red:s=64x36:r=25:d=1", "-f", "lavfi", "-i", "color=blue:s=64x36:r=25:d=1", "-filter_complex", "[0][1]concat=n=2:v=1", "-pix_fmt", "yuv420p", join(dir, "walk.mp4")]);
+  // Two seconds of sine wave audio, for audio preview tests.
+  execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "aac", join(dir, "song.m4a")]);
   const file: ProjectFile = {
     schema: SCHEMA_VERSION,
     id: "walk",
@@ -42,6 +45,7 @@ beforeAll(async () => {
     brief: { goal: "test" },
     assets: [
       { id: "walk", kind: "video", path: join(dir, "walk.mp4"), duration: 2, width: 64, height: 36, label: "The cat walks off" },
+      { id: "song", kind: "music", path: join(dir, "song.m4a"), duration: 2, label: "Theme" },
       { id: "photo", kind: "image", path: join(dir, "walk.mp4") },
     ],
     cuts: [
@@ -81,5 +85,34 @@ describe("a still from a clip", () => {
     expect(await colorOf(still.path)).toBe("red");
     await expect(stillFromClip("walk", "photo")).rejects.toThrow("not a clip");
     await expect(stillFromClip("walk", "walk", 3)).rejects.toThrow("there's no frame at 3s");
+  });
+});
+
+describe("clip_preview", () => {
+  it("slices a compact MP4 and zoomed strip into .cache/preview and reuses it on repeat calls", async () => {
+    const first = await clipPreview("walk", "walk", { from: 1, to: 2 });
+    expect(first.kind).toBe("video");
+    expect(first.from).toBe(1);
+    expect(first.to).toBe(2);
+    expect(first.file).toContain(".cache/preview/walk-1s-2s.mp4");
+    expect(existsSync(first.file)).toBe(true);
+    expect(first.strip && existsSync(first.strip)).toBe(true);
+    // The sliced second half (1s..2s) is blue.
+    expect(await colorOf(first.strip!)).toBe("blue");
+    const mtime = statSync(first.file).mtimeMs;
+    const second = await clipPreview("walk", "walk", { from: 1, to: 2 });
+    expect(second.file).toBe(first.file);
+    expect(statSync(second.file).mtimeMs).toBe(mtime);
+  });
+
+  it("slices an audio/music stretch into M4A and rejects invalid inputs", async () => {
+    const audio = await clipPreview("walk", "song", { from: 0.5, to: 1.5 });
+    expect(audio.kind).toBe("audio");
+    expect(audio.file).toContain(".cache/preview/song-0_5s-1_5s.m4a");
+    expect(existsSync(audio.file)).toBe(true);
+    expect(audio.strip).toBeUndefined();
+    await expect(clipPreview("walk", "photo")).rejects.toThrow("not a video or audio clip");
+    await expect(clipPreview("walk", "walk", { from: 5 })).rejects.toThrow("past its end");
+    await expect(clipPreview("walk", "walk", { from: 1.5, to: 1 })).rejects.toThrow("after start");
   });
 });
