@@ -4,6 +4,7 @@ import { mark, putSource, sourceClock } from "../editing";
 import { hideBroken, imageUrl, posterUrl, proxyUrl, RANGE_DRAG, runJob, stripUrl, OS, pathParts } from "../lib";
 import { BoxLabel, followBox, SubjectBoxes, SubjectTools } from "./Subjects";
 import { CleanSound, RestoreClip, useCleanSound } from "./Restore";
+import { ExtractSphere, PerformClip, RelightClip, StemsAndPitch, SwapClip } from "./ChangeClip";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { PopMenu, Stars, TextField } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
@@ -327,7 +328,12 @@ export function AssetView({ a }: { a: Asset }) {
 
       {a.kind !== "image" && !a.cutout && !a.version && <Said a={a} seek={seek} />}
       {a.kind !== "image" && !a.cutout && !a.version && <CleanSound a={a} hear={hear} setHear={setHear} />}
+      {a.kind !== "image" && !a.cutout && !a.version && <StemsAndPitch a={a} />}
       {isVideo && !a.cutout && !a.version && <RestoreClip a={a} t={t} />}
+      {isVideo && !a.cutout && !a.version && <RelightClip a={a} t={t} />}
+      {isVideo && !a.cutout && !a.version && <SwapClip a={a} t={t} />}
+      {isVideo && !a.cutout && !a.version && <PerformClip a={a} t={t} />}
+      {a.kind === "image" && !a.cutout && !a.tags?.includes("light-sphere") && <ExtractSphere a={a} />}
 
       {(isVideo || a.kind === "image") && !a.cutout && (
         <SubjectTools a={a} t={isVideo ? t : 0} boxing={boxing} setBoxing={setBoxing} hover={hover} setHover={setHover} seek={seek} />

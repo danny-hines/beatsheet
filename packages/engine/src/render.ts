@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
-import { EXPORT_KINDS, type ExportKind, type Project } from "@beatsheet/schema";
+import { EXPORT_KINDS, type ExportKind, type LayoutBox, type Project } from "@beatsheet/schema";
 import type { MediaQuality, VideoProps } from "@beatsheet/video";
 import { renderBrowser } from "./chrome.ts";
 import { startServer } from "./http.ts";
@@ -29,7 +29,7 @@ const getBundle = () =>
   (serveUrl ??= BUILT.video ? Promise.resolve(BUILT.video) : import("@remotion/bundler").then(({ bundle }) => bundle({ entryPoint: join(RESOURCES, "packages", "video", "src", "root.tsx") })));
 
 /** The composition for a cut, or for `override`: a stand-in cut made from the project's material (a look's preview, say). */
-async function prepare(id: string, cut: string | undefined, format: string | undefined, quality: MediaQuality, override?: Project, transparent?: boolean) {
+async function prepare(id: string, cut: string | undefined, format: string | undefined, quality: MediaQuality, override?: Project, transparent?: boolean, auditLayout?: boolean) {
   const loaded = loadProject(id, cut);
   const project = override ?? loaded.project;
   const dir = loaded.dir;
@@ -37,7 +37,7 @@ async function prepare(id: string, cut: string | undefined, format: string | und
   const [url, origin, browserExecutable] = await Promise.all([getBundle(), startServer(), renderBrowser()]);
   // How every Remotion call here opens Chrome: with WebGL, and in an installed app the one copy beatsheet keeps.
   const chrome = { chromiumOptions, browserExecutable };
-  const inputProps: VideoProps = { project, format: fmt.id, mediaBase: `${origin}/media/${id}`, quality, words: wordsInCut(id, project), ...(transparent ? { transparent } : {}) };
+  const inputProps: VideoProps = { project, format: fmt.id, mediaBase: `${origin}/media/${id}`, quality, words: wordsInCut(id, project), ...(transparent ? { transparent } : {}), ...(auditLayout ? { auditLayout } : {}) };
   const composition = await selectComposition({ serveUrl: url, id: "beatsheet", inputProps, ...chrome });
   return { project, dir, fmt, url, inputProps, composition, chrome };
 }
@@ -57,11 +57,13 @@ export async function renderProject(
     kind?: ExportKind;
     /** Only this stretch of the cut, in seconds. */
     range?: { from: number; to: number };
+    /** Optional stand-in project override (e.g. a synthetic 1-shot kit:ClayHead mask render). */
+    project?: Project;
   } = {},
 ): Promise<string> {
   const quality = opts.quality ?? "original";
   const kind = opts.kind ?? "mp4";
-  const { project, dir, fmt, url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, quality, undefined, kind === "alpha");
+  const { project, dir, fmt, url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, quality, opts.project, kind === "alpha");
   mkdirSync(join(dir, "out"), { recursive: true });
   // Each cut renders to its own file; the first cut keeps the plain name.
   const cutPart = project.cut.id === "main" ? "" : `-${project.cut.id}`;
@@ -125,13 +127,41 @@ export async function master(file: string, kind: ExportKind = "mp4"): Promise<{ 
 }
 
 /** Several stills of a cut (or of `project`, a stand-in cut) in one go, as JPEG files in `dir`, in order. */
-export async function renderStills(id: string, opts: { cut?: string; format?: string; times: number[]; scale?: number; dir: string; project?: Project }): Promise<string[]> {
-  const { url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "proxy", opts.project);
+export async function renderStills(
+  id: string,
+  opts: { cut?: string; format?: string; times: number[]; scale?: number; dir: string; project?: Project; onLayout?: (index: number, boxes: LayoutBox[]) => void },
+): Promise<string[]> {
+  const { url, inputProps, composition, chrome } = await prepare(id, opts.cut, opts.format, "proxy", opts.project, false, !!opts.onLayout);
   const files: string[] = [];
   for (const [i, t] of opts.times.entries()) {
     const frame = Math.min(composition.durationInFrames - 1, Math.max(0, Math.round(t * composition.fps)));
     const file = join(opts.dir, `still-${String(i).padStart(3, "0")}.jpg`);
-    await renderStill({ composition, serveUrl: url, frame, output: file, inputProps, imageFormat: "jpeg", jpegQuality: 80, scale: opts.scale ?? 0.35, ...chrome });
+    let latestBoxes: LayoutBox[] | undefined;
+    await renderStill({
+      composition,
+      serveUrl: url,
+      frame,
+      output: file,
+      inputProps,
+      imageFormat: "jpeg",
+      jpegQuality: 80,
+      scale: opts.scale ?? 0.35,
+      ...chrome,
+      ...(opts.onLayout
+        ? {
+            onBrowserLog: (log) => {
+              if (!log.text.startsWith("BS_LAYOUT:")) return;
+              try {
+                const parsed = JSON.parse(log.text.slice("BS_LAYOUT:".length)) as { boxes?: LayoutBox[] };
+                if (Array.isArray(parsed.boxes)) latestBoxes = parsed.boxes;
+              } catch {
+                // Ignore malformed console lines.
+              }
+            },
+          }
+        : {}),
+    });
+    if (opts.onLayout && latestBoxes) opts.onLayout(i, latestBoxes);
     files.push(file);
   }
   return files;

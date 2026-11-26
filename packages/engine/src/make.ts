@@ -27,6 +27,7 @@ import {
   driveWindow,
   FIDELITY,
   fitModel,
+  isCameraSheet,
   missingFromFrames,
   OWN_HARDWARE,
   preferredOf,
@@ -93,7 +94,7 @@ import {
 } from "./comfy.ts";
 import { DIRECT, directImage } from "./direct.ts";
 import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
-import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, takesSeed, type FalRequest } from "./fal.ts";
+import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, SHEET_LINE, takesSeed, type CameraKind, type FalRequest } from "./fal.ts";
 import { teinCancel, teinInput, teinStatus, teinSubmit, teinUpload } from "./tein.ts";
 import { runwayCancel, runwayInput, runwayStatus, runwaySubmit, runwayUpload } from "./runway.ts";
 import { higgsfieldCancel, higgsfieldEstimate, higgsfieldInput, higgsfieldStatus, higgsfieldSubmit, higgsfieldUpload } from "./higgsfield.ts";
@@ -144,10 +145,27 @@ export type MakeJob = {
     clip?: Stretch;
     /** What a take keeps the camera of: a stretch of a clip, or of a cut (a blockout) that's rendered when the take is made. */
     camera?: Camera;
+    /** Conditioning role of the reference video: clip camera, 3D blockout, relight, character swap, or clay facial performance. */
+    cameraKind?: CameraKind;
+    /** Local pre-processed conditioning video file (e.g. swap mesh/depth composite or clay face mask) sent in place of the raw clip. */
+    cameraFile?: string;
     seconds?: number;
     aspect?: string;
     seed?: number;
     shotSeconds?: number;
+  };
+  /** When set, the finished video is saved as a version of this clip stretch (with original or supplied sound muxed back). */
+  versionOf?: {
+    asset: string;
+    from: number;
+    to: number;
+    use?: boolean;
+    keepAudio?: boolean;
+    audioFile?: string;
+    tag?: string;
+    label?: string;
+    op?: string;
+    params?: Record<string, unknown>;
   };
   /** Estimated cost of this take, in US dollars. */
   usd?: number;
@@ -354,7 +372,13 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
    * a reference instead, and there's no end frame. Without it, a generated shot whose takes kept a camera keeps it again
    * (unless this take copies movement or lip-syncs instead); null for none.
    */
-  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number } | null;
+  camera?: { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
+  /** Conditioning role of the reference video (defaults to "blockout" for cuts and "clip" for assets). */
+  cameraKind?: CameraKind;
+  /** Local pre-processed conditioning video file sent in place of the raw asset stretch. */
+  cameraFile?: string;
+  /** Save the finished clip as a version of an existing clip stretch (relight, swap, etc.). */
+  versionOf?: MakeJob["versionOf"];
   model?: string;
 };
 
@@ -602,7 +626,7 @@ function cameraFor(projectId: string, project: Project, ask: NonNullable<MakeAsk
   const { format, from, to, missing, has } = blockoutStretch(blockout, ask.shots, aspect ?? aspectOf(project.formats[0]!.width, project.formats[0]!.height));
   if (missing.length) throw new Error(`No shot ${missing.map((id) => `"${id}"`).join(", ")} in cut "${ask.cut}" (${format.label}); it has ${has.join(", ")}`);
   if (!(to - from >= 0.1)) throw new Error(`Nothing to follow in cut "${ask.cut}"${ask.shots?.length ? ` across ${ask.shots.join(", ")}` : ""}`);
-  return { cut: ask.cut, format: format.id, from: r3(from), to: r3(to), ...(ask.shots?.length ? { shots: ask.shots } : {}) };
+  return { cut: ask.cut, format: format.id, from: r3(from), to: r3(to), ...(ask.shots?.length ? { shots: ask.shots } : {}), ...(ask.mode ? { mode: ask.mode } : {}) };
 }
 
 /**
@@ -860,11 +884,14 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
           ...(p.req.speech ? { speech: p.req.speech } : {}),
           ...(p.req.clip ? { clip: p.req.clip } : {}),
           ...(p.req.camera ? { camera: p.req.camera } : {}),
+          ...(p.ask.cameraKind ? { cameraKind: p.ask.cameraKind } : {}),
+          ...(p.ask.cameraFile ? { cameraFile: p.ask.cameraFile } : {}),
           seconds: p.fit.seconds,
           aspect: p.fit.aspect,
           seed: takesSeed(p.shape) ? randomInt(2 ** 31) : undefined,
           shotSeconds: p.req.seconds,
         },
+        ...(p.ask.versionOf ? { versionOf: p.ask.versionOf } : {}),
         usd: p.fit.usd === undefined ? undefined : Math.round((p.fit.usd / count) * 1000) / 1000,
         status: "queued",
         createdAt: now,
@@ -889,15 +916,16 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
   // uploaded: the pictures found in it are the ones that go (a start frame and references don't go together on some),
   // and its words are the ones the service reads, with what's added about the pictures and the blockout.
   const tag = (id: string) => `beatsheet:${id}`;
+  const sheet = isCameraSheet(r.camera);
   const stand = {
-    prompt: r.sent ?? r.prompt,
+    prompt: `${r.sent ?? r.prompt}${sheet ? SHEET_LINE : ""}`,
     quality: r.quality,
     seconds: fit.seconds,
     aspect: fit.aspect,
     start: r.start && tag(r.start),
     end: r.end && tag(r.end),
-    refs: r.refs?.map(tag),
-    camera: r.camera && { url: "beatsheet:camera", blockout: "cut" in r.camera },
+    refs: sheet ? ["beatsheet:camera-sheet", ...(r.refs?.map(tag) ?? [])] : r.refs?.map(tag),
+    camera: r.camera && !sheet ? { url: "beatsheet:camera", blockout: "cut" in r.camera, ...(ask.cameraKind ? { kind: ask.cameraKind } : {}) } : undefined,
     video: r.drive || r.clip ? "beatsheet:clip" : undefined,
     audio: r.speech ? "beatsheet:sound" : undefined,
   };
@@ -1201,18 +1229,20 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
       return falUpload(key, await refFile(project, dir, id, r.cast));
     };
+    const baseRefs = r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const cam = await cameraArgs(projectId, project, dir, job, (f) => falUpload(key, f), baseRefs);
     const input = falInput(job.shape, {
-      prompt: r.sent ?? r.prompt,
+      prompt: cam.prompt,
       quality: job.quality,
       seconds: r.seconds,
       aspect: r.aspect,
       seed: r.seed,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
-      refs: r.refs && (await Promise.all(r.refs.map(uploadRef))),
+      refs: cam.refs,
       video: r.drive ? await falUpload(key, await driveClip(project, dir, job)) : r.clip && (await falUpload(key, await dubClip(project, dir, job))),
       audio: r.speech && (await falUpload(key, await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.wav`)))),
-      camera: r.camera && { url: await falUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+      camera: cam.camera,
     });
     const remote = await falSubmit(key, job.endpoint, input);
     updateJob(projectId, job, { status: "running", remote });
@@ -1249,16 +1279,18 @@ async function stepTein(projectId: string, job: MakeJob, key: string) {
       if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
       return teinUpload(key, await refFile(project, dir, id, r.cast));
     };
+    // References don't go with a start frame there (teinInput), so they aren't sent up either.
+    const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const cam = await cameraArgs(projectId, project, dir, job, (f) => teinUpload(key, f), baseRefs);
     const input = teinInput(job.shape, job.endpoint, {
-      prompt: r.sent ?? r.prompt,
+      prompt: cam.prompt,
       quality: job.quality,
       seconds: r.seconds,
       aspect: r.aspect,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
-      // References don't go with a start frame there (teinInput), so they aren't sent up either.
-      refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
-      camera: r.camera && { url: await teinUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+      refs: cam.refs,
+      camera: cam.camera,
     });
     if (!job.once) job = updateJob(projectId, job, { once: randomUUID() });
     const remote = await teinSubmit(key, input, job.once!);
@@ -1299,16 +1331,18 @@ async function stepRunway(projectId: string, job: MakeJob, key: string) {
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const shape = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
+    // A clip's references don't go with a start frame there (runwayInput), so they aren't sent up either.
+    const baseRefs = job.op === "video" && r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const cam = await cameraArgs(projectId, project, dir, job, (f) => runwayUpload(key, f), baseRefs);
     const input = runwayInput(job.shape, job.endpoint, {
-      prompt: r.sent ?? r.prompt,
+      prompt: cam.prompt,
       quality: job.quality,
       seconds: r.seconds,
       aspect: r.aspect ?? shape,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
-      // A clip's references don't go with a start frame there (runwayInput), so they aren't sent up either.
-      refs: job.op === "video" && r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
-      camera: r.camera && { url: await runwayUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+      refs: cam.refs,
+      camera: cam.camera,
     });
     const { remote, usd } = await runwaySubmit(key, input);
     updateJob(projectId, job, { status: "running", remote, ...(usd !== undefined ? { usd } : {}) });
@@ -1345,16 +1379,18 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
     const upload = (id: string) => higgsfieldUpload(key, assetPath(project, dir, picture(id)));
     // A cast member's own photos go cut out, when that can be done here.
     const uploadRef = async (id: string) => higgsfieldUpload(key, await refFile(project, dir, picture(id).id, r.cast));
+    // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
+    const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const cam = await cameraArgs(projectId, project, dir, job, (f) => higgsfieldUpload(key, f), baseRefs);
     const input = higgsfieldInput(job.shape, job.endpoint, {
-      prompt: r.sent ?? r.prompt,
+      prompt: cam.prompt,
       quality: job.quality,
       seconds: r.seconds,
       aspect: r.aspect,
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
-      // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
-      refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef))),
-      camera: r.camera && { url: await higgsfieldUpload(key, await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+      refs: cam.refs,
+      camera: cam.camera,
       // The clip whose movement a take copies (Kling's motion control).
       video: r.drive && (await higgsfieldUpload(key, await driveClip(project, dir, job))),
     });
@@ -1435,18 +1471,20 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
+    // Standard video models drop references when a start frame is present (frame_images takes precedence on OpenRouter).
+    const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(encodeRef)));
+    const cam = await cameraArgs(projectId, project, dir, job, (f) => openrouterDataUrl(f), baseRefs);
     const body = openrouterVideoInput(job.shape, job.endpoint, {
-      prompt: r.sent ?? r.prompt,
+      prompt: cam.prompt,
       quality: job.quality,
       seconds: r.seconds,
       aspect: r.aspect ?? boardAspect,
       seed: r.seed,
       start: r.start && encode(r.start),
       end: r.end && encode(r.end),
-      // Standard video models drop references when a start frame is present (frame_images takes precedence on OpenRouter).
-      refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(encodeRef))),
+      refs: cam.refs,
       audio: r.speech && openrouterDataUrl(await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.mp3`))),
-      camera: r.camera && { url: openrouterDataUrl(await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+      camera: cam.camera,
     });
     const remote = await openrouterSubmit(key, body);
     updateJob(projectId, job, { status: "running", remote });
@@ -1493,10 +1531,30 @@ export function cameraSize(width: number, height: number): { width: number; heig
   return { width: even(width), height: even(height) };
 }
 
+/** Prepares camera/conditioning video or 4×4 16-frame contact sheet for any video provider. */
+async function cameraArgs(
+  projectId: string,
+  project: Project,
+  dir: string,
+  job: MakeJob,
+  upload: (file: string) => Promise<string> | string,
+  refs: string[] | undefined,
+): Promise<{ prompt: string; refs: string[] | undefined; camera: { url: string; blockout: boolean; kind?: CameraKind } | undefined }> {
+  const r = job.request;
+  const basePrompt = r.sent ?? r.prompt;
+  if (!r.camera) return { prompt: basePrompt, refs, camera: undefined };
+  if (isCameraSheet(r.camera)) {
+    const sheetUrl = await upload(await blockoutSheet(projectId, dir, job));
+    return { prompt: `${basePrompt}${SHEET_LINE}`, refs: [sheetUrl, ...(refs ?? [])], camera: undefined };
+  }
+  const clipUrl = await upload(await cameraClip(projectId, project, dir, job));
+  return { prompt: basePrompt, refs, camera: { url: clipUrl, blockout: "cut" in r.camera, ...(r.cameraKind ? { kind: r.cameraKind } : {}) } };
+}
+
 /**
- * The clip a take keeps the camera of, as a file to upload. A blockout is rendered first: the stretch of its cut, in
- * the format the request settled on. Then it's made what Seedance takes as a reference video: H.264 in an MP4, 24 to 60
- * frames a second, without sound, within its sizes, and small enough to send.
+ * The clip a take keeps the camera of (or a pre-built conditioning video), as a file to upload. A blockout is rendered
+ * first: the stretch of its cut, in the format the request settled on. Then it's made what Seedance takes as a
+ * reference video: H.264 in an MP4, 24 to 60 frames a second, without sound, within its sizes, and small enough to send.
  */
 async function cameraClip(projectId: string, project: Project, dir: string, job: MakeJob): Promise<string> {
   const c = job.request.camera!;
@@ -1505,7 +1563,12 @@ async function cameraClip(projectId: string, project: Project, dir: string, job:
   let src: string;
   let from = c.from;
   let to = c.to;
-  if ("cut" in c) {
+  if (job.request.cameraFile) {
+    if (!existsSync(job.request.cameraFile)) throw new FalError("The conditioning video prepared for this job isn't on disk any more", true);
+    src = job.request.cameraFile;
+    const info = await probe(src);
+    [from, to] = [0, Math.min(info.duration ?? c.to - c.from, c.to - c.from)];
+  } else if ("cut" in c) {
     src = join(work, `${job.id}-blockout.mp4`);
     try {
       await renderStretch(projectId, { cut: c.cut, format: c.format, range: { from: c.from, to: c.to }, out: src });
@@ -1531,12 +1594,40 @@ async function cameraClip(projectId: string, project: Project, dir: string, job:
   throw new FalError(`The clip to follow is ${(statSync(file).size / 1024 / 1024).toFixed(1)} MB even made small, more than ${said}. A shorter stretch would do.`, true);
 }
 
+/**
+ * Renders 16 evenly spaced frames of a blockout cut and tiles them into a 4×4 storyboard contact sheet JPEG, sent as
+ * the first reference picture (`mode: "sheet"`). Much cheaper than reference video and compatible with multi-ref models.
+ */
+async function blockoutSheet(projectId: string, dir: string, job: MakeJob): Promise<string> {
+  const c = job.request.camera;
+  if (!c || !("cut" in c)) throw new FalError("A contact sheet needs a blockout cut", true);
+  const work = join(dir, ".cache", "camera", `${job.id}-sheet`);
+  mkdirSync(work, { recursive: true });
+  const span = Math.max(0.05, c.to - c.from);
+  const times = Array.from({ length: 16 }, (_, i) => c.from + (span * i) / 15);
+  try {
+    await renderBlockoutStills(projectId, { cut: c.cut, format: c.format, times, scale: 0.35, dir: work });
+  } catch (err) {
+    throw new FalError(`The blockout sheet (cut "${c.cut}") couldn't be rendered: ${err instanceof Error ? err.message : String(err)}`, true);
+  }
+  const out = join(dir, ".cache", "camera", `${job.id}-sheet.jpg`);
+  await exec("ffmpeg", ["-v", "error", "-y", "-i", join(work, "still-%03d.jpg"), "-vf", "tile=4x4:padding=4:color=white", "-frames:v", "1", "-q:v", "3", out]);
+  return out;
+}
+
 /** Renders a stretch of a cut to a file, without the sound pass (set by tests to stand in for the renderer). */
 let renderStretch = async (projectId: string, opts: { cut: string; format: string; range: { from: number; to: number }; out: string }): Promise<void> => {
   const { renderProject } = await import("./render.ts");
   await renderProject(projectId, { ...opts, quality: "original", master: false });
 };
 export const setRenderStretch = (fn: typeof renderStretch) => void (renderStretch = fn);
+
+/** Renders stills of a blockout cut for 4×4 contact-sheet mode (set by tests to stand in for the renderer). */
+let renderBlockoutStills = async (projectId: string, opts: { cut: string; format: string; times: number[]; scale: number; dir: string }): Promise<string[]> => {
+  const { renderStills } = await import("./render.ts");
+  return renderStills(projectId, opts);
+};
+export const setRenderBlockoutStills = (fn: typeof renderBlockoutStills) => void (renderBlockoutStills = fn);
 
 /**
  * The stretch of the clip a take that copies movement follows, cut to a file to upload: the window driveWindow gives,
@@ -1827,7 +1918,7 @@ function finish(projectId: string, job: MakeJob, out: Taken) {
       const now = readJob(projectId, job.id);
       if (now) job = { ...job, sheet: now.sheet, request: now.request };
       const asset = await bringIn(projectId, job, out);
-      attach(projectId, job, asset);
+      await attach(projectId, job, asset);
       updateJob(projectId, job, { status: "done", position: undefined, asset: asset.id });
     } catch (err) {
       throw err instanceof FalError ? err : new FalError(`Couldn't bring the take in: ${err instanceof Error ? err.message : String(err)}`, false);
@@ -1876,12 +1967,27 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
   // One that lip-syncs comes back saying its line, which the cut's voice plays already (ComfyUI's takes are trimmed
   // silent); a file that won't read is left as it is.
   if (r.speech && !("file" in out)) await silence(file).catch(() => undefined);
+  const v = job.versionOf;
+  if (v && (v.keepAudio || v.audioFile)) {
+    const { project, dir } = loadProject(projectId, job.cut);
+    const { soundFile } = await import("./clean.ts");
+    const orig = project.assets.find((a) => a.id === v.asset);
+    const audioSrc = v.audioFile && existsSync(v.audioFile) ? v.audioFile : orig ? soundFile(project, dir, orig) : undefined;
+    if (audioSrc && existsSync(audioSrc)) {
+      const muxed = `${file}.muxed.mp4`;
+      const args = v.audioFile
+        ? ["-v", "error", "-y", "-i", file, "-i", audioSrc, "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", muxed]
+        : ["-v", "error", "-y", "-i", file, "-ss", v.from.toFixed(4), "-to", v.to.toFixed(4), "-i", audioSrc, "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart", muxed];
+      await exec("ffmpeg", args).then(() => replaceFile(muxed, file)).catch(() => undefined);
+    }
+  }
   const followed = r.camera && "asset" in r.camera ? r.camera.asset : undefined;
-  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, followed, r.speech && "asset" in r.speech ? r.speech.asset : undefined].filter((x): x is string => !!x);
+  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, followed, v?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined].filter((x): x is string => !!x);
   return addAsset(projectId, file, {
-    id: job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
-    label: r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt,
-    tags: [job.sheet ? (job.portrait ? "portrait" : "sheet") : "take"],
+    id: v ? `${v.asset}-${v.tag ?? "version"}` : job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
+    label: v?.label ?? (r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt),
+    tags: [v?.tag ?? (job.sheet ? (job.portrait ? "portrait" : "sheet") : "take")],
+    ...(v ? { version: { of: v.asset, from: Math.round(v.from * 10000) / 10000 } } : {}),
     provenance: {
       source: "generated",
       provider: job.route,
@@ -1892,7 +1998,7 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
       ...(from.length ? { refs: [...new Set(from)] } : {}),
       costUsd: job.usd,
       createdAt: new Date().toISOString(),
-      op: job.op,
+      op: v?.op ?? job.op,
       params: {
         model: job.model,
         prompt: r.prompt,
@@ -1906,6 +2012,8 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
         ...(r.speech ? { speech: r.speech } : {}),
         ...(r.clip ? { clip: r.clip } : {}),
         ...(r.camera ? { camera: r.camera } : {}),
+        ...(r.cameraKind ? { cameraKind: r.cameraKind } : {}),
+        ...(v?.params ?? {}),
         ...(job.comfy ? { workflow: `${job.endpoint}.${job.comfy.profile}` } : {}),
         ...(bars ? { letterbox: `removed ${bars.top + bars.bottom}px of bars` } : {}),
       },
@@ -1926,7 +2034,15 @@ const qualityOf = (a: Asset | undefined) => a?.provenance?.params?.quality as Qu
  * joins its shot's takes: the first is the one the shot shows, and so is the first clip over a board (a still) and the
  * first final over a rough, starting where takeLead says. The shot's fidelity moves up to match.
  */
-function attach(projectId: string, job: MakeJob, asset: Asset) {
+async function attach(projectId: string, job: MakeJob, asset: Asset) {
+  if (job.versionOf?.use) {
+    const { useVersion } = await import("./restore.ts");
+    try {
+      useVersion(projectId, asset.id, { cut: job.cut });
+    } catch {
+      // Shot or clip may have been removed while the job was running.
+    }
+  }
   if (job.sheet) {
     const [id, variant] = job.sheet.split("/");
     updateFile(projectId, (d) => {

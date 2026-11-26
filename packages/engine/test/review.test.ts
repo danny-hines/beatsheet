@@ -1,6 +1,12 @@
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import sharp from "sharp";
 import { cutView, parseFile, resolveTimeline, SCHEMA_V1, STAGE_IDS, type Project, type Shot } from "@beatsheet/schema";
-import { designChecks, reviewPaths, reviewRange } from "../src/review.ts";
+import { analyzeReviewVideo, designChecks, isStillBlank, projectChecks, reviewPaths, reviewRange } from "../src/review.ts";
+import { trimLineSilence } from "../src/narrate.ts";
 
 const project = (shots: Shot[], look?: Project["look"]): Project => {
   const r = parseFile({
@@ -84,5 +90,121 @@ describe("reviewRange", () => {
     expect(() => reviewRange(tl, { shots: ["nope"] })).toThrow(/nope/);
     expect(() => reviewRange(tl, { from: 15, to: 10 })).toThrow(/Nothing to review/);
     expect(() => reviewRange(tl, { from: 25 })).toThrow(/Nothing to review/);
+  });
+});
+
+describe("programmatic video, still and voiceover verification", () => {
+  it("flags maxLength violations and timeline diagnostics as FAIL in projectChecks", () => {
+    const p = project([
+      { id: "s1", track: "pic", fidelity: "rough", start: { kind: "time", t: 0 }, duration: 12, content: { kind: "text", text: "Long" } },
+    ]);
+    p.spec.maxLength = 10;
+    const tl = resolveTimeline(p);
+    const { checks } = projectChecks(p, tl, "vertical", 1080, 1920);
+    expect(checks.find((c) => c.id === "max-length")?.status).toBe("FAIL");
+    expect(checks.find((c) => c.id === "timeline-diagnostics")?.status).toBe("PASS");
+  });
+
+  it("detects blank black stretches and solid-black stills while passing healthy motion clips", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "beatsheet-review-vid-"));
+    try {
+      const blankVid = join(dir, "blank.mp4");
+      // 1s color + 1s pure black in the middle + 1s color, with a steady sine tone.
+      execFileSync(
+        "ffmpeg",
+        [
+          "-y",
+          "-v",
+          "error",
+          "-f",
+          "lavfi",
+          "-i",
+          "testsrc2=size=160x90:rate=15:duration=1",
+          "-f",
+          "lavfi",
+          "-i",
+          "color=c=black:s=160x90:r=15:d=1",
+          "-f",
+          "lavfi",
+          "-i",
+          "testsrc2=size=160x90:rate=15:duration=1",
+          "-f",
+          "lavfi",
+          "-i",
+          "sine=frequency=440:duration=3",
+          "-filter_complex",
+          "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]",
+          "-map",
+          "[v]",
+          "-map",
+          "3:a",
+          "-c:v",
+          "libx264",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          blankVid,
+        ],
+      );
+      const p = project([{ id: "s1", track: "pic", fidelity: "rough", start: { kind: "time", t: 0 }, duration: 3, content: { kind: "text", text: "Test" } }]);
+      const tl = resolveTimeline(p);
+      const audit = await analyzeReviewVideo(blankVid, { from: 0, span: 3, tl, project: p });
+      expect(audit.checks.find((c) => c.id === "blank-frames")?.status).toBe("FAIL");
+      expect(audit.checks.find((c) => c.id === "audio-silence")?.status).toBe("PASS");
+
+      const blackJpg = join(dir, "black.jpg");
+      const litJpg = join(dir, "lit.jpg");
+      await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 0, g: 0, b: 0 } } }).jpeg().toFile(blackJpg);
+      await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 180, g: 120, b: 60 } } }).jpeg().toFile(litJpg);
+      expect(await isStillBlank(blackJpg)).toBe(true);
+      expect(await isStillBlank(litJpg)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("trims dead leading and trailing silence from voiced audio and shifts word timestamps cleanly", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "beatsheet-vo-tight-"));
+    try {
+      const wav = join(dir, "line.wav");
+      // 0.4s silence + 0.6s 440Hz tone + 0.5s silence = 1.5s total
+      execFileSync("ffmpeg", [
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=24000:cl=mono:d=0.4",
+        "-f",
+        "lavfi",
+        "-i",
+        "sine=frequency=440:sample_rate=24000:duration=0.6",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=24000:cl=mono:d=0.5",
+        "-filter_complex",
+        "[0:a][1:a][2:a]concat=n=3:v=0:a=1[a]",
+        "-map",
+        "[a]",
+        "-c:a",
+        "pcm_s16le",
+        wav,
+      ]);
+      const words = [
+        { w: "Fast", s: 0.42, e: 0.68 },
+        { w: "cut", s: 0.72, e: 0.98 },
+      ];
+      const r = await trimLineSilence(wav, words, 1.5, { pad: 0.05 });
+      expect(r.trimmed).toBe(true);
+      expect(r.duration).toBeLessThan(0.9);
+      expect(r.duration).toBeGreaterThan(0.6);
+      expect(r.words[0]!.s).toBeLessThan(0.15);
+      expect(r.words[1]!.e).toBeLessThanOrEqual(r.duration);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

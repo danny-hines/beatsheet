@@ -39,7 +39,7 @@ import { cutOut, findSubjects, joinSubjects, trackSubject, visionStatus, type Cu
 import { addFootage, addSong, ensureCached, importFolder, lookAgain, scanFolder } from "./ingest.ts";
 import { assetPath, cachePaths, isProjectId, mediaPath, NoProjectError, projectDir, RUNTIME, sourceRoot } from "./paths.ts";
 import { IS_WINDOWS, pickerCommand, revealCommand, run as runLaunch } from "./platform.ts";
-import { ConflictError, InvalidProjectError, listProjects, loadFile, loadProject, readRaw, saveFile, trashPlan, trashProject } from "./store.ts";
+import { ConflictError, InvalidProjectError, listProjects, loadFile, loadProject, readRaw, saveFile, trashPlan, trashProject, updateFile } from "./store.ts";
 
 const run = promisify(execFile);
 
@@ -105,7 +105,7 @@ export function sendFile(req: IncomingMessage, res: ServerResponse, file: string
 
 export type Job = {
   id: string;
-  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe" | "clean" | "restore" | "angles";
+  kind: "render" | "import" | "install" | "subjects" | "record" | "narrate" | "transcribe" | "clean" | "restore" | "angles" | "stems" | "swap" | "perform";
   project: string;
   format?: string;
   status: "running" | "done" | "error";
@@ -125,6 +125,9 @@ const JOB_WORDS: Record<Job["kind"], string> = {
   clean: "cleaning the sound",
   restore: "restoring",
   angles: "lining up cameras",
+  stems: "separating stems",
+  swap: "preparing character swap",
+  perform: "tracking facial performance",
 };
 /** Kept for older imports. */
 export type RenderJob = Job;
@@ -399,7 +402,42 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // Restoring: the programs that clean sound and restore picture here, and what each fixer can do here.
     if (id === "restore" && req.method === "GET") {
       const { fixerStates } = await import("./clean.ts");
-      return json(res, 200, { tools: Object.fromEntries(TOOLS.map((t) => [t, toolStatus(t)])), states: await fixerStates() });
+      const { demucsStatus } = await import("./demucs.ts");
+      const { rubberbandStatus } = await import("./audio.ts");
+      const { visionPrepStatus } = await import("./visiontools.ts");
+      return json(res, 200, {
+        tools: Object.fromEntries(TOOLS.map((t) => [t, toolStatus(t)])),
+        states: await fixerStates(),
+        demucs: demucsStatus(),
+        rubberband: rubberbandStatus(),
+        visionPrep: visionPrepStatus(),
+      });
+    }
+    if (id === "vision-prep") {
+      const { cancelVisionPrepInstall, installVisionPrep, removeVisionPrep, visionPrepStatus } = await import("./visiontools.ts");
+      if (action === "install" && req.method === "POST") return json(res, 202, installVisionPrep());
+      if (action === "cancel" && req.method === "POST") {
+        cancelVisionPrepInstall();
+        return json(res, 200, visionPrepStatus());
+      }
+      if (!action && req.method === "DELETE") {
+        removeVisionPrep();
+        return json(res, 200, visionPrepStatus());
+      }
+      if (!action && req.method === "GET") return json(res, 200, visionPrepStatus());
+    }
+    if (id === "demucs") {
+      const { cancelDemucsInstall, demucsStatus, installDemucs, removeDemucs } = await import("./demucs.ts");
+      if (action === "install" && req.method === "POST") return json(res, 202, installDemucs());
+      if (action === "cancel" && req.method === "POST") {
+        cancelDemucsInstall();
+        return json(res, 200, demucsStatus());
+      }
+      if (!action && req.method === "DELETE") {
+        removeDemucs();
+        return json(res, 200, demucsStatus());
+      }
+      if (!action && req.method === "GET") return json(res, 200, demucsStatus());
     }
     if (id === "fix" && action && (TOOLS as string[]).includes(action)) {
       const tool = action as ToolId;
@@ -599,9 +637,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     // speechFrom to speechTo), or "none"; and clip "take" to change the mouths in the clip the shot shows.
     const says = q.get("speech");
     const lines = q.get("lines")?.split(",").filter(Boolean);
-    // The blockout a take keeps the camera of: camera (a cut's id, or "none" for none) and cameraShots (its shots, from the first to the last).
+    // The blockout a take keeps the camera of: camera (a cut's id, or "none" for none), cameraShots (its shots), and cameraMode ("video" or "sheet").
     const keeps = q.get("camera");
     const cameraShots = q.get("cameraShots")?.split(",").filter(Boolean);
+    const cameraMode = q.get("cameraMode") === "sheet" ? ("sheet" as const) : q.get("cameraMode") === "video" ? ("video" as const) : undefined;
     const speech = says === "none" ? { speech: null } : says === "lines" ? { speech: lines?.length ? { lines } : {} } : says ? { speech: { asset: says, from: at("speechFrom"), to: at("speechTo") } } : {};
     try {
       return json(
@@ -617,7 +656,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(q.get("end") === "none" ? { end: null } : q.get("end") ? { end: q.get("end")! } : {}),
           ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
           ...speech,
-          ...(keeps === "none" ? { camera: null } : keeps ? { camera: { cut: keeps, ...(cameraShots?.length ? { shots: cameraShots } : {}) } } : {}),
+          ...(keeps === "none" ? { camera: null } : keeps ? { camera: { cut: keeps, ...(cameraShots?.length ? { shots: cameraShots } : {}), ...(cameraMode ? { mode: cameraMode } : {}) } } : {}),
           ...(q.get("clip") === "take" ? { clip: "take" as const } : {}),
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,
@@ -731,14 +770,41 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     return json(res, 200, await fixChoices("clean", { seconds: a?.duration ?? 0 }));
   }
   if (section === "projects" && id && action === "clean" && req.method === "POST") {
-    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; with?: string; strength?: "light" | "full"; everywhere?: boolean; again?: boolean };
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; with?: string; strength?: "light" | "full"; everywhere?: boolean; keepMusic?: boolean; again?: boolean };
     if (!body.asset) return json(res, 400, { error: "Clean which clip?" });
     const { cleanSound } = await import("./clean.ts");
     const job = startJob("clean", id, async (j) => {
       const r = await cleanSound(id, body.asset!, { ...body, onProgress: (f) => (j.progress = f * 0.98) });
-      return JSON.stringify({ by: r.choice.label, spans: r.spans, reused: r.reused, costUsd: r.costUsd });
+      return JSON.stringify({ by: r.choice.label, spans: r.spans, reused: r.reused, keepMusic: r.keepMusic, costUsd: r.costUsd });
     });
     return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "stems" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; mode?: "two-stem" | "four-stem"; addAssets?: boolean; again?: boolean };
+    if (!body.asset) return json(res, 400, { error: "Separate stems for which clip?" });
+    const { separateStems } = await import("./demucs.ts");
+    const job = startJob("stems", id, async (j) => {
+      const r = await separateStems(id, body.asset!, { mode: body.mode, addAssets: body.addAssets, again: body.again, onProgress: (f) => (j.progress = f * 0.98) });
+      return JSON.stringify({ tracks: r.asset.stems?.tracks ?? [], reused: r.reused, added: r.added.map((a) => a.id) });
+    });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "shift-audio" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; semitones?: number; speed?: number; keepMusic?: boolean; formantPreserve?: boolean };
+    if (!body.asset) return json(res, 400, { error: "Shift audio on which clip?" });
+    const { shiftAudio } = await import("./audio.ts");
+    try {
+      const r = await shiftAudio(id, body.asset, body);
+      return json(res, 200, { pitch: r.asset.pitch, engine: r.engine, keepMusic: r.keepMusic });
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "shift-audio" && req.method === "DELETE") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const { unpitchAudio } = await import("./audio.ts");
+    unpitchAudio(id, q.get("asset") ?? "");
+    return json(res, 200, { ok: true });
   }
   // Several cameras on one event, lined up by their sound (a job), and which of them has each speaker.
   if (section === "projects" && id && action === "angles" && req.method === "POST") {
@@ -808,6 +874,194 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const { useVersion } = await import("./restore.ts");
     try {
       return json(res, 200, { shots: useVersion(id, body.version, { cut: body.cut, shots: body.shots, off: body.off }) });
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  // Light Sphere Relighting: estimate cost / model choices, start a relight job, or extract a light sphere from a still.
+  if (section === "projects" && id && action === "relight" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const asset = q.get("asset");
+    if (!asset) return json(res, 400, { error: "Relight which clip?" });
+    const { relightPlan } = await import("./relight.ts");
+    try {
+      const from = q.get("from") ? Number(q.get("from")) : undefined;
+      const to = q.get("to") ? Number(q.get("to")) : undefined;
+      const quality = q.get("quality") === "final" ? ("final" as const) : ("rough" as const);
+      return json(
+        res,
+        200,
+        relightPlan(id, asset, {
+          cut: q.get("cut") ?? undefined,
+          from,
+          to,
+          preset: q.get("preset") ?? undefined,
+          sphere: q.get("sphere") ?? undefined,
+          prompt: q.get("prompt") ?? undefined,
+          quality,
+          model: q.get("model") ?? undefined,
+          via: q.get("via") ?? undefined,
+        }),
+      );
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "relight" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as {
+      asset?: string;
+      cut?: string;
+      from?: number;
+      to?: number;
+      preset?: string;
+      sphere?: string;
+      prompt?: string;
+      quality?: "rough" | "final";
+      model?: string;
+      via?: string;
+      use?: boolean;
+      saveToLook?: boolean;
+    };
+    if (!body.asset) return json(res, 400, { error: "Relight which clip?" });
+    const { relightClip } = await import("./relight.ts");
+    try {
+      return json(res, 200, await relightClip(id, body.asset, body));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "light-sphere" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; preset?: string; prompt?: string; model?: string; via?: string; setLook?: boolean };
+    const { ensurePresetSphere, extractLightSphere } = await import("./relight.ts");
+    try {
+      if (body.preset) {
+        const asset = await ensurePresetSphere(id, body.preset);
+        if (body.setLook) {
+          updateFile(id, (d) => {
+            const look = (d.look ??= {});
+            look.lightSphere = asset.id;
+            look.lightPreset = body.preset;
+          });
+        }
+        return json(res, 200, { asset });
+      }
+      if (!body.asset) return json(res, 400, { error: "Pass a reference still (asset) or a built-in preset" });
+      return json(res, 200, extractLightSphere(id, { asset: body.asset, prompt: body.prompt, model: body.model, via: body.via }));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  // Character Replacement (Fast face mesh / Advanced depth+silhouette+mesh) via Seedance 2.5.
+  if (section === "projects" && id && action === "swap" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const asset = q.get("asset");
+    const cast = q.get("cast");
+    if (!asset || !cast) return json(res, 400, { error: "Pass asset and cast" });
+    const { swapPlan } = await import("./swap.ts");
+    try {
+      return json(
+        res,
+        200,
+        swapPlan(id, asset, {
+          cut: q.get("cut") ?? undefined,
+          cast,
+          mode: q.get("mode") === "advanced" ? "advanced" : "fast",
+          subject: q.get("subject") ?? undefined,
+          from: q.get("from") ? Number(q.get("from")) : undefined,
+          to: q.get("to") ? Number(q.get("to")) : undefined,
+          quality: q.get("quality") === "final" ? "final" : "rough",
+          prompt: q.get("prompt") ?? undefined,
+        }),
+      );
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "swap" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as {
+      asset?: string;
+      cut?: string;
+      cast?: string;
+      mode?: "fast" | "advanced";
+      subject?: string;
+      matteAsset?: string;
+      from?: number;
+      to?: number;
+      prompt?: string;
+      quality?: "rough" | "final";
+      model?: string;
+      via?: string;
+      use?: boolean;
+      pitchShift?: number;
+      keepMusic?: boolean;
+    };
+    if (!body.asset || !body.cast) return json(res, 400, { error: "Swap which clip, and into which character?" });
+    const { swapCharacter } = await import("./swap.ts");
+    try {
+      return json(res, 200, await swapCharacter(id, body.asset, { ...body, cast: body.cast }));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  // Facial Performance Transfer ("Act it yourself"): MediaPipe ARKit blendshapes -> kit:ClayHead mask -> Seedance 2.5.
+  if (section === "projects" && id && action === "face-track" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as { asset?: string; from?: number; to?: number; again?: boolean };
+    if (!body.asset) return json(res, 400, { error: "Track facial performance on which clip?" });
+    const { trackFacePerformance } = await import("./perform.ts");
+    const job = startJob("perform", id, async (j) => {
+      j.progress = 0.2;
+      const r = await trackFacePerformance(id, body.asset!, { from: body.from, to: body.to, again: body.again });
+      j.progress = 0.99;
+      return JSON.stringify({ file: r.file, frames: r.track.frames.length, duration: r.track.duration, reused: r.reused });
+    });
+    return json(res, 202, job);
+  }
+  if (section === "projects" && id && action === "perform" && req.method === "GET") {
+    const q = new URL(req.url ?? "", "http://local").searchParams;
+    const driver = q.get("driver");
+    if (!driver) return json(res, 400, { error: "Pass driver clip asset id" });
+    const { performPlan } = await import("./perform.ts");
+    try {
+      return json(
+        res,
+        200,
+        performPlan(id, {
+          cut: q.get("cut") ?? undefined,
+          driver,
+          shot: q.get("shot") ?? undefined,
+          cast: q.get("cast") ?? undefined,
+          start: q.get("start") ?? undefined,
+          from: q.get("from") ? Number(q.get("from")) : undefined,
+          to: q.get("to") ? Number(q.get("to")) : undefined,
+          quality: q.get("quality") === "final" ? "final" : "rough",
+          prompt: q.get("prompt") ?? undefined,
+        }),
+      );
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "perform" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as {
+      cut?: string;
+      driver?: string;
+      from?: number;
+      to?: number;
+      shot?: string;
+      cast?: string;
+      start?: string;
+      prompt?: string;
+      intensity?: number;
+      smooth?: number;
+      quality?: "rough" | "final";
+      model?: string;
+      via?: string;
+      count?: number;
+    };
+    if (!body.driver) return json(res, 400, { error: "Which performance clip should drive the face?" });
+    const { transferPerformance } = await import("./perform.ts");
+    try {
+      return json(res, 200, await transferPerformance(id, { ...body, driver: body.driver }));
     } catch (err) {
       return json(res, 400, { error: said(err) });
     }
@@ -1029,7 +1283,8 @@ async function media(req: IncomingMessage, res: ServerResponse, parts: string[])
     if (kind === "peaks") {
       if (a.kind === "image") return json(res, 200, { rate: PEAK_RATE, peaks: "" });
       const { soundFile } = await import("./clean.ts");
-      const out = a.cleaned ? c.peaks.replace(/\.json$/, `-${Date.parse(a.cleaned.at).toString(36)}.json`) : c.peaks;
+      const stamp = a.pitch?.at ?? a.cleaned?.at;
+      const out = stamp ? c.peaks.replace(/\.json$/, `-${Date.parse(stamp).toString(36)}.json`) : c.peaks;
       await makePeaks(soundFile(project, dir, a), out);
       res.setHeader("cache-control", "no-cache");
       return sendFile(req, res, out);

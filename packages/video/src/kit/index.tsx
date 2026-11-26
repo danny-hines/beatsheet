@@ -5,11 +5,14 @@
 import { AbsoluteFill } from "remotion";
 import { Background, Blueprint, Chip, Counter, Flash, Glitch, Grain, GridLines, Ink, isLight, Kicker, Paper, Pop, Rise, ScanLine, Shake, Slam, Solid, Stamp, Title, Typewriter, Viewfinder } from "./parts.tsx";
 import { Callouts, Cards, Code, Grid, Media, Phone, Polaroids, Quote, readable, Split, ThreeCanvas } from "./media.tsx";
+import { ClayHead, type ClayHeadProps } from "./clayhead.tsx";
+import { Previs, type PrevisProps } from "./previs.tsx";
 import { useLook, useScene } from "./scene.tsx";
 
 export * from "./scene.tsx";
-export { Background, Blueprint, Callouts, Cards, Chip, Code, Counter, Flash, Glitch, Grain, Grid, GridLines, Ink, isLight, Kicker, Media, Paper, Phone, Polaroids, Pop, Quote, readable, Rise, ScanLine, Shake, Slam, Solid, Split, Stamp, ThreeCanvas, Title, Typewriter, Viewfinder };
+export { Background, Blueprint, Callouts, Cards, Chip, ClayHead, Code, Counter, Flash, Glitch, Grain, Grid, GridLines, Ink, isLight, Kicker, Media, Paper, Phone, Polaroids, Pop, Previs, Quote, readable, Rise, ScanLine, Shake, Slam, Solid, Split, Stamp, ThreeCanvas, Title, Typewriter, Viewfinder };
 export type { CalloutPoint, CardItem, ThreeContext } from "./media.tsx";
+export type { ClayHeadProps, PrevisProps };
 export { GradeDefs, gradeFilter, Vignette } from "../grade.tsx";
 
 /** A big number counting up with a label: "60 SHARED PHOTOS", "30 STYLES". */
@@ -83,6 +86,8 @@ export const KIT: Record<string, React.FC<any>> = {
   Paper: () => <Paper />,
   Ink: () => <Ink />,
   Blueprint: () => <Blueprint />,
+  Previs,
+  ClayHead,
   ...Overlay,
 };
 

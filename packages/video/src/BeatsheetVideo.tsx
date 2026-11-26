@@ -25,6 +25,7 @@ import {
   type ClipEffect,
   type Cover,
   type Grade,
+  type LayoutBox,
   type Look,
   type Motion,
   type Project,
@@ -55,6 +56,8 @@ export type VideoProps = {
   words?: Record<string, SaidWord[]>;
   /** Nothing behind the picture where nothing's drawn (an export that keeps transparency), rather than black. */
   transparent?: boolean;
+  /** When set during review_cut still renders, measures rendered text/media/error boxes and logs BS_LAYOUT JSON. */
+  auditLayout?: boolean;
 };
 
 /** How loud a part of the mix plays: its level in the cut, off when it's muted or another part is soloed. */
@@ -71,8 +74,8 @@ export function assetUrl(base: string, a: Asset, quality: MediaQuality): string 
   return `${base}/asset/${a.id}/original`;
 }
 export const fileUrl = (base: string, path: string) => `${base}/file/${encodeURIComponent(path)}`;
-/** Where a clip's sound plays from: its cleaned sound once it's been cleaned, else its own file. */
-export const soundUrl = (base: string, a: Asset, quality: MediaQuality) => (a.cleaned ? `${base}/asset/${a.id}/sound` : assetUrl(base, a, quality));
+/** Where a clip's sound plays from: its pitch-shifted or cleaned sound once processed, else its own file. */
+export const soundUrl = (base: string, a: Asset, quality: MediaQuality) => (a.pitch || a.cleaned ? `${base}/asset/${a.id}/sound` : assetUrl(base, a, quality));
 
 /** Size, frame rate and length of the composition for a project in one format. */
 export function metadataFor(props: VideoProps) {
@@ -82,7 +85,7 @@ export function metadataFor(props: VideoProps) {
   return { width: fmt.width, height: fmt.height, fps: fmt.fps, durationInFrames: Math.max(1, Math.ceil(seconds * fmt.fps)) };
 }
 
-export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo, words, transparent }) => {
+export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBase, quality, codeVersion, solo, words, transparent, auditLayout }) => {
   const { fps } = useVideoConfig();
   const tl = useMemo(() => resolveTimeline(project, format), [project, format]);
   const assets = useMemo(() => new Map(project.assets.map((a) => [a.id, a])), [project]);
@@ -96,8 +99,9 @@ export const BeatsheetVideo: React.FC<VideoProps> = ({ project, format, mediaBas
   const music = loudnessOf(project, "music", solo), voice = loudnessOf(project, "voice", solo), sfx = loudnessOf(project, "sfx", solo);
 
   return (
-    <AbsoluteFill style={{ backgroundColor: transparent ? undefined : "#000" }}>
+    <AbsoluteFill data-beatsheet-root="true" style={{ backgroundColor: transparent ? undefined : "#000" }}>
       <LookFonts look={look} base={mediaBase} />
+      {auditLayout && <LayoutAuditProbe />}
       {project.tracks.map((track) => {
         if (track.hidden) return null;
         const list = tl.shots.filter((r) => r.track === track.id && Number.isFinite(r.start) && Number.isFinite(r.end) && r.end > r.start);
@@ -232,6 +236,7 @@ function CaptionsLayer({ tl, project, settings, look, words }: { tl: Timeline; p
   const highlight = (settings.style ?? "words") === "words";
   return (
     <AbsoluteFill
+      data-beatsheet-role="caption"
       style={{
         justifyContent: pos === "top" ? "flex-start" : pos === "middle" ? "center" : "flex-end",
         alignItems: "center",
@@ -843,4 +848,76 @@ function Placed({ shot, children }: { shot: Shot; children: ReactNode }) {
       {children}
     </div>
   );
+}
+
+/**
+ * Measures rendered text, media and scene-error bounding boxes in composition pixels and logs a single
+ * `BS_LAYOUT:` JSON record so `review_cut` can programmatically verify edge clipping, safe zones, overlaps,
+ * broken media and runtime scene errors on the exact frame rendered by Remotion.
+ */
+function LayoutAuditProbe() {
+  const frame = useCurrentFrame();
+  const { width, height } = useVideoConfig();
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const root = document.querySelector("[data-beatsheet-root]") as HTMLElement | null;
+    if (!root) return;
+    const rr = root.getBoundingClientRect();
+    if (rr.width <= 0 || rr.height <= 0) return;
+    const sx = width / rr.width;
+    const sy = height / rr.height;
+    const boxes: LayoutBox[] = [];
+    const toBox = (r: DOMRect) => ({
+      x: Math.round((r.left - rr.left) * sx * 10) / 10,
+      y: Math.round((r.top - rr.top) * sy * 10) / 10,
+      w: Math.round(r.width * sx * 10) / 10,
+      h: Math.round(r.height * sy * 10) / 10,
+    });
+    const visible = (el: Element): boolean => {
+      let cur: Element | null = el;
+      while (cur && cur !== root) {
+        const cs = getComputedStyle(cur);
+        if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) < 0.05) return false;
+        cur = cur.parentElement;
+      }
+      return true;
+    };
+
+    for (const err of root.querySelectorAll("[data-beatsheet-error]")) {
+      if (!visible(err)) continue;
+      boxes.push({ kind: "error", text: err.textContent?.trim().slice(0, 120), ...toBox(err.getBoundingClientRect()) });
+    }
+    for (const img of root.querySelectorAll("img")) {
+      if (!visible(img)) continue;
+      const b = toBox(img.getBoundingClientRect());
+      boxes.push({ kind: "media", text: img.alt || img.getAttribute("src") || "", broken: img.complete && img.naturalWidth === 0, ...b });
+    }
+
+    // Group visible leaf text nodes by their direct non-inline text block container so word spans don't self-overlap.
+    const seen = new Set<Element>();
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const txt = node.textContent?.trim();
+      if (!txt) continue;
+      const parent = node.parentElement;
+      if (!parent || parent.closest("[data-beatsheet-role='caption']") || parent.closest("[data-beatsheet-error]")) continue;
+      if (!visible(parent)) continue;
+      let block: Element = parent;
+      while (block.parentElement && block.parentElement !== root && getComputedStyle(block).display === "inline") {
+        block = block.parentElement;
+      }
+      if (seen.has(block)) continue;
+      seen.add(block);
+      const rect = block.getBoundingClientRect();
+      if (rect.width <= 2 || rect.height <= 2) continue;
+      const cs = getComputedStyle(block);
+      const clips = ["hidden", "clip"].includes(cs.overflowX) || ["hidden", "clip"].includes(cs.overflowY);
+      const clipped = clips && (block.scrollWidth > block.clientWidth + 4 || block.scrollHeight > block.clientHeight + 4);
+      boxes.push({ kind: "text", text: block.textContent?.trim().slice(0, 80), clipped, ...toBox(rect) });
+    }
+
+    console.info(`BS_LAYOUT:${JSON.stringify({ frame, boxes })}`);
+  }, [frame, width, height]);
+  return null;
 }

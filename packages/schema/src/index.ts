@@ -20,3 +20,7 @@ export * from "./script.ts";
 export * from "./multicam.ts";
 export * from "./keys.ts";
 export * from "./exports.ts";
+export * from "./previs.ts";
+export * from "./relight.ts";
+export * from "./review.ts";
+export * from "./face.ts";

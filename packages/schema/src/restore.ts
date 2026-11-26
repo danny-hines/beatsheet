@@ -6,7 +6,7 @@
  * tools give the same answer.
  */
 
-export type FixerJob = "clean" | "upscale" | "frames";
+export type FixerJob = "clean" | "upscale" | "frames" | "stems";
 
 export type Fixer = {
   id: string;
@@ -75,6 +75,15 @@ export const FIXERS: Fixer[] = [
     runs: "here",
     needs: "rife",
   },
+  {
+    id: "demucs",
+    label: "Demucs (htdemucs)",
+    by: "run on this computer",
+    note: "Free, MIT-licensed. Separates voices from music & ambience (2 stems) or vocals, drums, bass and other (4 stems) so voices can be cleaned or pitch-shifted without touching the music.",
+    does: "stems",
+    runs: "here",
+    needs: "demucs",
+  },
 ];
 
 /**
@@ -128,7 +137,7 @@ export function chooseFixer(
   const mp = megapixels(ask);
   const costOf = (f: Fixer) =>
     f.perMinute !== undefined ? Math.round((ask.seconds / 60) * f.perMinute * 1000) / 1000 : f.perMegapixel !== undefined ? Math.round(mp.out * f.perMegapixel * 1000) / 1000 : undefined;
-  const workOf = (f: Fixer, speed?: number) => (speed === undefined ? undefined : Math.round(f.does === "clean" ? ask.seconds * speed : mp.in * speed));
+  const workOf = (f: Fixer, speed?: number) => (speed === undefined ? undefined : Math.round(f.does === "clean" || f.does === "stems" ? ask.seconds * speed : mp.in * speed));
   const all = catalog
     .filter((f) => f.does === does)
     .map((f): FixerChoice => {

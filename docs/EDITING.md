@@ -19,6 +19,7 @@ The operations are in `packages/schema/src/edit.ts`, tested in `packages/schema/
 - **Script** (`script.ts`): a word said across a cut belongs to the shot that plays its middle. Deleting words takes out from halfway through the pause before them to halfway through the pause after. New transcripts are fitted to the sound (`fitWordsToSound`): whisper.cpp stretches a word over the pause after it and starts the next one late.
 - **Angles** (`multicam.ts`, engine `multicam.ts`): recordings are lined up by cross-correlating their loudness envelopes (500 a second, slow swells taken out), so they need sound in common; a match under 1.5 times the next best is left out. Each speaker's camera is the one that hears them loudest relative to how loud it hears everyone.
 - **Keys and layout** (`keys.ts`, the renderer's `Placed`): keys are in seconds into the shot, so they move with it. A layout's box is a fraction of the frame; a mask's box is a fraction of the shot's box.
+- **Stem separation & pitch-preserving audio** (`demucs.ts`, `audio.ts`): Demucs (`htdemucs`, MIT) splits clips or songs into 2 or 4 stems so `clean_sound(keepMusic: true)` and `shift_audio(keepMusic: true)` touch only vocals while leaving music and ambience intact. Rubber Band CLI (`--fine --formant`, with ffmpeg fallback) handles semitone pitch shifting (`-12..+12`) and pitch-preserving speed shifts.
 - **Exports** (`exports.ts`, engine `render.ts`, `share.ts`): every file with sound is mastered to −14 LUFS. Timeline files point at the original footage, not the playable copies.
 
 ## Gaps

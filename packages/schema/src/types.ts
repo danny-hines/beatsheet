@@ -165,6 +165,8 @@ export const Look = z.object({
     .string()
     .optional()
     .describe("The style made shots are drawn in: the id of a style in the cast (@hand-drawn). Sheets and boards follow it unless a cast member has its own; without one, they're photographs"),
+  lightPreset: z.string().optional().describe("Default relighting preset id (from RELIGHT_PRESETS) for footage and lighting continuity"),
+  lightSphere: z.string().optional().describe("Asset id of a lit calibration sphere (from a preset or extracted from a reference still) that unifies relighting across shots"),
 });
 export type Look = z.infer<typeof Look>;
 
@@ -299,11 +301,31 @@ export const Asset = z.object({
       by: z.string().describe("What cleaned it: deepfilter, isolator"),
       strength: z.enum(["light", "full"]).describe("light leaves a little of the room around the voices; full takes out everything but them"),
       only: z.literal("speech").optional().describe("Cleaned only where people talk (by its transcript), so music and sounds between the lines stay as they were"),
+      keepMusic: z.boolean().optional().describe("Separated voices from music with Demucs first, cleaned only the voices, and remixed the original music & ambience back in"),
       at: z.string(),
       costUsd: z.number().optional(),
     })
     .optional()
     .describe("Its voices cleaned of hiss, wind and hum, kept beside the project (media/<id>.clean-*.m4a): clips play that sound instead of the file's own. The original stays as it was"),
+  stems: z
+    .object({
+      by: z.string().describe("What separated it: demucs"),
+      mode: z.enum(["two-stem", "four-stem"]),
+      tracks: z.array(z.enum(["vocals", "no_vocals", "drums", "bass", "other"])),
+      at: z.string(),
+    })
+    .optional()
+    .describe("Separated audio stems kept beside the project (media/<id>.stem-<name>.wav) for voice cleaning, vocal-only pitch shifting, or remixing"),
+  pitch: z
+    .object({
+      semitones: z.number().min(-12).max(12).describe("Pitch shift in semitones (-12..12)"),
+      speed: z.number().positive().optional().describe("Optional pitch-preserving speed ratio"),
+      keepMusic: z.boolean().optional().describe("Shifted only the vocal stem via Demucs, keeping music & ambience untouched"),
+      engine: z.enum(["rubberband", "ffmpeg"]),
+      at: z.string(),
+    })
+    .optional()
+    .describe("Pitch-shifted or formant-adjusted sound kept beside the project (media/<id>.pitch-*.m4a): clips play this sound instead of the original"),
   version: z
     .object({
       of: z.string().describe("The clip it's a version of"),
@@ -537,6 +559,8 @@ export const ShotContent = z.discriminatedUnion("kind", [
       .optional()
       .describe("Slides the clip so this moment plays at the anchor, e.g. the jump on the drop"),
     speed: z.number().positive().optional(),
+    preservePitch: z.boolean().optional().describe("Keep original voice pitch when changing speed"),
+    pitch: z.number().min(-12).max(12).optional().describe("Pitch shift in semitones (-12..12)"),
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id"),
     look: z.string().optional().describe("mono, dim, blur, mono-dim, warm, cool or faded"),
     volume: z.number().optional(),
@@ -582,6 +606,7 @@ export const ShotContent = z.discriminatedUnion("kind", [
         z.object({
           cut: z.string().describe("The cut the blockout is in: coded shots that draw a grey set, a stand-in for each person and the camera's move"),
           shots: z.array(z.string()).optional().describe("From the first of these shots of that cut to the last; default the whole cut"),
+          mode: z.enum(["video", "sheet"]).optional().describe("video: reference video clip (Seedance 2.5); sheet: 4×4 16-frame storyboard contact sheet sent as a reference image"),
         }),
         z.object({
           asset: z.string().describe("A clip whose camera to keep"),
@@ -765,7 +790,10 @@ export const PlannedTake = z.object({
     .array(z.object({ asset: z.string(), as: z.enum(["start", "end", "ref"]) }))
     .describe("Every picture that goes with it, in the order the model gets them: what it starts from, ends on, and its references"),
   camera: z
-    .union([z.object({ cut: z.string(), format: z.string(), from: z.number(), to: z.number(), shots: z.array(z.string()).optional() }), Stretch])
+    .union([
+      z.object({ cut: z.string(), format: z.string(), from: z.number(), to: z.number(), shots: z.array(z.string()).optional(), mode: z.enum(["video", "sheet"]).optional() }),
+      Stretch,
+    ])
     .optional()
     .describe("The blockout (a stretch of a cut, rendered when it's made) or clip whose camera it keeps"),
   drive: Stretch.optional().describe("The stretch of a clip whose movement it copies"),

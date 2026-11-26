@@ -528,7 +528,7 @@ server.registerTool(
     ].join("\n");
     const content: ({ type: "image"; data: string; mimeType: string } | { type: "text"; text: string })[] = [
       { type: "image", data: r.sheet.toString("base64"), mimeType: "image/jpeg" },
-      { type: "text", text: `${head}\n${r.notes.length ? r.notes.map((n) => `- ${n}`).join("\n") : "Nothing stands out."}` },
+      { type: "text", text: `${r.report}\n\n${head}\n${r.notes.length ? r.notes.map((n) => `- ${n}`).join("\n") : "Nothing stands out."}` },
     ];
     if (r.designs) {
       const designRel = r.designsFile ? inWorkspace(r.designsFile) : undefined;
@@ -716,6 +716,10 @@ const makeArgs = {
       z.object({
         cut: z.string().describe("The cut the blockout is in"),
         shots: z.array(z.string()).optional().describe("From the first of these shots to the last; default the whole cut"),
+        mode: z
+          .enum(["video", "sheet"])
+          .optional()
+          .describe('video (default): renders a reference MP4 (Seedance 2.5, bills blockout seconds too); sheet: renders a 4×4 16-frame storyboard contact sheet JPEG as a reference image (no video-input surcharge, and works with Wan 3.0, MiniMax H3, HappyHorse 1.1 and Seedance)'),
       }),
       z.object({
         asset: z.string().describe("A clip whose camera to keep"),
@@ -747,7 +751,7 @@ type MakeToolArgs = {
   drive?: { asset: string; from?: number; to?: number } | null;
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
   clip?: "take" | { asset: string; from?: number; to?: number };
-  camera?: { cut: string; shots?: string[] } | { asset: string; from?: number; to?: number } | null;
+  camera?: { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
   seconds?: number;
   aspect?: string;
   count?: number;
@@ -1141,15 +1145,16 @@ server.registerTool(
       replace: z.boolean().optional(),
       voice: z.string().optional().describe("A voice id from list_voices; it becomes the cut's voice"),
       force: z.boolean().optional().describe("Read every line again, even unchanged ones"),
+      tighten: z.boolean().optional().describe("Trim dead leading/trailing silence from each voiced line, shift word timings to match, and tighten pauses between lines for crisp pacing"),
     },
   },
-  async ({ project: id, cut, lines, replace, voice, force }) => {
-    const r = await narrate(id, { cut, lines, replace, voice, force });
+  async ({ project: id, cut, lines, replace, voice, force, tighten }) => {
+    const r = await narrate(id, { cut, lines, replace, voice, force, tighten });
     const { project } = loadProject(id, r.cut);
     const tl = resolveTimeline(project, project.formats[0]!.id);
     const rows = tl.lines.map((l) => `- ${l.id} · ${formatTime(l.start)}–${formatTime(l.end)} · ${l.words.length} words`);
     return text(
-      `Voiced ${r.voiced.length} line${r.voiced.length === 1 ? "" : "s"}${r.kept.length ? ` (${r.kept.length} unchanged)` : ""} with ${await voiceName(r.voice)} in cut ${r.cut}. The voice runs ${tl.lines.length ? `${formatTime(tl.lines[0]!.start)}–${formatTime(tl.lines.at(-1)!.end)}` : "nowhere in this format"}; the cut is ${formatTime(tl.duration)}.\n${rows.join("\n")}`,
+      `Voiced ${r.voiced.length} line${r.voiced.length === 1 ? "" : "s"}${r.kept.length ? ` (${r.kept.length} unchanged)` : ""}${r.tightened ? ` · tightened ${r.tightened} line${r.tightened === 1 ? "" : "s"}` : ""} with ${await voiceName(r.voice)} in cut ${r.cut}. The voice runs ${tl.lines.length ? `${formatTime(tl.lines[0]!.start)}–${formatTime(tl.lines.at(-1)!.end)}` : "nowhere in this format"}; the cut is ${formatTime(tl.duration)}.\n${rows.join("\n")}`,
     );
   },
 );
@@ -1355,19 +1360,71 @@ server.registerTool(
       with: z.enum(["deepfilter", "isolator"]).optional().describe("A cleaner; default Auto"),
       strength: z.enum(["light", "full"]).optional(),
       everywhere: z.boolean().optional().describe("Clean all of it, not just where people talk (it has no music, or it's all talk)"),
+      keepMusic: z.boolean().optional().describe("Separate vocals from music & ambience with Demucs (htdemucs) first, clean ONLY the vocals, and remix the original music untouched"),
       again: z.boolean().optional().describe("Clean the voices again rather than reuse the ones cleaned before"),
       off: z.boolean().optional().describe("Back to the clip's own sound"),
     },
   },
-  async ({ project: id, asset, with: by, strength, everywhere, again, off }) => {
+  async ({ project: id, asset, with: by, strength, everywhere, keepMusic, again, off }) => {
     const { cleanSound, uncleanSound } = await import("./clean.ts");
     if (off) {
       uncleanSound(id, asset);
       return text(`${asset} plays its own sound again (the cleaned voices are kept, so cleaning it again is quick).`);
     }
-    const r = await cleanSound(id, asset, { with: by, strength, everywhere, again, spendable: turnBudget() - spentThisTurn(id) });
+    const r = await cleanSound(id, asset, { with: by, strength, everywhere, keepMusic, again, spendable: turnBudget() - spentThisTurn(id) });
     return text(
-      `${asset}'s voices are cleaned (${r.asset.cleaned!.strength}) by ${r.choice.label}${r.choice.where ? ` ${r.choice.where}` : ""}${r.reused ? " (the voices cleaned before, mixed again)" : ""}${r.costUsd ? `, about $${r.costUsd.toFixed(2)}` : ""}: ${r.spans ? `only where people talk (${r.spans} stretch${r.spans === 1 ? "" : "es"}), the rest as it was` : "all of it (transcribe it first to clean only where people talk)"}. Its clips play the cleaned sound now.`,
+      `${asset}'s voices are cleaned (${r.asset.cleaned!.strength}) by ${r.choice.label}${r.choice.where ? ` ${r.choice.where}` : ""}${r.keepMusic ? " (vocals separated via Demucs, music & ambience kept untouched)" : ""}${r.reused ? " (the voices cleaned before, mixed again)" : ""}${r.costUsd ? `, about $${r.costUsd.toFixed(2)}` : ""}: ${r.keepMusic ? "music preserved cleanly under speech" : r.spans ? `only where people talk (${r.spans} stretch${r.spans === 1 ? "" : "es"}), the rest as it was` : "all of it (transcribe it first to clean only where people talk)"}. Its clips play the cleaned sound now.`,
+    );
+  },
+);
+
+server.registerTool(
+  "separate_stems",
+  {
+    description:
+      "Separate a clip or song into isolated audio stems using local Demucs (htdemucs, MIT-licensed, free, installed in Settings → Restoring): two-stem (vocals + no_vocals) or four-stem (vocals + drums + bass + other). Stems stay cached beside the project so clean_sound(keepMusic: true) and shift_audio(keepMusic: true) can modify only the voice without touching background music or ambience. Set addAssets: true to also add each stem as its own audio asset for mixing on separate tracks.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      mode: z.enum(["two-stem", "four-stem"]).optional().describe("Default two-stem (vocals + no_vocals)"),
+      addAssets: z.boolean().optional().describe("Also register each stem as an audio asset in the project"),
+      again: z.boolean().optional().describe("Re-run separation even if stems are already cached"),
+    },
+  },
+  async ({ project: id, asset, mode, addAssets, again }) => {
+    const { separateStems } = await import("./demucs.ts");
+    const r = await separateStems(id, asset, { mode, addAssets, again });
+    const tracks = r.asset.stems?.tracks ?? Object.keys(r.stems);
+    return text(
+      `Separated ${asset} into ${tracks.join(", ")}${r.reused ? " (cached)" : " (Demucs htdemucs)"}.${r.added.length ? ` Added audio assets: ${r.added.map((a) => `${a.id} (${a.label})`).join(", ")}.` : " Pass addAssets: true to add them as tracks, or use clean_sound / shift_audio with keepMusic: true."}`,
+    );
+  },
+);
+
+server.registerTool(
+  "shift_audio",
+  {
+    description:
+      "Pitch-shift (-12 to +12 semitones) and/or pitch-preserving time-stretch a clip's sound using Rubber Band (formant-preserving R3 quality, with automatic ffmpeg fallback). With keepMusic: true (requires Demucs), shifts ONLY the separated vocal stem while keeping background music & ambience untouched — ideal when matching a swapped character's voice. off: true returns the clip to its original sound.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string(),
+      semitones: z.number().min(-12).max(12).optional().describe("Pitch shift in semitones (-12..+12, e.g. -3 deeper, +4 higher)"),
+      speed: z.number().min(0.25).max(4).optional().describe("Pitch-preserving speed multiplier (default 1)"),
+      keepMusic: z.boolean().optional().describe("Shift only the separated vocal stem via Demucs, keeping music & ambience untouched"),
+      formantPreserve: z.boolean().optional().describe("Keep natural vocal formants (default true)"),
+      off: z.boolean().optional().describe("Reset back to the clip's un-shifted sound"),
+    },
+  },
+  async ({ project: id, asset, semitones, speed, keepMusic, formantPreserve, off }) => {
+    const { shiftAudio, unpitchAudio } = await import("./audio.ts");
+    if (off) {
+      unpitchAudio(id, asset);
+      return text(`${asset} plays its un-shifted sound again.`);
+    }
+    const r = await shiftAudio(id, asset, { semitones, speed, keepMusic, formantPreserve });
+    return text(
+      `Shifted ${asset}'s sound (${semitones ? `${semitones > 0 ? "+" : ""}${semitones} semitones` : ""}${semitones && speed && speed !== 1 ? ", " : ""}${speed && speed !== 1 ? `${speed}× speed pitch-preserved` : ""}) using ${r.engine}${r.keepMusic ? " (vocals only; music kept untouched)" : ""}. Its clips play this sound now.`,
     );
   },
 );
@@ -1404,6 +1461,195 @@ server.registerTool(
     const r = await restoreClip(id, asset, { from, to, steps, upscaleWith: by, ...(use ? { use: { cut } } : {}), spendable: turnBudget() - spentThisTurn(id) });
     return text(
       `${r.asset.id} is ${what}, a version of ${asset} (${how}; took ${r.seconds < 90 ? `${r.seconds}s` : `${Math.round(r.seconds / 60)} min`}).${r.shots.length ? ` Shown in ${r.shots.join(", ")}.` : use ? " No clip shot of it in the cut is inside that stretch." : ` Show it in a clip shot of ${asset} with content.version: "${r.asset.id}" (or restore with use: true).`}`,
+    );
+  },
+);
+
+server.registerTool(
+  "relight_clip",
+  {
+    description:
+      "Give a stretch of existing footage a new lighting setup using a lit calibration sphere, first-frame prompt adaptation and Seedance 2.5's reference-video route (Tein, fal, Runway, Higgsfield or OpenRouter). Pick one of the 24 built-in presets (blue-amber, neon-noir, golden-hour, moonlit-silver, green-noir-cab, teal-fashion, sodium-street, warm-tungsten, overcast-nordic, desert-dusk, chiaroscuro, rembrandt, butterfly, split-light, day-for-night, firelight, volumetric-godrays, rim-backlight, window-blinds, candlelight, soft-flat, high-key, low-key, three-point), pass a custom sphere asset id (from extract_light_sphere or /look/lightSphere), or describe the light. Saves the relit clip as a version (`version: { of, from }`) with the clip's own (or cleaned) sound muxed back. Call jobs with wait to follow it; estimate: true prices it first.",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      asset: z.string().describe("The clip asset id to relight"),
+      from: z.number().nonnegative().optional().describe("Seconds into the clip; default 0"),
+      to: z.number().positive().optional().describe("Seconds into the clip; default min(end, from + 10)"),
+      preset: z.string().optional().describe("Built-in lighting preset id (e.g. blue-amber, chiaroscuro, day-for-night, golden-hour)"),
+      sphere: z.string().optional().describe("Custom lighting sphere asset id (overrides preset; defaults to /look/lightSphere)"),
+      prompt: z.string().optional().describe("Additional lighting direction or custom setup description"),
+      quality: z.enum(["rough", "final"]).optional().describe("Default rough (480p); final renders at 1080p"),
+      model: z.string().optional().describe("Model id; default Auto (Seedance 2.5)"),
+      via: z.string().optional().describe("Provider route (tein, fal, runway, higgsfield, openrouter)"),
+      use: z.boolean().optional().describe("Show the relit version in matching clip shots once finished"),
+      saveToLook: z.boolean().optional().describe("Save this lighting preset/sphere to /look for project-wide continuity"),
+      estimate: z.boolean().optional().describe("Preview model choices and cost without starting a job"),
+    },
+  },
+  async ({ project: id, asset, estimate: only, ...opts }) => {
+    const { relightClip, relightPlan } = await import("./relight.ts");
+    if (only) {
+      const p = relightPlan(id, asset, opts);
+      const best = p.choices.auto;
+      return text(
+        [
+          `Relighting ${asset} (${formatTime(p.from)}–${formatTime(p.to)}, ${p.seconds}s)${p.preset ? ` with preset "${p.preset.label}"` : ""}:`,
+          best ? `Auto: ${best.label} on ${best.where} (${costAt(best)}, ${minutes(best.wait)}).` : "No connected model can run reference-video relighting right now (connect Tein, fal, Runway, Higgsfield or OpenRouter).",
+          ...p.choices.ready.slice(0, 4).map(fitLine),
+        ].join("\n"),
+      );
+    }
+    const r = await relightClip(id, asset, { ...opts, spendable: turnBudget() - spentThisTurn(id) });
+    return text(
+      `Relighting ${asset} (${formatTime(r.from)}–${formatTime(r.to)}) with ${r.fit.label} on ${r.fit.where} (${costAt(r.fit)})${r.sphere ? `, using light sphere ${r.sphere}` : ""}${r.adapted ? " (prompt adapted to the clip's first frame)" : ""}. Job ${r.jobs.map((j) => j.id).join(", ")}. Call jobs with wait to see the relit version land.`,
+    );
+  },
+);
+
+server.registerTool(
+  "extract_light_sphere",
+  {
+    description:
+      "Create a reusable lit calibration sphere asset: either from a built-in preset (free, instant local 3D render) or extracted from any reference film still / photo using an image model (cents). Use the sphere asset in relight_clip or set /look/lightSphere to share one lighting setup across footage and generated shots.",
+    inputSchema: {
+      project: projectArg,
+      preset: z.string().optional().describe("Built-in relight preset id to render locally for free"),
+      asset: z.string().optional().describe("Reference film still or photo asset id to extract a matching light sphere from"),
+      prompt: z.string().optional().describe("Optional extra lighting note"),
+      setLook: z.boolean().optional().describe("Save the preset sphere straight into /look/lightSphere"),
+      model: z.string().optional(),
+      via: z.string().optional(),
+    },
+  },
+  async ({ project: id, preset, asset, prompt, setLook, model, via }) => {
+    const { ensurePresetSphere, extractLightSphere } = await import("./relight.ts");
+    if (preset) {
+      const a = await ensurePresetSphere(id, preset);
+      if (setLook) {
+        updateFile(id, (d) => {
+          const look = (d.look ??= {});
+          look.lightSphere = a.id;
+          look.lightPreset = preset;
+        });
+      }
+      return text(`Rendered light sphere ${a.id} (${a.label})${setLook ? " and set it on /look" : ""}. Use it with relight_clip (sphere: "${a.id}").`);
+    }
+    if (!asset) return text("Pass either preset (a built-in lighting look) or asset (a reference film still to extract lighting from).");
+    const { fit, jobs } = extractLightSphere(id, { asset, prompt, model, via, spendable: turnBudget() - spentThisTurn(id) });
+    return text(`Extracting a light sphere from ${asset} with ${fit.label} on ${fit.where} (${costAt(fit)}). Job ${jobs.map((j) => j.id).join(", ")}. Call jobs with wait, then pass the asset id to relight_clip or /look/lightSphere.`);
+  },
+);
+
+server.registerTool(
+  "swap_character",
+  {
+    description:
+      "Replace a person in existing footage with a @cast character while keeping their motion, expressions, camera and real background (no local 24 GB GPU needed; uses local Apache-2.0 MediaPipe + OpenCV prep + Seedance 2.5 reference video). fast mode draws a MediaPipe 478-landmark face mesh over the original face (best for same-build swaps); advanced mode combines a SAM 3 / Apple Vision cut-out silhouette matte + temporally smoothed depth map + face mesh for big body or costume changes. Real-person cast references automatically route to Tein. Optionally shifts the character's voice pitch via Rubber Band (+ Demucs keepMusic) and lands as a clip version (`version: { of, from }`).",
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      asset: z.string().describe("Clip asset id to replace a person in"),
+      cast: z.string().describe('Target cast member id (e.g. "hero" or "hero/heist")'),
+      mode: z.enum(["fast", "advanced"]).optional().describe("fast (default): face mesh only; advanced: silhouette matte + depth map + face mesh"),
+      subject: z.string().optional().describe("Subject id on the clip (from find_subjects/track_subject) to target a specific person"),
+      matteAsset: z.string().optional().describe("Optional cut-out video asset id (from cut_out) to use as exact silhouette matte in advanced mode"),
+      from: z.number().nonnegative().optional().describe("Seconds into the clip; default 0"),
+      to: z.number().positive().optional().describe("Seconds into the clip; default min(end, from + 8)"),
+      prompt: z.string().optional().describe("Optional wardrobe, lighting or performance detail"),
+      quality: z.enum(["rough", "final"]).optional().describe("Default rough (480p); final renders at 1080p"),
+      model: z.string().optional(),
+      via: z.string().optional(),
+      use: z.boolean().optional().describe("Show the swapped version in matching clip shots once finished (default true)"),
+      pitchShift: z.number().min(-12).max(12).optional().describe("Optional Rubber Band voice pitch shift in semitones (-12..+12)"),
+      keepMusic: z.boolean().optional().describe("With pitchShift: separate vocals via Demucs so background music stays untouched"),
+      estimate: z.boolean().optional().describe("Preview model choices, real-person routing and cost without starting"),
+    },
+  },
+  async ({ project: id, asset, estimate: only, ...opts }) => {
+    const { swapCharacter, swapPlan } = await import("./swap.ts");
+    if (only) {
+      const p = swapPlan(id, asset, opts);
+      const best = p.choices.auto;
+      return text(
+        [
+          `Swapping ${asset} (${formatTime(p.from)}–${formatTime(p.to)}, ${p.mode} mode) to @${p.member.id} (${p.pics.length} ref picture${p.pics.length === 1 ? "" : "s"}):`,
+          p.visionReady ? "Local vision prep (MediaPipe + OpenCV): ready." : "Local vision prep not installed yet — install in Settings → Restoring before running.",
+          best ? `Auto: ${best.label} on ${best.where} (${costAt(best)}, ${minutes(best.wait)}).` : "No connected model can run this swap right now (real people require Tein).",
+          ...p.choices.ready.slice(0, 4).map(fitLine),
+        ].join("\n"),
+      );
+    }
+    const r = await swapCharacter(id, asset, { ...opts, spendable: turnBudget() - spentThisTurn(id) });
+    return text(
+      `Swapping character in ${asset} (${formatTime(r.from)}–${formatTime(r.to)}, ${r.mode} mode) to @${opts.cast} with ${r.fit.label} on ${r.fit.where} (${costAt(r.fit)})${r.pitchShifted ? ` · voice shifted ${opts.pitchShift! > 0 ? "+" : ""}${opts.pitchShift} st` : ""}. Job ${r.jobs.map((j) => j.id).join(", ")}. Call jobs with wait to see the swapped clip version land.`,
+    );
+  },
+);
+
+server.registerTool(
+  "track_performance",
+  {
+    description:
+      "Extract 52 ARKit facial blendshapes and 3D head orientation (pitch, yaw, roll) from a video clip (e.g. a webcam recording from Record → Camera) using local Apache-2.0 MediaPipe Face Landmarker on CPU. Saves a reusable FacePerformanceTrack JSON (`media/<id>.face.json`) that can drive `kit:ClayHead` shots or `transfer_performance`.",
+    inputSchema: {
+      project: projectArg,
+      asset: z.string().describe("Video asset id of the actor performing the expression"),
+      from: z.number().nonnegative().optional(),
+      to: z.number().positive().optional(),
+      again: z.boolean().optional().describe("Re-track even if a cached .face.json exists"),
+    },
+  },
+  async ({ project: id, asset, from, to, again }) => {
+    const { trackFacePerformance } = await import("./perform.ts");
+    const r = await trackFacePerformance(id, asset, { from, to, again });
+    return text(
+      `Tracked ${r.track.frames.length} frames (${formatTime(r.track.duration)} at ${r.track.fps} fps) from ${asset}${r.reused ? " (cached)" : ""} → ${inWorkspace(r.file)}. Preview it in a coded shot with kit:ClayHead (trackFile: "media/${asset}.face.json") or transfer it onto a character with transfer_performance.`,
+    );
+  },
+);
+
+server.registerTool(
+  "transfer_performance",
+  {
+    description:
+      '"Act it yourself" facial performance transfer (100% commercial-safe, Apache-2.0 MediaPipe + procedural Three.js `kit:ClayHead`): extracts 52 ARKit blendshapes + 3D head pose from a driver clip (such as a webcam take), renders an identity-stripped neutral grey 3D clay head mask video so the actor\'s own skin/hair/background never leak through, and transfers the exact micro-expressions, eye gaze, blinks, brow tension and lip motion onto any @cast character, portrait still, or shot board via Seedance 2.5.',
+    inputSchema: {
+      project: projectArg,
+      cut: cutArg,
+      driver: z.string().describe("Video asset id of the acted facial performance"),
+      from: z.number().nonnegative().optional(),
+      to: z.number().positive().optional(),
+      shot: z.string().optional().describe("Target shot id (uses its board/cast and lands takes on it)"),
+      cast: z.string().optional().describe('Target cast member id (e.g. "cat", "hero")'),
+      start: z.string().optional().describe("Target portrait or board still asset id"),
+      prompt: z.string().optional().describe("Optional scene, lighting or framing direction"),
+      intensity: z.number().min(0.4).max(1.8).optional().describe("Expression scale multiplier (default 1.0)"),
+      smooth: z.number().min(0).max(0.2).optional().describe("Temporal smoothing window in seconds (default 0.05)"),
+      quality: z.enum(["rough", "final"]).optional(),
+      model: z.string().optional(),
+      via: z.string().optional(),
+      count: z.number().int().min(1).max(4).optional(),
+      estimate: z.boolean().optional().describe("Preview model choices and cost without rendering or starting a job"),
+    },
+  },
+  async ({ project: id, estimate: only, ...opts }) => {
+    const { performPlan, transferPerformance } = await import("./perform.ts");
+    if (only) {
+      const p = performPlan(id, opts);
+      const best = p.choices.auto;
+      return text(
+        [
+          `Transferring facial performance from ${p.driver.id} (${formatTime(p.from)}–${formatTime(p.to)}) onto ${p.targetLabel}:`,
+          p.visionReady ? "Local MediaPipe face tracker: ready." : "Local MediaPipe vision prep not installed yet — install in Settings → Restoring before running.",
+          best ? `Auto: ${best.label} on ${best.where} (${costAt(best)}, ${minutes(best.wait)}).` : "No connected model can run reference-video performance transfer right now.",
+          ...p.choices.ready.slice(0, 4).map(fitLine),
+        ].join("\n"),
+      );
+    }
+    const r = await transferPerformance(id, { ...opts, spendable: turnBudget() - spentThisTurn(id) });
+    return text(
+      `Transferred ${r.frames} frames (${formatTime(r.from)}–${formatTime(r.to)}) of facial performance via neutral clay head mask with ${r.fit.label} on ${r.fit.where} (${costAt(r.fit)}). Job ${r.jobs.map((j) => j.id).join(", ")}. Call jobs with wait to see the finished performance clip land.`,
     );
   },
 );

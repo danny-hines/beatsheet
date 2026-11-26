@@ -201,11 +201,15 @@ export type Stretch = { asset: string; from: number; to: number };
 export type Drive = Stretch;
 /**
  * A stretch of a cut, in seconds of the cut in one of its formats: a blockout, drawn there as a grey set, a stand-in
- * for each person and the camera's move. `shots` are the ones it was asked by, when it was.
+ * for each person and the camera's move. `shots` are the ones it was asked by, when it was. `mode: "sheet"` renders a
+ * 4×4 16-frame contact sheet and sends it as a reference picture (no video-input surcharge, and works with any multi-ref
+ * model) instead of sending a reference video clip.
  */
-export type CutStretch = { cut: string; format: string; from: number; to: number; shots?: string[] };
+export type CutStretch = { cut: string; format: string; from: number; to: number; shots?: string[]; mode?: "video" | "sheet" };
 /** What a take keeps the camera of: a stretch of a clip, or of a cut that's rendered to one when the take is made. */
 export type Camera = Stretch | CutStretch;
+/** Whether a camera blockout is sent as a 4×4 16-frame contact sheet image instead of a reference video. */
+export const isCameraSheet = (c: Camera | undefined): c is CutStretch => !!c && "cut" in c && c.mode === "sheet";
 
 /**
  * The stretch of a blockout a take follows: all of the cut, or from the first of `shots` to the last, in whichever of
@@ -305,7 +309,19 @@ const list = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -
 
 /** Which of a service's endpoints a request needs. */
 export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip" | "camera">): RequestShape =>
-  req.speech ? (req.clip ? "dub" : "talk") : req.drive ? "drive" : req.camera ? "camera" : req.refs?.length ? "refs" : req.start ? "start" : "text";
+  req.speech
+    ? req.clip
+      ? "dub"
+      : "talk"
+    : req.drive
+      ? "drive"
+      : req.camera && !isCameraSheet(req.camera)
+        ? "camera"
+        : req.refs?.length || isCameraSheet(req.camera)
+          ? "refs"
+          : req.start
+            ? "start"
+            : "text";
 
 /** The length to ask for, or why it can't be made. */
 function lengthFor(model: CatalogModel, wanted: number | undefined, spare: number): { seconds: number } | { why: Why } {
@@ -383,20 +399,23 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (req.speech && !req.clip && !model.takes.start) return no({ kind: "fit", reason: "Changes the mouths in a clip: say which clip (the take the shot shows)" });
   if (req.speech && !req.clip && !req.start) return no({ kind: "fit", reason: "Needs a picture of who speaks: start from the shot's board" });
   if (req.clip && req.start) return no({ kind: "fit", reason: "Changes the mouths in a clip, so it doesn't start from a picture as well" });
-  const followed = req.camera ? req.camera.to - req.camera.from : undefined;
+  const sheet = isCameraSheet(req.camera);
+  const followed = req.camera && !sheet ? req.camera.to - req.camera.from : undefined;
   if (req.camera) {
-    const takes = model.takes.camera;
-    if (!takes) return no({ kind: "fit", reason: "Doesn't keep the camera of a clip it's given" });
     if (req.drive || req.speech) return no({ kind: "fit", reason: "Keeps a clip's camera, so it doesn't copy movement or lip-sync as well" });
     if (req.start) return no({ kind: "fit", reason: "Keeps a clip's camera from reference pictures, not from a start frame: give the picture as a reference" });
-    // Services allow a little either side of their limits (Tein: 0.05s).
-    if (followed! < takes.min - 0.05) return no({ kind: "fit", reason: `Follows ${seconds1(takes.min)} of clip at least; this is ${seconds1(followed!)}` });
-    if (followed! > takes.max + 0.05) return no({ kind: "fit", reason: `Follows up to ${seconds1(takes.max)} of clip; this is ${seconds1(followed!)}`, fix: "split" });
+    if (!sheet) {
+      const takes = model.takes.camera;
+      if (!takes) return no({ kind: "fit", reason: "Doesn't keep the camera of a clip it's given" });
+      // Services allow a little either side of their limits (Tein: 0.05s).
+      if (followed! < takes.min - 0.05) return no({ kind: "fit", reason: `Follows ${seconds1(takes.min)} of clip at least; this is ${seconds1(followed!)}` });
+      if (followed! > takes.max + 0.05) return no({ kind: "fit", reason: `Follows up to ${seconds1(takes.max)} of clip; this is ${seconds1(followed!)}`, fix: "split" });
+    }
   }
   if (req.start && !model.takes.start) return no({ kind: "fit", reason: "Doesn't start from a picture" });
   if (req.end && !req.start) return no({ kind: "fit", reason: "An end frame needs a start frame too", fix: "drop-end" });
   if (req.end && !model.takes.end) return no({ kind: "fit", reason: "Doesn't take an end frame", fix: "drop-end" });
-  const refs = req.refs?.length ?? 0;
+  const refs = (req.refs?.length ?? 0) + (sheet ? 1 : 0);
   const maxRefs = model.takes.refs ?? 0;
   if (refs > maxRefs) {
     if (maxRefs === 0 && model.takes.start && !req.start) return no({ kind: "fit", reason: "Doesn't take references; a start frame made from them would do", fix: "via-start-frame" });
@@ -929,7 +948,8 @@ export function shotNeeds(project: Project, shotId: string, op?: MakeOp): { seco
 type Generated = Extract<ShotContent, { kind: "generated" }>;
 
 /** What a take kept the camera of, as a shot keeps it: the blockout by its cut and shots (found again as the cut is then), or the stretch of a clip. */
-export const cameraOnShot = (c: Camera): NonNullable<Generated["camera"]> => ("cut" in c ? { cut: c.cut, ...(c.shots?.length ? { shots: c.shots } : {}) } : { asset: c.asset, from: c.from, to: c.to });
+export const cameraOnShot = (c: Camera): NonNullable<Generated["camera"]> =>
+  "cut" in c ? { cut: c.cut, ...(c.shots?.length ? { shots: c.shots } : {}), ...(c.mode ? { mode: c.mode } : {}) } : { asset: c.asset, from: c.from, to: c.to };
 
 /** What a take kept the camera of, from how it was asked for, as a shot keeps it; nothing for a take that kept none. */
 export const cameraOfTake = (take: Asset | undefined): NonNullable<Generated["camera"]> | undefined => {

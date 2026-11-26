@@ -53,7 +53,7 @@ export function SceneProblem({ title, message, fallback }: { title: string; mess
   return (
     <AbsoluteFill>
       {fallback}
-      <AbsoluteFill style={{ justifyContent: "flex-start", alignItems: fallback ? "flex-start" : "flex-end", padding: 24 * u, pointerEvents: "none" }}>
+      <AbsoluteFill data-beatsheet-error="scene" style={{ justifyContent: "flex-start", alignItems: fallback ? "flex-start" : "flex-end", padding: 24 * u, pointerEvents: "none" }}>
         <div style={{ background: "rgba(42,15,18,0.94)", color: "#ffd7d2", borderRadius: 10 * u, padding: `${12 * u}px ${18 * u}px`, fontFamily: "SF Mono, Menlo, monospace", fontSize: 20 * u, lineHeight: 1.4, maxWidth: "80%" }}>
           <div style={{ color: "#ff8a80", fontWeight: 700 }}>{title}</div>
           <div style={{ whiteSpace: "pre-wrap" }}>{message.split("\n").slice(0, 4).join("\n")}</div>

@@ -1,4 +1,4 @@
-import type { Grade, Look, Motion, Project, Shot } from "@beatsheet/schema";
+import { RELIGHT_PRESETS, type Grade, type Look, type Motion, type Project, type Shot } from "@beatsheet/schema";
 import { NEUTRAL } from "@beatsheet/video";
 import { useState } from "react";
 import { actions } from "../store";
@@ -114,6 +114,25 @@ export function LookPanel({ p }: { p: Project }) {
       <div className="insp-row" title="The style made shots and cast sheets are drawn in, unless a cast member has its own">
         <span>Made shots</span>
         <StyleSelect value={look.style} fallback="None (photographs)" onChange={(s) => set((l) => void (s ? (l.style = s) : delete l.style))} />
+      </div>
+      <div className="insp-row" title="Default lighting sphere preset for relighting footage in this project">
+        <span>Light sphere</span>
+        <select
+          value={look.lightPreset ?? ""}
+          onChange={(e) =>
+            set((l) => {
+              if (e.target.value) l.lightPreset = e.target.value;
+              else delete l.lightPreset;
+            })
+          }
+        >
+          <option value="">{look.lightSphere ? `Custom (${look.lightSphere})` : "None"}</option>
+          {RELIGHT_PRESETS.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="insp-row">
         <span>Display font</span>

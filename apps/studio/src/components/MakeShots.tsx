@@ -8,7 +8,7 @@ import type { MakeAsk, MakeJob } from "@beatsheet/engine";
 import { aspectOf, cameraOfTake, CATALOG, FIDELITY, type Asset, type Fidelity, type MakeOp, type Project, type Quality, type Shot } from "@beatsheet/schema";
 import { ASSET_DRAG, FIDELITY_LABEL, hideBroken, imageUrl, posterUrl, proxyUrl, putInShot, round2, timeAgo } from "../lib";
 import { actions, useProject, useStore, useTimeline } from "../store";
-import { BlockoutPlayer, useBlockout, type BlockoutHandle, type BlockoutPick } from "./Blockout";
+import { BlockoutPlayer, BlockoutWipe, useBlockout, type BlockoutHandle, type BlockoutPick } from "./Blockout";
 import { NotesFor } from "./Side";
 import { madeWith, money, pickOf, pickTake, Takes } from "./Takes";
 import { FidelityPill } from "./ui";
@@ -353,6 +353,7 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
   // render and send), else the one the take being looked at kept, as that cut is now. It can be put away.
   const [picked, setPicked] = useState<BlockoutPick>();
   const [away, setAway] = useState(false);
+  const [compare, setCompare] = useState<"side" | "wipe">("side");
   const followed = cameraOfTake(look);
   const its = picked ?? (followed && "cut" in followed ? followed : undefined);
   const cam = away ? undefined : its;
@@ -399,31 +400,46 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
       </header>
       <div className="shot-cols">
         <section className="shot-stage-col">
-          <div className={`stage-pair ${cam ? "two" : ""}`}>
-          <div className={`stage ${look ? "" : "empty"}`} style={{ aspectRatio: look?.width && look.height ? `${look.width} / ${look.height}` : aspect }}>
-            {cam && look && <span className="stage-tag">Take</span>}
-            {look ? (
-              look.kind === "video" ? (
+          {cam && look && compare === "wipe" ? (
+            <BlockoutWipe
+              pick={cam}
+              aspect={look.width && look.height ? `${look.width} / ${look.height}` : aspect}
+              label={blockout ? `${blockout.name} · ${round2(blockout.to - blockout.from)}s` : undefined}
+              blockoutRef={drawn}
+            >
+              {look.kind === "video" ? (
                 <video ref={video} key={look.id} src={proxyUrl(projectId, look.id)} poster={posterUrl(projectId, look.id)} controls loop playsInline />
               ) : (
-                <img key={look.id} src={imageUrl(projectId, look.id)} alt="" onClick={() => setLarge(true)} onError={hideBroken} />
-              )
-            ) : (
-              <div className="stage-idea">
-                <p>{shotPrompt(shot) || "Nothing written for this shot yet."}</p>
-                <p className="dim small">{going.length ? "Its first takes are on the way." : "No takes yet. Make a few stills to settle the shot, then a clip from the one you like."}</p>
+                <img key={look.id} src={imageUrl(projectId, look.id)} alt="" onError={hideBroken} />
+              )}
+            </BlockoutWipe>
+          ) : (
+            <div className={`stage-pair ${cam ? "two" : ""}`}>
+              <div className={`stage ${look ? "" : "empty"}`} style={{ aspectRatio: look?.width && look.height ? `${look.width} / ${look.height}` : aspect }}>
+                {cam && look && <span className="stage-tag">Take</span>}
+                {look ? (
+                  look.kind === "video" ? (
+                    <video ref={video} key={look.id} src={proxyUrl(projectId, look.id)} poster={posterUrl(projectId, look.id)} controls loop playsInline />
+                  ) : (
+                    <img key={look.id} src={imageUrl(projectId, look.id)} alt="" onClick={() => setLarge(true)} onError={hideBroken} />
+                  )
+                ) : (
+                  <div className="stage-idea">
+                    <p>{shotPrompt(shot) || "Nothing written for this shot yet."}</p>
+                    <p className="dim small">{going.length ? "Its first takes are on the way." : "No takes yet. Make a few stills to settle the shot, then a clip from the one you like."}</p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-          {cam && (
-            <div className="stage blockout" style={{ aspectRatio: blockout ? `${blockout.format.width} / ${blockout.format.height}` : aspect }}>
-              <BlockoutPlayer ref={drawn} pick={cam} aspect={aspectOf(format.width, format.height)} />
-              <span className="stage-tag">
-                Blockout{blockout ? ` · ${blockout.name} · ${round2(blockout.to - blockout.from)}s` : ""}
-              </span>
+              {cam && (
+                <div className="stage blockout" style={{ aspectRatio: blockout ? `${blockout.format.width} / ${blockout.format.height}` : aspect }}>
+                  <BlockoutPlayer ref={drawn} pick={cam} aspect={aspectOf(format.width, format.height)} />
+                  <span className="stage-tag">
+                    Blockout{blockout ? ` · ${blockout.name} · ${round2(blockout.to - blockout.from)}s` : ""}
+                  </span>
+                </div>
+              )}
             </div>
           )}
-          </div>
           {look && (
             <div className="stage-bar">
               <span className="small">
@@ -432,6 +448,16 @@ export function ShotPage({ shot, jobs, back, backLabel }: { shot: Shot; jobs: Ma
               </span>
               {kept?.cut && <span className="dim small">· kept the camera of {doc?.cuts.find((x) => x.id === kept.cut)?.name ?? kept.cut}</span>}
               <span className="spacer" />
+              {cam && (
+                <div className="segmented" role="group" aria-label="Blockout view">
+                  <button className={compare === "side" ? "on" : ""} onClick={() => setCompare("side")} title="Show the take and the blockout side by side">
+                    Side by side
+                  </button>
+                  <button className={compare === "wipe" ? "on" : ""} onClick={() => setCompare("wipe")} title="Drag a divider across the take and the blockout">
+                    Wipe
+                  </button>
+                </div>
+              )}
               {its && (
                 <button onClick={() => setAway(!away)} title={away ? "Play the blockout beside the take" : "Give the take the whole stage"}>
                   {away ? "Show the blockout" : "Hide the blockout"}

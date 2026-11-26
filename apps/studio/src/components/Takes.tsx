@@ -216,7 +216,14 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
   const drive = op === "video" ? (follow && !speaking ? { drive: follow.asset, from: follow.from, to: follow.to } : { drive: "none" }) : {};
   const lipsync = op === "video" ? (speaking ? { speech: "lines", ...(changing ? { clip: "take" } : {}) } : { speech: "none" }) : {};
   // The stretch of a clip a take keeps the camera of is the shot's own (the agent set it); the form picks blockouts.
-  const camera = op === "video" ? (keeping ? ("cut" in keeping ? { camera: keeping.cut, cameraShots: keeping.shots?.join(",") } : {}) : { camera: "none" }) : {};
+  const camera =
+    op === "video"
+      ? keeping
+        ? "cut" in keeping
+          ? { camera: keeping.cut, cameraShots: keeping.shots?.join(","), ...(keeping.mode ? { cameraMode: keeping.mode } : {}) }
+          : {}
+        : { camera: "none" }
+      : {};
   const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
   const { choices, problem, absent } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, end: op === "video" ? (end ?? "none") : undefined, quality: op === "video" ? quality : undefined, ...drive, ...lipsync, ...camera });
   // Another take comes from the model that made the one showing (or the last of its kind), until another is picked.
@@ -437,7 +444,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
               </div>
               {stretch && stretch.shots.length > 1 && (
                 <div className="chips camera-shots" role="group" aria-label="Which of its shots">
-                  <button className={`chip ${blockout.shots?.length ? "" : "on"}`} onClick={() => setCam({ cut: blockout.cut })}>
+                  <button className={`chip ${blockout.shots?.length ? "" : "on"}`} onClick={() => setCam({ cut: blockout.cut, ...(blockout.mode ? { mode: blockout.mode } : {}) })}>
                     All of it
                   </button>
                   {stretch.shots.map((s) => {
@@ -445,13 +452,36 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
                     // Kept in the cut's order, whichever was ticked first.
                     const next = stretch.shots.map((x) => x.id).filter((id) => (id === s.id ? !on : blockout.shots?.includes(id)));
                     return (
-                      <button key={s.id} className={`chip ${on ? "on" : ""}`} onClick={() => setCam({ cut: blockout.cut, ...(next.length ? { shots: next } : {}) })} title="From the first shot ticked to the last">
+                      <button
+                        key={s.id}
+                        className={`chip ${on ? "on" : ""}`}
+                        onClick={() => setCam({ cut: blockout.cut, ...(next.length ? { shots: next } : {}), ...(blockout.mode ? { mode: blockout.mode } : {}) })}
+                        title="From the first shot ticked to the last"
+                      >
                         {s.label ?? s.id}
                       </button>
                     );
                   })}
                 </div>
               )}
+              <div className="make-row small">
+                <div className="segmented" role="group" aria-label="How the blockout is sent">
+                  <button
+                    className={(blockout.mode ?? "video") === "video" ? "on" : ""}
+                    onClick={() => setCam({ ...blockout, mode: undefined })}
+                    title="Send the rendered blockout clip as reference video (Seedance 2.5, exact frame timing; bills the blockout's seconds too)"
+                  >
+                    Reference clip
+                  </button>
+                  <button
+                    className={blockout.mode === "sheet" ? "on" : ""}
+                    onClick={() => setCam({ ...blockout, mode: "sheet" })}
+                    title="Render a 4×4 16-frame contact sheet and send it as a reference image (no video surcharge, works with Wan 3.0, MiniMax H3, HappyHorse and Seedance)"
+                  >
+                    16-frame sheet
+                  </button>
+                </div>
+              </div>
               {strip && (
                 <div className="camera-preview" style={{ aspectRatio: stretch ? `${stretch.format.width} / ${stretch.format.height}` : "16 / 9" }}>
                   <BlockoutPlayer pick={blockout} aspect={shape} />
@@ -459,8 +489,9 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
               )}
               {stretch && (
                 <p className="dim small">
-                  {round2(stretch.to - stretch.from)}s of it, drawn {stretch.format.label}: the take is exactly that long{length && Math.abs(stretch.to - stretch.from - length) > 0.05 ? ` (the shot plays ${length}s)` : ""}, and the blockout's seconds are billed too. The model copies
-                  everything it's shown, so the prompt says what each stand-in really is, by its colour, and describes the real place.
+                  {blockout.mode === "sheet"
+                    ? `${round2(stretch.to - stretch.from)}s sampled into a 4×4 16-frame sheet (${stretch.format.label}), sent as a reference image with no video-input surcharge.`
+                    : `${round2(stretch.to - stretch.from)}s of it, drawn ${stretch.format.label}: the take is exactly that long${length && Math.abs(stretch.to - stretch.from - length) > 0.05 ? ` (the shot plays ${length}s)` : ""}, and the blockout's seconds are billed too. The model copies everything it's shown, so the prompt says what each stand-in really is, by its colour, and describes the real place.`}
                 </p>
               )}
             </div>
@@ -472,7 +503,17 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
       )}
       <WhyNot
         choices={choices}
-        only={speaking ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.speech : follow ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive : keeping ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.camera : undefined}
+        only={
+          speaking
+            ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.speech
+            : follow
+              ? (id) => !!CATALOG.find((m) => m.id === id)?.takes.drive
+              : keeping
+                ? "cut" in keeping && keeping.mode === "sheet"
+                  ? (id) => (CATALOG.find((m) => m.id === id)?.takes.refs ?? 0) > 0
+                  : (id) => !!CATALOG.find((m) => m.id === id)?.takes.camera
+                : undefined
+        }
       />
       {op === "video" && absent.length > 0 && (
         <p className="warn small">

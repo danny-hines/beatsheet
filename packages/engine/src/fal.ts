@@ -104,6 +104,9 @@ export async function falUpload(key: string, file: string): Promise<string> {
   return r.file_url;
 }
 
+/** What a reference video guides: a raw clip's camera, a 3D blockout, a clip being relit, a character swap, or a clay facial performance. */
+export type CameraKind = "clip" | "blockout" | "relight" | "swap" | "perform";
+
 /**
  * A request in the terms every adapter understands; pictures, the stretch of a clip a take follows or changes the
  * mouths in (`video`), and what it says (`audio`) are already URLs fal can fetch. A model that makes roughs and finals
@@ -120,25 +123,35 @@ export type FalAsk = {
   refs?: string[];
   video?: string;
   audio?: string;
-  /** A clip whose camera the take keeps, and whether it's a blockout (a grey set and stand-ins, none of which should be seen). */
-  camera?: { url: string; blockout: boolean };
+  /** A clip whose camera/lighting/performance/swap conditioning the take keeps, and what kind of guide it is. */
+  camera?: { url: string; blockout: boolean; kind?: CameraKind };
 };
+
+/** Instruction added when a 4×4 16-frame blockout contact sheet is sent as the first reference picture instead of a reference video. */
+export const SHEET_LINE =
+  " The first reference picture is a 4×4 storyboard contact sheet (16 sequential frames, left to right, top to bottom) showing the exact camera move, framing, staging and cut timing to follow. Follow that camera progression across the shot; none of the grid borders, grey set geometry or striped stand-ins appears in the finished video.";
 
 /** The prompt with a line saying which reference picture is which, in the model's own names for them ("Image 1", "@Image1"). */
 const withRefs = (ask: FalAsk, name: (n: number) => string) =>
   ask.refs?.length ? `${ask.prompt} ${ask.refs.length === 1 ? `${name(1)} is a reference` : `${name(1)} to ${name(ask.refs.length)} are references`} for who and what is in it.` : ask.prompt;
 
 /**
- * What's said of a clip whose camera a take keeps, called what the service calls it ("The reference video", "@Video1").
- * A reference video is copied in everything it shows, so the model is told what to take from it: the camera. A
- * blockout's grey set and striped stand-ins are there to be replaced, which it's told too, or it draws them.
+ * What's said of a reference video a take follows, called what the service calls it ("The reference video", "@Video1").
+ * A reference video is copied in everything it shows, so the model is told exactly what to keep and what to replace.
  */
-export const cameraLine = (camera: FalAsk["camera"], name: string) =>
-  !camera
-    ? ""
-    : camera.blockout
-      ? ` ${name} is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result.`
-      : ` ${name} sets the camera: keep its move, its framing, its timing and where its cuts fall.`;
+export const cameraLine = (camera: FalAsk["camera"], name: string) => {
+  if (!camera) return "";
+  const kind: CameraKind = camera.kind ?? (camera.blockout ? "blockout" : "clip");
+  if (kind === "blockout")
+    return ` ${name} is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result.`;
+  if (kind === "relight")
+    return ` ${name} is the source footage to relight: keep its exact framing, subjects, movement, textures and timing unchanged, and replace only its lighting, shadows and color atmosphere to match the reference lighting sphere and prompt. The lighting sphere itself never appears in the video.`;
+  if (kind === "swap")
+    return ` ${name} is the source scene with a tracked mesh or mask marking the person to replace: keep the exact camera, background, lighting, body pose, timing and expression, replace the marked person with the character in the reference pictures, and remove every mesh line, mask and depth color in the finished video.`;
+  if (kind === "perform")
+    return ` ${name} is a neutral 3D clay facial-performance guide carrying exact head motion, eye blinks, brow movement and mouth expressions: transfer every expression and head turn onto the character in the reference picture with photorealistic skin and detail; none of the grey clay sculpt appears in the finished video.`;
+  return ` ${name} sets the camera: keep its move, its framing, its timing and where its cuts fall.`;
+};
 
 /** Whole seconds, for models that only make those. */
 export const whole = (seconds: number | undefined) => Math.ceil((seconds ?? 5) - 1e-6);

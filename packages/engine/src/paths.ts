@@ -120,6 +120,15 @@ export const voicesPath = (dir: string, assetId: string, by: string) => join(dir
 /** The sound an asset's clips play once it's cleaned: the voices mixed back with the original, as asked. */
 export const cleanPath = (dir: string, a: Asset) => (a.cleaned ? join(dir, "media", `${a.id}.clean-${Date.parse(a.cleaned.at).toString(36)}.m4a`) : undefined);
 
+/** A separated audio stem (vocals, no_vocals, drums, bass, other) kept beside the project as lossless WAV. */
+export const stemPath = (dir: string, assetId: string, stem: string) => join(dir, "media", `${assetId}.stem-${stem}.wav`);
+
+/** The pitch-shifted / formant-adjusted sound an asset's clips play once shifted. */
+export const pitchPath = (dir: string, a: Asset) => (a.pitch ? join(dir, "media", `${a.id}.pitch-${Date.parse(a.pitch.at).toString(36)}.m4a`) : undefined);
+
+/** Cached 52-blendshape ARKit facial performance track JSON extracted via MediaPipe Face Landmarker. */
+export const faceTrackPath = (dir: string, assetId: string) => join(dir, "media", `${assetId}.face.json`);
+
 /** The file itself, never a copy: where it came from. */
 export const originalPath = (project: HasSources, dir: string, a: Asset) => mediaPath(project, dir, a.path, a.source);
 

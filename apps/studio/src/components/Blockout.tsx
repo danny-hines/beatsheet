@@ -6,11 +6,11 @@
 import { blockoutStretch, cutView, type ProjectFile } from "@beatsheet/schema";
 import { BeatsheetVideo, metadataFor, type VideoProps } from "@beatsheet/video";
 import { Player, type PlayerRef } from "@remotion/player";
-import { forwardRef, useImperativeHandle, useMemo, useRef } from "react";
+import { forwardRef, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore } from "../store";
 
-/** A blockout as a shot keeps it: the cut it's drawn in, and the shots of it to follow (all of it without). */
-export type BlockoutPick = { cut: string; shots?: string[] };
+/** A blockout as a shot keeps it: the cut it's drawn in, which of its shots to follow, and video vs 16-frame sheet mode. */
+export type BlockoutPick = { cut: string; shots?: string[]; mode?: "video" | "sheet" };
 
 /** The cuts that could be a blockout for `cutId`: the project's other cuts made only of designed shots. */
 export function blockoutCuts(doc: ProjectFile | undefined, cutId: string | undefined) {
@@ -77,3 +77,75 @@ export const BlockoutPlayer = forwardRef<BlockoutHandle, { pick: BlockoutPick; a
     />
   );
 });
+
+/**
+ * Interactive before/after wipe comparator stacking a take over its 3D blockout so framing, camera moves and cut
+ * alignment can be scrubbed directly on top of each other.
+ */
+export function BlockoutWipe({
+  pick,
+  aspect,
+  label,
+  blockoutRef,
+  children,
+}: {
+  pick: BlockoutPick;
+  aspect: string;
+  label?: string;
+  blockoutRef?: React.Ref<BlockoutHandle>;
+  children: ReactNode;
+}) {
+  const [split, setSplit] = useState(50);
+  const box = useRef<HTMLDivElement>(null);
+  const move = (clientX: number) => {
+    const r = box.current?.getBoundingClientRect();
+    if (!r || !r.width) return;
+    setSplit(Math.max(2, Math.min(98, ((clientX - r.left) / r.width) * 100)));
+  };
+  return (
+    <div
+      ref={box}
+      className="stage blockout-wipe"
+      style={{ aspectRatio: aspect }}
+      onPointerDown={(e) => {
+        if ((e.target as HTMLElement).closest("video, button, input")) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        move(e.clientX);
+      }}
+      onPointerMove={(e) => e.buttons === 1 && e.currentTarget.hasPointerCapture(e.pointerId) && move(e.clientX)}
+    >
+      <div className="wipe-layer wipe-base">
+        <BlockoutPlayer ref={blockoutRef} pick={pick} aspect={aspect.replace(/\s+/g, "").replace("/", ":")} />
+      </div>
+      <div className="wipe-layer wipe-top" style={{ clipPath: `inset(0 0 0 ${split}%)` }}>
+        {children}
+      </div>
+      <div
+        className="wipe-handle"
+        style={{ left: `${split}%` }}
+        role="slider"
+        tabIndex={0}
+        aria-label="Compare blockout and take"
+        aria-valuemin={2}
+        aria-valuemax={98}
+        aria-valuenow={Math.round(split)}
+        onPointerDown={(e) => {
+          e.stopPropagation();
+          e.currentTarget.setPointerCapture(e.pointerId);
+          move(e.clientX);
+        }}
+        onPointerMove={(e) => e.buttons === 1 && move(e.clientX)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") setSplit((s) => Math.max(2, s - 4));
+          if (e.key === "ArrowRight") setSplit((s) => Math.min(98, s + 4));
+        }}
+      >
+        <span className="wipe-knob" aria-hidden="true">
+          ↔
+        </span>
+      </div>
+      <span className="stage-tag">Blockout{label ? ` · ${label}` : ""}</span>
+      <span className="stage-tag right">Take</span>
+    </div>
+  );
+}

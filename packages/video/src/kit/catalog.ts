@@ -19,4 +19,6 @@ export const KIT_PROPS: Record<string, string> = {
   Paper: "(a background)",
   Ink: "(a background)",
   Blueprint: "(a background)",
+  Previs: "move? (push-in|pull-out|orbit|low-arc|crane-up|crane-down|dolly-zoom|whip-pan|steadicam-follow|steadicam-lead|over-the-shoulder|handheld|truck-right|bullet-time|snorricam|crash-zoom|chase-drone|aerial-spiral|aerial-pullback|product-spin|hero-orbit|top-down|macro-slider|wipe-reveal|bay-360|trunk-shot), look? (pills|sketch|ink|ghosts|empty), set? (studio|street|room|alley|corridor|clearing), subjects? [{color?, height?, x?, z?, facing?, moveTo?, kind?}], cameraOnly?, lens?, distance?, height?, angle?, speedRamp? {at?, slow?, width?}, hud?",
+  ClayHead: "track? (FacePerformanceTrack), trackFile? (project-relative JSON path), preset? (neutral|joy|surprise|anger|sadness|skeptical|smirk|focus), intensity? (default 1), smooth? (seconds, default 0.05), clayColor?, bgColor?",
 };

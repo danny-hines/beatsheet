@@ -61,6 +61,7 @@ export function CleanSound({ a, hear, setHear }: { a: Asset; hear: "own" | "clea
   const [pick, setPick] = useState("");
   const [strength, setStrength] = useState<"light" | "full">(a.cleaned?.strength ?? "light");
   const [everywhere, setEverywhere] = useState(false);
+  const [keepMusic, setKeepMusic] = useState(!!a.cleaned?.keepMusic);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [again, setAgain] = useState(false);
@@ -78,7 +79,7 @@ export function CleanSound({ a, hear, setHear }: { a: Asset; hear: "own" | "clea
     setBusy(0);
     try {
       await actions.flushSave();
-      await runJob(`/api/projects/${projectId}/clean`, { asset: a.id, ...(pick ? { with: pick } : {}), strength, everywhere }, setBusy);
+      await runJob(`/api/projects/${projectId}/clean`, { asset: a.id, ...(pick ? { with: pick } : {}), strength, everywhere, keepMusic }, setBusy);
       await actions.reload();
       setAgain(false);
       setHear("clean");
@@ -101,7 +102,7 @@ export function CleanSound({ a, hear, setHear }: { a: Asset; hear: "own" | "clea
         {c && (
           <span className="dim small">
             voices cleaned ({c.strength}) · {CLEANERS[c.by] ?? c.by}
-            {c.only ? " · where people talk" : ""}
+            {c.keepMusic ? " · music kept (Demucs)" : c.only ? " · where people talk" : ""}
           </span>
         )}
       </h4>
@@ -161,11 +162,14 @@ export function CleanSound({ a, hear, setHear }: { a: Asset; hear: "own" | "clea
               </select>
             )}
           </div>
-          {a.transcript && (
+          {a.transcript && !keepMusic && (
             <label className="check small" title="Clean all of it, music and all, not just where people talk">
               <input type="checkbox" checked={everywhere} onChange={(e) => setEverywhere(e.target.checked)} /> All of it, not just where people talk
             </label>
           )}
+          <label className="check small" title="Separates vocals from music via Demucs first, cleans only the vocals, and keeps the original music untouched">
+            <input type="checkbox" checked={keepMusic} onChange={(e) => setKeepMusic(e.target.checked)} /> Keep music &amp; ambience (Demucs)
+          </label>
           {busy !== null ? (
             <div className="progress thin">
               <div style={{ width: `${Math.round(busy * 100)}%` }} />

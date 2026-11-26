@@ -12,9 +12,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { chooseFixer, cleanCurve, FIXERS, LIGHT_KEEP, speechSpans, type Asset, type FixAsk, type FixerChoice, type FixerJob, type FixerState } from "@beatsheet/schema";
+import { demucsStatus, separateStems, type DemucsRunner } from "./demucs.ts";
 import { runDeepFilter, toolReady, toolStatus, type ToolId } from "./fixtools.ts";
 import { assertSpendable } from "./make.ts";
-import { assetPath, cleanPath, originalPath, voicesPath } from "./paths.ts";
+import { assetPath, cleanPath, originalPath, pitchPath, voicesPath } from "./paths.ts";
 import { getSecret, readSettings } from "./settings.ts";
 import { recordSpend } from "./spend.ts";
 import { loadProject, updateFile } from "./store.ts";
@@ -33,12 +34,20 @@ export async function fixerStates(): Promise<Record<string, FixerState>> {
     if (s.state === "unsupported") return { state: "unfit", detail: s.detail };
     return { state: "install", detail: s.state === "installing" ? `Installing: ${s.detail}` : `Install it in Settings → Restoring (${s.detail.charAt(0).toLowerCase()}${s.detail.slice(1)})` };
   };
+  const demucs = demucsStatus();
+  const demucsState: FixerState =
+    demucs.state === "ready"
+      ? { state: "ready", speed: demucs.ready?.speed, where: demucs.ready ? `on ${demucs.ready.where}` : undefined }
+      : demucs.state === "unsupported"
+        ? { state: "unfit", detail: demucs.detail }
+        : { state: "install", detail: demucs.state === "installing" ? `Installing: ${demucs.detail}` : `Install Demucs in Settings → Restoring (${demucs.detail})` };
   return {
     deepfilter: local("deepfilter"),
     isolator: saved.elevenlabs ? { state: "ready" } : { state: "key", detail: "Needs an ElevenLabs key (Settings → Media services)" },
     realesrgan: local("realesrgan"),
     seedvr: saved.fal ? { state: "ready" } : { state: "key", detail: "Needs a fal key (Settings → Media services)" },
     rife: local("rife"),
+    demucs: demucsState,
   };
 }
 
@@ -198,8 +207,18 @@ const scratch = () => {
 export async function cleanSound(
   projectId: string,
   assetId: string,
-  opts: { with?: string; strength?: "light" | "full"; everywhere?: boolean; again?: boolean; spendable?: number; onProgress?: (f: number) => void } = {},
-): Promise<{ asset: Asset; choice: FixerChoice; spans?: number; reused: boolean; costUsd?: number }> {
+  opts: {
+    with?: string;
+    strength?: "light" | "full";
+    everywhere?: boolean;
+    keepMusic?: boolean;
+    musicGain?: number;
+    again?: boolean;
+    spendable?: number;
+    onProgress?: (f: number) => void;
+    demucsRunner?: DemucsRunner;
+  } = {},
+): Promise<{ asset: Asset; choice: FixerChoice; spans?: number; reused: boolean; keepMusic?: boolean; costUsd?: number }> {
   const { project, dir } = loadProject(projectId);
   const a = project.assets.find((x) => x.id === assetId);
   if (!a) throw new Error(`No asset "${assetId}"`);
@@ -211,10 +230,18 @@ export async function cleanSound(
   if (!existsSync(src)) throw new Error(`Its file isn't there: ${src}`);
   const work = scratch();
   try {
+    let musicStem: string | undefined;
+    let cleanInput = src;
+    if (opts.keepMusic) {
+      const sep = await separateStems(projectId, assetId, { mode: "two-stem", runner: opts.demucsRunner });
+      if (!sep.stems.vocals || !sep.stems.no_vocals) throw new Error("Demucs didn't produce vocals and no_vocals stems");
+      cleanInput = sep.stems.vocals;
+      musicStem = sep.stems.no_vocals;
+    }
     const orig = join(work, "orig.wav");
-    await soundInStep(src, orig);
-    onProgress(0.05);
-    const voices = voicesPath(dir, a.id, choice.id);
+    await soundInStep(cleanInput, orig);
+    onProgress(0.1);
+    const voices = voicesPath(dir, a.id, opts.keepMusic ? `${choice.id}-vocals` : choice.id);
     const reused = existsSync(voices) && !opts.again;
     let costUsd: number | undefined;
     if (!reused) {
@@ -224,7 +251,7 @@ export async function cleanSound(
         if (!ready) throw new Error("DeepFilterNet isn't installed on this computer (Settings → Restoring)");
         // It says nothing as it goes; the bar moves by how long it took here on the check clip.
         const started = Date.now(), expect = Math.max(1, seconds * ready.speed);
-        const tick = setInterval(() => onProgress(0.05 + 0.8 * Math.min(0.95, (Date.now() - started) / 1000 / expect)), 500);
+        const tick = setInterval(() => onProgress(0.1 + 0.75 * Math.min(0.95, (Date.now() - started) / 1000 / expect)), 500);
         try {
           const out = await runDeepFilter(ready, orig, join(work, "clean"));
           await exec("ffmpeg", ["-v", "error", "-y", "-i", out, "-ac", "1", "-ar", String(RATE), "-c:a", "pcm_s16le", voices]);
@@ -255,8 +282,8 @@ export async function cleanSound(
       }
     }
     onProgress(0.88);
-    // Only where people talk, when there's a transcript to say where that is.
-    const t = !opts.everywhere ? readTranscript(projectId, a.id) : undefined;
+    // Only where people talk, when there's a transcript to say where that is (not needed when Demucs separated vocals).
+    const t = !opts.everywhere && !opts.keepMusic ? readTranscript(projectId, a.id) : undefined;
     const spans = t?.words.length ? speechSpans(t.words) : undefined;
     const [origRaw, voicesRaw, mixed] = [join(work, "orig.raw"), join(work, "voices.raw"), join(work, "mix.raw")];
     await toRaw(orig, origRaw);
@@ -265,9 +292,42 @@ export async function cleanSound(
     // original: the two mixed sound hollow. It's used on its own where people talk.
     const strength = choice.id === "isolator" ? "full" : (opts.strength ?? "light");
     mixRaw(origRaw, voicesRaw, mixed, cleanCurve(spans, statSync(origRaw).size / 2 / RATE), strength === "light" ? LIGHT_KEEP : 0);
-    const cleaned: NonNullable<Asset["cleaned"]> = { by: choice.id, strength, ...(spans ? { only: "speech" as const } : {}), at: new Date().toISOString(), ...(costUsd ? { costUsd } : {}) };
+    const cleaned: NonNullable<Asset["cleaned"]> = {
+      by: choice.id,
+      strength,
+      ...(spans ? { only: "speech" as const } : {}),
+      ...(musicStem ? { keepMusic: true } : {}),
+      at: new Date().toISOString(),
+      ...(costUsd ? { costUsd } : {}),
+    };
     const out = cleanPath(dir, { ...a, cleaned })!;
-    await exec("ffmpeg", ["-v", "error", "-y", "-f", "s16le", "-ar", String(RATE), "-ac", "1", "-i", mixed, "-c:a", "aac", "-b:a", "160k", out]);
+    if (musicStem) {
+      const gain = opts.musicGain ?? 1;
+      await exec("ffmpeg", [
+        "-v",
+        "error",
+        "-y",
+        "-f",
+        "s16le",
+        "-ar",
+        String(RATE),
+        "-ac",
+        "1",
+        "-i",
+        mixed,
+        "-i",
+        musicStem,
+        "-filter_complex",
+        `[0:a]pan=stereo|c0=c0|c1=c0[v];[1:a]aresample=${RATE},volume=${gain}[m];[v][m]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.95`,
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        out,
+      ]);
+    } else {
+      await exec("ffmpeg", ["-v", "error", "-y", "-f", "s16le", "-ar", String(RATE), "-ac", "1", "-i", mixed, "-c:a", "aac", "-b:a", "160k", out]);
+    }
     // The mix it replaces goes; the cleaned voices stay, for mixing again.
     for (const f of readdirSync(join(dir, "media"))) if (f.startsWith(`${a.id}.clean-`) && join(dir, "media", f) !== out) rmSync(join(dir, "media", f), { force: true });
     updateFile(projectId, (d) => {
@@ -275,7 +335,7 @@ export async function cleanSound(
       if (x) x.cleaned = cleaned;
     });
     onProgress(1);
-    return { asset: { ...a, cleaned }, choice, ...(spans ? { spans: spans.length } : {}), reused, ...(costUsd ? { costUsd } : {}) };
+    return { asset: { ...a, cleaned }, choice, ...(spans ? { spans: spans.length } : {}), reused, ...(musicStem ? { keepMusic: true } : {}), ...(costUsd ? { costUsd } : {}) };
   } finally {
     rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
@@ -294,8 +354,10 @@ export function uncleanSound(projectId: string, assetId: string) {
   });
 }
 
-/** The file a clip's sound comes from: its cleaned sound once there is one, else the file it plays. */
+/** The file a clip's sound comes from: its pitch-shifted sound, else its cleaned sound, else the file it plays. */
 export function soundFile(project: Parameters<typeof assetPath>[0], dir: string, a: Asset): string {
+  const shifted = pitchPath(dir, a);
+  if (shifted && existsSync(shifted)) return shifted;
   const clean = cleanPath(dir, a);
   return clean && existsSync(clean) ? clean : assetPath(project, dir, a);
 }

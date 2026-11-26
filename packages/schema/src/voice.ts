@@ -44,3 +44,39 @@ export function voiceProvider(id: string | undefined): "elevenlabs" | "kokoro" |
   const p = id?.split(":")[0];
   return p === "elevenlabs" || p === "kokoro" || p === "mac" || p === "windows" ? p : undefined;
 }
+
+/** Shifts and clamps a line's word timestamps after dead leading/trailing silence has been trimmed off its audio. */
+export function tightenLineTiming<W extends { w: string; s: number; e: number }>(
+  words: W[],
+  duration: number,
+  trimStart: number,
+  trimEnd: number,
+): { duration: number; words: W[] } {
+  const start = Math.max(0, trimStart);
+  const end = Math.max(start + 0.05, Math.min(duration, trimEnd));
+  const nextDuration = Math.round((end - start) * 1000) / 1000;
+  let cursor = 0;
+  const shifted = words.map((word) => {
+    const s = Math.max(cursor, Math.min(nextDuration, Math.round((word.s - start) * 1000) / 1000));
+    const e = Math.max(s, Math.min(nextDuration, Math.round((word.e - start) * 1000) / 1000));
+    cursor = s;
+    return { ...word, s, e };
+  });
+  return { duration: nextDuration, words: shifted };
+}
+
+/** Tightens excessive pauses between narrated lines for brisker social/explainer pacing. */
+export function tightenLineGaps<L extends { gapAfter?: number; holdBefore?: number }>(
+  lines: L[],
+  opts: { maxGap?: number; minGap?: number; maxHold?: number } = {},
+): L[] {
+  const maxGap = opts.maxGap ?? 0.25;
+  const minGap = opts.minGap ?? 0.08;
+  const maxHold = opts.maxHold ?? 0.35;
+  return lines.map((line) => {
+    const next = { ...line };
+    if (next.gapAfter !== undefined) next.gapAfter = Math.round(Math.max(minGap, Math.min(maxGap, next.gapAfter)) * 1000) / 1000;
+    if (next.holdBefore !== undefined && next.holdBefore > maxHold) next.holdBefore = maxHold;
+    return next;
+  });
+}
