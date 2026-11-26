@@ -50,6 +50,9 @@ function problem(body: Body, status: number, model?: string): FalError {
   const { code, message } = said(body, status);
   if (status === 401) return new FalError("Higgsfield refused the key. The person can check it in Settings → Media services.", true);
   if (code === "api_key_expired" || code === "api_key_disabled") return new FalError(`The Higgsfield key ${code === "api_key_expired" ? "has expired" : "is turned off"}. The person can make another at open.higgsfield.ai.`, true);
+  if (status === 403 && (code === "model_unavailable" || message === "model_unavailable")) {
+    return new FalError(`Higgsfield says ${model ?? "this model"} isn't available to this API key right now (model_unavailable). Check model access at open.higgsfield.ai or pick another model.`, true, true);
+  }
   // A request the balance can't pay for is refused with 403, like a key that may not use the model.
   if (status === 403) return new FalError(`Higgsfield wouldn't start this: its balance is too low, or the key isn't allowed this model (${message}). The person can look at open.higgsfield.ai.`, true, true);
   if (status === 404 && model) return new FalError(`Higgsfield doesn't offer ${model} to this account (${message})`, true);

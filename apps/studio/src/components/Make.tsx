@@ -126,7 +126,7 @@ export function MakeView() {
             onClose={() => setCreating(undefined)}
           />
         ) : shot ? (
-          <ShotPage key={shot.id} shot={shot} jobs={jobs} back={back} backLabel={backLabel} onCreate={openCreate} onStarted={started} />
+          <ShotPage key={shot.id} shot={shot} jobs={jobs} back={back} backLabel={backLabel} onCreate={openCreate} onStarted={started} retry={(j) => void retry([j.id])} />
         ) : member ? (
           <CastMemberPage id={member.id} back={back} backLabel={backLabel} />
         ) : asset ? (

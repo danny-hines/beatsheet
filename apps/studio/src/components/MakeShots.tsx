@@ -29,7 +29,7 @@ import type { CreateLaunch } from "./CreatePage";
 import { GuideCompare, guideOfAsset } from "./GuideCompare";
 import { Icon } from "./Icon";
 import { NotesFor } from "./Side";
-import { madeWith, money, pickOf, pickTake } from "./Takes";
+import { madeWith, modelLabel, money, pickOf, pickTake } from "./Takes";
 import { answer } from "./Turn";
 import { FidelityPill } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
@@ -455,6 +455,7 @@ export function ShotPage({
   backLabel,
   onCreate,
   onStarted,
+  retry,
 }: {
   shot: Shot;
   jobs: MakeJob[];
@@ -462,6 +463,7 @@ export function ShotPage({
   backLabel: string;
   onCreate: (launch: CreateLaunch) => void;
   onStarted: (jobs: MakeJob[]) => void;
+  retry?: (job: MakeJob) => void;
 }) {
   const projectId = useStore((s) => s.projectId)!;
   const cutId = useStore((s) => s.cutId);
@@ -482,21 +484,32 @@ export function ShotPage({
   const [tweakNote, setTweakNote] = useState("");
   const [rerolling, setRerolling] = useState(false);
   const [rerollError, setRerollError] = useState("");
+  const [dismissedFailed, setDismissedFailed] = useState<string[]>([]);
 
-  // A take that's just arrived is the one to look at.
+  // A take that's just arrived is the one to look at, and stays pinned in the tray so freshly made stills never hide themselves.
   const last = takes.at(-1)?.id;
-  const [seen, setSeen] = useState(takes.length);
+  const [seenIds, setSeenIds] = useState<string[]>(() => takes.map((t) => t.id));
+  const [freshIds, setFreshIds] = useState<string[]>([]);
   useEffect(() => {
-    if (takes.length > seen && last) setLooking(last);
-    setSeen(takes.length);
+    const added = takes.map((t) => t.id).filter((id) => !seenIds.includes(id));
+    if (added.length) {
+      setFreshIds((prev) => [...new Set([...prev, ...added])]);
+      setLooking(added.at(-1) ?? last);
+      setSeenIds(takes.map((t) => t.id));
+    }
   }, [takes.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const look = takes.find((a) => a.id === looking) ?? takes.find((a) => a.id === showing) ?? takes.at(-1);
   const lookJob = look ? jobs.find((j) => j.asset === look.id) : undefined;
   const guide = guideOfAsset(projectId, doc, cutId, look);
-  const going = jobs.filter((j) => isOpen(j) && j.shot === shot.id && (!j.cut || j.cut === cutId));
+  const shotJobs = jobs.filter((j) => j.shot === shot.id && (!j.cut || j.cut === cutId));
+  const going = shotJobs.filter(isOpen);
   const goingClips = going.filter((j) => j.op === "video");
   const goingStills = going.filter((j) => j.op === "image");
+  const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+  const failedJobs = shotJobs
+    .filter((j) => j.status === "failed" && j.updatedAt >= hourAgo && !dismissedFailed.includes(j.id))
+    .sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1));
   const list = shotsToMake(p);
   const at = list.indexOf(shot);
   const go = (s: Shot | undefined) => s && actions.select({ kind: "shot", id: s.id });
@@ -540,11 +553,12 @@ export function ShotPage({
     });
   };
 
-  // Smart default launch into Creation Screen based on shot stage.
+  // Smart default launch into Creation Screen based on shot stage; if the user selected a specific still, animate that one.
+  const boardForVideo = look?.kind === "image" ? look : activeBoard;
   const openMakeTake = (override?: Partial<MakeDraft>) => {
-    const defaultOp: MakeOp = override?.op ?? (activeBoard || hasBlockout ? "video" : "image");
+    const defaultOp: MakeOp = override?.op ?? (boardForVideo || hasBlockout ? "video" : "image");
     const defaultInputMode: MakeDraft["inputMode"] =
-      override?.inputMode ?? (defaultOp === "image" ? "refs" : hasBlockout ? "blockout" : activeBoard ? "board" : "board");
+      override?.inputMode ?? (defaultOp === "image" ? "refs" : hasBlockout ? "blockout" : boardForVideo ? "board" : "board");
     onCreate({
       backLabel: `Shot ${shot.id}`,
       draft: {
@@ -553,8 +567,8 @@ export function ShotPage({
         quality: clips.length ? "final" : "rough",
         inputMode: defaultInputMode,
         prompt: shotPrompt(shot, defaultOp),
-        ...(defaultOp === "video" && activeBoard && defaultInputMode === "board" ? { start: activeBoard.id } : {}),
-        ...(defaultOp === "video" && activeBoard && defaultInputMode === "blockout" ? { refs: [activeBoard.id] } : {}),
+        ...(defaultOp === "video" && boardForVideo && defaultInputMode === "board" ? { start: boardForVideo.id } : {}),
+        ...(defaultOp === "video" && boardForVideo && defaultInputMode === "blockout" ? { refs: [boardForVideo.id] } : {}),
         ...(hasBlockout && defaultInputMode === "blockout" ? { useBlockout: true, blockoutMode: shot.blockout?.mode ?? "video" } : {}),
         ...(seconds ? { seconds } : {}),
         count: defaultOp === "image" ? 2 : 1,
@@ -608,9 +622,23 @@ export function ShotPage({
     }
   };
 
-  // When clips exist, keep the primary still visible and fold earlier first-frame attempts behind a toggle.
+  // When clips exist, keep the active board, any stills generated AFTER the latest clip, and any stills that arrived this visit visible; fold only older superseded stills.
   const hasClipsOrGoing = clips.length > 0 || goingClips.length > 0;
-  const pinnedStills = hasClipsOrGoing && !showAllStills ? stills.filter((s) => s.id === activeBoardId || s.id === look?.id || s.id === showing) : stills;
+  const latestClipAt = clips.reduce((max, cl) => {
+    const at = cl.provenance?.createdAt ?? "";
+    return at > max ? at : max;
+  }, "");
+  const pinnedStills =
+    hasClipsOrGoing && !showAllStills
+      ? stills.filter(
+          (s) =>
+            s.id === activeBoardId ||
+            s.id === look?.id ||
+            s.id === showing ||
+            freshIds.includes(s.id) ||
+            (latestClipAt !== "" && (s.provenance?.createdAt ?? "") > latestClipAt),
+        )
+      : stills;
   const hiddenStillsCount = stills.length - pinnedStills.length;
 
   return (
@@ -720,6 +748,46 @@ export function ShotPage({
             </div>
           )}
           {rerollError && <p className="warn small">{rerollError}</p>}
+          {failedJobs.length > 0 && (
+            <div className="shot-failed-list" role="alert">
+              {failedJobs.map((j) => (
+                <div key={j.id} className="shot-failed small">
+                  <div className="shot-failed-head">
+                    <strong>
+                      {j.op === "video" ? "Clip" : "Still"} didn&apos;t come · {modelLabel(j.model)}
+                    </strong>
+                    <span className="dim">{timeAgo(j.updatedAt)}</span>
+                    <span className="spacer" />
+                    <button
+                      className="link small"
+                      onClick={() => onCreate({ backLabel: `Shot ${shot.id}`, ...draftFromAssetOrJob(undefined, j, shot.id) })}
+                      title="Re-open this prompt and settings in Create to pick another model or adjust inputs"
+                    >
+                      Edit / change model…
+                    </button>
+                    {retry && (
+                      <button
+                        className="link small"
+                        onClick={() => retry(j)}
+                        title={j.charged ? "It was made; fetch it again, at no cost" : "Ask for it again"}
+                      >
+                        Try again
+                      </button>
+                    )}
+                    <button
+                      className="icon"
+                      onClick={() => setDismissedFailed((prev) => [...prev, j.id])}
+                      title="Dismiss this error"
+                      aria-label="Dismiss error"
+                    >
+                      <Icon name="close" size={12} />
+                    </button>
+                  </div>
+                  <p className="shot-failed-msg">{j.error ?? "Generation failed"}</p>
+                </div>
+              ))}
+            </div>
+          )}
           {look && <Given a={look} />}
 
           {/* Video takes (hero tray) */}
@@ -746,8 +814,12 @@ export function ShotPage({
                   />
                 ))}
                 {goingClips.map((j) => (
-                  <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title="A clip on its way">
-                    {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                  <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title={`A clip from ${modelLabel(j.model)} on its way`}>
+                    <span>
+                      {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                      <br />
+                      {modelLabel(j.model)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -786,8 +858,12 @@ export function ShotPage({
                   />
                 ))}
                 {goingStills.map((j) => (
-                  <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title="A still on its way">
-                    {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                  <div key={j.id} className="tray-take pending" style={{ aspectRatio: aspect }} title={`A still from ${modelLabel(j.model)} on its way`}>
+                    <span>
+                      {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                      <br />
+                      {modelLabel(j.model)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -808,17 +884,12 @@ export function ShotPage({
             <p className="small dim shot-recipe-prompt">{shotPrompt(shot) || "No prompt written yet."}</p>
             <div className="shot-recipe-actions">
               <button className="primary" onClick={() => openMakeTake()}>
-                <Icon name="add" size={12} /> {activeBoard || hasBlockout ? "Make video take…" : "Make board stills…"}
+                <Icon name="add" size={12} /> {boardForVideo || hasBlockout ? (look?.kind === "image" ? "Make video from this still…" : "Make video take…") : "Make board stills…"}
               </button>
               <div className="make-row">
-                {(activeBoard || hasBlockout) && (
+                {(boardForVideo || hasBlockout) && (
                   <button className="small" onClick={() => openMakeTake({ op: "image" })} title="Generate fresh board stills for this shot">
                     New board stills…
-                  </button>
-                )}
-                {look?.kind === "image" && (
-                  <button className="small" onClick={() => openMakeTake({ op: "video", inputMode: hasBlockout ? "blockout" : "board", start: look.id, refs: hasBlockout ? [look.id] : undefined })} title="Animate this exact still into a video clip">
-                    Animate this still…
                   </button>
                 )}
               </div>
