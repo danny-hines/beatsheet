@@ -97,7 +97,7 @@ export function swapPlan(projectId: string, assetId: string, opts: SwapOpts) {
   const uses = castOf("", project.cast, [cleanId]);
   const found = uses[0];
   if (!found) throw new Error(`No cast member "@${cleanId}". Add them to /cast first.`);
-  const pics = castPictures(uses).map((p) => p.asset);
+  const pics = castPictures(uses, { cast: project.cast }).map((p) => p.asset);
   if (!pics.length) throw new Error(`@${cleanId} has no reference pictures yet. Add a photo or make their portrait/sheet first.`);
 
   const mode: SwapMode = opts.mode ?? "fast";

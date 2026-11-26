@@ -2223,3 +2223,193 @@ describe("multimodal reference audio (audioRefs)", () => {
     expect(voiceTake.provenance?.refs).toContain("cat-voice");
   });
 });
+
+describe("decoupled face & wardrobe sheets, procedural compositing, and model-adaptive delivery", () => {
+  it("generates bare portraits, 360° face sheets, and headless/ghost-mannequin outfit sheets (with zero face photos on outfit sheets)", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const makePng = async (name: string, r: number, g: number, b: number) => {
+      const p = join(dir, name);
+      await sharp({ create: { width: 120, height: 150, channels: 3, background: { r, g, b } } }).png().toFile(p);
+      return p;
+    };
+    const p1 = await makePng("will-photo-1.png", 180, 120, 90);
+    const p2 = await makePng("will-photo-2.png", 170, 110, 85);
+
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push(
+        { id: "will-p1", kind: "image", path: p1, label: "Will front", provenance: { source: "import" } },
+        { id: "will-p2", kind: "image", path: p2, label: "Will side", provenance: { source: "import" } },
+      );
+      d.cast!.push(
+        {
+          id: "will",
+          name: "Galileo",
+          kind: "character",
+          about: "17-year-old with ginger hair and freckles",
+          wears: "dark wool doublet and breeches",
+          headwear: "none",
+          seen: [{ asset: "will-p1" }, { asset: "will-p2" }],
+          variants: [{ id: "battle", about: "torn, mud-splattered doublet with ripped sleeve" }],
+        },
+        {
+          id: "cloak",
+          name: "Inquisitor Cloak",
+          kind: "wardrobe",
+          about: "heavy black hooded Renaissance robe with silver clasp and white mask",
+          headwear: "ghost",
+        },
+      );
+    });
+
+    // 1. Portrait (4:5 bare shoulders because headwear is not "face"): attaches to portrait.
+    const portReq = make.requestFor(PROJECT, { op: "image", sheet: "will", sheetKind: "portrait" });
+    expect(portReq.aspect).toBe("4:5");
+    expect(portReq.refs).toEqual(["will-p1", "will-p2"]);
+    expect(portReq.sent).toContain("bare neck and shoulders");
+    expect(portReq.sent).not.toContain("dark wool doublet");
+    make.startMake(PROJECT, { op: "image", sheet: "will", sheetKind: "portrait", count: 1 });
+    await make.driveJobs(PROJECT);
+    let will = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "will")!;
+    expect(will.portrait).toBe("will-portrait");
+
+    // 2. 360° Face Sheet (3:2 6-panel 3×2 turnaround anchored on chosen portrait + extra angled photos): attaches to faceSheet.
+    const faceReq = make.requestFor(PROJECT, { op: "image", sheet: "will", sheetKind: "face-sheet" });
+    expect(faceReq.aspect).toBe("3:2");
+    expect(faceReq.refs).toEqual(["will-portrait", "will-p1", "will-p2"]);
+    expect(faceReq.sent).toContain("3x2");
+    expect(faceReq.sent).toContain("bare neck and shoulders");
+    expect(faceReq.sent).not.toContain("dark wool doublet");
+    make.startMake(PROJECT, { op: "image", sheet: "will", sheetKind: "face-sheet", count: 1 });
+    await make.driveJobs(PROJECT);
+    will = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "will")!;
+    expect(will.faceSheet).toBe("will-face-sheet");
+    expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "will-face-sheet")?.tags).toContain("face-sheet");
+
+    // 3. Headless Outfit Sheet (1:1): sends ZERO face photos and clears realPeople so real-person filters don't block costumes!
+    const outfitReq = make.requestFor(PROJECT, { op: "image", sheet: "will", sheetKind: "outfit-sheet" });
+    expect(outfitReq.aspect).toBe("1:1");
+    expect(outfitReq.refs).toBeUndefined();
+    expect(outfitReq.realPeople).toBeUndefined();
+    expect(outfitReq.sent).toContain("headless");
+    expect(outfitReq.sent).toContain("dark wool doublet");
+    make.startMake(PROJECT, { op: "image", sheet: "will", sheetKind: "outfit-sheet", count: 1 });
+    await make.driveJobs(PROJECT);
+    will = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "will")!;
+    expect(will.outfitSheet).toBe("will-outfit-sheet");
+
+    // 4. Outfit variant edits directly from the plain outfitSheet (still zero face photos / zero realPeople).
+    const battleReq = make.requestFor(PROJECT, { op: "image", sheet: "will/battle", sheetKind: "outfit-sheet" });
+    expect(battleReq.refs).toEqual(["will-outfit-sheet"]);
+    expect(battleReq.realPeople).toBeUndefined();
+    expect(battleReq.sent).toContain("torn, mud-splattered doublet");
+    make.startMake(PROJECT, { op: "image", sheet: "will/battle", sheetKind: "outfit-sheet", count: 1 });
+    await make.driveJobs(PROJECT);
+    will = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "will")!;
+    expect(will.variants![0]!.outfitSheet).toBe("will-battle-outfit-sheet");
+
+    // 5. Reusable wardrobe entry with headwear: "ghost" defaults to outfit-sheet and uses ghost-mannequin wording.
+    const cloakReq = make.requestFor(PROJECT, { op: "image", sheet: "cloak" });
+    expect(cloakReq.aspect).toBe("1:1");
+    expect(cloakReq.sent).toContain("over an empty neutral-gray void");
+    make.startMake(PROJECT, { op: "image", sheet: "cloak", count: 1 });
+    await make.driveJobs(PROJECT);
+    const cloak = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "cloak")!;
+    expect(cloak.outfitSheet).toBe("cloak-outfit-sheet");
+  });
+
+  it("packs decoupled cast per model (split-single vs split-360 vs procedural sharp composite) and translates @ImageN on Seedance", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const mkImg = async (name: string, w: number, h: number, r: number, g: number, b: number) => {
+      const p = join(dir, name);
+      await sharp({ create: { width: w, height: h, channels: 3, background: { r, g, b } } }).jpeg().toFile(p);
+      return p;
+    };
+    const [pFace, p360, pOutfit, pRobe, bPort, b360] = await Promise.all([
+      mkImg("g-port.jpg", 400, 500, 210, 150, 120),
+      mkImg("g-360.jpg", 600, 400, 200, 140, 110),
+      mkImg("g-out.jpg", 500, 500, 60, 70, 95),
+      mkImg("robe.jpg", 500, 500, 35, 35, 40),
+      mkImg("b-port.jpg", 400, 500, 190, 160, 140),
+      mkImg("b-360.jpg", 600, 400, 180, 150, 130),
+    ]);
+
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push(
+        { id: "g-port", kind: "image", path: pFace, provenance: { source: "generated" } },
+        { id: "g-360", kind: "image", path: p360, provenance: { source: "generated" } },
+        { id: "g-out", kind: "image", path: pOutfit, provenance: { source: "generated" } },
+        { id: "robe-out", kind: "image", path: pRobe, provenance: { source: "generated" } },
+        { id: "b-port", kind: "image", path: bPort, provenance: { source: "generated" } },
+        { id: "b-360", kind: "image", path: b360, provenance: { source: "generated" } },
+      );
+      d.cast!.push(
+        { id: "robe", name: "Cloak", kind: "wardrobe", about: "black hooded cloak", headwear: "ghost", outfitSheet: "robe-out" },
+        { id: "galileo", name: "Galileo", kind: "character", about: "young astronomer", wears: "wool doublet", portrait: "g-port", faceSheet: "g-360", outfitSheet: "g-out" },
+        { id: "bobby", name: "Bobby", kind: "character", about: "tall inquisitor", portrait: "b-port", faceSheet: "b-360", outfit: "robe" },
+      );
+    });
+
+    // 1. Grid-sensitive still model (nano-banana → split-single): gets [portrait, outfitSheet], never the 6-panel 360° grid.
+    const nanoPlan = make.planTake(PROJECT, { op: "image", prompt: "@galileo stands by the telescope", model: "nano-banana", count: 1 });
+    expect(nanoPlan.pictures).toEqual([
+      { asset: "g-port", as: "ref", role: "portrait" },
+      { asset: "g-out", as: "ref", role: "outfit" },
+    ]);
+    expect(nanoPlan.told).toContain("Image 1 is Galileo's portrait");
+    expect(nanoPlan.told).toContain("Image 2 is Galileo's outfit turnaround");
+
+    // 2. Instruction-following still model (gpt-image-sunburst → split-360): gets [faceSheet, outfitSheet].
+    const gptPlan = make.planTake(PROJECT, { op: "image", prompt: "@galileo stands by the telescope", model: "gpt-image-sunburst", count: 1 });
+    expect(gptPlan.pictures).toEqual([
+      { asset: "g-360", as: "ref", role: "face-sheet" },
+      { asset: "g-out", as: "ref", role: "outfit" },
+    ]);
+    expect(gptPlan.told).toContain("Image 1 is Galileo's 360-degree face sheet");
+
+    // 3. Combined / tight-budget procedural compositing: builds real 1536×864 JPEG in .cache/castpack/, uploads 1 file per
+    // character, and records both underlying real asset ids in provenance.refs.
+    const { compositeSheet } = await import("../src/castpack.ts");
+    const projLoaded = store.loadProject(PROJECT);
+    const compPath1 = await compositeSheet(projLoaded.project, projLoaded.dir, { face: "g-port", outfit: "g-out", mode: "portrait-outfit" });
+    const compPath2 = await compositeSheet(projLoaded.project, projLoaded.dir, { face: "g-port", outfit: "g-out", mode: "portrait-outfit" });
+    expect(compPath1).toBe(compPath2);
+    const meta = await sharp(compPath1).metadata();
+    expect([meta.width, meta.height]).toEqual([1536, 864]);
+
+    const uploadsBefore = seen.uploads;
+    const compStart = make.startMake(PROJECT, {
+      op: "image",
+      prompt: "@galileo faces @bobby in the courtyard",
+      model: "nano-banana",
+      via: "fal",
+      castPack: "combined",
+      count: 1,
+    });
+    expect(compStart.jobs[0]!.request.packedRefs).toHaveLength(2);
+    expect(compStart.jobs[0]!.request.packedRefs![0]).toMatchObject({ kind: "composite", face: "g-port", outfit: "g-out" });
+    expect(compStart.jobs[0]!.request.packedRefs![1]).toMatchObject({ kind: "composite", face: "b-port", outfit: "robe-out" });
+    await make.driveJobs(PROJECT);
+    // Only 2 composited images uploaded (one per character), not 4!
+    expect(seen.uploads - uploadsBefore).toBe(2);
+    const compAsset = store.loadProject(PROJECT).project.assets.find((a) => a.provenance?.job === compStart.jobs[0]!.id)!;
+    // Provenance records all 4 real underlying asset IDs (never synthetic cache IDs).
+    expect(compAsset.provenance?.refs).toEqual(["g-port", "g-out", "b-port", "robe-out"]);
+
+    // 4. Reference-to-video on Seedance 2.5 (fal) with no start board auto-attaches decoupled [faceSheet, outfitSheet]
+    // and translates Image 1 / Image 2 role labels into @Image1 / @Image2!
+    const seedanceStart = make.startMake(PROJECT, {
+      op: "video",
+      prompt: "@galileo turns slowly toward the lantern",
+      model: "seedance-2.5",
+      via: "fal",
+      seconds: 4,
+      count: 1,
+    });
+    expect(seedanceStart.fit).toMatchObject({ model: "seedance-2.5", route: "fal", endpoint: "bytedance/seedance-2.5/us/reference-to-video" });
+    await make.driveJobs(PROJECT);
+    const sentSeedance = seen.submits.filter((s) => s.endpoint === "bytedance/seedance-2.5/us/reference-to-video").at(-1)!;
+    expect(sentSeedance.input.image_urls).toHaveLength(2);
+    expect(String(sentSeedance.input.prompt)).toContain("@Image1 is Galileo's 360-degree face sheet");
+    expect(String(sentSeedance.input.prompt)).toContain("@Image2 is Galileo's outfit turnaround");
+  });
+});

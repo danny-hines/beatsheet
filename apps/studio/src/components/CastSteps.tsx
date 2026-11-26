@@ -1,25 +1,54 @@
 /**
- * A character's look, settled step by step: the photos its face comes from, what it wears, then a portrait chosen from
- * those made, then a sheet made from that portrait and chosen the same way. Models are given the chosen sheet (else
- * the chosen portrait), so a character is one picture, and one face, in every shot.
+ * A character's or wardrobe's look, settled step by step with decoupled face & wardrobe ingredients:
+ * - Characters: Face photos + chosen Portrait → 360° Face Sheet, and Wardrobe (or shared @wardrobe + headwear mode) →
+ *   headless/ghost-mannequin Outfit Sheet, plus a collapsible legacy Combined Sheet option. Models automatically get
+ *   the format that works best for them (split 360° + outfit, single portrait + outfit, or procedural composite).
+ * - Wardrobes: reusable headless front/back outfit turnarounds shared across characters and variants (clean vs tattered).
  */
-import type { MakeJob } from "@beatsheet/engine";
-import { lookGiven, type Asset, type CastLook, type CastMember } from "@beatsheet/schema";
+import type { MakeJob, SheetKind } from "@beatsheet/engine";
+import { characterIngredients, lookGiven, resolveWardrobe, type Asset, type CastLook, type CastMember, type HeadwearMode } from "@beatsheet/schema";
 import { useState, type HTMLAttributes, type ReactNode } from "react";
 import { ASSET_DRAG, hideBroken, posterUrl } from "../lib";
-import { useProject } from "../store";
+import { actions, useProject } from "../store";
 import { madeWith, modelLabel } from "./Takes";
 import { PopMenu, TextField } from "./ui";
 import { Viewer } from "./Viewer";
 import { Icon } from "./Icon";
 
 type Variant = NonNullable<CastMember["variants"]>[number];
-type Made = "portrait" | "sheet";
-const OTHERS = { portrait: "portraits", sheet: "sheets" } as const;
+type Made = "portrait" | "faceSheet" | "outfitSheet" | "sheet";
+const OTHERS: Record<Made, "portraits" | "faceSheets" | "outfitSheets" | "sheets"> = {
+  portrait: "portraits",
+  faceSheet: "faceSheets",
+  outfitSheet: "outfitSheets",
+  sheet: "sheets",
+};
+const MADE_LABEL: Record<Made, string> = {
+  portrait: "portrait",
+  faceSheet: "360° face sheet",
+  outfitSheet: "outfit sheet",
+  sheet: "combined sheet",
+};
+const MADE_PLURAL: Record<Made, string> = {
+  portrait: "portraits",
+  faceSheet: "face sheets",
+  outfitSheet: "outfit sheets",
+  sheet: "combined sheets",
+};
 /** Where a picture sits in a look's steps, to drag it from or drop it on. */
-type Spot = "before" | "faces" | "wardrobe" | Made | "portraits" | "sheets";
+type Spot = "before" | "faces" | "wardrobe" | Made | "portraits" | "faceSheets" | "outfitSheets" | "sheets";
 /** A picture being dragged (PICTURE_DRAG): which, and where in the steps it's from (none for the footage). */
 type Dragged = { asset?: string; from?: Spot };
+
+const jobMatches = (j: MakeJob, kind: Made) => {
+  const sk: SheetKind = j.sheetKind ?? (j.portrait ? "portrait" : "sheet");
+  return (
+    (kind === "portrait" && sk === "portrait") ||
+    (kind === "faceSheet" && sk === "face-sheet") ||
+    (kind === "outfitSheet" && sk === "outfit-sheet") ||
+    (kind === "sheet" && sk === "sheet")
+  );
+};
 
 /** A person's or a thing's own photo (brought in, recorded, a still from their footage), as the engine's ownPhotos tells. */
 export const isOwnPhoto = (a: Asset | undefined) => a?.kind === "image" && !a.cutout && ["import", "capture", "recorded", undefined].includes(a.provenance?.source);
@@ -27,11 +56,16 @@ export const isOwnPhoto = (a: Asset | undefined) => a?.kind === "image" && !a.cu
 /** What's being dragged among cast pictures: from which look and row, or a photo from the footage (`asset`). */
 export const PICTURE_DRAG = "application/x-beatsheet-picture";
 
+const HEADWEAR_OPTIONS: { value: HeadwearMode; label: string }[] = [
+  { value: "none", label: "None — bare 360° head + headless outfit" },
+  { value: "ghost", label: "Hat / hood / mask — ghost mannequin on outfit sheet" },
+  { value: "face", label: "Attached to face — beard, wimple, glasses, facial wounds" },
+];
+
 export function CharacterSteps({
   projectId,
   member: m,
   variant,
-  lookName,
   plainLabel,
   going,
   canMake,
@@ -48,7 +82,7 @@ export function CharacterSteps({
   going: MakeJob[];
   /** Whether making can start: a model is ready and nothing's being sent. */
   canMake: boolean;
-  onMake: (portrait: boolean) => void;
+  onMake: (sheetKind: SheetKind) => void;
   edit: (fn: (m: CastMember) => void) => void;
   /** Writing who they are from their pictures (a link), under the words. */
   describe?: ReactNode;
@@ -57,7 +91,6 @@ export function CharacterSteps({
   const [viewing, setViewing] = useState<{ row: "faces" | "wardrobe" | Made | "before"; items: string[]; at: number }>();
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   const [cutting, setCutting] = useState("");
-  // A picture being dragged within the steps, and the spot it's over.
   const [dragging, setDragging] = useState(false);
   const [over, setOver] = useState<Spot>();
   const look: CastLook = variant ?? m;
@@ -69,12 +102,13 @@ export function CharacterSteps({
       also?.(x);
     });
   const tidy = (l: CastLook) => {
-    for (const k of ["images", "kept", "faces", "wardrobe", "portraits", "sheets"] as const) if (l[k] && !l[k]!.length && k !== "faces") delete l[k];
+    for (const k of ["images", "kept", "faces", "wardrobe", "portraits", "faceSheets", "outfitSheets", "sheets"] as const)
+      if (l[k] && !l[k]!.length && k !== "faces") delete l[k];
   };
 
-  // Step 1: the face. Their own photos; a look also offers the plain look's settled face, and starts from it.
+  // Step 1: face photos & portrait.
   const own = [...new Set([...(m.images ?? []), ...(m.kept ?? []), ...(m.seen ?? []).map((s) => s.asset)])].filter((a) => isOwnPhoto(asset(a)));
-  const settled = variant ? [m.portrait, m.sheet, ...(m.images ?? [])].find(image) : undefined;
+  const settled = variant ? [m.portrait, m.faceSheet, m.sheet, ...(m.images ?? [])].find(image) : undefined;
   const faceChoices = [...new Set([...(settled ? [settled] : []), ...own, ...(look.faces ?? [])])].filter(image);
   const faceDefault = variant && settled ? [settled] : own;
   const faces = look.faces ?? faceDefault;
@@ -84,9 +118,14 @@ export function CharacterSteps({
       l.faces = now.includes(a) ? now.filter((x) => x !== a) : [...now, a];
     });
 
-  // Step 2: the wardrobe. A look without pictures of its own wears the plain one's.
+  // Wardrobe & shared wardrobe options.
   const wardrobe = look.wardrobe ?? [];
   const inherited = variant && !wardrobe.length ? (m.wardrobe ?? []) : [];
+  const headwear: HeadwearMode = look.headwear ?? (!variant ? "none" : m.headwear ?? "none");
+  const sharedWardrobes = (p.cast ?? []).filter((c) => c.kind === "wardrobe");
+  const linkedRef = look.outfit ?? (variant ? m.outfit : undefined);
+  const linkedWardrobe = linkedRef ? resolveWardrobe(linkedRef, p.cast) : undefined;
+  const linkedOwn = !!look.outfit;
   const fromPhoto = async (a: string) => {
     setMenu(undefined);
     setCutting("Cutting the clothes out of the photo…");
@@ -98,10 +137,33 @@ export function CharacterSteps({
     const j = res ? ((await res.json()) as { cropped?: boolean; error?: string }) : { error: "Couldn't reach the engine" };
     setCutting(j.error ?? (j.cropped ? "" : "No face was found in it to cut below, so it's the whole photo, and the face in it may compete. Say the clothes in words too."));
   };
-  /**
-   * Puts a picture in a spot, moving it out of the one it came from (a picture from the Library or the footage is
-   * added). A chosen portrait or sheet put aside joins the others, and one dropped on the chosen spot takes its place.
-   */
+
+  const saveAsWardrobe = () => {
+    const baseText = (variant ? variant.about : m.wears) ?? "";
+    const suggestedName = variant ? `${m.name || m.id} (${variant.id}) outfit` : `${m.name || m.id} outfit`;
+    actions.edit((d) => {
+      const cast = (d.cast ??= []);
+      const taken = cast.map((x) => x.id);
+      const baseSlug = `${m.id}${variant ? `-${variant.id}` : ""}-outfit`.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "wardrobe";
+      let newId = baseSlug;
+      for (let n = 2; taken.includes(newId); n++) newId = `${baseSlug}-${n}`;
+      const src = cast.find((x) => x.id === m.id);
+      const srcLook = variant ? src?.variants?.find((v) => v.id === variant.id) : src;
+      if (!src || !srcLook) return;
+      cast.push({
+        id: newId,
+        name: suggestedName,
+        kind: "wardrobe",
+        ...(baseText.trim() ? { about: baseText.trim() } : {}),
+        ...(srcLook.wardrobe?.length ? { wardrobe: [...srcLook.wardrobe] } : {}),
+        ...(srcLook.outfitSheet ? { outfitSheet: srcLook.outfitSheet } : {}),
+        ...(srcLook.outfitSheets?.length ? { outfitSheets: [...srcLook.outfitSheets] } : {}),
+        ...(srcLook.headwear && srcLook.headwear !== "face" ? { headwear: srcLook.headwear } : {}),
+      });
+      srcLook.outfit = newId;
+    });
+  };
+
   const put = (a: string, from: Spot | undefined, to: Exclude<Spot, "before">) =>
     editLook(
       (l) => {
@@ -110,17 +172,16 @@ export function CharacterSteps({
           l.kept = l.kept?.filter((x) => x !== a);
         }
         if (from === "wardrobe" && to !== "wardrobe") l.wardrobe = l.wardrobe?.filter((x) => x !== a);
-        for (const kind of ["portrait", "sheet"] as const)
+        for (const kind of ["portrait", "faceSheet", "outfitSheet", "sheet"] as const)
           if (from === kind || from === OTHERS[kind]) {
             if (l[kind] === a) delete l[kind];
             l[OTHERS[kind]] = l[OTHERS[kind]]?.filter((x) => x !== a);
           }
         if (to === "faces") {
-          // Their own photo joins the photos it's taken from; anything else becomes one of the faces chosen.
           if (!isOwnPhoto(asset(a))) l.faces = [...new Set([...(l.faces ?? faceDefault), a])];
           else if (l.faces && !l.faces.includes(a)) l.faces = [...l.faces, a];
         } else if (to === "wardrobe") l.wardrobe = [...(l.wardrobe ?? []).filter((x) => x !== a), a];
-        else if (to === "portrait" || to === "sheet") {
+        else if (to === "portrait" || to === "faceSheet" || to === "outfitSheet" || to === "sheet") {
           const prev = l[to];
           l[to] = a;
           l[OTHERS[to]] = [...(prev && prev !== a ? [prev] : []), ...(l[OTHERS[to]] ?? []).filter((x) => x !== a)];
@@ -129,6 +190,7 @@ export function CharacterSteps({
       },
       (x) => void (to === "faces" && isOwnPhoto(asset(a)) && !x.seen?.some((s) => s.asset === a) && (x.seen = [...(x.seen ?? []), { asset: a }])),
     );
+
   const dragFrom = (from: Spot, a: string): HTMLAttributes<HTMLSpanElement> => ({
     draggable: true,
     onDragStart: (e) => {
@@ -162,7 +224,6 @@ export function CharacterSteps({
     },
   });
 
-  // Steps 3 and 4: the portrait, then the sheet made from it (a look's, or the plain one's).
   const choose = (kind: Made, a: string) =>
     editLook((l) => {
       const prev = l[kind];
@@ -176,51 +237,60 @@ export function CharacterSteps({
       l[OTHERS[kind]] = (l[OTHERS[kind]] ?? []).filter((x) => x !== a);
       tidy(l);
     });
-  const sheetFace = look.portrait ?? settled;
 
-  // Pictures from before there were steps: given to models until a portrait or sheet is chosen.
+  const sheetFace = look.portrait ?? settled;
+  const canMakeOutfit = !!(
+    !linkedOwn &&
+    (wardrobe.length || inherited.length || (variant ? variant.about : m.wears) || (variant && m.outfitSheet))
+  );
+
+  // Pictures from before there were steps: given to models until chosen sheets exist.
   const before = [...(look.images ?? []), ...(look.kept ?? [])];
   const fromBefore = (a: string, to: Made | "faces" | "wardrobe" | null) =>
     editLook(
       (l) => {
         l.images = l.images?.filter((x) => x !== a);
         l.kept = l.kept?.filter((x) => x !== a);
-        if (to === "portrait" || to === "sheet") {
+        if (to === "portrait" || to === "faceSheet" || to === "outfitSheet" || to === "sheet") {
           if (l[to]) l[OTHERS[to]] = [l[to]!, ...(l[OTHERS[to]] ?? [])];
           l[to] = a;
         } else if (to === "wardrobe") l.wardrobe = [...(l.wardrobe ?? []), a];
         else if (to === "faces" && l.faces) l.faces = [...l.faces, a];
         tidy(l);
       },
-      // A face photo stays among their own, where the face is taken from.
       (x) => void (to === "faces" && !x.seen?.some((s) => s.asset === a) && (x.seen = [...(x.seen ?? []), { asset: a }])),
     );
 
-  // What sorting would do: a made portrait or sheet goes to its step, their own photo to the face. (A photo brought in
-  // can be tagged "portrait" for its shape, so only made pictures go by their tags.)
   const sortedAs = (a: string): Made | "faces" | undefined => {
     const x = asset(a);
     if (isOwnPhoto(x)) return "faces";
     if (x?.provenance?.source !== "generated") return undefined;
+    if (x.tags?.includes("face-sheet")) return "faceSheet";
+    if (x.tags?.includes("outfit-sheet")) return "outfitSheet";
     return x.tags?.includes("portrait") ? "portrait" : x.tags?.includes("sheet") ? "sheet" : undefined;
   };
   const sortable = (() => {
-    const n = { portrait: 0, sheet: 0, faces: 0 };
+    const n = { portrait: 0, faceSheet: 0, outfitSheet: 0, sheet: 0, faces: 0 };
     for (const a of before) {
       const to = sortedAs(a);
       if (to) n[to]++;
     }
-    const words = [n.portrait && `${n.portrait} portrait${n.portrait === 1 ? "" : "s"}`, n.sheet && `${n.sheet} sheet${n.sheet === 1 ? "" : "s"}`, n.faces && `${n.faces} photo${n.faces === 1 ? "" : "s"} to the face`].filter(Boolean);
-    return { total: n.portrait + n.sheet + n.faces, words: words.join(", ") };
+    const words = [
+      n.portrait && `${n.portrait} portrait${n.portrait === 1 ? "" : "s"}`,
+      n.faceSheet && `${n.faceSheet} face sheet${n.faceSheet === 1 ? "" : "s"}`,
+      n.outfitSheet && `${n.outfitSheet} outfit sheet${n.outfitSheet === 1 ? "" : "s"}`,
+      n.sheet && `${n.sheet} sheet${n.sheet === 1 ? "" : "s"}`,
+      n.faces && `${n.faces} photo${n.faces === 1 ? "" : "s"} to the face`,
+    ].filter(Boolean);
+    return { total: n.portrait + n.faceSheet + n.outfitSheet + n.sheet + n.faces, words: words.join(", ") };
   })();
   const sortBefore = () =>
     editLook(
       (l) => {
-        // The pictures given first come first, so the one in slot 1 becomes the chosen one.
         const keep = (list?: string[]) =>
           list?.filter((a) => {
             const to = sortedAs(a);
-            if (to === "portrait" || to === "sheet") {
+            if (to === "portrait" || to === "faceSheet" || to === "outfitSheet" || to === "sheet") {
               if (!l[to]) l[to] = a;
               else if (l[to] !== a && !l[OTHERS[to]]?.includes(a)) l[OTHERS[to]] = [...(l[OTHERS[to]] ?? []), a];
             }
@@ -235,32 +305,39 @@ export function CharacterSteps({
       },
     );
 
+  // What models receive, using canonical ingredients + procedural packaging.
+  const ing = characterIngredients({ member: m, variant }, p.cast);
   const given = lookGiven(look);
-  const gets = look.sheet
-    ? "the chosen sheet"
-    : look.portrait
-      ? "the chosen portrait, until a sheet is chosen"
-      : given.length
-        ? `${Math.min(given.length, 3) === 1 ? "a picture" : `${Math.min(given.length, 3)} pictures`} from before the steps`
-        : variant && lookGiven(m).length
-          ? `the ${plainLabel.toLowerCase()} look's ${m.sheet ? "sheet" : m.portrait ? "portrait" : "pictures"}, with what's different in words`
-          : "no picture yet, only the words";
+  const hasDecoupledFace = !!(ing.faceSheet || ing.portrait);
+  const gets = (() => {
+    if (hasDecoupledFace && ing.outfitSheet) {
+      const faceDesc = ing.faceSheet && ing.portrait ? "360° face sheet (or portrait on grid-sensitive models)" : ing.faceSheet ? "360° face sheet" : "chosen portrait";
+      const outfitDesc = ing.wardrobeUse ? `@${ing.wardrobeUse.id} outfit sheet` : "outfit sheet";
+      return `${faceDesc} + ${outfitDesc} — sent as separate role-bound refs, or auto-composited when a model's ref cap is tight`;
+    }
+    if (ing.legacySheet) return "the chosen combined sheet";
+    if (ing.faceSheet) return "the 360° face sheet (add an outfit sheet to lock wardrobe)";
+    if (ing.portrait) return "the chosen portrait, until a 360° face sheet + outfit sheet (or combined sheet) is chosen";
+    if (ing.outfitSheet) return `${ing.wardrobeUse ? `@${ing.wardrobeUse.id} ` : ""}outfit sheet (add a portrait or 360° face sheet to lock likeness)`;
+    if (given.length) return `${Math.min(given.length, 3) === 1 ? "a picture" : `${Math.min(given.length, 3)} pictures`} from before the steps`;
+    return "no picture yet, only the words";
+  })();
 
   const by = (a: string) => madeWith(asset(a)) ?? (isOwnPhoto(asset(a)) ? "Photo" : undefined);
   const open = (row: NonNullable<typeof viewing>["row"], items: string[], a: string) => setViewing({ row, items, at: Math.max(0, items.indexOf(a)) });
   const pending = (kind: Made) =>
     going
-      .filter((j) => !!j.portrait === (kind === "portrait"))
+      .filter((j) => jobMatches(j, kind))
       .map((j) => (
         <span key={j.id} className="cast-pic">
-          <div className="take pending" title={`A ${kind} from ${modelLabel(j.model)} on its way`}>
+          <div className="take pending" title={`A ${MADE_LABEL[kind]} from ${modelLabel(j.model)} on its way`}>
             {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
             <br />
             {modelLabel(j.model)}
           </div>
         </span>
       ));
-  const made = (kind: Made) => {
+  const made = (kind: Made, emptyHint?: string, inheritedPic?: string) => {
     const chosen = look[kind];
     const others = look[OTHERS[kind]] ?? [];
     const all = [...(chosen ? [chosen] : []), ...others];
@@ -269,16 +346,16 @@ export function CharacterSteps({
         <div {...dropOn(kind)}>
           {chosen ? (
             <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom(kind, chosen)} onOpen={() => open(kind, all, chosen)} />
+          ) : inheritedPic ? (
+            <Picture projectId={projectId} id={inheritedPic} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => open(kind, [inheritedPic], inheritedPic)} />
           ) : (
-            <span className="dim small cast-none">
-              {kind === "portrait" && variant && settled ? `None of its own: its sheet takes the face from the ${plainLabel.toLowerCase()} look's.` : `No ${kind} chosen yet.`}
-            </span>
+            <span className="dim small cast-none">{emptyHint ?? `No ${MADE_LABEL[kind]} chosen yet.`}</span>
           )}
         </div>
-        {(others.length > 0 || dragging || going.some((j) => !!j.portrait === (kind === "portrait"))) && (
+        {(others.length > 0 || dragging || going.some((j) => jobMatches(j, kind))) && (
           <>
             <div className="dim small">
-              Other {OTHERS[kind]} · {others.length}
+              Other {MADE_PLURAL[kind]} · {others.length}
               {others.length ? " · click one to see it large and choose it, or drag it onto the chosen one" : ""}
             </div>
             <div {...dropOn(OTHERS[kind])}>
@@ -294,6 +371,9 @@ export function CharacterSteps({
     );
   };
 
+  const hasLegacySheet = !!(look.sheet || look.sheets?.length || going.some((j) => jobMatches(j, "sheet")));
+  const hasDecoupledReady = !!(ing.faceSheet && ing.outfitSheet);
+
   return (
     <div className="cast-steps">
       <div className="cast-gets small">
@@ -301,7 +381,7 @@ export function CharacterSteps({
         {gets}
       </div>
 
-      <Step n={1} done={faces.length > 0} title="Face" note={variant ? "· what this look's face starts from" : "· from their photos"}>
+      <Step n={1} done={!!(look.portrait || (variant && m.portrait))} title="Face & portrait" note={variant ? "· lock face if this look changes it" : "· photos + front likeness anchor"}>
         <div {...dropOn("faces")}>
           {faceChoices.map((a) => (
             <Picture
@@ -314,29 +394,121 @@ export function CharacterSteps({
               onOpen={() => open("faces", faceChoices, a)}
             />
           ))}
-          {!faceChoices.length && <span className="dim small cast-none">No photos of them yet: right-click one in the Library to add it, or drag one here. Without any, portraits are made from the words.</span>}
+          {!faceChoices.length && <span className="dim small cast-none">No photos yet: right-click one in the Library to add it, or drag one here. Without any, portraits are made from words.</span>}
         </div>
         <label>
           <span>
-            Who they are <span className="dim">· in every look</span>
+            Who they are <span className="dim">· face, hair &amp; build in every look</span>
           </span>
           <TextField multiline value={m.about ?? ""} placeholder="A 17-year-old with long straight ginger-red hair, pale freckled skin, light eyes" onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))} />
         </label>
         {describe}
+        <div className="cast-step-sub">
+          {made(
+            "portrait",
+            variant && m.portrait ? `Inherits ${plainLabel}'s portrait unless this look alters the face (headwear/wounds).` : "No portrait chosen yet.",
+            variant && headwear !== "face" ? m.portrait : undefined,
+          )}
+          <div className="make-row">
+            <button className={!look.portrait && !(variant && headwear !== "face" && m.portrait) ? "primary" : ""} disabled={!canMake} onClick={() => onMake("portrait")} title="Head-and-shoulders likeness anchor (bare shoulders unless headwear is attached to face)">
+              Make portraits
+            </button>
+          </div>
+        </div>
       </Step>
 
-      <Step n={2} done={!!(wardrobe.length || inherited.length || (variant ? variant.about : m.wears))} title="Wardrobe" note="· words, pictures, or both">
+      <Step n={2} done={!!(look.faceSheet || (variant && headwear !== "face" && m.faceSheet))} title="360° face sheet" note="· 6-angle bare turnaround from portrait">
+        {made(
+          "faceSheet",
+          variant && m.faceSheet && headwear !== "face"
+            ? `Inherits ${plainLabel}'s 360° face sheet — no need to remake unless the face changes.`
+            : "No 360° face sheet yet. Generated from the chosen portrait + angled face photos.",
+          variant && headwear !== "face" ? m.faceSheet : undefined,
+        )}
+        <div className="make-row">
+          <button
+            className={!!sheetFace && !look.faceSheet && !(variant && headwear !== "face" && m.faceSheet) ? "primary" : ""}
+            disabled={!canMake || !sheetFace}
+            onClick={() => onMake("face-sheet")}
+            title="3×2 six-panel turnaround (left profile, front, right profile, left 3/4, back, right 3/4) on neutral mid-gray"
+          >
+            Make 360° face sheet
+          </button>
+          {!sheetFace && <span className="dim small">Choose a portrait first so all 6 angles match it.</span>}
+        </div>
+      </Step>
+
+      <Step n={3} done={!!(linkedRef || wardrobe.length || inherited.length || (variant ? variant.about : m.wears))} title="Wardrobe" note="· outfit description, shared wardrobe & headwear">
+        <label>
+          <span>Shared wardrobe</span>
+          <div className="cast-wardrobe-link">
+            <select
+              value={look.outfit ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                editLook((l) => {
+                  if (v) l.outfit = v;
+                  else delete l.outfit;
+                });
+              }}
+              aria-label="Shared wardrobe"
+            >
+              <option value="">{variant && m.outfit ? `Inherit ${plainLabel}'s (@${m.outfit})` : "Custom for this character"}</option>
+              {sharedWardrobes.map((w) => [
+                <option key={w.id} value={w.id}>
+                  @{w.id} — {w.name || w.id}
+                </option>,
+                ...(w.variants ?? []).map((v) => (
+                  <option key={`${w.id}/${v.id}`} value={`${w.id}/${v.id}`}>
+                    @{w.id}/{v.id} — {w.name || w.id} ({v.id})
+                  </option>
+                )),
+              ])}
+            </select>
+            {linkedWardrobe && (
+              <button className="link small" onClick={() => actions.openCast(linkedWardrobe.member.id)} title="Open this reusable wardrobe">
+                Open @{linkedWardrobe.member.id}
+              </button>
+            )}
+            {!look.outfit && (look.outfitSheet || (variant ? variant.about : m.wears)) && (
+              <button className="link small" onClick={saveAsWardrobe} title="Extract this costume into a reusable Wardrobe entry other characters can wear">
+                Save as reusable wardrobe
+              </button>
+            )}
+          </div>
+        </label>
+        <label>
+          <span>Headwear &amp; face accessories</span>
+          <select
+            value={look.headwear ?? ""}
+            onChange={(e) => {
+              const v = e.target.value as HeadwearMode | "";
+              editLook((l) => {
+                if (v) l.headwear = v;
+                else delete l.headwear;
+              });
+            }}
+            aria-label="Headwear mode"
+          >
+            {variant && <option value="">Inherit {plainLabel}&apos;s ({m.headwear ?? "none"})</option>}
+            {HEADWEAR_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           {variant ? "What's different in this look" : "What they wear"}
           {variant ? (
             <TextField
               multiline
               value={variant.about}
-              placeholder="Soaked from the rain; a tiny black eye mask"
+              placeholder="Battle-tattered & mud-splattered; soaked from the rain; bloodied forehead"
               onCommit={(t) => edit((x) => void (x.variants!.find((v) => v.id === variant.id)!.about = t))}
             />
           ) : (
-            <TextField multiline value={m.wears ?? ""} placeholder="A dark wool doublet with a ruff, puffed breeches, a fake white beard on an elastic strap" onCommit={(v) => edit((x) => void (v.trim() ? (x.wears = v.trim()) : delete x.wears))} />
+            <TextField multiline value={m.wears ?? ""} placeholder="Dark wool doublet with ruff collar, puffed breeches, scuffed leather boots" onCommit={(v) => edit((x) => void (v.trim() ? (x.wears = v.trim()) : delete x.wears))} />
           )}
         </label>
         <div {...dropOn("wardrobe")}>
@@ -346,7 +518,7 @@ export function CharacterSteps({
           {inherited.map((a) => (
             <Picture key={a} projectId={projectId} id={a} borrowed by={by(a)} onOpen={() => open("wardrobe", inherited, a)} />
           ))}
-          {!wardrobe.length && !inherited.length && <span className="dim small cast-none">Drag a picture of the clothes here (a costume photo from the Library), or:</span>}
+          {!wardrobe.length && !inherited.length && <span className="dim small cast-none">Drag a costume photo here (optional), or:</span>}
         </div>
         <div className="make-row small">
           <button className="link small" disabled={!own.length || cutting.startsWith("Cutting")} onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })} title="The clothes they wear in one of their photos, cut below the face">
@@ -365,24 +537,68 @@ export function CharacterSteps({
         )}
       </Step>
 
-      <Step n={3} done={!!look.portrait} title="Portrait" note="· head and shoulders, in this wardrobe">
-        {made("portrait")}
-        <div className="make-row">
-          <button className={look.portrait ? "" : "primary"} disabled={!canMake} onClick={() => onMake(true)} title="Made from the face photos and the wardrobe">
-            Make portraits
-          </button>
-        </div>
+      <Step
+        n={4}
+        done={!!ing.outfitSheet}
+        title="Outfit sheet"
+        note={
+          linkedWardrobe
+            ? `· from shared @${linkedRef}`
+            : headwear === "ghost"
+              ? "· front & back ghost mannequin (includes hat/hood/mask)"
+              : "· headless front & back turnaround"
+        }
+      >
+        {linkedWardrobe ? (
+          <div className="take-strip">
+            {ing.outfitSheet ? (
+              <Picture projectId={projectId} id={ing.outfitSheet} borrowed by={`@${linkedRef}`} className="chosen" onOpen={() => open("outfitSheet", [ing.outfitSheet!], ing.outfitSheet!)} />
+            ) : (
+              <span className="dim small cast-none">
+                Linked to @{linkedRef}, which has no outfit sheet yet.{" "}
+                <button className="link small" onClick={() => actions.openCast(linkedWardrobe.member.id)}>
+                  Open @{linkedWardrobe.member.id} to make it
+                </button>
+              </span>
+            )}
+          </div>
+        ) : (
+          <>
+            {made(
+              "outfitSheet",
+              variant && m.outfitSheet
+                ? `No variant outfit sheet yet — generating one edits directly from ${plainLabel}'s outfit sheet.`
+                : "No outfit sheet yet. Generated headless on neutral mid-gray (no face sent).",
+              variant && !look.outfitSheet ? m.outfitSheet : undefined,
+            )}
+            <div className="make-row">
+              <button
+                className={canMakeOutfit && !look.outfitSheet ? "primary" : ""}
+                disabled={!canMake || !canMakeOutfit}
+                onClick={() => onMake("outfit-sheet")}
+                title="2-panel front and back headless outfit turnaround on neutral mid-gray (zero face photos sent)"
+              >
+                Make outfit sheet
+              </button>
+              {!canMakeOutfit && <span className="dim small">Describe what they wear or drop a wardrobe photo first.</span>}
+            </div>
+          </>
+        )}
       </Step>
 
-      <Step n={4} done={!!look.sheet} title="Sheet" note="· from the chosen portrait and the wardrobe">
-        {made("sheet")}
+      <details className="cast-fold" open={hasLegacySheet && !hasDecoupledReady}>
+        <summary>Combined sheet (legacy / manual){look.sheet ? " · chosen" : ""}</summary>
+        <p className="dim small">
+          Optional single-image face + body turnaround. When a 360° face sheet (or portrait) and outfit sheet are set above, beatsheet automatically supplies them separately or composites them to fit each model.
+        </p>
+        {made("sheet", "No combined sheet chosen.")}
         <div className="make-row">
-          <button className={look.portrait && !look.sheet ? "primary" : ""} disabled={!canMake || !sheetFace} onClick={() => onMake(false)} title="The face once, close up, then the body from the front (cropped at the neck) and the back">
-            Make sheets
+          <button disabled={!canMake || !sheetFace} onClick={() => onMake("sheet")} title="Legacy 16:9 sheet: close-up face + front body (cropped at neck) + back body">
+            Make combined sheet
           </button>
-          {!sheetFace && <span className="dim small">Choose a portrait first: the sheet is made from it.</span>}
+          {!sheetFace && <span className="dim small">Choose a portrait first.</span>}
         </div>
-      </Step>
+      </details>
 
       {before.length > 0 && (
         <details className="cast-fold" open>
@@ -390,7 +606,7 @@ export function CharacterSteps({
           <p className="dim small">Models get these until a portrait or sheet is chosen. Drag each onto its step, or click one to say what it is.</p>
           {sortable.total > 0 && (
             <p className="small">
-              <button onClick={sortBefore} title="Made portraits and sheets go to their steps (the first of each, as it was ordered, becomes the chosen one); their own photos go to the face">
+              <button onClick={sortBefore} title="Made portraits and sheets go to their steps; their own photos go to the face">
                 Sort them
               </button>{" "}
               <span className="dim">{sortable.words}</span>
@@ -421,24 +637,256 @@ export function CharacterSteps({
                   Take out
                 </button>
               ) : null;
-            if (row === "portrait" || row === "sheet")
+            if (row === "portrait" || row === "faceSheet" || row === "outfitSheet" || row === "sheet")
               return (
                 <>
-                  {look[row] === a ? <span className="dim small">The chosen {row}</span> : <button onClick={() => choose(row, a)}>Use this one</button>}
-                  <button className="danger" onClick={() => takeOut(row, a)}>
-                    Take out
-                  </button>
+                  {look[row] === a ? <span className="dim small">Chosen {MADE_LABEL[row]}</span> : <button onClick={() => choose(row, a)}>Use this one</button>}
+                  {(look[row] === a || look[OTHERS[row]]?.includes(a)) && (
+                    <button className="danger" onClick={() => takeOut(row, a)}>
+                      Take out
+                    </button>
+                  )}
                 </>
               );
             return (
               <>
-                <button onClick={() => fromBefore(a, "portrait")}>It's the portrait</button>
-                <button onClick={() => fromBefore(a, "sheet")}>It's the sheet</button>
+                <button onClick={() => fromBefore(a, "portrait")}>It&apos;s the portrait</button>
+                <button onClick={() => fromBefore(a, "faceSheet")}>It&apos;s the 360° face sheet</button>
+                <button onClick={() => fromBefore(a, "outfitSheet")}>It&apos;s the outfit sheet</button>
+                <button onClick={() => fromBefore(a, "sheet")}>It&apos;s the combined sheet</button>
                 {isOwnPhoto(asset(a)) && <button onClick={() => fromBefore(a, "faces")}>A face photo</button>}
                 <button onClick={() => fromBefore(a, "wardrobe")}>Wardrobe</button>
                 <button className="danger" onClick={() => fromBefore(a, null)}>
                   Take out
                 </button>
+              </>
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Reusable wardrobe entry: headless front & back outfit sheet (with optional ghost-mannequin headwear) worn by characters. */
+export function WardrobeSteps({
+  projectId,
+  member: m,
+  variant,
+  plainLabel,
+  going,
+  canMake,
+  onMake,
+  edit,
+  describe,
+}: {
+  projectId: string;
+  member: CastMember;
+  variant?: Variant;
+  plainLabel: string;
+  going: MakeJob[];
+  canMake: boolean;
+  onMake: (sheetKind: SheetKind) => void;
+  edit: (fn: (m: CastMember) => void) => void;
+  describe?: ReactNode;
+}) {
+  const p = useProject();
+  const [viewing, setViewing] = useState<{ row: "wardrobe" | "outfitSheet"; items: string[]; at: number }>();
+  const [over, setOver] = useState<"wardrobe" | "outfitSheet" | "outfitSheets">();
+  const look: CastLook = variant ?? m;
+  const asset = (id?: string) => (id ? p.assets.find((a) => a.id === id) : undefined);
+  const image = (id?: string) => asset(id)?.kind === "image";
+  const editLook = (fn: (l: CastLook) => void) => edit((x) => fn(variant ? x.variants!.find((v) => v.id === variant.id)! : x));
+  const tidy = (l: CastLook) => {
+    for (const k of ["wardrobe", "outfitSheets"] as const) if (l[k] && !l[k]!.length) delete l[k];
+  };
+  const wardrobe = look.wardrobe ?? [];
+  const inherited = variant && !wardrobe.length ? (m.wardrobe ?? []) : [];
+  const headwear: HeadwearMode = look.headwear ?? (!variant ? "none" : m.headwear ?? "none");
+  const chosen = look.outfitSheet;
+  const others = look.outfitSheets ?? [];
+  const all = [...(chosen ? [chosen] : []), ...others];
+  const by = (a: string) => madeWith(asset(a)) ?? (isOwnPhoto(asset(a)) ? "Photo" : undefined);
+
+  const wornBy = (p.cast ?? []).filter(
+    (c) =>
+      c.kind === "character" &&
+      (c.outfit === m.id || c.outfit?.startsWith(`${m.id}/`) || c.variants?.some((v) => v.outfit === m.id || v.outfit?.startsWith(`${m.id}/`))),
+  );
+
+  const choose = (a: string) =>
+    editLook((l) => {
+      const prev = l.outfitSheet;
+      l.outfitSheet = a;
+      l.outfitSheets = [...(prev && prev !== a ? [prev] : []), ...(l.outfitSheets ?? []).filter((x) => x !== a)];
+      tidy(l);
+    });
+  const takeOut = (a: string) =>
+    editLook((l) => {
+      if (l.outfitSheet === a) delete l.outfitSheet;
+      l.outfitSheets = (l.outfitSheets ?? []).filter((x) => x !== a);
+      tidy(l);
+    });
+
+  const dropOn = (to: "wardrobe" | "outfitSheet" | "outfitSheets"): HTMLAttributes<HTMLElement> => ({
+    className: `take-strip ${over === to ? "drop-on" : ""}`,
+    onDragOver: (e) => {
+      if (!e.dataTransfer.types.includes(ASSET_DRAG)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOver(to);
+    },
+    onDragLeave: (e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(undefined),
+    onDrop: (e) => {
+      const a = e.dataTransfer.getData(ASSET_DRAG);
+      setOver(undefined);
+      if (!a || !image(a)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (to === "wardrobe") editLook((l) => void (l.wardrobe = [...(l.wardrobe ?? []).filter((x) => x !== a), a]));
+      else if (to === "outfitSheet") choose(a);
+      else editLook((l) => void (l.outfitSheets = [...(l.outfitSheets ?? []).filter((x) => x !== a), a]));
+    },
+  });
+
+  const canMakeOutfit = !!(wardrobe.length || inherited.length || (variant ? variant.about : m.about) || (variant && m.outfitSheet));
+
+  return (
+    <div className="cast-steps">
+      <div className="cast-gets small">
+        <span className="dim">Reusable wardrobe · </span>
+        {wornBy.length ? (
+          <>
+            worn by{" "}
+            {wornBy.map((c, i) => (
+              <span key={c.id}>
+                {i > 0 && ", "}
+                <button className="link small mono" onClick={() => actions.openCast(c.id)}>
+                  @{c.id}
+                </button>
+              </span>
+            ))}
+          </>
+        ) : (
+          "link this from any character's Wardrobe step so multiple actors can wear it consistently"
+        )}
+      </div>
+
+      <Step n={1} done={!!(wardrobe.length || inherited.length || (variant ? variant.about : m.about))} title="Garment & headwear" note="· costume details & reference photos">
+        <label>
+          {variant ? "What's different in this state" : "What the outfit looks like"}
+          {variant ? (
+            <TextField
+              multiline
+              value={variant.about}
+              placeholder="Battle-tattered, torn sleeves, mud-splattered hem"
+              onCommit={(t) => edit((x) => void (x.variants!.find((v) => v.id === variant.id)!.about = t))}
+            />
+          ) : (
+            <TextField
+              multiline
+              value={m.about ?? ""}
+              placeholder="Heavy black Renaissance hooded inquisitor robe with silver clasp, leather belt, matte white mask"
+              onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))}
+            />
+          )}
+        </label>
+        {!variant && describe}
+        <label>
+          <span>Headwear</span>
+          <select
+            value={look.headwear ?? ""}
+            onChange={(e) => {
+              const v = e.target.value as HeadwearMode | "";
+              editLook((l) => {
+                if (v) l.headwear = v;
+                else delete l.headwear;
+              });
+            }}
+            aria-label="Wardrobe headwear mode"
+          >
+            {variant && <option value="">Inherit {plainLabel}&apos;s ({m.headwear ?? "none"})</option>}
+            <option value="none">None — headless collarless outfit</option>
+            <option value="ghost">Hat / hood / helmet / mask — ghost mannequin over empty void</option>
+          </select>
+        </label>
+        <div {...dropOn("wardrobe")}>
+          {wardrobe.map((a) => (
+            <Picture
+              key={a}
+              projectId={projectId}
+              id={a}
+              by={by(a)}
+              onOpen={() => setViewing({ row: "wardrobe", items: wardrobe, at: wardrobe.indexOf(a) })}
+              onRemove={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}
+            />
+          ))}
+          {inherited.map((a) => (
+            <Picture key={a} projectId={projectId} id={a} borrowed by={by(a)} onOpen={() => setViewing({ row: "wardrobe", items: inherited, at: inherited.indexOf(a) })} />
+          ))}
+          {!wardrobe.length && !inherited.length && <span className="dim small cast-none">Drag costume reference photos here (optional).</span>}
+        </div>
+      </Step>
+
+      <Step n={2} done={!!chosen} title="Outfit sheet" note={headwear === "ghost" ? "· ghost-mannequin front & back" : "· headless front & back"}>
+        <div {...dropOn("outfitSheet")}>
+          {chosen ? (
+            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: all, at: 0 })} />
+          ) : variant && m.outfitSheet ? (
+            <Picture projectId={projectId} id={m.outfitSheet} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: [m.outfitSheet!], at: 0 })} />
+          ) : (
+            <span className="dim small cast-none">No outfit sheet yet.</span>
+          )}
+        </div>
+        {(others.length > 0 || going.length > 0) && (
+          <>
+            <div className="dim small">Other outfit sheets · {others.length}</div>
+            <div {...dropOn("outfitSheets")}>
+              {others.map((a) => (
+                <Picture key={a} projectId={projectId} id={a} by={by(a)} onOpen={() => setViewing({ row: "outfitSheet", items: all, at: all.indexOf(a) })} onRemove={() => takeOut(a)} />
+              ))}
+              {going.map((j) => (
+                <span key={j.id} className="cast-pic">
+                  <div className="take pending">
+                    {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                    <br />
+                    {modelLabel(j.model)}
+                  </div>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+        <div className="make-row">
+          <button className={!chosen && canMakeOutfit ? "primary" : ""} disabled={!canMake || !canMakeOutfit} onClick={() => onMake("outfit-sheet")}>
+            Make outfit sheet
+          </button>
+          {variant && m.outfitSheet && <span className="dim small">Edits directly from {plainLabel}&apos;s outfit sheet to preserve cut &amp; seams.</span>}
+        </div>
+      </Step>
+
+      {viewing && (
+        <Viewer
+          projectId={projectId}
+          items={viewing.items.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : ""].filter(Boolean).join(" · ") }))}
+          at={viewing.at}
+          onClose={() => setViewing(undefined)}
+          actions={(item) => {
+            const a = item.id;
+            if (viewing.row === "wardrobe")
+              return wardrobe.includes(a) ? (
+                <button className="danger" onClick={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}>
+                  Take out
+                </button>
+              ) : null;
+            return (
+              <>
+                {chosen === a ? <span className="dim small">Chosen outfit sheet</span> : <button onClick={() => choose(a)}>Use this one</button>}
+                {(chosen === a || others.includes(a)) && (
+                  <button className="danger" onClick={() => takeOut(a)}>
+                    Take out
+                  </button>
+                )}
               </>
             );
           }}

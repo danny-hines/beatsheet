@@ -52,6 +52,7 @@ import {
   type Blockout,
   type BlockoutBeat,
   type CastLook,
+  type CastPackStrategy,
   type Commercial,
   type Fit,
   type PlannedTake,
@@ -64,7 +65,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, preferredProvider, retryJobs, spentThisTurn, startMakeAll, turnBudget, type AudioRefAsk, type MakeAsk } from "./make.ts";
+import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, preferredProvider, retryJobs, spentThisTurn, startMakeAll, turnBudget, type AudioRefAsk, type MakeAsk, type SheetKind } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -678,11 +679,23 @@ const makeArgs = {
     .string()
     .optional()
     .describe("A cast member (cat, or cat/heist for a look) to make a reference sheet for. A character's sheet is a face close-up, the body front (cropped at the neck) and the back, made from the look's chosen portrait and its wardrobe; it becomes the chosen sheet when there's none, else joins the other sheets to choose between (set /cast/…/sheet to choose). Anything else's stills join its pictures"),
+  sheetKind: z
+    .enum(["portrait", "face-sheet", "outfit-sheet", "sheet"])
+    .optional()
+    .describe(
+      'With sheet: which kind of reference sheet to make. "portrait" = front head-and-shoulders likeness anchor (4:5); "face-sheet" = 360° 6-panel 3×2 bare-shoulders face turnaround (3:2) from the chosen portrait + face photos; "outfit-sheet" = headless 2-panel front+back costume turnaround (1:1, with ghost-mannequin headwear if headwear is "ghost", or a variant edit directly from the base outfitSheet with zero face refs); "sheet" = legacy combined face+body turnaround (16:9). Defaults to "outfit-sheet" for wardrobe entries, "portrait" when portrait:true, else "sheet".',
+    ),
   portrait: z
     .boolean()
     .optional()
     .describe(
-      "With sheet, for a character: a head-and-shoulders portrait instead, made from the look's face photos (their own photos by default; a look's, the plain one's chosen portrait) and its wardrobe. It becomes the chosen portrait when there's none, else joins the other portraits: show them to the person (a choose hand-off), set /cast/…/portrait to the one they pick, then make the sheet",
+      'Shorthand for sheetKind: "portrait". Makes a head-and-shoulders portrait from the look\'s face photos (or the plain look\'s chosen portrait for a variant) to lock likeness first.',
+    ),
+  castPack: z
+    .enum(["split-360", "split-single", "combined"])
+    .optional()
+    .describe(
+      'Override how decoupled face+outfit cast references are packaged for the model: "split-360" (360° faceSheet + outfitSheet as separate role-bound refs), "split-single" (single portrait + outfitSheet for grid-sensitive image models), or "combined" (procedural 16:9 composite per character). Default adapts automatically to the chosen model and its ref limit.',
     ),
   prompt: z.string().optional().describe("What to make; default the shot's description. Name cast and sets with @id (@cat, @cat/heist): they're described to the model, and stills are given their pictures. For video, say what moves and how the camera does"),
   cast: z.array(z.string()).optional().describe("Cast and sets in it that the prompt doesn't name"),
@@ -796,7 +809,9 @@ type MakeToolArgs = {
   shot?: string;
   shots?: string[];
   sheet?: string;
+  sheetKind?: SheetKind;
   portrait?: boolean;
+  castPack?: CastPackStrategy;
   prompt?: string;
   cast?: string[];
   quality?: "rough" | "final";
@@ -915,7 +930,20 @@ server.registerTool(
       return text(["Not started, so nothing's spent:", ...held, ABSENT_WHY, "Give the clip a frame with them in it (an end frame drawn from their portrait). If you've looked and they're there, or they aren't meant to be seen, ask again with anyway: true."].join("\n"));
     const spendable = turnBudget() - spentThisTurn(id);
     const { plans, usd: total } = startMakeAll(id, asks, { spendable });
-    const what = (p: (typeof plans)[number]) => (p.ask.shot ? `shot ${p.ask.shot}` : p.ask.sheet ? `a ${p.ask.portrait ? "portrait" : "sheet"} for @${p.ask.sheet}` : args.op === "image" ? "a still" : "a clip");
+    const what = (p: (typeof plans)[number]) => {
+      if (p.ask.shot) return `shot ${p.ask.shot}`;
+      if (p.ask.sheet) {
+        const k = p.ask.sheetKind ?? (p.ask.portrait ? "portrait" : "sheet");
+        return k === "face-sheet"
+          ? `a 360° face sheet for @${p.ask.sheet}`
+          : k === "outfit-sheet"
+            ? `an outfit sheet for @${p.ask.sheet}`
+            : k === "portrait"
+              ? `a portrait for @${p.ask.sheet}`
+              : `a sheet for @${p.ask.sheet}`;
+      }
+      return args.op === "image" ? "a still" : "a clip";
+    };
     const lines = plans.map(
       (p) =>
         `- ${p.jobs.length} take${p.jobs.length === 1 ? "" : "s"} of ${what(p)} with ${p.fit.label}: ${[p.fit.seconds && `${p.fit.seconds}s`, p.fit.aspect, costAt(p.fit)].filter(Boolean).join(", ")}. Jobs ${p.jobs.map((j) => j.id).join(", ")}.`,
@@ -2161,14 +2189,36 @@ function overview(id: string, cut?: string, format?: string): string {
   }
   if (p.cast?.length) {
     lines.push(
-      "Cast & sets (name them in prompts with @id). A character's look is settled in steps: face photos, wardrobe, a chosen portrait, then a chosen sheet made from it; models are given the chosen sheet, else the chosen portrait. Anything else is given its pictures in order, never its kept ones:",
+      "Cast & sets (name them in prompts with @id). Characters support decoupled identity & wardrobe (portrait → 360° faceSheet + headless outfitSheet or linked @wardrobe, packaged per model automatically), or legacy combined sheets. Reusable wardrobes (kind \"wardrobe\") hold headless front/back outfitSheets shared via a character's outfit field:",
     );
     const list = (label: string, k?: string[]) => (k?.length ? `; ${label} ${k.join(", ")}` : "");
     const steps = (l: CastLook) =>
-      `${l.portrait ? `portrait ${l.portrait}` : "no portrait chosen"}${list("other portraits", l.portraits)}; ${l.sheet ? `sheet ${l.sheet}` : "no sheet chosen"}${list("other sheets", l.sheets)}${list("face from", l.faces)}${list("wardrobe", l.wardrobe)}${list("pictures from before", l.images)}`;
+      [
+        l.portrait ? `portrait ${l.portrait}` : "no portrait chosen",
+        ...(l.portraits?.length ? [`other portraits ${l.portraits.join(", ")}`] : []),
+        ...(l.faceSheet ? [`faceSheet ${l.faceSheet}`] : []),
+        ...(l.faceSheets?.length ? [`other faceSheets ${l.faceSheets.join(", ")}`] : []),
+        ...(l.outfit ? [`outfit @${l.outfit}`] : []),
+        ...(l.outfitSheet ? [`outfitSheet ${l.outfitSheet}`] : []),
+        ...(l.outfitSheets?.length ? [`other outfitSheets ${l.outfitSheets.join(", ")}`] : []),
+        ...(l.headwear && l.headwear !== "none" ? [`headwear ${l.headwear}`] : []),
+        ...(l.sheet ? [`sheet ${l.sheet}`] : []),
+        ...(l.sheets?.length ? [`other sheets ${l.sheets.join(", ")}`] : []),
+        ...(l.faces?.length ? [`face from ${l.faces.join(", ")}`] : []),
+        ...(l.wardrobe?.length ? [`wardrobe ${l.wardrobe.join(", ")}`] : []),
+        ...(l.images?.length ? [`pictures from before ${l.images.join(", ")}`] : []),
+      ].join("; ");
+    const wardrobeSteps = (l: CastLook) =>
+      [
+        l.outfitSheet ? `outfitSheet ${l.outfitSheet}` : "no outfitSheet chosen",
+        ...(l.outfitSheets?.length ? [`other outfitSheets ${l.outfitSheets.join(", ")}`] : []),
+        ...(l.headwear && l.headwear !== "none" ? [`headwear ${l.headwear}`] : []),
+        ...(l.wardrobe?.length ? [`wardrobe refs ${l.wardrobe.join(", ")}`] : []),
+        ...(l.images?.length ? [`pictures ${l.images.join(", ")}`] : []),
+      ].join("; ");
     const pics = (l: CastLook) => `${l.images?.length ? `pictures ${l.images.join(", ")}` : "no pictures yet"}${list("kept", l.kept)}`;
     for (const m of p.cast) {
-      const look = (l: CastLook) => (m.kind === "character" ? steps(l) : pics(l));
+      const look = (l: CastLook) => (m.kind === "character" ? steps(l) : m.kind === "wardrobe" ? wardrobeSteps(l) : pics(l));
       lines.push(
         `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"}${m.wears ? ` · wears: ${m.wears}` : ""} · ${look(m)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${look(v)})`).join(", ")}` : ""}`,
       );

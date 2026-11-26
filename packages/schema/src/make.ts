@@ -5,7 +5,7 @@
  */
 import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
-import type { Asset, AudioRef, Blockout, CastMember, CastProposal, Format, Project, ProjectFile, Shot, ShotContent } from "./types.ts";
+import type { Asset, AudioRef, Blockout, CastMember, CastProposal, Format, HeadwearMode, Project, ProjectFile, Shot, ShotContent } from "./types.ts";
 
 /**
  * What can be asked for. Lip sync is video with speech (MakeRequest.speech). More join as they're wired up: extend,
@@ -26,6 +26,20 @@ export type AudioTake = { max: number; minSeconds: number; maxSeconds: number; m
 
 /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references, tighter or no audio references. */
 export type RouteTakes = { end?: boolean; refs?: number; audio?: AudioTake | false };
+
+/** How a model prefers character face + outfit ingredients to be packaged at dispatch time. */
+export type CastPackStrategy = "split-360" | "split-single" | "combined";
+
+/** What a reference picture contributes in a multi-reference prompt. */
+export type CastRefRole = "face-sheet" | "portrait" | "outfit" | "sheet" | "composite" | "picture" | "prop" | "place" | "style";
+
+/**
+ * One packed reference slot prepared for a model: either a direct project asset or a procedural face+outfit composite
+ * materialized on disk via sharp before upload.
+ */
+export type PackedRef =
+  | { kind: "asset"; asset: string; role?: CastRefRole; label?: string }
+  | { kind: "composite"; face: string; outfit: string; mode: "portrait-outfit" | "face360-outfit"; role: "composite"; label?: string };
 
 /** One place a model runs, and what it costs there. */
 export type ModelRoute = {
@@ -51,6 +65,8 @@ export type ModelRoute = {
   lengths?: number[] | { min: number; max: number };
   /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references, tighter or no audio references. */
   takes?: RouteTakes;
+  /** Optional per-route override for how decoupled character face + outfit ingredients are packaged. */
+  castPack?: CastPackStrategy;
   /** Roughly how long one take takes here, when that isn't the model's usual. */
   wait?: number;
   /** It draws real people here, though the model won't elsewhere (Seedance 2.5 through Tein, which keeps the faces it's given). */
@@ -103,6 +119,8 @@ export type CatalogModel = {
    * another model, or to a route of this one that does (its `realPeople`).
    */
   refusesRealPeople?: boolean;
+  /** How this model prefers decoupled character face + outfit sheets to be supplied (default "split-360"). */
+  castPack?: CastPackStrategy;
   /** Roughly how long one take takes, in seconds, for estimates. */
   wait?: number;
   routes: ModelRoute[];
@@ -120,6 +138,8 @@ export type MakeRequest = {
   start?: string;
   end?: string;
   refs?: string[];
+  /** Model-packed reference slots (direct assets or procedural face+outfit composites); overrides `refs` count for fitting and upload. */
+  packedRefs?: PackedRef[];
   /** For video that copies movement: the stretch of a clip to follow. */
   drive?: Drive;
   /** For video that lip-syncs: what it says. The start picture is made to say it, or the mouths in `clip` are. */
@@ -406,7 +426,7 @@ const money = (usd: number) => `$${usd < 1 ? usd.toFixed(2) : usd.toFixed(2).rep
 const list = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}`);
 
 /** Which of a service's endpoints a request needs. */
-export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip" | "camera" | "audioRefs">): RequestShape =>
+export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "packedRefs" | "drive" | "speech" | "clip" | "camera" | "audioRefs">): RequestShape =>
   req.speech
     ? req.clip
       ? "dub"
@@ -415,7 +435,7 @@ export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "spe
       ? "drive"
       : req.camera && !isCameraSheet(req.camera)
         ? "camera"
-        : req.refs?.length || req.audioRefs?.length || isCameraSheet(req.camera)
+        : req.packedRefs?.length || req.refs?.length || req.audioRefs?.length || isCameraSheet(req.camera)
           ? "refs"
           : req.start
             ? "start"
@@ -542,7 +562,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (req.start && !model.takes.start) return no({ kind: "fit", reason: "Doesn't start from a picture" });
   if (req.end && !req.start) return no({ kind: "fit", reason: "An end frame needs a start frame too", fix: "drop-end" });
   if (req.end && !model.takes.end) return no({ kind: "fit", reason: "Doesn't take an end frame", fix: "drop-end" });
-  const refs = (req.refs?.length ?? 0) + (sheet ? 1 : 0);
+  const refs = (req.packedRefs?.length ?? req.refs?.length ?? 0) + (sheet ? 1 : 0);
   const maxRefs = model.takes.refs ?? 0;
   if (refs > maxRefs) {
     if (maxRefs === 0 && model.takes.start && !req.start) return no({ kind: "fit", reason: "Doesn't take references; a start frame made from them would do", fix: "via-start-frame" });
@@ -806,55 +826,204 @@ export function missingFromFrames(project: Pick<Project, "assets" | "cast">, fra
   return [...new Set([...asked, ...called])].map((m) => m.name);
 }
 
-/** A cast member as the model reads it: its name, then what it looks like, and its own style unless the prompt names that style anyway. */
-const described = (u: CastUse, uses: CastUse[]) => {
+/** How a model + route prefers decoupled character ingredients to be supplied (default "split-360"). */
+export const castPackFor = (model: Pick<CatalogModel, "castPack"> | undefined, route?: Pick<ModelRoute, "castPack">): CastPackStrategy =>
+  route?.castPack ?? model?.castPack ?? "split-360";
+
+/** Resolves a shared wardrobe pointer ("doublet", or "doublet/bloodied") in `cast`. */
+export function resolveWardrobe(
+  ref: string | undefined,
+  cast: CastMember[] | undefined,
+): { member: CastMember; variant?: NonNullable<CastMember["variants"]>[number]; sheet?: string; about?: string; headwear?: HeadwearMode } | undefined {
+  if (!ref || !cast?.length) return undefined;
+  const [wid, vid] = ref.split("/") as [string, string?];
+  const member = cast.find((m) => m.id === wid && m.kind === "wardrobe");
+  if (!member) return undefined;
+  const variant = vid ? member.variants?.find((v) => v.id === vid) : undefined;
+  const sheet =
+    variant?.outfitSheet ?? variant?.sheet ?? variant?.images?.[0] ?? member.outfitSheet ?? member.sheet ?? member.images?.[0];
+  const about = [member.about, member.wears, variant?.about].filter(Boolean).join("; ") || undefined;
+  const headwear = variant?.headwear ?? member.headwear;
+  return { member, ...(variant ? { variant } : {}), ...(sheet ? { sheet } : {}), ...(about ? { about } : {}), ...(headwear ? { headwear } : {}) };
+}
+
+/** Canonical resolved visual ingredients for one character (or look), merging shared wardrobe links and variant overrides. */
+export type CharacterIngredients = {
+  portrait?: string;
+  faceSheet?: string;
+  outfitSheet?: string;
+  legacySheet?: string;
+  legacyImages?: string[];
+  headwear?: HeadwearMode;
+  wardrobeUse?: CastUse;
+  outfitAbout?: string;
+  variantFace: boolean;
+  variantOutfit: boolean;
+};
+
+/**
+ * Resolves a character's (or look's) face and outfit ingredients without mixing a variant's overridden face with the
+ * plain look's bare face. A variant that only changes clothes inherits the character's settled face; one that links
+ * to a shared `wardrobe` entry inherits that wardrobe's outfit turnaround and description.
+ */
+export function characterIngredients(use: Pick<CastUse, "member" | "variant">, cast?: CastMember[]): CharacterIngredients {
+  const m = use.member;
+  const v = use.variant;
+  const variantFace = !!(v?.faceSheet || v?.portrait);
+  const portrait = variantFace ? v?.portrait : m.portrait;
+  const faceSheet = variantFace ? v?.faceSheet : m.faceSheet;
+
+  let outfitSheet: string | undefined;
+  let outfitAbout: string | undefined;
+  let wardrobeUse: CastUse | undefined;
+  let wardrobeHeadwear: HeadwearMode | undefined;
+  const applyShared = (ref: string | undefined) => {
+    const w = resolveWardrobe(ref, cast);
+    if (!w) return false;
+    outfitSheet = w.sheet;
+    outfitAbout = w.about;
+    wardrobeHeadwear = w.headwear;
+    wardrobeUse = { id: w.variant ? `${w.member.id}/${w.variant.id}` : w.member.id, member: w.member, ...(w.variant ? { variant: w.variant } : {}) };
+    return true;
+  };
+  if (v?.outfit) {
+    applyShared(v.outfit);
+    if (!outfitSheet && v.outfitSheet) outfitSheet = v.outfitSheet;
+  } else if (v?.outfitSheet) {
+    outfitSheet = v.outfitSheet;
+  } else if (m.outfit) {
+    applyShared(m.outfit);
+    if (!outfitSheet && m.outfitSheet) outfitSheet = m.outfitSheet;
+  } else if (m.outfitSheet) {
+    outfitSheet = m.outfitSheet;
+  }
+  const variantOutfit = !!(v?.outfit || v?.outfitSheet);
+  const headwear = v?.headwear ?? m.headwear ?? wardrobeHeadwear;
+
+  const variantHasLegacy = !!(v?.sheet || v?.images?.length);
+  const variantHasOwn = variantFace || variantOutfit || variantHasLegacy;
+  const legacySheet = v ? (v.sheet ?? (!variantHasOwn ? m.sheet : undefined)) : m.sheet;
+  const legacyImages = v?.images?.length ? v.images : (!variantHasOwn ? m.images : undefined);
+
+  return {
+    ...(portrait ? { portrait } : {}),
+    ...(faceSheet ? { faceSheet } : {}),
+    ...(outfitSheet ? { outfitSheet } : {}),
+    ...(legacySheet ? { legacySheet } : {}),
+    ...(legacyImages?.length ? { legacyImages } : {}),
+    ...(headwear ? { headwear } : {}),
+    ...(wardrobeUse ? { wardrobeUse } : {}),
+    ...(outfitAbout ? { outfitAbout } : {}),
+    variantFace,
+    variantOutfit,
+  };
+}
+
+/** One reference picture prepared for a model: either a single project asset or a procedural face+outfit composite. */
+export type PackedCastRef = {
+  use: CastUse;
+  asset: string;
+  role: CastRefRole;
+  composite?: { face: string; outfit: string; mode: "portrait-outfit" | "face360-outfit" };
+  wardrobeUse?: CastUse;
+  headwear?: HeadwearMode;
+};
+
+/** A cast member as the model reads it: its name, then what it looks like (including any linked wardrobe), and its own style unless the prompt names that style anyway. */
+const described = (u: CastUse, uses: CastUse[], allCast?: CastMember[]) => {
   const own = u.style && !uses.some((x) => x.id === u.style!.id) ? `in the style of ${u.style.name}${u.style.about ? `: ${u.style.about}` : ""}` : "";
-  const about = [u.member.about, u.member.wears, u.variant?.about, own].filter(Boolean).join("; ");
+  const linked = u.member.kind === "character" ? resolveWardrobe(u.variant?.outfit ?? u.member.outfit, allCast)?.about : undefined;
+  const about = [u.member.about, u.member.wears, linked, u.variant?.about, own].filter(Boolean).join("; ");
   return about ? `${u.member.name} (${about})` : u.member.name;
 };
+
+const isPackedCastRef = (x: CastUse | PackedCastRef): x is PackedCastRef => "asset" in x && "role" in x && "use" in x;
 
 /**
  * The prompt as a model reads it: each @mention becomes the name, described the first time, and cast listed but not
  * named in the prompt are added at the end (a style as "In the style of…"). With reference pictures, it says which
- * picture is whom.
+ * picture is whom — and when decoupled face/outfit or composite sheets are used, assigns each image an explicit role.
  */
-export function castPrompt(prompt: string, uses: CastUse[], pictured: CastUse[] = []): string {
+export function castPrompt(
+  prompt: string,
+  uses: CastUse[],
+  pictured: (CastUse | PackedCastRef)[] = [],
+  allCast?: CastMember[],
+  opts?: { refPrefix?: (n: number) => string; refOffset?: number },
+): string {
   const seen = new Set<string>();
   let text = prompt.replace(MENTION, (whole, id: string, v?: string) => {
     const u = uses.find((x) => x.id === (v ? `${id}/${v}` : id)) ?? uses.find((x) => x.id === id);
     if (!u) return whole;
     const first = !seen.has(u.id);
     seen.add(u.id);
-    return first ? described(u, uses) : u.member.name;
+    return first ? described(u, uses, allCast) : u.member.name;
   });
   const sentence = (t: string) => (/[.!?]\s*$/.test(t) ? t.trimEnd() : `${t.trimEnd()}.`);
   const rest = uses.filter((u) => !seen.has(u.id));
   const others = rest.filter((u) => u.member.kind !== "style");
   const styles = rest.filter((u) => u.member.kind === "style");
-  if (others.length) text = `${sentence(text)} With ${others.map((u) => described(u, uses)).join(", ")}.`;
-  if (styles.length) text = `${sentence(text)} In the style of ${styles.map((u) => described(u, uses)).join(" and ")}.`;
+  if (others.length) text = `${sentence(text)} With ${others.map((u) => described(u, uses, allCast)).join(", ")}.`;
+  if (styles.length) text = `${sentence(text)} In the style of ${styles.map((u) => described(u, uses, allCast)).join(" and ")}.`;
   if (pictured.length) {
-    // Several pictures of one are named once: "2 pictures of the cat, noir".
-    const runs: { u: CastUse; n: number }[] = [];
-    for (const u of pictured) {
-      const last = runs.at(-1);
-      if (last?.u.id === u.id) last.n++;
-      else runs.push({ u, n: 1 });
+    const packed = pictured.every(isPackedCastRef) ? pictured : undefined;
+    const decoupled =
+      !!packed &&
+      packed.some(
+        (p) =>
+          p.role === "face-sheet" ||
+          p.role === "outfit" ||
+          p.role === "composite" ||
+          (p.role === "portrait" && packed.some((q) => q.use.id === p.use.id && q.role === "outfit")),
+      );
+    if (decoupled && packed) {
+      const refName = opts?.refPrefix ?? ((n: number) => `Image ${n}`);
+      const offset = opts?.refOffset ?? 0;
+      const parts = packed.map((p, i) => {
+        const tag = refName(i + 1 + offset);
+        const name = p.use.member.name || p.use.id;
+        if (p.role === "face-sheet") return `${tag} is ${name}'s 360-degree face sheet (keep exact face, hair and facial geometry from every angle)`;
+        if (p.role === "portrait") return `${tag} is ${name}'s portrait (keep exact face, hair and features)`;
+        if (p.role === "outfit") {
+          const ghost = p.headwear === "ghost" ? ", including its headwear" : "";
+          return p.use.member.kind === "wardrobe"
+            ? `${tag} is the ${name} outfit turnaround (exact garments, colors and fit${ghost}, no face)`
+            : `${tag} is ${name}'s outfit turnaround (dress them in these exact garments, colors and fit${ghost}, taking no face from it)`;
+        }
+        if (p.role === "composite") return `${tag} is ${name}'s character sheet (left: face; right: front and back outfit)`;
+        if (p.role === "sheet") return `${tag} is ${name}'s character sheet`;
+        if (p.role === "style") return `${tag} is the visual style (${name}) to draw it in, not who or what is in it`;
+        if (p.role === "place") return `${tag} is the setting (${name})`;
+        return `${tag} shows ${name}`;
+      });
+      text = `${sentence(text)} Reference pictures, in order: ${parts.join("; ")}. Keep each character's face and outfit faithful to their assigned reference pictures; draw them in the style asked for.`;
+    } else {
+      // Several pictures of one are named once: "2 pictures of the cat, noir".
+      const runs: { u: CastUse; n: number }[] = [];
+      for (const item of pictured) {
+        const u = isPackedCastRef(item) ? item.use : item;
+        const last = runs.at(-1);
+        if (last?.u.id === u.id) last.n++;
+        else runs.push({ u, n: 1 });
+      }
+      const whose = runs.map(({ u, n }) => (n === 1 ? u.member.name : `${n} pictures of ${u.member.name}`)).join(", ");
+      text = `${sentence(text)} Reference pictures, in order: ${whose}. Keep each one's features, markings and colors as they are there; draw them in the style asked for.`;
     }
-    const whose = runs.map(({ u, n }) => (n === 1 ? u.member.name : `${n} pictures of ${u.member.name}`)).join(", ");
-    text = `${sentence(text)} Reference pictures, in order: ${whose}. Keep each one's features, markings and colors as they are there; draw them in the style asked for.`;
   }
   return text;
 }
 
-/** Who gets a picture first when there are more than a model takes: the characters, then props, places and the style. */
-const PICTURE_ORDER: CastMember["kind"][] = ["character", "prop", "place", "style"];
+/** Who gets a picture first when there are more than a model takes: characters, then shared wardrobes, props, places and style. */
+const PICTURE_ORDER: CastMember["kind"][] = ["character", "wardrobe", "prop", "place", "style"];
 
 /** The most of one cast member's pictures a model is given: its main one, and the next two when there's room. */
 export const PICTURES_EACH = 3;
 
 /** One look of a cast member, as stored: the plain one is the member itself, the others its variants. */
-export type CastLook = Pick<CastMember, "images" | "kept" | "faces" | "wardrobe" | "portrait" | "portraits" | "sheet" | "sheets">;
+export type CastLook = Pick<
+  CastMember,
+  "images" | "kept" | "faces" | "wardrobe" | "portrait" | "portraits" | "faceSheet" | "faceSheets" | "outfit" | "outfitSheet" | "outfitSheets" | "headwear" | "sheet" | "sheets"
+>;
 
 /** Every asset a look holds, whatever it's for. */
 export const lookAssets = (l: CastLook): string[] => [
@@ -864,45 +1033,206 @@ export const lookAssets = (l: CastLook): string[] => [
   ...(l.wardrobe ?? []),
   ...(l.portrait ? [l.portrait] : []),
   ...(l.portraits ?? []),
+  ...(l.faceSheet ? [l.faceSheet] : []),
+  ...(l.faceSheets ?? []),
+  ...(l.outfitSheet ? [l.outfitSheet] : []),
+  ...(l.outfitSheets ?? []),
   ...(l.sheet ? [l.sheet] : []),
   ...(l.sheets ?? []),
 ];
 
-/** What a look gives models: its chosen sheet, else its chosen portrait, else the pictures it had before there were steps. */
-export const lookGiven = (l: CastLook): string[] => (l.sheet ? [l.sheet] : l.portrait ? [l.portrait] : (l.images ?? []));
+/**
+ * What a look gives models: its decoupled face + outfit sheets when set, else its chosen combined sheet, else its
+ * chosen portrait, else the pictures it had before there were steps.
+ */
+export const lookGiven = (l: CastLook): string[] => {
+  if (l.faceSheet || l.outfitSheet) {
+    const face = l.faceSheet ?? l.portrait;
+    return [...(face ? [face] : []), ...(l.outfitSheet ? [l.outfitSheet] : [])];
+  }
+  return l.sheet ? [l.sheet] : l.portrait ? [l.portrait] : (l.images ?? []);
+};
 
 /**
  * The pictures of a cast member a model may be given, in order, up to PICTURES_EACH: a variant's own, or the plain
- * one's when it has none yet. Never the two mixed: the plain one's pictures show other clothes, other hair, no costume
- * beard, and a look holds only if every picture of it agrees. A character with a chosen sheet gives only that: one
- * picture, one face.
+ * one's when it has none yet. Never mixes a variant's overridden face with the plain one's; a variant that only swaps
+ * clothes inherits the character's settled face.
  */
-export function picturesGiven(use: Pick<CastUse, "member" | "variant">): string[] {
+export function picturesGiven(use: Pick<CastUse, "member" | "variant">, cast?: CastMember[]): string[] {
+  if (use.member.kind === "character") {
+    const ing = characterIngredients(use, cast);
+    if (ing.faceSheet || ing.outfitSheet) {
+      const face = ing.faceSheet ?? ing.portrait;
+      return [...(face ? [face] : []), ...(ing.outfitSheet ? [ing.outfitSheet] : [])].slice(0, PICTURES_EACH);
+    }
+    if (ing.legacySheet) return [ing.legacySheet];
+    if (ing.portrait) return [ing.portrait];
+    return (ing.legacyImages ?? []).slice(0, PICTURES_EACH);
+  }
+  if (use.member.kind === "wardrobe") {
+    const v = use.variant;
+    const own = v ? (v.outfitSheet ? [v.outfitSheet] : v.sheet ? [v.sheet] : (v.images ?? [])) : [];
+    const base = use.member.outfitSheet ? [use.member.outfitSheet] : use.member.sheet ? [use.member.sheet] : (use.member.images ?? []);
+    return (own.length ? own : base).slice(0, PICTURES_EACH);
+  }
   const own = use.variant ? lookGiven(use.variant) : [];
   return (own.length ? own : lookGiven(use.member)).slice(0, PICTURES_EACH);
 }
 
 /**
- * The pictures to give a model, as many as `max`, kept together by whom they show. The characters come first, each
- * one's main picture and then each one's next while there's room; then the props, places and the style the same way.
- * The cast left without one is still described in words.
+ * Procedurally packages cast references for a target model and reference budget:
+ * - `"split-360"`: sends `[faceSheet (360°), outfitSheet]` per character when slots allow.
+ * - `"split-single"`: sends `[portrait (single headshot), outfitSheet]` to avoid grid echo on sensitive models (Muse, FLUX Klein).
+ * - `"combined"` (or automatically whenever decoupled characters exceed `max`): packs each decoupled character into one
+ *   procedural composite (`sharp` stitches face + outfit onto neutral gray) so every character keeps both face and clothes.
  */
-export function castPictures(uses: CastUse[], max = Infinity): { use: CastUse; asset: string }[] {
-  const each = uses
-    .map((use) => ({ use, assets: picturesGiven(use) }))
-    .filter((x) => x.assets.length)
-    .sort((a, b) => PICTURE_ORDER.indexOf(a.use.member.kind) - PICTURE_ORDER.indexOf(b.use.member.kind));
-  const given = each.map(() => 0);
+export function packCastPictures(
+  uses: CastUse[],
+  opts: { max?: number; strategy?: CastPackStrategy; cast?: CastMember[]; faceOnly?: boolean } = {},
+): PackedCastRef[] {
+  const max = opts.max ?? Infinity;
+  if (max <= 0) return [];
+  const strategy: CastPackStrategy = opts.strategy ?? "split-360";
+  const allCast = opts.cast ?? uses.map((u) => u.member);
+  const sorted = [...uses].sort((a, b) => PICTURE_ORDER.indexOf(a.member.kind) - PICTURE_ORDER.indexOf(b.member.kind));
+
+  // Track outfit assets already emitted via a character's linked wardrobe so mentioning both @char and @wardrobe doesn't duplicate it.
+  const usedOutfitAssets = new Set<string>();
+  type Entry = { use: CastUse; items: PackedCastRef[]; splitCapable?: boolean; compositeItem?: PackedCastRef };
+  const entries: Entry[] = [];
+
+  for (const use of sorted) {
+    if (use.member.kind === "character") {
+      const ing = characterIngredients(use, allCast);
+      const faceAsset = strategy === "split-single" ? (ing.portrait ?? ing.faceSheet) : (ing.faceSheet ?? ing.portrait);
+      const faceRole: CastRefRole = faceAsset === ing.faceSheet ? "face-sheet" : "portrait";
+      if (faceAsset && ing.outfitSheet && !opts.faceOnly) {
+        usedOutfitAssets.add(ing.outfitSheet);
+        const compFace = ing.portrait ?? ing.faceSheet!;
+        const compMode: "portrait-outfit" | "face360-outfit" = compFace === ing.faceSheet ? "face360-outfit" : "portrait-outfit";
+        const compositeItem: PackedCastRef = {
+          use,
+          asset: compFace,
+          role: "composite",
+          composite: { face: compFace, outfit: ing.outfitSheet, mode: compMode },
+          ...(ing.wardrobeUse ? { wardrobeUse: ing.wardrobeUse } : {}),
+          ...(ing.headwear ? { headwear: ing.headwear } : {}),
+        };
+        if (strategy === "combined") {
+          entries.push({ use, items: [compositeItem] });
+        } else {
+          entries.push({
+            use,
+            splitCapable: true,
+            compositeItem,
+            items: [
+              { use, asset: faceAsset, role: faceRole, ...(ing.headwear ? { headwear: ing.headwear } : {}) },
+              {
+                use,
+                asset: ing.outfitSheet,
+                role: "outfit",
+                ...(ing.wardrobeUse ? { wardrobeUse: ing.wardrobeUse } : {}),
+                ...(ing.headwear ? { headwear: ing.headwear } : {}),
+              },
+            ],
+          });
+        }
+      } else if (faceAsset && (ing.faceSheet || opts.faceOnly)) {
+        entries.push({ use, items: [{ use, asset: faceAsset, role: faceRole, ...(ing.headwear ? { headwear: ing.headwear } : {}) }] });
+      } else if (ing.outfitSheet && !opts.faceOnly) {
+        usedOutfitAssets.add(ing.outfitSheet);
+        entries.push({
+          use,
+          items: [
+            {
+              use,
+              asset: ing.outfitSheet,
+              role: "outfit",
+              ...(ing.wardrobeUse ? { wardrobeUse: ing.wardrobeUse } : {}),
+              ...(ing.headwear ? { headwear: ing.headwear } : {}),
+            },
+          ],
+        });
+      } else if (ing.legacySheet) {
+        entries.push({ use, items: [{ use, asset: ing.legacySheet, role: "sheet" }] });
+      } else if (ing.portrait) {
+        entries.push({ use, items: [{ use, asset: ing.portrait, role: "portrait" }] });
+      } else if (ing.legacyImages?.length) {
+        entries.push({ use, items: ing.legacyImages.slice(0, PICTURES_EACH).map((asset) => ({ use, asset, role: "picture" as const })) });
+      }
+      continue;
+    }
+    if (use.member.kind === "wardrobe") {
+      const assets = picturesGiven(use, allCast).filter((a) => !usedOutfitAssets.has(a));
+      const hw = use.variant?.headwear ?? use.member.headwear;
+      if (assets.length) entries.push({ use, items: assets.map((asset) => ({ use, asset, role: "outfit" as const, ...(hw ? { headwear: hw } : {}) })) });
+      continue;
+    }
+    const assets = picturesGiven(use, allCast);
+    const role: CastRefRole = use.member.kind === "style" ? "style" : use.member.kind === "place" ? "place" : "prop";
+    if (assets.length) entries.push({ use, items: assets.map((asset) => ({ use, asset, role })) });
+  }
+
+  // Dynamic budget compression: if split characters alone exceed `max`, collapse them to 1 procedural composite each
+  // so every character keeps both face and outfit rather than dropping outfits or characters.
+  const charEntries = entries.filter((e) => e.use.member.kind === "character");
+  const wantCharSlots = charEntries.reduce((sum, e) => sum + (e.splitCapable ? 2 : Math.min(1, e.items.length)), 0);
+  if (wantCharSlots > max) {
+    for (const e of charEntries) {
+      if (e.splitCapable && e.compositeItem) {
+        e.items = [e.compositeItem];
+        e.splitCapable = false;
+      }
+    }
+  }
+
+  // Allocate slots in kind priority order: for split characters, allocate their pair atomically while room remains;
+  // for multi-picture entries (legacy images, places, props), round-robin one per round up to PICTURES_EACH.
+  const given = entries.map(() => 0);
   let left = max;
-  for (const kind of PICTURE_ORDER)
-    for (let round = 0; round < PICTURES_EACH; round++)
-      each.forEach((x, i) => {
-        if (left > 0 && x.use.member.kind === kind && x.assets.length > round) {
+  for (const kind of PICTURE_ORDER) {
+    if (kind === "character") {
+      // First pass: give each character its core representation (2 for split face+outfit if it fits, else 1).
+      entries.forEach((x, i) => {
+        if (x.use.member.kind !== "character" || left <= 0 || !x.items.length) return;
+        const take = x.splitCapable ? (left >= 2 ? 2 : 1) : 1;
+        given[i] = Math.min(take, x.items.length);
+        left -= given[i]!;
+      });
+      // Subsequent rounds for legacy multi-photo characters (round 1..PICTURES_EACH-1).
+      for (let round = 1; round < PICTURES_EACH; round++) {
+        entries.forEach((x, i) => {
+          if (left > 0 && x.use.member.kind === "character" && !x.splitCapable && x.items.length > given[i]!) {
+            given[i]!++;
+            left--;
+          }
+        });
+      }
+      continue;
+    }
+    for (let round = 0; round < PICTURES_EACH; round++) {
+      entries.forEach((x, i) => {
+        if (left > 0 && x.use.member.kind === kind && x.items.length > round) {
           given[i]!++;
           left--;
         }
       });
-  return each.flatMap((x, i) => x.assets.slice(0, given[i]).map((asset) => ({ use: x.use, asset })));
+    }
+  }
+  return entries.flatMap((x, i) => x.items.slice(0, given[i]));
+}
+
+/**
+ * The pictures to give a model, as many as `max`, kept together by whom they show. The characters come first, then
+ * wardrobes, props, places and the style. Returns `PackedCastRef[]` (a superset of `{ use, asset }[]`).
+ */
+export function castPictures(
+  uses: CastUse[],
+  maxOrOpts: number | { max?: number; strategy?: CastPackStrategy; cast?: CastMember[]; faceOnly?: boolean } = Infinity,
+  opts?: { strategy?: CastPackStrategy; cast?: CastMember[]; faceOnly?: boolean },
+): PackedCastRef[] {
+  if (typeof maxOrOpts === "number") return packCastPictures(uses, { max: maxOrOpts, ...opts });
+  return packCastPictures(uses, { ...maxOrOpts, ...opts });
 }
 
 /** An id prompts can name after an @. */
@@ -928,6 +1258,10 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
     if (file.look?.style === id) file.look.style = to;
   }
   const { key: map, text: inPrompt } = castRenaming(from, to);
+  for (const m of file.cast!) {
+    if (m.outfit) m.outfit = map(m.outfit);
+    for (const v of m.variants ?? []) if (v.outfit) v.outfit = map(v.outfit);
+  }
   for (const cut of file.cuts) {
     for (const shot of cut.shots) {
       const c = shot.content;
@@ -1024,9 +1358,11 @@ export function mergeLook(file: ProjectFile, look: string): boolean {
   const text0 = (a?: string) => [a, v.about].filter(Boolean).join("; ");
   if (member.kind === "character" && (member.wears || !member.about)) member.wears = text0(member.wears);
   else if (text0(member.about)) member.about = text0(member.about);
-  // The look's steps take over where it has them; the plain one's chosen portrait and sheet join the others.
+  // The look's steps take over where it has them; the plain one's chosen portrait and sheets join the others.
   for (const [one, many] of [
     ["portrait", "portraits"],
+    ["faceSheet", "faceSheets"],
+    ["outfitSheet", "outfitSheets"],
     ["sheet", "sheets"],
   ] as const) {
     const chosen = v[one] ?? member[one];
@@ -1037,6 +1373,8 @@ export function mergeLook(file: ProjectFile, look: string): boolean {
   }
   if (v.faces) member.faces = v.faces;
   if (v.wardrobe?.length) member.wardrobe = v.wardrobe;
+  if (v.outfit) member.outfit = v.outfit;
+  if (v.headwear) member.headwear = v.headwear;
   // What models were given for the look: its own pictures, or the plain one's when it had none.
   const given = v.images?.length ? v.images : (member.images ?? []);
   const kept = [...new Set([...(v.kept ?? []), ...(v.images?.length ? (member.images ?? []) : []), ...(member.kept ?? [])])].filter((a) => !given.includes(a));
@@ -1047,6 +1385,10 @@ export function mergeLook(file: ProjectFile, look: string): boolean {
   member.variants = member.variants!.filter((x) => x !== v);
   if (!member.variants.length) delete member.variants;
   const { key, text } = lookMerging(look);
+  for (const m of file.cast ?? []) {
+    if (m.outfit) m.outfit = key(m.outfit);
+    for (const vr of m.variants ?? []) if (vr.outfit) vr.outfit = key(vr.outfit);
+  }
   const keys = (ks: string[]) => [...new Set(ks.map(key))];
   for (const cut of file.cuts)
     for (const shot of cut.shots) {
@@ -1179,7 +1521,7 @@ export function classifyGeneratedAssets(doc: Pick<ProjectFile, "assets" | "cast"
       out.set(a.id, { role: "cast", intermediate: true, owner: { kind: "cast", member: castMember } });
       continue;
     }
-    if (a.tags?.includes("portrait") || a.tags?.includes("sheet")) {
+    if (a.tags?.includes("portrait") || a.tags?.includes("sheet") || a.tags?.includes("face-sheet") || a.tags?.includes("outfit-sheet")) {
       const inferred = castIds.find((id) => a.id === id || a.id.startsWith(`${id}-`));
       out.set(a.id, { role: "cast", intermediate: true, ...(inferred ? { owner: { kind: "cast", member: inferred } } : {}) });
       continue;

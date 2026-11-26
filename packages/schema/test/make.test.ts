@@ -4,8 +4,13 @@ import {
   billedWithClip,
   CATALOG,
   castOf,
+  castPackFor,
   castPictures,
+  characterIngredients,
+  classifyGeneratedAssets,
+  packCastPictures,
   picturesGiven,
+  resolveWardrobe,
   castPrompt,
   checkCut,
   checkReferences,
@@ -1469,5 +1474,196 @@ describe("multimodal reference audio (audioRefs)", () => {
     const s1 = file.cuts[0]!.shots[0]!.content;
     expect(s1.kind === "generated" && s1.audioRefs?.[0]).toMatchObject({ kind: "voice", cast: "marmalade" });
     expect((file.assets[0]!.provenance!.params!.audioRefs as { cast?: string }[])[1]?.cast).toBe("marmalade");
+  });
+});
+
+describe("decoupled face & wardrobe sheets and model-adaptive cast packing", () => {
+  const robe: CastMember = {
+    id: "inquisitor-robe",
+    name: "Inquisitor Robe",
+    kind: "wardrobe",
+    about: "heavy black hooded Renaissance robe with silver clasp and white mask",
+    headwear: "ghost",
+    outfitSheet: "robe-clean-sheet",
+    variants: [{ id: "tattered", about: "torn hem and mud-splattered sleeves", outfitSheet: "robe-tattered-sheet" }],
+  };
+  const galileo: CastMember = {
+    id: "galileo",
+    name: "Galileo",
+    kind: "character",
+    about: "17-year-old with ginger hair and freckles",
+    wears: "dark wool doublet and breeches",
+    portrait: "galileo-portrait",
+    faceSheet: "galileo-face-360",
+    outfitSheet: "galileo-outfit-clean",
+    variants: [
+      { id: "battle", about: "torn, mud-splattered doublet", outfitSheet: "galileo-outfit-battle" },
+      { id: "bloodied", about: "cut on brow, fake white beard", headwear: "face", portrait: "galileo-bloodied-portrait", faceSheet: "galileo-bloodied-face-360", outfitSheet: "galileo-outfit-battle" },
+    ],
+  };
+  const bobby: CastMember = {
+    id: "bobby",
+    name: "Bobby",
+    kind: "character",
+    about: "tall lanky teenager with dark hair",
+    portrait: "bobby-portrait",
+    faceSheet: "bobby-face-360",
+    outfit: "inquisitor-robe",
+    variants: [{ id: "aftermath", about: "exhausted after the duel", outfit: "inquisitor-robe/tattered" }],
+  };
+  const cast = [robe, galileo, bobby];
+
+  it("resolves character ingredients across own outfits, variants, headwear overrides, and reusable shared wardrobes", () => {
+    expect(resolveWardrobe("inquisitor-robe", cast)?.sheet).toBe("robe-clean-sheet");
+    expect(resolveWardrobe("inquisitor-robe/tattered", cast)?.sheet).toBe("robe-tattered-sheet");
+
+    // Plain character gets own portrait + 360° faceSheet + own outfitSheet.
+    expect(characterIngredients({ member: galileo }, cast)).toMatchObject({
+      portrait: "galileo-portrait",
+      faceSheet: "galileo-face-360",
+      outfitSheet: "galileo-outfit-clean",
+    });
+    // Outfit-only variant inherits base portrait + faceSheet while swapping outfitSheet.
+    expect(characterIngredients({ member: galileo, variant: galileo.variants![0] }, cast)).toMatchObject({
+      portrait: "galileo-portrait",
+      faceSheet: "galileo-face-360",
+      outfitSheet: "galileo-outfit-battle",
+    });
+    // Face-mounted variant overrides portrait + faceSheet too.
+    expect(characterIngredients({ member: galileo, variant: galileo.variants![1] }, cast)).toMatchObject({
+      portrait: "galileo-bloodied-portrait",
+      faceSheet: "galileo-bloodied-face-360",
+      outfitSheet: "galileo-outfit-battle",
+      headwear: "face",
+    });
+    // Character linked to shared wardrobe resolves outfitSheet + ghost headwear from the wardrobe entry (and its variant).
+    expect(characterIngredients({ member: bobby }, cast)).toMatchObject({
+      faceSheet: "bobby-face-360",
+      outfitSheet: "robe-clean-sheet",
+      wardrobeUse: { id: "inquisitor-robe" },
+      headwear: "ghost",
+    });
+    expect(characterIngredients({ member: bobby, variant: bobby.variants![0] }, cast)).toMatchObject({
+      faceSheet: "bobby-face-360",
+      outfitSheet: "robe-tattered-sheet",
+      wardrobeUse: { id: "inquisitor-robe/tattered" },
+      headwear: "ghost",
+    });
+  });
+
+  it("adapts cast packaging by model strategy (split-360, split-single, combined) and compresses under tight ref caps", () => {
+    const nano = CATALOG.find((m) => m.id === "nano-banana")!;
+    const muse = CATALOG.find((m) => m.id === "muse-image")!;
+    const klein = CATALOG.find((m) => m.id === "flux3-klein")!;
+    const gpt = CATALOG.find((m) => m.id === "gpt-image-sunburst")!;
+    const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
+    expect([castPackFor(nano), castPackFor(muse), castPackFor(klein)]).toEqual(["split-single", "split-single", "split-single"]);
+    expect([castPackFor(gpt), castPackFor(seedance)]).toEqual(["split-360", "split-360"]);
+
+    const one = castOf("@galileo walks in", cast);
+    // split-360: 360° faceSheet + outfitSheet as two separate role-bound refs.
+    expect(packCastPictures(one, { max: 10, strategy: "split-360", cast })).toMatchObject([
+      { asset: "galileo-face-360", role: "face-sheet" },
+      { asset: "galileo-outfit-clean", role: "outfit" },
+    ]);
+    // split-single: single portrait + outfitSheet so grid-sensitive still models don't echo a 6-panel layout.
+    expect(packCastPictures(one, { max: 10, strategy: "split-single", cast })).toMatchObject([
+      { asset: "galileo-portrait", role: "portrait" },
+      { asset: "galileo-outfit-clean", role: "outfit" },
+    ]);
+    // combined: single procedural composite pairing portrait + outfitSheet.
+    expect(packCastPictures(one, { max: 10, strategy: "combined", cast })).toMatchObject([
+      { asset: "galileo-portrait", role: "composite", composite: { face: "galileo-portrait", outfit: "galileo-outfit-clean", mode: "portrait-outfit" } },
+    ]);
+
+    // Dynamic budget compression: 2 decoupled characters need 4 slots split, so a 3-ref cap (Antigravity) collapses each
+    // character into 1 procedural composite (2 refs total <= 3), while a 10-ref model keeps all 4 separate!
+    const two = castOf("@galileo/battle faces @bobby", cast);
+    const tight = packCastPictures(two, { max: 3, strategy: "split-single", cast });
+    expect(tight).toMatchObject([
+      { asset: "galileo-portrait", role: "composite", composite: { face: "galileo-portrait", outfit: "galileo-outfit-battle", mode: "portrait-outfit" } },
+      { asset: "bobby-portrait", role: "composite", composite: { face: "bobby-portrait", outfit: "robe-clean-sheet", mode: "portrait-outfit" } },
+    ]);
+    const roomy = packCastPictures(two, { max: 10, strategy: "split-360", cast });
+    expect(roomy).toMatchObject([
+      { asset: "galileo-face-360", role: "face-sheet" },
+      { asset: "galileo-outfit-battle", role: "outfit" },
+      { asset: "bobby-face-360", role: "face-sheet" },
+      { asset: "robe-clean-sheet", role: "outfit" },
+    ]);
+
+    // Role-labeled castPrompt includes shared wardrobe description and supports refOffset for blockout contact sheets.
+    const prompt = castPrompt("@galileo/battle faces @bobby", two, roomy, cast);
+    expect(prompt).toContain("heavy black hooded Renaissance robe");
+    expect(prompt).toContain("Image 1 is Galileo's 360-degree face sheet");
+    expect(prompt).toContain("Image 2 is Galileo's outfit turnaround");
+    expect(prompt).toContain("Image 3 is Bobby's 360-degree face sheet");
+    expect(prompt).toContain("Image 4 is Bobby's outfit turnaround");
+    const shifted = castPrompt("@galileo/battle faces @bobby", two, roomy, cast, { refOffset: 1 });
+    expect(shifted).toContain("Image 2 is Galileo's 360-degree face sheet");
+    expect(shifted).toContain("Image 5 is Bobby's outfit turnaround");
+  });
+
+  it("validates shared wardrobe links, remaps them on renameCast, preserves decoupled fields in mergeLook, and classifies tags", () => {
+    const mkAsset = (id: string, tags?: string[]): Asset => ({ id, kind: "image", path: `${id}.jpg`, provenance: { source: "generated" }, ...(tags ? { tags } : {}) });
+    const proj = Project.parse({
+      id: "p",
+      title: "t",
+      recipe: "film",
+      brief: { goal: "g" },
+      formats: [{ id: "f", label: "16:9", width: 1920, height: 1080, fps: 30 }],
+      stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])),
+      spine: "shots",
+      assets: [
+        mkAsset("robe-clean-sheet", ["outfit-sheet"]),
+        mkAsset("robe-tattered-sheet", ["outfit-sheet"]),
+        mkAsset("galileo-portrait", ["portrait"]),
+        mkAsset("galileo-face-360", ["face-sheet"]),
+        mkAsset("galileo-outfit-clean", ["outfit-sheet"]),
+        mkAsset("galileo-outfit-battle", ["outfit-sheet"]),
+        mkAsset("galileo-bloodied-portrait", ["portrait"]),
+        mkAsset("galileo-bloodied-face-360", ["face-sheet"]),
+        mkAsset("bobby-portrait", ["portrait"]),
+        mkAsset("bobby-face-360", ["face-sheet"]),
+      ],
+      cast,
+      tracks: [{ id: "pic", kind: "picture", label: "Pic" }],
+      shots: [],
+      notes: [],
+    });
+    expect(checkCut(proj)).toEqual([]);
+
+    // Invalid outfit links (missing or non-wardrobe) are caught by checkCut.
+    const bad = Project.parse({
+      ...proj,
+      cast: [...cast, { id: "bad1", name: "Bad 1", kind: "character", outfit: "missing" }, { id: "bad2", name: "Bad 2", kind: "character", outfit: "galileo" }],
+    });
+    expect(checkCut(bad).map((i) => i.message)).toEqual(['no wardrobe "missing" in the cast', 'no wardrobe "galileo" in the cast']);
+
+    // classifyGeneratedAssets categorizes face-sheet and outfit-sheet assets as cast.
+    const file: ProjectFile = withCut({ schema: SCHEMA_VERSION, cuts: [], ...proj } as never, proj);
+    const cls = classifyGeneratedAssets(file);
+    expect(cls.get("galileo-face-360")).toMatchObject({ role: "cast", owner: { kind: "cast", member: "galileo" } });
+    expect(cls.get("galileo-outfit-clean")).toMatchObject({ role: "cast", owner: { kind: "cast", member: "galileo" } });
+    expect(cls.get("robe-clean-sheet")).toMatchObject({ role: "cast", owner: { kind: "cast", member: "inquisitor-robe" } });
+
+    // renameCast remaps shared wardrobe ids and variant ids on character outfits.
+    expect(renameCast(file, "inquisitor-robe", "cloak")).toBe(true);
+    expect(renameCast(file, "cloak/tattered", "ruined")).toBe(true);
+    const renamedBobby = file.cast!.find((m) => m.id === "bobby")!;
+    expect(renamedBobby.outfit).toBe("cloak");
+    expect(renamedBobby.variants![0]!.outfit).toBe("cloak/ruined");
+
+    // mergeLook moves decoupled faceSheet / outfitSheet / headwear into the plain look.
+    expect(mergeLook(file, "galileo/bloodied")).toBe(true);
+    const mergedGalileo = file.cast!.find((m) => m.id === "galileo")!;
+    expect(mergedGalileo).toMatchObject({
+      headwear: "face",
+      portrait: "galileo-bloodied-portrait",
+      faceSheet: "galileo-bloodied-face-360",
+      outfitSheet: "galileo-outfit-battle",
+    });
+    expect(mergedGalileo.faceSheets).toContain("galileo-face-360");
+    expect(mergedGalileo.outfitSheets).toContain("galileo-outfit-clean");
   });
 });

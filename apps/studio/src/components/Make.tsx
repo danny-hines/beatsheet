@@ -560,7 +560,7 @@ function Board({ jobs, onCreate, retry }: { jobs: MakeJob[]; onCreate: (l: Creat
     for (const [memberId, g] of castMap) {
       const member = doc.cast?.find((m) => m.id === memberId);
       const sorted = [...g.assets].sort(newestAsset);
-      const chosenId = member?.sheet ?? member?.portrait ?? member?.images?.[0];
+      const chosenId = member?.sheet ?? member?.faceSheet ?? member?.outfitSheet ?? member?.portrait ?? member?.images?.[0];
       const hero = (chosenId ? sorted.find((a) => a.id === chosenId) : undefined) ?? sorted[0];
       const others = sorted.filter((a) => a.id !== hero?.id);
       const updatedAt = [hero?.provenance?.createdAt, sorted[0]?.provenance?.createdAt, g.going[0]?.createdAt].filter(Boolean).sort().at(-1) ?? "";
@@ -788,7 +788,15 @@ function BatchRow({ batch, onCreate, retry, nest }: { batch: Batch; onCreate: (l
   const j = batch.first;
   const r = j.request;
   const usd = batch.jobs.filter(counts).reduce((s, x) => s + (x.usd ?? 0), 0);
-  const kind = j.sheet ? `Sheet for @${j.sheet}` : j.op === "image" ? "Stills" : `${j.quality === "final" ? "Final" : "Rough"} clips`;
+  const sheetWord =
+    j.sheetKind === "face-sheet"
+      ? "360° face sheet for"
+      : j.sheetKind === "outfit-sheet"
+        ? "Outfit sheet for"
+        : j.sheetKind === "portrait" || j.portrait
+          ? "Portrait of"
+          : "Sheet for";
+  const kind = j.sheet ? `${sheetWord} @${j.sheet}` : j.op === "image" ? "Stills" : `${j.quality === "final" ? "Final" : "Rough"} clips`;
   const shot = j.shot && p.shots.some((s) => s.id === j.shot) ? j.shot : undefined;
   const member = j.sheet && p.cast?.some((m) => m.id === j.sheet!.split("/")[0]) ? j.sheet.split("/")[0] : undefined;
   const where = j.shot ? (shot ? "" : `for shot ${j.shot} (gone)`) : j.sheet ? "" : "for the Library";
@@ -796,7 +804,7 @@ function BatchRow({ batch, onCreate, retry, nest }: { batch: Batch; onCreate: (l
   return (
     <div className="batch">
       <div className="batch-head">
-        <strong className="small">{member ? (j.portrait ? "Portrait of" : "Sheet for") : kind}</strong>
+        <strong className="small">{member ? sheetWord : kind}</strong>
         {shot && (
           <button className="link small" onClick={() => actions.select({ kind: "shot", id: shot })} title="Open the shot">
             for shot {shot}

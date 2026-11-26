@@ -1300,9 +1300,12 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .look-head .nowrap { white-space: nowrap; }
 /* A character's look in steps (CastSteps.tsx): face, wardrobe, portrait, sheet, each numbered and ticked once done. */
 .cast-steps { display: flex; flex-direction: column; gap: 4px; }
-.cast-gets { padding: 4px 8px; border-radius: var(--r-2); background: var(--raised); }
-.cast-step { display: flex; flex-direction: column; gap: 4px; padding: 8px 0 4px; border-top: 1px solid var(--line); }
-.cast-step-head { display: flex; align-items: center; gap: 8px; }
+.cast-gets { padding: 6px 10px; border-radius: var(--r-2); background: var(--raised); line-height: 1.4; }
+.cast-step { display: flex; flex-direction: column; gap: 6px; padding: 8px 0 4px; border-top: 1px solid var(--line); }
+.cast-step-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cast-step-sub { margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--line); display: flex; flex-direction: column; gap: 6px; }
+.cast-wardrobe-link { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cast-wardrobe-link select { flex: 1; min-width: 140px; }
 .cast-step-n { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; font-size: var(--t-2); background: var(--raised); color: var(--dim); }
 .cast-step-n.done { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good); }
 .cast-step-title { font-weight: 600; }

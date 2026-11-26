@@ -30,7 +30,7 @@ import { narrate } from "./narrate.ts";
 import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
-import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, startPicked, turnBudget, type MakeAsk } from "./make.ts";
+import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, startPicked, turnBudget, type MakeAsk, type SheetKind } from "./make.ts";
 import { prepareMake } from "./prepare.ts";
 import { codeRoot, compileScene, sceneFile } from "./scenes.ts";
 import { SFX_DIR } from "./sounds.ts";
@@ -673,6 +673,14 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
             ? { camera: { cut: keeps, ...(cameraShots?.length ? { shots: cameraShots } : {}), ...(cameraMode ? { mode: cameraMode } : {}) } }
             : {};
     try {
+      const sheetKindRaw = q.get("sheetKind");
+      const sheetKind =
+        sheetKindRaw === "portrait" || sheetKindRaw === "face-sheet" || sheetKindRaw === "outfit-sheet" || sheetKindRaw === "sheet"
+          ? (sheetKindRaw as SheetKind)
+          : undefined;
+      const castPackRaw = q.get("castPack");
+      const castPack =
+        castPackRaw === "split-360" || castPackRaw === "split-single" || castPackRaw === "combined" ? castPackRaw : undefined;
       return json(
         res,
         200,
@@ -681,7 +689,9 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           cut: q.get("cut") ?? undefined,
           shot: q.get("shot") ?? undefined,
           sheet: q.get("sheet") ?? undefined,
+          ...(sheetKind ? { sheetKind } : {}),
           ...(q.get("portrait") === "1" ? { portrait: true } : {}),
+          ...(castPack ? { castPack } : {}),
           start: q.get("start") ?? undefined,
           ...(q.get("end") === "none" ? { end: null } : q.get("end") ? { end: q.get("end")! } : {}),
           ...(refs?.length ? { refs } : {}),

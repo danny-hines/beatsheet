@@ -102,7 +102,7 @@ export function SubjectTools({
     if (!res.ok) setError(((await res.json()) as { error?: string }).error ?? "Couldn't join them");
   };
   // Someone found here into the cast: a new character (or prop), or more of one already there, with a still of them.
-  const cast = (useStore((s) => s.project?.cast) ?? []).filter((m) => m.kind !== "style");
+  const cast = (useStore((s) => s.project?.cast) ?? []).filter((m) => m.kind !== "style" && m.kind !== "wardrobe");
   const castAs = async (subject: string, into: string) => {
     setError("");
     setBusy({ what: "Making a still of them", progress: 0 });
@@ -112,7 +112,7 @@ export function SubjectTools({
       const j = (await res.json()) as { member?: string; voice?: string; error?: string };
       if (!j.member) throw new Error(j.error ?? "Couldn't add them to the cast");
       await actions.reload();
-      actions.select({ kind: "cast", id: j.member }, [], { inspect: true });
+      actions.openCast(j.member);
       // They were the one talking while on screen: their voice is theirs now too, here and in the other clips it's heard in.
       if (j.voice) {
         const m = getState().doc?.cast?.find((x) => x.id === j.member);

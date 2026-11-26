@@ -3,7 +3,7 @@
  * at the top of the Library. Right-click a photo to make one from it or add it to one; select one to name it,
  * describe it and make its sheet (clean views that models are given to match).
  */
-import type { MakeJob } from "@beatsheet/engine";
+import type { MakeJob, SheetKind } from "@beatsheet/engine";
 import { castOf, lookGiven, mergeLook, PICTURES_EACH, renameCast, speakerLabel, type Asset, type CastMember, type Project } from "@beatsheet/schema";
 import { useMemo, useState, type HTMLAttributes } from "react";
 import { hideBroken, posterUrl } from "../lib";
@@ -11,7 +11,7 @@ import { lineUp } from "../multicam";
 import { actions, getState, setState, useProject, useStore } from "../store";
 import { cost, Failed, fitLabel, fitOf, madeWith, modelLabel, money, useChoices, useMake, WhyNot } from "./Takes";
 import { Viewer } from "./Viewer";
-import { CharacterSteps, isOwnPhoto, Picture, PICTURE_DRAG } from "./CastSteps";
+import { CharacterSteps, isOwnPhoto, Picture, PICTURE_DRAG, WardrobeSteps } from "./CastSteps";
 import { PopMenu, TextField } from "./ui";
 import { VoicePicker } from "./Voices";
 import { Icon } from "./Icon";
@@ -19,14 +19,16 @@ import { Icon } from "./Icon";
 export type Kind = CastMember["kind"];
 export const KINDS: [Kind, string][] = [
   ["character", "Character"],
+  ["wardrobe", "Wardrobe"],
   ["place", "Set"],
   ["prop", "Prop"],
   ["style", "Style"],
 ];
-export const WORD: Record<Kind, string> = { character: "character", place: "set", prop: "prop", style: "style" };
+export const WORD: Record<Kind, string> = { character: "character", wardrobe: "wardrobe", place: "set", prop: "prop", style: "style" };
 /** What a description of each kind looks like: the specifics a model can draw. */
 const ABOUT_EXAMPLE: Record<Kind, string> = {
   character: "Woman in her forties, short curly gray hair, round tortoiseshell glasses, mustard cardigan, warm crooked smile",
+  wardrobe: "Heavy black Renaissance hooded inquisitor robe with silver clasp, leather belt, worn hem, matte white mask",
   place: "Narrow alley, wet brick, steam from a grate, one neon sign",
   prop: "Battered brass pocket watch, cracked face, initials engraved on the lid",
   style: "Hand-drawn 2D animation, clean ink lines, flat colors, soft shading",
@@ -40,25 +42,37 @@ const castIdFor = (name: string, taken: string[], fallback: string) => {
   return id;
 };
 /** The id a member gets before it has a name; naming it gives it one from the name. */
-const UNNAMED = /^(character|place|prop|style)(-\d+)?$/;
+const UNNAMED = /^(character|wardrobe|place|prop|style)(-\d+)?$/;
 
-/** Makes a cast member (from pictures, when there are some) and selects it, so its name can be typed straight away. */
+/** Makes a cast member (from pictures, when there are some) and opens it in Make → Cast & sets so creation always has full room. */
 export function newMember(kind: Kind, from: Asset[] = []) {
   let id = "";
   actions.edit((d) => {
     const cast = (d.cast ??= []);
     id = castIdFor("", cast.map((m) => m.id), kind);
-    cast.push({ id, name: "", kind, ...(from.length ? { seen: from.map((a) => ({ asset: a.id })) } : {}) });
+    cast.push({
+      id,
+      name: "",
+      kind,
+      ...(from.length
+        ? kind === "wardrobe"
+          ? { wardrobe: from.map((a) => a.id), seen: from.map((a) => ({ asset: a.id })) }
+          : { seen: from.map((a) => ({ asset: a.id })) }
+        : {}),
+    });
   });
-  actions.select({ kind: "cast", id }, [], { inspect: true });
+  actions.openCast(id);
 }
 
-/** Adds pictures to where a cast member is seen. */
+/** Adds pictures to where a cast member is seen (and for a wardrobe, straight to its wardrobe references). */
 function addTo(id: string, as: Asset[]) {
   actions.edit((d) => {
     const m = d.cast?.find((x) => x.id === id);
     if (!m) return;
-    for (const a of as) if (!m.seen?.some((s) => s.asset === a.id)) m.seen = [...(m.seen ?? []), { asset: a.id }];
+    for (const a of as) {
+      if (!m.seen?.some((s) => s.asset === a.id)) m.seen = [...(m.seen ?? []), { asset: a.id }];
+      if (m.kind === "wardrobe" && a.kind === "image" && !m.wardrobe?.includes(a.id)) m.wardrobe = [...(m.wardrobe ?? []), a.id];
+    }
   });
 }
 
@@ -142,9 +156,16 @@ export async function findCast() {
   actions.setSide("agent");
 }
 
-/** The picture that stands for a cast member: its chosen portrait (a look's when the plain one has none), else what it's given, else a photo it's seen in. */
+/** The picture that stands for a cast member: its chosen portrait, 360° face sheet, outfit sheet, combined sheet, or a photo it's seen in. */
 export const castPicture = (p: Project, m: CastMember): string | undefined =>
-  m.portrait ?? m.variants?.find((v) => v.portrait)?.portrait ?? m.sheet ?? m.images?.[0] ?? m.seen?.find((s) => p.assets.find((a) => a.id === s.asset)?.kind === "image")?.asset;
+  m.portrait ??
+  m.variants?.find((v) => v.portrait)?.portrait ??
+  m.faceSheet ??
+  m.outfitSheet ??
+  m.variants?.find((v) => v.outfitSheet)?.outfitSheet ??
+  m.sheet ??
+  m.images?.[0] ??
+  m.seen?.find((s) => p.assets.find((a) => a.id === s.asset)?.kind === "image")?.asset;
 
 /** How many of this cut's shots to make name a cast member, in any of its looks. */
 export const shotsWith = (p: Project, id: string): number => [...shotsPerLook(p, id).values()].reduce((a, b) => a + b, 0);
@@ -175,7 +196,7 @@ export function CastList() {
       {cast.map((m) => {
         const pic = castPicture(p, m);
         return (
-          <button key={m.id} className={`asset-row cast-row ${selection?.kind === "cast" && selection.id === m.id ? "sel" : ""}`} onClick={() => actions.select({ kind: "cast", id: m.id }, [], { inspect: true })}>
+          <button key={m.id} className={`asset-row cast-row ${selection?.kind === "cast" && selection.id === m.id ? "sel" : ""}`} onClick={() => actions.openCast(m.id)}>
             <span className="asset-row-thumb">
               {pic ? <img src={posterUrl(projectId, pic)} loading="lazy" alt="" onError={hideBroken} /> : <span className="asset-row-note">{label(m)[0]!.toUpperCase()}</span>}
             </span>
@@ -184,7 +205,7 @@ export function CastList() {
               <span className="asset-row-meta small">
                 <span className="mono">@{m.id}</span>
                 <span className="tag">{WORD[m.kind]}</span>
-                {![m, ...(m.variants ?? [])].some((l) => lookGiven(l).length) && <span className="dim">no pictures</span>}
+                {![m, ...(m.variants ?? [])].some((l) => lookGiven(l).length || l.outfit) && <span className="dim">no pictures</span>}
               </span>
             </span>
           </button>
@@ -230,6 +251,9 @@ export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: nu
           <button role="menuitem" onClick={pick(() => newMember("character", photos))}>
             Make a character from {these}
           </button>
+          <button role="menuitem" onClick={pick(() => newMember("wardrobe", photos))}>
+            Make a wardrobe from {these}
+          </button>
           <button role="menuitem" onClick={pick(() => newMember("place", photos))}>
             Make a set from {these}
           </button>
@@ -267,9 +291,9 @@ export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: nu
 
 /** A cast member's plain look, as its looks name it; the others are its variants' ids. */
 const PLAIN = "";
-const PLAIN_LABEL: Record<Kind, string> = { character: "Plain", place: "As it is", prop: "Plain", style: "" };
+const PLAIN_LABEL: Record<Kind, string> = { character: "Plain", wardrobe: "Clean", place: "As it is", prop: "Plain", style: "" };
 /** What making pictures of a cast member is called, by kind. */
-const MAKE_WORD: Record<Kind, string> = { character: "Make sheets", place: "Make views", prop: "Make sheets", style: "Make stills" };
+const MAKE_WORD: Record<Kind, string> = { character: "Make sheets", wardrobe: "Make outfit sheet", place: "Make views", prop: "Make sheets", style: "Make stills" };
 
 
 /** How many of this cut's made shots name each of a cast member's looks (PLAIN for the plain one). */
@@ -311,7 +335,7 @@ function CastPanel({ id }: { id: string }) {
   const look = lookAsked !== undefined && looks.includes(lookAsked) ? lookAsked : looks.reduce((best, l) => ((perLook.get(l) ?? 0) > (perLook.get(best) ?? 0) ? l : best), PLAIN);
   const sheet = look ? `${id}/${look}` : id;
   const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
-  const { choices, problem } = useChoices({ op: "image", sheet, count });
+  const { choices, problem } = useChoices({ op: "image", sheet, count, ...(m?.kind === "wardrobe" ? { sheetKind: "outfit-sheet" } : {}) });
   const ready = choices?.ready ?? [];
   const picked = (models ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => ready.some((f) => f.model === x));
   const fits = picked.map((x) => fitOf(choices, x)!);
@@ -402,15 +426,15 @@ function CastPanel({ id }: { id: string }) {
     actions.edit((d) => void (d.cast = d.cast!.filter((x) => x.id !== id)));
     actions.select(undefined);
   };
-  const makeIt = (portrait: boolean) => {
-    const ask = { op: "image" as const, sheet, count, ...(portrait ? { portrait: true } : {}) };
+  const makeIt = (sheetKind: SheetKind) => {
+    const ask = { op: "image" as const, sheet, sheetKind, count, ...(sheetKind === "portrait" ? { portrait: true } : {}) };
     void make(models ? picked.map((model) => ({ ...ask, model })) : ask);
   };
 
   const footage = (m.seen ?? []).map((s) => p.assets.find((a) => a.id === s.asset)).filter((a): a is Asset => !!a);
   const photos = footage.filter((a) => a.kind === "image");
   const clips = footage.length - photos.length;
-  const canMake = !!(m.about || m.wears || variant?.about || photos.length || given.length || borrowed?.length);
+  const canMake = !!(m.about || m.wears || m.outfit || variant?.about || variant?.outfit || m.outfitSheet || m.faceSheet || photos.length || given.length || borrowed?.length);
   const nShots = perLook.get(look) ?? 0;
   const lookName = variant ? `@${id}/${variant.id}` : `@${id}`;
   // Where what's made comes from, said once, under the buttons.
@@ -491,6 +515,19 @@ function CastPanel({ id }: { id: string }) {
             edit={edit}
             describe={describeLink}
           />
+        ) : m.kind === "wardrobe" ? (
+          <WardrobeSteps
+            key={look}
+            projectId={projectId}
+            member={m}
+            variant={variant}
+            plainLabel={PLAIN_LABEL[m.kind]}
+            going={going.filter((j) => j.sheet === sheet)}
+            canMake={!!picked.length && !sending}
+            onMake={makeIt}
+            edit={edit}
+            describe={describeLink}
+          />
         ) : (
           <>
             <label>
@@ -522,7 +559,7 @@ function CastPanel({ id }: { id: string }) {
               onMoveTo={moveToLook}
             />
             <div className="make-row">
-              <button className="primary" disabled={!picked.length || sending || !canMake} onClick={() => makeIt(false)}>
+              <button className="primary" disabled={!picked.length || sending || !canMake} onClick={() => makeIt("sheet")}>
                 {MAKE_WORD[m.kind]}
               </button>
             </div>
@@ -553,14 +590,28 @@ function CastPanel({ id }: { id: string }) {
             );
           })}
         </details>
-        {m.kind !== "character" && (
+        {m.kind !== "character" && m.kind !== "wardrobe" && (
           <p className="dim small">
             {sources}. New ones wait in Kept until you drag one into a slot{given.length ? "" : " (the first goes into slot 1)"}.
           </p>
         )}
         <WhyNot choices={choices} />
         {(error || problem) && <p className="warn small">{error || problem}</p>}
-        {failed && !error && <Failed job={failed} what={failed.portrait ? "A portrait" : "A sheet"} retry={(j) => void retry(j)} />}
+        {failed && !error && (
+          <Failed
+            job={failed}
+            what={
+              failed.sheetKind === "face-sheet"
+                ? "A 360° face sheet"
+                : failed.sheetKind === "outfit-sheet"
+                  ? "An outfit sheet"
+                  : failed.sheetKind === "portrait" || failed.portrait
+                    ? "A portrait"
+                    : "A sheet"
+            }
+            retry={(j) => void retry(j)}
+          />
+        )}
         {variant && (
           <p className="small">
             <button

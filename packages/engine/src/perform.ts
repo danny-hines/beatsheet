@@ -207,7 +207,7 @@ export function performPlan(projectId: string, opts: PerformOpts) {
     const uses = castOf("", project.cast, [clean]);
     if (!uses.length) throw new Error(`No cast member "@${clean}"`);
     if (!castIds.includes(clean)) castIds.push(clean);
-    for (const p of castPictures(uses)) if (!refs.includes(p.asset)) refs.push(p.asset);
+    for (const p of castPictures(uses, { cast: project.cast })) if (!refs.includes(p.asset)) refs.push(p.asset);
     targetLabel = uses[0]!.member.name;
   }
   if (!refs.length) {

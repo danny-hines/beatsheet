@@ -10,15 +10,24 @@ import { castPicture, CastView, findCast, KINDS, label, newMember, shotsWith, WO
 import { PopMenu } from "./ui";
 import { Icon } from "./Icon";
 
-const PLURAL: Record<Kind, string> = { character: "Characters", place: "Sets", prop: "Props", style: "Styles" };
+const PLURAL: Record<Kind, string> = { character: "Characters", wardrobe: "Wardrobes", place: "Sets", prop: "Props", style: "Styles" };
 
 /** What a cast member still needs before models can keep it the same, if anything. */
 function needs(m: CastMember): string | undefined {
   if (m.kind === "style") return m.about ? undefined : "No description yet";
   const looks = [m, ...(m.variants ?? [])];
-  const pictured = looks.some((l) => l.sheet || l.portrait || l.images?.length);
+  if (m.kind === "wardrobe") {
+    if (looks.some((l) => l.outfitSheet || l.images?.length)) return undefined;
+    return m.about ? "Described, no outfit sheet yet" : "Nothing yet";
+  }
+  const pictured = looks.some((l) => l.sheet || l.faceSheet || l.outfitSheet || l.portrait || l.images?.length);
   if (!pictured) return m.seen?.length ? "Photos, no portrait or sheet yet" : m.about ? "Described, no pictures yet" : "Nothing yet";
-  if (m.kind === "character" && !looks.some((l) => l.sheet)) return "No sheet yet";
+  if (m.kind === "character") {
+    const hasLegacy = looks.some((l) => l.sheet);
+    const hasFace = looks.some((l) => l.faceSheet || l.portrait);
+    const hasOutfit = looks.some((l) => l.outfitSheet || l.outfit);
+    if (!hasLegacy && !(hasFace && hasOutfit)) return hasFace ? "No outfit sheet yet" : "No sheet yet";
+  }
   return undefined;
 }
 

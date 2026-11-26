@@ -19,6 +19,7 @@ import {
   cameraOnShot,
   CATALOG,
   castOf,
+  castPackFor,
   castPictures,
   castRenaming,
   lookAssets,
@@ -34,10 +35,12 @@ import {
   isCameraSheet,
   missingFromFrames,
   OWN_HARDWARE,
+  packCastPictures,
   preferredOf,
   providersOf,
   realPeople,
   resolveTimeline,
+  resolveWardrobe,
   shapeOf,
   shotNeeds,
   speechOnShot,
@@ -48,12 +51,15 @@ import {
   type AudioRefRole,
   type Camera,
   type CastMember,
+  type CastPackStrategy,
   type Choices,
   type CutStretch,
   type Drive,
   type FitOk,
+  type HeadwearMode,
   type MakeOp,
   type MakeRequest,
+  type PackedRef,
   type PlannedTake,
   type Project,
   type Quality,
@@ -113,9 +119,12 @@ import { replaceFile } from "./platform.ts";
 import { probe } from "./probe.ts";
 import { SERVICES } from "./services.ts";
 import { ledgerSince } from "./spend.ts";
-import { refFile } from "./refcut.ts";
+import { packedRefAssets, resolvePackedRef } from "./castpack.ts";
 import { getSecret, readSettings, updateSettings } from "./settings.ts";
 import { listProjects, loadFile, loadProject, updateFile, updateProject } from "./store.ts";
+
+/** Which kind of cast reference still a sheet job makes. */
+export type SheetKind = "portrait" | "face-sheet" | "outfit-sheet" | "sheet";
 
 export type MakeJob = {
   id: string;
@@ -125,7 +134,9 @@ export type MakeJob = {
   shot?: string;
   /** The cast member (or variant) it's a sheet for. */
   sheet?: string;
-  /** A portrait of them rather than a sheet. */
+  /** Which kind of cast picture it's making (portrait, 360° face sheet, headless outfit turnaround, or legacy combined sheet). */
+  sheetKind?: SheetKind;
+  /** Legacy flag: true when making a portrait rather than a sheet. */
   portrait?: true;
   op: MakeOp;
   quality?: Quality;
@@ -145,6 +156,8 @@ export type MakeJob = {
     start?: string;
     end?: string;
     refs?: string[];
+    /** Model-packed reference slots (direct assets or procedural face+outfit composites). */
+    packedRefs?: PackedRef[];
     /** The stretch of a clip a take that copies movement follows (the take is made a little wider where the clip has room: driveWindow). */
     drive?: Drive;
     /** What a take that lip-syncs says, and the clip whose mouths it changes, when it changes one (both widened together: speechWindow). */
@@ -357,10 +370,16 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
   /** A cast member (or variant: cat/heist) it's a sheet for: the stills join its pictures. */
   sheet?: string;
   /**
-   * With `sheet`, for a character: a head-and-shoulders portrait instead, from their own photos when they have some.
-   * It settles how the face looks (in a variant's fake beard, hat or makeup) before the sheet is made from it.
+   * With `sheet`: which kind of cast sheet to make ("portrait", "face-sheet" for a 360° 6-panel face turnaround,
+   * "outfit-sheet" for a headless/ghost-mannequin front+back outfit turnaround, or "sheet" for a combined sheet).
+   */
+  sheetKind?: SheetKind;
+  /**
+   * With `sheet`, for a character: a head-and-shoulders portrait instead (shorthand for `sheetKind: "portrait"`).
    */
   portrait?: boolean;
+  /** Optional override for how decoupled character face + outfit ingredients are packaged for the model. */
+  castPack?: CastPackStrategy;
   /** Cast and sets in it beyond the ones the prompt names. */
   cast?: string[];
   /** Asset id of the picture a clip starts from, or "board": the shot's chosen still. */
@@ -415,14 +434,34 @@ export type FullRequest = MakeRequest & {
   absent?: string[];
 };
 
+/** Resolves which kind of cast reference still a `sheet` request asks for. */
+function effectiveSheetKind(member: CastMember, ask: Pick<MakeAsk, "sheetKind" | "portrait">): SheetKind {
+  if (ask.sheetKind) return ask.sheetKind;
+  if (ask.portrait) return "portrait";
+  if (member.kind === "wardrobe") return "outfit-sheet";
+  return "sheet";
+}
+
 /**
- * The prompt a sheet is made from when none is given: clean views of one cast member, to give models later, in its
- * style (its own, else the look's). Without a style, a photograph, said in so many words: "reference sheet" alone
- * gets a drawing, and the boards made from a drawn sheet come out drawn too. A character's sheet shows the face once:
- * a close-up, then the body front (cropped at the neck) and back, so a model isn't given several faces to choose
- * between. A portrait is the face alone, in whatever the character wears on it.
+ * The prompt a cast sheet is made from when none is given: clean views of one cast member, to give models later, in
+ * its style (its own, else the look's). Without a style, a photograph, said in so many words: "reference sheet" alone
+ * gets a drawing, and the boards made from a drawn sheet come out drawn too.
+ *
+ * - `"portrait"`: head-and-shoulders frontal shot to lock likeness first.
+ * - `"face-sheet"`: 360° symmetrical 3×2 six-panel face turnaround (profiles, front, 3/4 views, back of head) on
+ *   neutral mid-gray — bare neck/shoulders unless `headwear === "face"`.
+ * - `"outfit-sheet"`: headless (or ghost-mannequin when `headwear === "ghost"`) full-body front + back turnaround on
+ *   neutral mid-gray, with zero real-person face in frame.
+ * - `"sheet"`: legacy 3-panel combined character sheet (close-up face, front body cropped at neck, back view).
  */
-function sheetPrompt(member: CastMember, id: string, style: string | undefined, portrait = false): string {
+function sheetPrompt(
+  member: CastMember,
+  id: string,
+  style: string | undefined,
+  kind: SheetKind,
+  variant?: NonNullable<CastMember["variants"]>[number],
+  allCast?: CastMember[],
+): string {
   if (member.kind === "style") return `A single still that shows the look of @${id}.`;
   if (member.kind === "place")
     return style
@@ -432,10 +471,49 @@ function sheetPrompt(member: CastMember, id: string, style: string | undefined, 
     return style
       ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
       : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
-  if (portrait)
+
+  const headwear: HeadwearMode | undefined =
+    variant?.headwear ?? member.headwear ?? (member.kind === "character" ? resolveWardrobe(variant?.outfit ?? member.outfit, allCast)?.headwear : undefined);
+
+  if (kind === "outfit-sheet" || member.kind === "wardrobe") {
+    const linkedAbout = member.kind === "character" ? resolveWardrobe(variant?.outfit ?? member.outfit, allCast)?.about : undefined;
+    const outfitDesc =
+      member.kind === "wardrobe"
+        ? [member.about, member.wears, variant?.about].filter(Boolean).join("; ")
+        : [member.wears, linkedAbout, variant?.about].filter(Boolean).join("; ");
+    const subject = outfitDesc ? `the outfit (${outfitDesc})` : `the outfit for ${member.name || member.id}`;
+    const headClause =
+      headwear === "ghost"
+        ? "The costume includes its headwear (hat, hood, veil, helmet or mask) holding its natural 3D shape in position above the collar over an empty neutral-gray void — completely faceless with no head, no mannequin and no skin inside."
+        : "Displayed as a standalone costume on an invisible ghost mannequin: completely headless, the collar ends cleanly at the neck with empty neutral-gray background above it, no head, no face and no skin.";
+    const layout = `a two-panel turnaround sheet arranged side by side against a seamless neutral mid-gray studio background: left panel shows a full-body frontal view in a neutral standing pose; right panel shows a full-body rear view (back profile) in the identical neutral standing pose. ${headClause}`;
+    return style
+      ? `An outfit turnaround sheet of ${subject}: ${layout} Nothing else in the picture and no text or labels, in the style of @${style}.`
+      : `A photographic outfit turnaround sheet of ${subject}: ${layout} Soft even studio light, realistic fabric and textures, photographed rather than drawn, nothing else in the picture and no text or labels.`;
+  }
+
+  if (kind === "face-sheet") {
+    const faceWear =
+      headwear === "face"
+        ? ", keeping anything worn directly on the head or face consistently across every angle"
+        : ", bare neck and shoulders with no clothes or headwear";
+    const grid = `presented as a single, perfectly symmetrical 3x2 grid (three columns, two rows) of six identical-sized head-and-shoulders panels separated by thin clean dark gutter lines against a seamless neutral mid-gray studio background, neutral relaxed expression${faceWear}. Top row left: full left side profile; top row middle: direct frontal view facing the camera; top row right: full right side profile; bottom row left: left three-quarter view; bottom row middle: direct back of head view; bottom row right: right three-quarter view. Identical hair, skin, features and proportions across all six panels`;
+    return style
+      ? `A 360-degree multi-panel character face study of @${id}, ${grid}. Nothing else in the picture and no text or labels, in the style of @${style}.`
+      : `A hyper-realistic multi-panel photographic character face study of @${id}, ${grid}. Soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+  }
+
+  if (kind === "portrait") {
+    if (headwear === "none" || headwear === "ghost") {
+      return style
+        ? `A head-and-shoulders portrait of @${id} facing the camera with a neutral relaxed expression, bare neck and shoulders, no hat or costume on the head, on a plain neutral mid-gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
+        : `A photographic head-and-shoulders portrait of @${id} facing the camera with a neutral relaxed expression, bare neck and shoulders, no hat or costume on the head, on a plain neutral mid-gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+    }
     return style
       ? `A head-and-shoulders portrait of @${id} facing the camera, with anything worn on the head or face, on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
       : `A photographic head-and-shoulders portrait of @${id} facing the camera, with anything worn on the head or face, on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+  }
+
   const panels =
     "in three panels side by side on a plain light gray background: a close-up of the head and face, with anything worn on them; a full-length front view cropped at the neck, so the face shows only once; and a full-length back view";
   return style
@@ -453,27 +531,87 @@ function ownPhotos(project: Project, member: CastMember): string[] {
 }
 
 /**
- * What a character's portrait or sheet is made from, in order, and the words that say which picture is which. The
- * face comes first: for a portrait, the look's face photos (by default the person's own photos, or for a variant the
- * plain look's chosen picture, so a face already settled stays settled); for a sheet, the look's chosen portrait (or
- * the plain one's). Then the pictures of what it wears, and the style's picture when there's room.
+ * What a character's or wardrobe's portrait, 360° face sheet, outfit turnaround, or combined sheet is made from, in
+ * order, and the words that say which picture is which.
  */
-function lookRefs(project: Project, member: CastMember, variantId: string | undefined, portrait: boolean, pictures: number, styled: string | undefined): { refs: string[]; words: string } {
+function lookRefs(
+  project: Project,
+  member: CastMember,
+  variantId: string | undefined,
+  kind: SheetKind,
+  pictures: number,
+  styled: string | undefined,
+): { refs: string[]; words: string } {
   const variant = variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   const look = variant ?? member;
   const asset = (id: string | undefined) => (id ? project.assets.find((a) => a.id === id && a.kind === "image") : undefined);
-  const settled = variant ? [member.portrait, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
+  const stylePic = styled ? project.cast?.find((m) => m.id === styled)?.images?.[0] : undefined;
+  const who = member.name || member.id;
+
+  if (kind === "outfit-sheet" || member.kind === "wardrobe") {
+    // Outfit turnarounds NEVER pull in face photos: clean garments only (and for variants, edit directly from the base outfitSheet!).
+    const baseOutfit = variant ? [member.outfitSheet, member.sheet].find(asset) : undefined;
+    const rawWardrobe = (
+      variant
+        ? (variant.wardrobe?.length ? variant.wardrobe : baseOutfit ? [] : (member.wardrobe ?? []))
+        : (member.wardrobe?.length ? member.wardrobe : member.kind === "wardrobe" ? ownPhotos(project, member) : [])
+    ).filter(asset);
+    const baseList = baseOutfit ? [baseOutfit] : [];
+    const room = Math.max(0, pictures - baseList.length - (stylePic ? 1 : 0));
+    const w = rawWardrobe.filter((id) => id !== baseOutfit).slice(0, room);
+    const withStyle = !!stylePic && baseList.length + w.length < pictures;
+    const words: string[] = [];
+    if (baseOutfit) {
+      words.push("The first reference picture is the base outfit turnaround sheet: keep the exact same garments, seams, silhouette, neutral standing pose and neutral gray background, changing only what is different in this look.");
+    }
+    if (w.length) {
+      words.push(
+        `The ${baseOutfit ? "next" : "first"} ${w.length === 1 ? "reference picture shows" : `${w.length} reference pictures show`} the clothes to turn into a clean turnaround: copy the garments, colors, patterns and fit exactly, and take nothing else from ${w.length === 1 ? "it" : "them"}, not a face and not a place.`,
+      );
+    }
+    if (withStyle) words.push("The last reference picture shows the style to draw it in, not who or what it is.");
+    return { refs: [...baseList, ...w, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
+  }
+
+  if (kind === "face-sheet") {
+    // 360° face turnaround: anchor on the chosen portrait (or base faceSheet for a variant), plus extra raw face photos
+    // from other angles when available so side/3/4 geometry is grounded in reality. Never pull in wardrobe photos!
+    const settled = variant ? [member.faceSheet, member.portrait, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
+    const anchor = [look.portrait, settled].find(asset);
+    const extraFaces = (look.faces ?? (variant ? [] : ownPhotos(project, member))).filter((id) => asset(id) && id !== anchor);
+    const maxFaces = Math.max(1, pictures - (stylePic ? 1 : 0));
+    const faces = [...(anchor ? [anchor] : []), ...extraFaces].slice(0, maxFaces);
+    const withStyle = !!stylePic && faces.length < pictures;
+    const words: string[] = [];
+    if (anchor) {
+      const role = [look.faceSheet, member.faceSheet].includes(anchor) ? "360-degree face sheet" : [look.portrait, member.portrait].includes(anchor) ? "portrait" : "sheet";
+      if (faces.length > 1) {
+        words.push(
+          `The first reference picture is ${who}'s chosen ${role}, and the next ${faces.length - 1 === 1 ? "picture is another photo" : `${faces.length - 1} pictures are additional photos`} of ${who} from other angles: keep ${who}'s exact face, hair, skin, bone structure and proportions across all six panels.`,
+        );
+      } else {
+        words.push(`The first reference picture is ${who}'s chosen ${role}: keep ${who}'s exact face, hair, skin and features across all six panels.`);
+      }
+    } else if (faces.length) {
+      words.push(`The reference photos show ${who}: keep ${who}'s exact face, hair, skin, features and proportions across all six panels.`);
+    }
+    if (withStyle) words.push("The last reference picture shows the style to draw it in, not who or what it is.");
+    return { refs: [...faces, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
+  }
+
+  const portrait = kind === "portrait";
+  const headwear: HeadwearMode | undefined = variant?.headwear ?? member.headwear;
+  const barePortrait = portrait && (headwear === "none" || headwear === "ghost");
+  const settled = variant ? [member.portrait, member.faceSheet, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
   const chosen = portrait ? undefined : [look.portrait, settled].find(asset);
   const faces = (chosen ? [chosen] : (look.faces ?? (portrait && settled ? [settled] : ownPhotos(project, member)))).filter(asset);
-  const wardrobe = ((variant?.wardrobe?.length ? variant.wardrobe : member.wardrobe) ?? []).filter(asset);
-  const stylePic = styled ? project.cast?.find((m) => m.id === styled)?.images?.[0] : undefined;
+  const wardrobe = barePortrait ? [] : ((variant?.wardrobe?.length ? variant.wardrobe : member.wardrobe) ?? []).filter(asset);
   const w = wardrobe.slice(0, Math.max(0, pictures - 1));
   const f = faces.slice(0, Math.max(1, pictures - w.length - (stylePic ? 1 : 0)));
   const withStyle = !!stylePic && f.length + w.length < pictures;
-  const who = member.name;
   const words: string[] = [];
   // Named by its role, not its tags: a photo brought in can be tagged "portrait" for its shape.
-  const made = !f[0] ? undefined : [look.portrait, member.portrait].includes(f[0]) ? "portrait" : [look.sheet, member.sheet].includes(f[0]) ? "sheet" : undefined;
+  const made = !f[0] ? undefined : [look.portrait, member.portrait].includes(f[0]) ? "portrait" : [look.faceSheet, member.faceSheet].includes(f[0]) ? "360-degree face sheet" : [look.sheet, member.sheet].includes(f[0]) ? "sheet" : undefined;
   if (made) words.push(`The first reference picture is ${who}'s chosen ${made}: keep ${who}'s face, hair and features exactly.`);
   else if (f.length)
     words.push(
@@ -499,29 +637,40 @@ function boardOf(project: Project, shot: Shot | undefined): string | undefined {
   return c.refs?.find(isImg) ?? [...(c.takes ?? [])].reverse().find(isImg);
 }
 
+/** Options controlling how `requestFor` packs cast references for a target model. */
+export type RequestPackOpts = { pictures?: number; strategy?: CastPackStrategy; videoAutoRefs?: boolean };
+
 /**
  * The request in full. A shot fills in its length (for video), the cut's shape and its description; a sheet, a
- * prompt for clean views of its cast member, and a portrait one for its face. Cast named with @ are described in what
- * the model reads, and stills are given their pictures (a character's portrait and sheet, its look's face and wardrobe,
- * as lookRefs says; anything else's sheet with no pictures yet, the photos it was made from; either, its style's
- * picture when there's room): as many as `pictures`, which is what every still model takes until one is picked. A clip
- * from a board doesn't need them: they're in the board.
+ * prompt for clean views of its cast member (portrait, 360° face turnaround, headless outfit turnaround, or combined
+ * sheet). Cast named with @ are described in what the model reads, and stills (plus reference-to-video / camera-blockout
+ * requests without a start frame) receive their cast pictures packaged for the target model's strategy and ref budget.
  */
-export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestStillRefs(CATALOG)): FullRequest {
+export function requestFor(projectId: string, ask: MakeAsk, pack: number | RequestPackOpts = fewestStillRefs(CATALOG)): FullRequest {
+  const pictures = typeof pack === "number" ? pack : (pack.pictures ?? fewestStillRefs(CATALOG));
+  const strategy: CastPackStrategy = (typeof pack === "number" ? undefined : pack.strategy) ?? ask.castPack ?? "split-360";
+  const videoAutoRefs = typeof pack === "number" ? false : !!pack.videoAutoRefs;
+
   const { project } = loadProject(projectId, ask.cut);
   const shot = ask.shot ? project.shots.find((s) => s.id === ask.shot) : undefined;
   if (ask.shot && !shot) throw new Error(`No shot "${ask.shot}" in this cut`);
   const [castId, variantId] = (ask.sheet ?? "").split("/");
   const member = ask.sheet ? project.cast?.find((m) => m.id === castId) : undefined;
   if (ask.sheet && (!member || (variantId && !member.variants?.some((v) => v.id === variantId)))) throw new Error(`No cast member "${ask.sheet}"`);
-  const portrait = !!member && !!ask.portrait;
-  if (portrait && member.kind !== "character") throw new Error(`A portrait is of a character; @${castId} is a ${member.kind}`);
+  const sheetKind = member ? effectiveSheetKind(member, ask) : undefined;
+  if (member && (sheetKind === "portrait" || sheetKind === "face-sheet") && member.kind !== "character") {
+    throw new Error(`A ${sheetKind === "portrait" ? "portrait" : "face sheet"} is of a character; @${castId} is a ${member.kind}`);
+  }
+  if (member && sheetKind === "outfit-sheet" && member.kind !== "character" && member.kind !== "wardrobe") {
+    throw new Error(`An outfit sheet is of a character or wardrobe; @${castId} is a ${member.kind}`);
+  }
+  const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   const needs = shot ? shotNeeds(project, shot.id, ask.op) : undefined;
   const format = project.formats[0]!;
   // The style made shots are drawn in; a sheet takes its member's own when it has one, and names it in its prompt.
   const style = (id: string | undefined) => (id && project.cast?.some((m) => m.id === id && m.kind === "style") ? id : undefined);
   const lookStyle = style(project.look?.style);
-  const prompt = (ask.prompt ?? needs?.prompt ?? (member ? sheetPrompt(member, ask.sheet!, style(member.style) ?? lookStyle, portrait) : "")).trim();
+  const prompt = (ask.prompt ?? needs?.prompt ?? (member ? sheetPrompt(member, ask.sheet!, style(member.style) ?? lookStyle, sheetKind!, variant, project.cast) : "")).trim();
   const shotCast = shot?.content.kind === "generated" ? (shot.content.cast ?? []) : [];
   const uses = castOf(prompt, project.cast, [...(ask.cast ?? []), ...shotCast, ...(!member && lookStyle ? [lookStyle] : [])]);
   const start = ask.start === "board" ? boardOf(project, shot) : ask.start;
@@ -547,20 +696,36 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
       : undefined;
 
   let refs = ask.refs?.length ? ask.refs : undefined;
+  let packedRefs: PackedRef[] | undefined;
   // One that keeps a clip's camera or uses reference audio runs on reference-to-video, so a start frame goes first among its refs.
   if ((camera || audioRefs?.length) && start) refs = [...new Set([start, ...(refs ?? [])])];
-  let sent = castPrompt(prompt, uses);
-  if (!refs && ask.op === "image" && member?.kind === "character") {
-    // A character's portrait and sheet come from its look's steps: the face, then the wardrobe.
-    const made = lookRefs(project, member, variantId, portrait, pictures, style(member.style) ?? lookStyle);
+
+  // For a bare 360° face sheet or bare portrait (headwear !== "face"), scrub body clothing from the @mention expansion
+  // so the face study stays collarless/unclothed rather than dressing the portrait.
+  const memberHeadwear = member ? (variant?.headwear ?? member.headwear) : undefined;
+  const bareFaceSheet = !!member && (sheetKind === "face-sheet" || (sheetKind === "portrait" && (memberHeadwear === "none" || memberHeadwear === "ghost"))) && memberHeadwear !== "face";
+  const promptUses = bareFaceSheet
+    ? uses.map((u) =>
+        u.member.id === member!.id
+          ? { ...u, member: { ...u.member, wears: undefined, outfit: undefined }, ...(u.variant ? { variant: { ...u.variant, outfit: undefined } } : {}) }
+          : u,
+      )
+    : uses;
+  let sent = castPrompt(prompt, promptUses, [], project.cast);
+
+  if (!refs && ask.op === "image" && member && (member.kind === "character" || member.kind === "wardrobe")) {
+    // A character's portrait, 360° face sheet, outfit turnaround, or combined sheet comes from its look's steps.
+    const made = lookRefs(project, member, variantId, sheetKind!, pictures, style(member.style) ?? lookStyle);
     if (made.refs.length) {
       refs = made.refs;
       sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${made.words}`;
     }
-  } else if (!refs && ask.op === "image") {
-    // A sheet with no pictures yet starts from the photos it was made from.
+  } else if (!refs && (ask.op === "image" || (ask.op === "video" && videoAutoRefs && !start && !clip && !drive && !speech))) {
+    // A non-character sheet with no pictures yet starts from the photos it was made from.
     const photos =
-      member && !member.images?.length ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image") : [];
+      ask.op === "image" && member && !member.images?.length
+        ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image")
+        : [];
     if (photos.length) {
       // A style's picture goes last, when there's room for it after the photos.
       const styled = style(member!.style) ?? lookStyle;
@@ -575,22 +740,46 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
         sent += " The last reference picture shows the style to draw it in, not who or what it is.";
       }
     } else {
-      // As many pictures as the model takes, characters first; the rest are described in words.
-      const pictured = castPictures(uses, pictures);
+      // Package cast references for the model's strategy and ref cap (separate face + outfit, single face + outfit, or procedural composite).
+      const pictured = packCastPictures(uses, { max: pictures, strategy, cast: project.cast });
       if (pictured.length) {
-        refs = pictured.map((p) => p.asset);
-        sent = castPrompt(prompt, uses, pictured.map((p) => p.use));
+        packedRefs = pictured.map((p): PackedRef =>
+          p.composite
+            ? { kind: "composite", face: p.composite.face, outfit: p.composite.outfit, mode: p.composite.mode, role: "composite", label: `${p.use.member.name} (face + outfit)` }
+            : { kind: "asset", asset: p.asset, role: p.role, label: p.use.member.name },
+        );
+        refs = packedRefAssets(packedRefs);
+        sent = castPrompt(prompt, uses, pictured, project.cast, { refOffset: isCameraSheet(camera) ? 1 : 0 });
         // Given a sheet of views, a model can copy its layout and give back a grid of the scene (Muse Image did).
-        if (!member) sent += " The picture is one single frame of the scene, not a sheet, a grid or panels.";
+        if (ask.op === "image" && !member) sent += " The picture is one single frame of the scene, not a sheet, a grid or panels.";
       }
     }
   }
-  // A variant's sheet starts from the plain one, which models copy view for view; the difference has to be in all of them.
+  // A variant's sheet starts from the base one, which models copy view for view; the difference has to be in all of them.
   // A variant's portrait starts from photos in other clothes, so it says what's different too.
-  const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
-  if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${portrait ? "In this portrait" : "In every view"}: ${variant.about}.`;
-  const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
-  const people = realPeople(uses, project.assets);
+  if (variant && !ask.prompt) {
+    const scope =
+      sheetKind === "portrait"
+        ? "In this portrait"
+        : sheetKind === "face-sheet"
+          ? "Across every angle"
+          : sheetKind === "outfit-sheet"
+            ? "In this outfit variant (both front and back views)"
+            : "In every view";
+    sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${scope}: ${variant.about}.`;
+  }
+  const sheetAspect =
+    sheetKind === "portrait"
+      ? "4:5"
+      : sheetKind === "face-sheet"
+        ? "3:2"
+        : sheetKind === "outfit-sheet"
+          ? "1:1"
+          : member && (member.kind === "character" || member.kind === "prop")
+            ? "16:9"
+            : undefined;
+  // A headless outfit turnaround contains no real person's face, so real-person filters don't apply to it.
+  const people = sheetKind === "outfit-sheet" ? [] : realPeople(uses, project.assets);
   const timelineAudio = audioRefs?.find((a) => a.kind === "music" || a.kind === "speech");
   const along = clip ?? drive ?? speech ?? camera ?? timelineAudio;
   // A clip that ended on a frame ends on it again; one that copies movement, says a line, keeps a camera or uses audioRefs doesn't take one.
@@ -612,6 +801,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     start: clip || camera || audioRefs?.length ? undefined : start,
     end,
     refs,
+    ...(packedRefs?.length ? { packedRefs } : {}),
     ...(absent.length ? { absent } : {}),
     ...(drive ? { drive } : {}),
     ...(speech ? { speech } : {}),
@@ -941,7 +1131,7 @@ function plan(projectId: string, ask: MakeAsk): Plan {
   const where = ask.shot ? `Shot "${ask.shot}": ` : "";
   if (!req.prompt) throw new Error(`${where}say what to make: a prompt, or a shot whose description says it`);
   const { project } = loadProject(projectId, ask.cut);
-  for (const id of [req.start, req.end, ...(req.refs ?? [])].filter((x): x is string => !!x)) {
+  for (const id of [req.start, req.end, ...packedRefAssets(req.packedRefs, req.refs)].filter((x): x is string => !!x)) {
     const a = project.assets.find((x) => x.id === id);
     if (!a) throw new Error(`${where}no asset "${id}"`);
     if (a.kind !== "image") throw new Error(`${where}"${id}" is a ${a.kind}; start frames, end frames and references are pictures`);
@@ -952,27 +1142,71 @@ function plan(projectId: string, ask: MakeAsk): Plan {
   }
   const states = connectedStates();
   const preferred = preferredProvider(req.op, states);
+  let full = req;
   let fit: FitOk | undefined;
   if (ask.model) {
     const model = CATALOG.find((m) => m.id === ask.model);
     if (!model) throw new Error(`No model "${ask.model}"; list_models names them`);
-    const f = fitModel(model, req, states, preferred);
+    let f = fitModel(model, full, states, preferred);
+    // If a route has a tighter ref cap than the initial pack (e.g. Antigravity's 3-ref cap with 2 decoupled characters),
+    // re-pack into procedural composites for that model/route before rejecting.
+    if (!f.ok && f.why.kind === "fit" && full.op === "image" && !ask.refs?.length && (full.packedRefs?.length ?? 0) > 1) {
+      const matchRoute = ask.via ? model.routes.find((r) => r.via === ask.via) : model.routes.find((r) => states[r.via]?.state === "ready");
+      const cap = matchRoute?.takes?.refs ?? model.takes.refs ?? 0;
+      if (cap > 0) {
+        const compressed = requestFor(projectId, ask, { pictures: cap, strategy: ask.castPack ?? castPackFor(model, matchRoute) });
+        const retry = fitModel(model, compressed, states, preferred);
+        if (retry.ok) [full, f] = [compressed, retry];
+      }
+    }
     if (!f.ok) throw new Error(`${where}${model.label} can't make this: ${f.why.reason}`);
     fit = f;
   } else {
     fit = choices.auto;
+    if (!fit && full.op === "image" && !ask.refs?.length && (full.packedRefs?.length ?? 0) > 1) {
+      // Check if a tight-cap ready route (e.g. 3-ref plan) can run once decoupled characters are composited.
+      const compressed = requestFor(projectId, ask, { pictures: 3 });
+      const retryChoices = chooseModels(CATALOG, compressed, states, [], preferred);
+      if (retryChoices.auto) [full, fit] = [compressed, retryChoices.auto];
+    }
     if (!fit) {
       const why = [...choices.setup, ...choices.unfit].map((f) => (f.ok ? "" : `${f.label}: ${f.why.reason}`)).filter(Boolean);
       throw new Error(why.length ? `${where}nothing can make this now. ${why.join(". ")}.` : `No model makes ${req.op === "image" ? "images" : "video"}`);
     }
   }
-  // Picked: a model that takes more pictures than every still model does is given more of the cast's.
-  let full = req;
+  // Picked: tailor cast reference packaging to this exact model + route's strategy and ref cap (separate face + outfit,
+  // single portrait + outfit for grid-sensitive models, or procedural composite when ref slots are tight).
   const model = CATALOG.find((m) => m.id === fit!.model)!;
-  if (req.op === "image" && !ask.refs?.length && (model.takes.refs ?? 0) > fewestStillRefs(CATALOG)) {
-    const more = requestFor(projectId, ask, model.takes.refs);
-    const f = fitModel(model, { ...more, via: fit!.route }, states, preferred);
-    if ((more.refs?.length ?? 0) > (req.refs?.length ?? 0) && f.ok) [full, fit] = [more, f];
+  const pickedRoute = model.routes.find((r) => r.via === fit!.route && r.endpoints[shapeOf(full)] === fit!.endpoint);
+  const routeCap = pickedRoute?.takes?.refs ?? model.takes.refs ?? 0;
+  const strategy = ask.castPack ?? castPackFor(model, pickedRoute);
+  if (full.op === "image" && !ask.refs?.length && routeCap > 0) {
+    const tailored = requestFor(projectId, ask, { pictures: routeCap, strategy });
+    const f = fitModel(model, { ...tailored, via: fit!.route }, states, preferred);
+    if (f.ok && (tailored.sent !== full.sent || JSON.stringify(tailored.packedRefs ?? tailored.refs) !== JSON.stringify(full.packedRefs ?? full.refs))) {
+      [full, fit] = [tailored, f];
+    }
+  } else if (
+    full.op === "video" &&
+    !ask.refs?.length &&
+    !full.start &&
+    !full.clip &&
+    !full.drive &&
+    !full.speech &&
+    !full.refs?.length &&
+    routeCap > 0 &&
+    (!!pickedRoute?.endpoints.refs || !!pickedRoute?.endpoints.camera) &&
+    (!!full.camera || !!full.audioRefs?.length || !!ask.model)
+  ) {
+    // Reference-to-video & camera blockouts without a start frame automatically receive packed cast refs (face + outfit).
+    const room = Math.max(0, routeCap - (isCameraSheet(full.camera) ? 1 : 0));
+    if (room > 0) {
+      const withCast = requestFor(projectId, ask, { pictures: room, strategy, videoAutoRefs: true });
+      if (withCast.packedRefs?.length) {
+        const f = fitModel(model, { ...withCast, via: fit!.route }, states, preferred);
+        if (f.ok) [full, fit] = [withCast, f];
+      }
+    }
   }
   const route = model.routes.find((r) => r.via === fit!.route && r.endpoints[shapeOf(full)] === fit!.endpoint)!;
   return { ask, req: full, fit, shape: route.shape };
@@ -1032,6 +1266,8 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
   const started = plans.map((p) => {
     const count = Math.max(1, p.req.count ?? 1);
     const batch = newId("b");
+    const sheetMember = p.ask.sheet ? loadProject(projectId, p.ask.cut).project.cast?.find((m) => m.id === p.ask.sheet!.split("/")[0]) : undefined;
+    const sheetKind = sheetMember ? effectiveSheetKind(sheetMember, p.ask) : undefined;
     const jobs = Array.from({ length: count }, () =>
       saveJob(projectId, {
         id: newId("j"),
@@ -1039,7 +1275,8 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
         cut: p.ask.cut ?? cut,
         shot: p.ask.shot,
         sheet: p.ask.sheet,
-        ...(p.ask.sheet && p.ask.portrait ? { portrait: true as const } : {}),
+        ...(sheetKind ? { sheetKind } : {}),
+        ...(sheetKind === "portrait" ? { portrait: true as const } : {}),
         op: p.req.op,
         quality: p.req.op === "video" ? p.req.quality : undefined,
         model: p.fit.model,
@@ -1053,6 +1290,7 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
           start: p.req.start,
           end: p.req.end,
           refs: p.req.refs,
+          ...(p.req.packedRefs?.length ? { packedRefs: p.req.packedRefs } : {}),
           ...(p.req.drive ? { drive: p.req.drive } : {}),
           ...(p.req.speech ? { speech: p.req.speech } : {}),
           ...(p.req.clip ? { clip: p.req.clip } : {}),
@@ -1090,6 +1328,8 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
   // uploaded: the pictures found in it are the ones that go (a start frame and references don't go together on some),
   // and its words are the ones the service reads, with what's added about the pictures and the blockout.
   const tag = (id: string) => `beatsheet:${id}`;
+  const packedTag = (p: PackedRef) => (p.kind === "composite" ? `beatsheet:composite:${p.face}:${p.outfit}` : tag(p.asset));
+  const refTags = r.packedRefs?.length ? r.packedRefs.map(packedTag) : r.refs?.map(tag);
   const sheet = isCameraSheet(r.camera);
   const stand = {
     prompt: `${r.sent ?? r.prompt}${sheet ? SHEET_LINE : ""}`,
@@ -1098,7 +1338,7 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     aspect: fit.aspect,
     start: r.start && tag(r.start),
     end: r.end && tag(r.end),
-    refs: sheet ? ["beatsheet:camera-sheet", ...(r.refs?.map(tag) ?? [])] : r.refs?.map(tag),
+    refs: sheet ? ["beatsheet:camera-sheet", ...(refTags ?? [])] : refTags,
     camera: r.camera && !sheet ? { url: "beatsheet:camera", blockout: isCameraBlockout(r.camera), ...(ask.cameraKind ? { kind: ask.cameraKind } : {}) } : undefined,
     video: r.drive || r.clip ? "beatsheet:clip" : undefined,
     audio: r.speech ? "beatsheet:sound" : undefined,
@@ -1120,7 +1360,24 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     // A shape built some other way: the request as asked for.
   }
   const sent = built && JSON.stringify(built);
-  const parts = [...(r.start ? [{ asset: r.start, as: "start" as const }] : []), ...(r.end ? [{ asset: r.end, as: "end" as const }] : []), ...(r.refs ?? []).map((asset) => ({ asset, as: "ref" as const }))];
+  const refParts = r.packedRefs?.length
+    ? r.packedRefs.map((p) =>
+        p.kind === "composite"
+          ? {
+              asset: p.face,
+              as: "ref" as const,
+              role: p.role,
+              composite: { face: p.face, outfit: p.outfit, mode: p.mode },
+              _tag: packedTag(p),
+            }
+          : { asset: p.asset, as: "ref" as const, ...(p.role ? { role: p.role } : {}), _tag: packedTag(p) },
+      )
+    : (r.refs ?? []).map((asset) => ({ asset, as: "ref" as const, _tag: tag(asset) }));
+  const parts = [
+    ...(r.start ? [{ asset: r.start, as: "start" as const, _tag: tag(r.start) }] : []),
+    ...(r.end ? [{ asset: r.end, as: "end" as const, _tag: tag(r.end) }] : []),
+    ...refParts,
+  ];
   const told = built && [built.prompt, built.promptText, built.text].find((x): x is string => typeof x === "string");
   const free = PLAN_ROUTES.includes(fit.route) || fit.route === "comfy";
   return {
@@ -1136,7 +1393,7 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     count: Math.max(1, r.count ?? 1),
     ...(fit.seconds !== undefined ? { seconds: fit.seconds } : {}),
     ...(fit.aspect ? { aspect: fit.aspect } : {}),
-    pictures: sent ? parts.filter((p) => sent.includes(JSON.stringify(tag(p.asset)))) : parts,
+    pictures: (sent ? parts.filter((p) => sent.includes(JSON.stringify(p._tag))) : parts).map(({ _tag: _drop, ...p }) => p),
     ...(r.camera ? { camera: r.camera } : {}),
     ...(r.drive ? { drive: r.drive } : {}),
     ...(r.clip ? { clip: r.clip } : {}),
@@ -1150,7 +1407,10 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
 export function planChanges(was: PlannedTake, now: PlannedTake): string[] {
   const out: string[] = [];
   if (was.model !== now.model || was.where !== now.where) out.push(`it would go to ${now.label} on ${now.where}, not ${was.label} on ${was.where}`);
-  const pics = (p: PlannedTake) => p.pictures.map((x) => `${x.as}:${x.asset}`).join(",");
+  const pics = (p: PlannedTake) =>
+    p.pictures
+      .map((x) => `${x.as}:${x.composite ? `${x.composite.mode}:${x.composite.face}+${x.composite.outfit}` : x.asset}${x.role ? `(${x.role})` : ""}`)
+      .join(",");
   if (pics(was) !== pics(now)) out.push(`its pictures would be ${now.pictures.map((x) => x.asset).join(", ") || "none"}`);
   if (was.told !== now.told) out.push("its words changed");
   const along = (p: PlannedTake) => JSON.stringify([p.camera, p.drive, p.clip, p.speech, p.audioRefs]);
@@ -1381,6 +1641,32 @@ async function drive(projectId: string) {
   }
 }
 
+/**
+ * Resolves a job's reference pictures (supporting decoupled face/outfit sheets and procedural composites) into ready
+ * local files, validates every referenced asset still exists in the project, and transforms each file (upload, data
+ * URL, or file path).
+ */
+async function prepareJobRefs<T>(
+  project: Project,
+  dir: string,
+  r: MakeJob["request"],
+  transform: (file: string, ref: PackedRef, index: number) => Promise<T> | T,
+): Promise<T[] | undefined> {
+  const packed: PackedRef[] = r.packedRefs?.length
+    ? r.packedRefs
+    : (r.refs ?? []).map((asset) => ({ kind: "asset" as const, asset }));
+  if (!packed.length) return undefined;
+  for (const id of packedRefAssets(r.packedRefs, r.refs)) {
+    if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+  }
+  return Promise.all(
+    packed.map(async (p, i) => {
+      const file = await resolvePackedRef(project, dir, p, r.cast);
+      return transform(file, p, i);
+    }),
+  );
+}
+
 /** One step of a job: send it, or ask where it is, or bring in what it made. */
 async function step(projectId: string, job: MakeJob, key: string | undefined) {
   if (job.route === "comfy") return stepComfy(projectId, job);
@@ -1403,12 +1689,8 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       return falUpload(key, assetPath(project, dir, a));
     };
     const r = job.request;
-    // A cast member's own photos go cut out, when that can be done here.
-    const uploadRef = async (id: string) => {
-      if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
-      return falUpload(key, await refFile(project, dir, id, r.cast));
-    };
-    const baseRefs = r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    // A cast member's own photos go cut out, and decoupled face+outfit pairs composite procedurally when packed that way.
+    const baseRefs = await prepareJobRefs(project, dir, r, (file) => falUpload(key, file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => falUpload(key, f), baseRefs);
     const aud = await audioRefArgs(project, dir, job, (f) => falUpload(key, f), ".wav");
     const input = falInput(job.shape, {
@@ -1456,13 +1738,8 @@ async function stepTein(projectId: string, job: MakeJob, key: string) {
       if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
       return teinUpload(key, assetPath(project, dir, a));
     };
-    // A cast member's own photos go cut out, when that can be done here.
-    const uploadRef = async (id: string) => {
-      if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
-      return teinUpload(key, await refFile(project, dir, id, r.cast));
-    };
     // References don't go with a start frame there (teinInput), so they aren't sent up either.
-    const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const baseRefs = r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => teinUpload(key, file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => teinUpload(key, f), baseRefs);
     const input = teinInput(job.shape, job.endpoint, {
       prompt: cam.prompt,
@@ -1506,15 +1783,13 @@ async function stepRunway(projectId: string, job: MakeJob, key: string) {
       return a;
     };
     const upload = (id: string) => runwayUpload(key, assetPath(project, dir, picture(id)));
-    // A cast member's own photos go cut out, when that can be done here.
-    const uploadRef = async (id: string) => runwayUpload(key, await refFile(project, dir, picture(id).id, r.cast));
     // A clip from a picture comes out the picture's shape. Where Runway wants a size said even so, it's the one
     // nearest the picture's (the cut's, when the picture's isn't known), so little is cropped.
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const shape = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
     // A clip's references don't go with a start frame there (runwayInput), so they aren't sent up either.
-    const baseRefs = job.op === "video" && r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const baseRefs = job.op === "video" && r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => runwayUpload(key, file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => runwayUpload(key, f), baseRefs);
     const aud = await audioRefArgs(project, dir, job, (f) => runwayUpload(key, f), ".wav");
     const input = runwayInput(job.shape, job.endpoint, {
@@ -1562,14 +1837,12 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
       return a;
     };
     const upload = (id: string) => higgsfieldUpload(key, assetPath(project, dir, picture(id)));
-    // A cast member's own photos go cut out, when that can be done here.
-    const uploadRef = async (id: string) => higgsfieldUpload(key, await refFile(project, dir, picture(id).id, r.cast));
     // Give models whose image-to-video defaults to 16:9 (MAGI-2) the board's own shape when aspect was left to the start frame.
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
     // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
-    const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
+    const baseRefs = r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => higgsfieldUpload(key, file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => higgsfieldUpload(key, f), baseRefs);
     const aud = await audioRefArgs(project, dir, job, (f) => higgsfieldUpload(key, f), ".wav");
     const input = higgsfieldInput(job.shape, job.endpoint, {
@@ -1618,10 +1891,7 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
     }
     const { project, dir } = loadProject(projectId, job.cut);
     const r = job.request;
-    for (const id of r.refs ?? []) {
-      if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
-    }
-    const refs = r.refs && (await Promise.all(r.refs.map(async (id) => openrouterDataUrl(await refFile(project, dir, id, r.cast)))));
+    const refs = await prepareJobRefs(project, dir, r, (file) => openrouterDataUrl(file));
     job = updateJob(projectId, job, { status: "running" });
     const beat = setInterval(() => {
       try {
@@ -1659,13 +1929,12 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
       return a;
     };
     const encode = (id: string) => openrouterDataUrl(assetPath(project, dir, picture(id)));
-    const encodeRef = async (id: string) => openrouterDataUrl(await refFile(project, dir, picture(id).id, r.cast));
     // Give wide/tall-only models (Gemini Omni) the board's orientation even when aspect was left to the start frame.
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
     // Standard video models drop references when a start frame is present (frame_images takes precedence on OpenRouter).
-    const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(encodeRef)));
+    const baseRefs = r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => openrouterDataUrl(file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => openrouterDataUrl(f), baseRefs);
     const aud = await audioRefArgs(project, dir, job, (f) => openrouterDataUrl(f), ".mp3");
     const body = openrouterVideoInput(job.shape, job.endpoint, {
@@ -2054,14 +2323,8 @@ async function stepDirect(projectId: string, job: MakeJob, key: string | undefin
     throw new FalError(`The engine stopped while this was being made, so the picture was lost${plan ? "" : " (and may have been charged)"}. Try again to make it again.`, true);
   }
   const { project, dir } = loadProject(projectId, job.cut);
-  const fileOf = (id: string) => {
-    const a = project.assets.find((x) => x.id === id);
-    if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
-    return assetPath(project, dir, a);
-  };
   const r = job.request;
-  for (const id of r.refs ?? []) fileOf(id);
-  const refs = r.refs && (await Promise.all(r.refs.map((id) => refFile(project, dir, id, r.cast))));
+  const refs = await prepareJobRefs(project, dir, r, (file) => file);
   job = updateJob(projectId, job, { status: "running" });
   const beat = setInterval(() => {
     try {
@@ -2129,20 +2392,26 @@ async function stepComfy(projectId: string, job: MakeJob) {
       await comfySubmit(url, prompt, job.comfy!.id, job.comfy!.outputs);
     };
     if (spec.still) {
-      const refs = r.refs ?? [];
+      const packed: PackedRef[] = r.packedRefs?.length ? r.packedRefs : (r.refs ?? []).map((asset) => ({ kind: "asset" as const, asset }));
       const most = refsIn(loaded);
-      if (refs.length > most) throw new FalError(`The ${spec.label} workflow takes ${most} reference picture${most === 1 ? "" : "s"}; this has ${refs.length}`, true);
+      if (packed.length > most) throw new FalError(`The ${spec.label} workflow takes ${most} reference picture${most === 1 ? "" : "s"}; this has ${packed.length}`, true);
       // The nodes for pictures it isn't given come out.
       let workflow = loaded;
-      for (let k = refs.length + 1; k <= most; k++) workflow = without(workflow, `STUDIO_REF_IMAGE_${k}`);
+      for (let k = packed.length + 1; k <= most; k++) workflow = without(workflow, `STUDIO_REF_IMAGE_${k}`);
       const [w, h] = (r.aspect ?? "1:1").split(":").map(Number);
       const size = fitSize(w || 1, h || 1, spec.area[profile], spec.multiple);
       const values: Record<string, unknown> = { STUDIO_SEED: r.seed ?? randomInt(2 ** 31), STUDIO_WIDTH: size.width, STUDIO_HEIGHT: size.height, STUDIO_PROMPT: r.sent ?? r.prompt };
-      for (const [i, id] of refs.entries()) {
+      for (const id of packedRefAssets(r.packedRefs, r.refs)) {
         if (!project.assets.some((a) => a.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      }
+      for (const [i, ref] of packed.entries()) {
         const file = join(work, `ref${i + 1}.png`);
+        const src = await resolvePackedRef(project, dir, ref, r.cast);
         // A photo the picture library can't read (a phone's HEIC) goes as its upright preview instead.
-        await fitReference(await refFile(project, dir, id, r.cast), file).catch(() => fitReference(cachePaths(dir, id).image, file));
+        await fitReference(src, file).catch((err) => {
+          if (ref.kind === "asset") return fitReference(cachePaths(dir, ref.asset).image, file);
+          throw err;
+        });
         values[`STUDIO_REF_IMAGE_${i + 1}`] = await comfyUpload(url, file, `${job.id}_ref${i + 1}.png`);
       }
       return send(workflow, values, "STUDIO_OUTPUT");
@@ -2314,13 +2583,14 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
       await exec("ffmpeg", args).then(() => replaceFile(muxed, file)).catch(() => undefined);
     }
   }
+  const sk: SheetKind | undefined = job.sheet ? (job.sheetKind ?? (job.portrait ? "portrait" : "sheet")) : undefined;
   const followed = r.camera && "asset" in r.camera ? r.camera.asset : undefined;
   const audioAssets = (r.audioRefs ?? []).flatMap((a) => ("asset" in a ? [a.asset] : []));
-  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, followed, v?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined, ...audioAssets].filter((x): x is string => !!x);
+  const from = [r.start, r.end, ...packedRefAssets(r.packedRefs, r.refs), r.drive?.asset, r.clip?.asset, followed, v?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined, ...audioAssets].filter((x): x is string => !!x);
   return addAsset(projectId, file, {
-    id: v ? `${v.asset}-${v.tag ?? "version"}` : job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
+    id: v ? `${v.asset}-${v.tag ?? "version"}` : job.sheet ? `${job.sheet.replace("/", "-")}-${sk}` : `${job.shot ?? job.op}-take`,
     label: v?.label ?? (r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt),
-    tags: [v?.tag ?? (job.sheet ? (job.portrait ? "portrait" : "sheet") : "take")],
+    tags: [v?.tag ?? (sk ?? "take")],
     ...(v ? { version: { of: v.asset, from: Math.round(v.from * 10000) / 10000 } } : {}),
     provenance: {
       source: "generated",
@@ -2380,14 +2650,25 @@ async function attach(projectId: string, job: MakeJob, asset: Asset) {
   }
   if (job.sheet) {
     const [id, variant] = job.sheet.split("/");
+    const sk: SheetKind = job.sheetKind ?? (job.portrait ? "portrait" : "sheet");
     updateFile(projectId, (d) => {
       const m = d.cast?.find((x) => x.id === id);
       const target = variant ? m?.variants?.find((v) => v.id === variant) : m;
       if (!m || !target || lookAssets(target).includes(asset.id)) return;
       if (m.kind === "character") {
-        const [one, many] = job.portrait ? (["portrait", "portraits"] as const) : (["sheet", "sheets"] as const);
+        const [one, many] =
+          sk === "portrait"
+            ? (["portrait", "portraits"] as const)
+            : sk === "face-sheet"
+              ? (["faceSheet", "faceSheets"] as const)
+              : sk === "outfit-sheet"
+                ? (["outfitSheet", "outfitSheets"] as const)
+                : (["sheet", "sheets"] as const);
         if (target[one]) target[many] = [...(target[many] ?? []), asset.id];
         else target[one] = asset.id;
+      } else if (m.kind === "wardrobe") {
+        if (target.outfitSheet) target.outfitSheets = [...(target.outfitSheets ?? []), asset.id];
+        else target.outfitSheet = asset.id;
       } else if (target.images?.length) target.kept = [...(target.kept ?? []), asset.id];
       else target.images = [asset.id];
     });
@@ -2445,8 +2726,16 @@ export function describeJob(j: MakeJob): string {
   const s = j.request.speech;
   const c = j.request.clip;
   const ar = j.request.audioRefs;
+  const sheetDesc =
+    j.sheetKind === "face-sheet"
+      ? "360° face sheet"
+      : j.sheetKind === "outfit-sheet"
+        ? "outfit sheet"
+        : j.sheetKind === "portrait" || j.portrait
+          ? "portrait"
+          : "sheet";
   const what = [
-    j.shot ? `shot ${j.shot}` : j.sheet ? `sheet for @${j.sheet}` : j.op,
+    j.shot ? `shot ${j.shot}` : j.sheet ? `${sheetDesc} for @${j.sheet}` : j.op,
     model,
     j.quality ?? "",
     j.request.seconds ? `${j.request.seconds}s` : "",

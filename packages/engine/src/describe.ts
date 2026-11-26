@@ -18,6 +18,7 @@ const TYPES: Record<string, string> = { ".jpg": "image/jpeg", ".jpeg": "image/jp
 /** What to say about each kind of cast member: the specifics that keep it the same from shot to shot. */
 const WHAT: Record<CastMember["kind"], string> = {
   character: "for a person: apparent age, build, hair, skin, face, clothes and anything distinctive; for an animal: species or breed, size, colors, markings and anything distinctive",
+  wardrobe: "the garments, silhouette, fabric textures, colors, fastenings, footwear, headwear or mask, and any wear or damage",
   place: "the layout, the materials, the colors, the light and anything distinctive",
   prop: "its shape, size, materials, colors, wear and anything distinctive",
   style: "the medium, the rendering, the palette, the light and the texture",
@@ -28,7 +29,11 @@ export async function describeCast(projectId: string, castId: string): Promise<s
   const { project, dir } = loadProject(projectId);
   const member = project.cast?.find((m) => m.id === castId);
   if (!member) throw new Error(`No cast member "${castId}"`);
-  const ids = member.images?.length ? member.images : (member.seen ?? []).map((s) => s.asset);
+  const ids = [
+    ...(member.kind === "wardrobe" ? [member.outfitSheet, ...(member.wardrobe ?? [])] : [member.portrait, member.faceSheet, member.sheet, member.outfitSheet]),
+    ...(member.images ?? []),
+    ...(member.seen ?? []).map((s) => s.asset),
+  ].filter((x): x is string => !!x);
   const pictures = ids
     .map((id) => project.assets.find((a) => a.id === id))
     .filter((a) => a?.kind === "image" && TYPES[extname(a.path).toLowerCase()])

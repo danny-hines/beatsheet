@@ -222,7 +222,7 @@ function Choose({ ask }: { ask: Extract<HandOff, { kind: "choose" }> }) {
 
 type Option = Extract<HandOff, { kind: "choose" }>["options"][number];
 
-const KINDS = { character: "Character", place: "Place", prop: "Prop" } as const;
+const KINDS = { character: "Character", wardrobe: "Wardrobe", place: "Place", prop: "Prop" } as const;
 
 /**
  * Who and what the agent found in the Library, each with the pictures it's in: the ones kept join the cast (or add their
@@ -334,13 +334,28 @@ function Board({ pics, onOpen }: { pics: Pic[]; onOpen: (id: string) => void }) 
 
 const PART = { start: "Starts from", end: "Ends on", ref: "Reference" } as const;
 
-type Steps = { sheet?: string; sheets?: string[]; portrait?: string; portraits?: string[]; images?: string[]; kept?: string[]; faces?: string[]; wardrobe?: string[] };
+type Steps = {
+  sheet?: string;
+  sheets?: string[];
+  portrait?: string;
+  portraits?: string[];
+  faceSheet?: string;
+  faceSheets?: string[];
+  outfitSheet?: string;
+  outfitSheets?: string[];
+  images?: string[];
+  kept?: string[];
+  faces?: string[];
+  wardrobe?: string[];
+};
 
-/** What a picture is to the cast, when it's one of theirs: "Galileo (William)'s sheet". */
+/** What a picture is to the cast, when it's one of theirs: "Galileo (William)'s 360° face sheet". */
 function castName(cast: ProjectFile["cast"], id: string): string | undefined {
   for (const m of cast ?? []) {
     const looks: [Steps, string][] = [[m, m.name], ...(m.variants ?? []).map((v): [Steps, string] => [v, `${m.name} (${v.id})`])];
     for (const [l, name] of looks) {
+      if (l.faceSheet === id || l.faceSheets?.includes(id)) return `${name}'s 360° face sheet`;
+      if (l.outfitSheet === id || l.outfitSheets?.includes(id)) return `${name}'s outfit sheet`;
       if (l.sheet === id || l.sheets?.includes(id)) return `${name}'s sheet`;
       if (l.portrait === id || l.portraits?.includes(id)) return `${name}'s portrait`;
       if (l.faces?.includes(id)) return `a photo of ${name}`;
@@ -365,9 +380,11 @@ function sendsPictures(projectId: string, assets: Asset[] | undefined, cast: Pro
     return castName(cast, id) ?? (made ? id : a!.label!.length > 48 ? `${a!.label!.slice(0, 47)}…` : a!.label!);
   };
   const out: SendPic[] = m.pictures.map((p, i) => {
-    const name = named(p.asset);
-    const caption = `${PART[p.as]}: ${name}${name === p.asset ? "" : ` (${p.asset})`}`;
-    return { id: `${of}/sends/${i}`, of, part: PART[p.as], name, caption, src: imageUrl(projectId, p.asset), thumb: posterUrl(projectId, p.asset) };
+    const baseName = named(p.asset);
+    const name = p.composite ? `${baseName} + ${named(p.composite.outfit)} (composited)` : baseName;
+    const part = p.composite ? "Composite ref" : p.role === "face-sheet" ? "360° face" : p.role === "portrait" ? "Face ref" : p.role === "outfit" ? "Outfit ref" : PART[p.as];
+    const caption = `${part}: ${name}${name === p.asset ? "" : ` (${p.asset})`}`;
+    return { id: `${of}/sends/${i}`, of, part, name, caption, src: imageUrl(projectId, p.asset), thumb: posterUrl(projectId, p.asset) };
   });
   const clips: [string, { asset: string; from: number; to: number } | undefined][] = [
     ["Camera of", m.camera && "asset" in m.camera ? m.camera : undefined],

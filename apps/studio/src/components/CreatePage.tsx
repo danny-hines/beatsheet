@@ -10,6 +10,7 @@ import {
   blockoutDuration,
   CATALOG,
   castOf,
+  castPackFor,
   castPictures,
   PREVIS_BY_ID,
   PREVIS_MOVES,
@@ -289,8 +290,14 @@ export function CreatePage({
     return { role: a.role ? a.role[0]!.toUpperCase() + a.role.slice(1) : "Audio", text: name };
   };
 
-  // Auto-resolved cast pictures when no manual ref list overrides stills.
-  const autoCastPics = useMemo(() => (op === "image" && !refs.length ? castPictures(castOf(prompt, p.cast), maxRefs || 4) : []), [op, refs.length, prompt, p.cast, maxRefs]);
+  // Auto-resolved cast pictures packaged for this model + route (stills, reference-to-video, and camera blockouts without manual refs).
+  const autoCastPics = useMemo(() => {
+    if (refs.length) return [];
+    const wantsAuto = op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout"));
+    if (!wantsAuto || maxRefs <= 0) return [];
+    const room = Math.max(1, maxRefs - (op === "video" && inputMode === "blockout" && blockoutMode === "sheet" ? 1 : 0));
+    return castPictures(castOf(prompt, p.cast), { max: room, strategy: castPackFor(catalogModel, activeRoute), cast: p.cast });
+  }, [op, inputMode, blockoutMode, refs.length, prompt, p.cast, maxRefs, catalogModel, activeRoute]);
   const unknownCast = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
   const styleMember = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
 
@@ -372,12 +379,16 @@ export function CreatePage({
   const missingDrive = op === "video" && inputMode === "drive" && !drive;
   const canSubmit = !!chosenFit && !!prompt.trim() && !sending && !missingBlockout && !missingDrive;
 
+  const roleTag = (role?: string) => (role === "face-sheet" ? "360° face" : role === "portrait" ? "face" : role === "outfit" ? "outfit" : role === "composite" ? "face+outfit" : "");
   const flightPics: { id: string; part: string; label: string }[] = [
     ...(activeStart ? [{ id: activeStart, part: "Starts from", label: p.assets.find((a) => a.id === activeStart)?.label ?? activeStart }] : []),
     ...(activeEnd ? [{ id: activeEnd, part: "Ends on", label: p.assets.find((a) => a.id === activeEnd)?.label ?? activeEnd }] : []),
     ...(activeRefs.length
       ? activeRefs.map((id) => ({ id, part: "Reference", label: p.assets.find((a) => a.id === id)?.label ?? id }))
-      : autoCastPics.map((x) => ({ id: x.asset, part: `@${x.use.id}`, label: x.use.member.name }))),
+      : autoCastPics.map((x) => {
+          const r = roleTag(x.role);
+          return { id: x.asset, part: r ? `@${x.use.id} · ${r}` : `@${x.use.id}`, label: x.composite ? `${x.use.member.name} (composited face + outfit)` : x.use.member.name };
+        })),
   ];
 
   const dropAsset = (slot: "start" | "end" | "ref") => ({
@@ -796,12 +807,19 @@ export function CreatePage({
                           </span>
                         ))}
                         {!refs.length &&
-                          autoCastPics.map((x) => (
-                            <span key={x.asset} className="slot-ref-item auto" title={`Auto-attached from @${x.use.id}`}>
-                              <img src={posterUrl(projectId, x.asset)} alt="" onError={hideBroken} />
-                              <span className="slot-ref-tag">@{x.use.id}</span>
-                            </span>
-                          ))}
+                          autoCastPics.map((x, i) => {
+                            const r = roleTag(x.role);
+                            return (
+                              <span
+                                key={`${x.asset}-${x.role ?? i}-${i}`}
+                                className="slot-ref-item auto"
+                                title={x.composite ? `Auto-composited face + outfit for @${x.use.id} to fit ${maxRefs}-ref limit` : `Auto-attached from @${x.use.id}${r ? ` (${r})` : ""}`}
+                              >
+                                <img src={posterUrl(projectId, x.asset)} alt="" onError={hideBroken} />
+                                <span className="slot-ref-tag">{r ? `@${x.use.id} ${r}` : `@${x.use.id}`}</span>
+                              </span>
+                            );
+                          })}
                         {refs.length < maxRefs && images.length > 0 && (
                           <button className="slot-ref-add" onClick={() => setPickingSlot("ref")} title="Add a reference picture (or drag from Media)">
                             <Icon name="add" size={14} />

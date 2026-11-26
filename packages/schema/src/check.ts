@@ -94,6 +94,16 @@ export function checkCut(p: Project): CheckIssue[] {
   const isStyle = (id: string) => p.cast?.some((m) => m.id === id && m.kind === "style");
   p.cast?.forEach((m, i) => m.style && !isStyle(m.style) && add(`cast.${i}.style`, `no style "${m.style}" in the cast`));
   if (p.look?.style && !isStyle(p.look.style)) add("look.style", `no style "${p.look.style}" in the cast`);
+  // A shared outfit link points to a wardrobe cast entry (or one of its variants: "doublet/bloodied").
+  const isWardrobe = (ref: string) => {
+    const [wid, vid] = ref.split("/") as [string, string?];
+    const w = p.cast?.find((m) => m.id === wid && m.kind === "wardrobe");
+    return !!w && (!vid || !!w.variants?.some((v) => v.id === vid));
+  };
+  p.cast?.forEach((m, i) => {
+    if (m.outfit && !isWardrobe(m.outfit)) add(`cast.${i}.outfit`, `no wardrobe "${m.outfit}" in the cast`);
+    m.variants?.forEach((v, j) => v.outfit && !isWardrobe(v.outfit) && add(`cast.${i}.variants.${j}.outfit`, `no wardrobe "${v.outfit}" in the cast`));
+  });
 
   const formats = (path: string, list: string[] | undefined) => {
     for (const f of list ?? []) if (!ids.formats.has(f)) add(path, `unknown format "${f}"`);

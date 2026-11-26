@@ -425,6 +425,12 @@ export const actions = {
   setMakePage(makePage: State["makePage"]) {
     setState({ makePage, selection: undefined, also: [] });
   },
+  /** Opens a cast member in Make → Cast & sets, flipping over from Edit so creation has full room. */
+  openCast(id: string) {
+    if (state.mode !== "make") player?.pause();
+    setState({ mode: "make", makePage: "cast", selection: { kind: "cast", id }, also: [], playing: false });
+    if (state.projectId && state.cutId) showCut(state.projectId, state.cutId);
+  },
   setMakeWide(makeWide: boolean) {
     setState({ makeWide });
   },

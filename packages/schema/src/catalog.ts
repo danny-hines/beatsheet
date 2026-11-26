@@ -63,6 +63,7 @@ export const CATALOG: CatalogModel[] = [
     note: "The first Nano Banana: stills and boards, keeps a character from reference pictures. Google retires it on March 15, 2027.",
     ops: ["image"],
     takes: { refs: 4 },
+    castPack: "split-single",
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 15,
     // fal.ai/models/fal-ai/nano-banana: $0.0398 an image. On the Gemini API it's gemini-2.5-flash-image: 1,290 tokens
@@ -83,6 +84,7 @@ export const CATALOG: CatalogModel[] = [
     note: "Cheap stills and boards; keeps a character from reference pictures.",
     ops: ["image"],
     takes: { refs: 10 },
+    castPack: "split-single",
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     wait: 20,
     // dev.meta.ai/docs/image-generation: $0.01 an image, whatever its size. Muse Code's own image tool makes it on the
@@ -274,6 +276,7 @@ export const CATALOG: CatalogModel[] = [
     note: "Open weights: stills and boards on your own graphics card through ComfyUI for nothing, or hosted through OpenRouter for under a cent; keeps a character from reference pictures.",
     ops: ["image"],
     takes: { refs: 10 },
+    castPack: "split-single",
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
     // On an RTX 4090, through beatsheet: a 944×1680 board of a cast member from its sheet took 15 seconds with the model
     // loading, a 1680×944 still from the prompt alone 9 once it was loaded.

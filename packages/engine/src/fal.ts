@@ -139,8 +139,15 @@ export const SHEET_LINE =
   " The first reference picture is a 4×4 storyboard contact sheet (16 sequential frames, left to right, top to bottom) showing the exact camera move, framing, staging and cut timing to follow. Follow that camera progression across the shot; none of the grid borders, grey set geometry or striped stand-ins appears in the finished video.";
 
 /** The prompt with a line saying which reference picture is which, in the model's own names for them ("Image 1", "@Image1"). */
-const withRefs = (ask: FalAsk, name: (n: number) => string) =>
-  ask.refs?.length ? `${ask.prompt} ${ask.refs.length === 1 ? `${name(1)} is a reference` : `${name(1)} to ${name(ask.refs.length)} are references`} for who and what is in it.` : ask.prompt;
+const withRefs = (ask: FalAsk, name: (n: number) => string) => {
+  if (!ask.refs?.length) return ask.prompt;
+  // When castPrompt already assigned explicit numbered roles ("Reference pictures, in order: Image 1 is ..."),
+  // rewrite "Image N" into this model's reference syntax (@Image1 on Seedance) instead of appending a generic line.
+  if (/Reference pictures, in order:\s*Image \d+ is\b/.test(ask.prompt)) {
+    return ask.prompt.replace(/\bImage (\d+)\b/g, (_, n) => name(Number(n)));
+  }
+  return `${ask.prompt} ${ask.refs.length === 1 ? `${name(1)} is a reference` : `${name(1)} to ${name(ask.refs.length)} are references`} for who and what is in it.`;
+};
 
 /**
  * What's said of a reference video a take follows, called what the service calls it ("The reference video", "@Video1").

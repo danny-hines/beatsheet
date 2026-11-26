@@ -863,7 +863,21 @@ export const PlannedTake = z.object({
   seconds: z.number().optional(),
   aspect: z.string().optional(),
   pictures: z
-    .array(z.object({ asset: z.string(), as: z.enum(["start", "end", "ref"]) }))
+    .array(
+      z.object({
+        asset: z.string(),
+        as: z.enum(["start", "end", "ref"]),
+        role: z.string().optional().describe("What this reference contributes (face-sheet, portrait, outfit, composite, sheet…)"),
+        composite: z
+          .object({
+            face: z.string(),
+            outfit: z.string(),
+            mode: z.enum(["portrait-outfit", "face360-outfit"]),
+          })
+          .optional()
+          .describe("When set, the engine procedurally composites face + outfit onto one neutral-gray sheet before sending"),
+      }),
+    )
     .describe("Every picture that goes with it, in the order the model gets them: what it starts from, ends on, and its references"),
   camera: z
     .union([
@@ -919,7 +933,7 @@ export type ChooseOption = z.infer<typeof ChooseOption>;
 /** A cast member the agent found in the Library, for the person to keep or not. */
 const CastProposal = z.object({
   id: z.string().describe("The id it'd have in the cast (@cat); one that's already there gets these pictures added"),
-  kind: z.enum(["character", "place", "prop"]),
+  kind: z.enum(["character", "wardrobe", "place", "prop"]),
   name: z.string(),
   about: z.string().optional().describe("What it looks like, from the pictures"),
   assets: z.array(z.string()).min(1).describe("The photos and clips it's in, the clearest first"),
@@ -982,34 +996,58 @@ export const Turn = z.object({
 });
 export type Turn = z.infer<typeof Turn>;
 
+/** How headwear or face-mounted costume pieces are carried between a character's face sheet and outfit sheet. */
+export const HEADWEAR_MODES = ["none", "ghost", "face"] as const;
+export const HeadwearMode = z.enum(HEADWEAR_MODES);
+export type HeadwearMode = z.infer<typeof HeadwearMode>;
+
 /**
- * How a character's look is settled, step by step: the photos its face is taken from, what it wears (pictures, beside
- * the words), then a portrait chosen from those made, then a sheet made from that portrait and chosen the same way.
- * Models are given the chosen sheet, else the chosen portrait.
+ * How a character's (or shared wardrobe's) look is settled, step by step: raw face photos, a chosen portrait, an
+ * optional 360° 6-panel bare face turnaround, wardrobe references + a headless (or ghost-mannequin) outfit turnaround
+ * (or a link to a reusable `wardrobe` cast entry), plus legacy combined sheets for backwards compatibility.
+ * beatsheet packages these canonical ingredients procedurally to match each target model.
  */
 const LookSteps = {
   faces: z
     .array(z.string())
     .optional()
-    .describe("Photos the face is taken from, for its portraits. Default: the person's own photos, or for a variant the plain look's chosen portrait"),
+    .describe("Photos the face is taken from, for its portraits and 360° face sheets. Default: the person's own photos, or for a variant the plain look's chosen portrait"),
   wardrobe: z
     .array(z.string())
     .optional()
-    .describe("Pictures of what it wears in this look: a costume photo, or the clothes cropped from a photo of them (below the face); a variant without its own uses the plain one's"),
-  portrait: z.string().optional().describe("The chosen portrait: head and shoulders, made from the face photos and the wardrobe"),
+    .describe("Reference pictures of what it wears in this look: a costume photo, or the clothes cropped from a photo of them (below the face); a variant without its own uses the plain one's"),
+  portrait: z.string().optional().describe("The chosen portrait: head and shoulders facing the camera, to lock likeness before making sheets"),
   portraits: z.array(z.string()).optional().describe("The other portraits made for this look, to choose between"),
-  sheet: z.string().optional().describe("The chosen sheet, made from the chosen portrait and the wardrobe: what models are given"),
-  sheets: z.array(z.string()).optional().describe("The other sheets made for this look"),
+  faceSheet: z
+    .string()
+    .optional()
+    .describe("The chosen 360° 6-panel face turnaround (3×2 grid: left profile, front, right profile / left 3/4, back, right 3/4) on neutral mid-gray"),
+  faceSheets: z.array(z.string()).optional().describe("Other 360° face turnarounds made for this look"),
+  outfit: z
+    .string()
+    .optional()
+    .describe('Optional shared wardrobe cast id ("inquisitor-cloak", or "doublet/bloodied" for a variant) worn in this look instead of an inline outfit'),
+  outfitSheet: z
+    .string()
+    .optional()
+    .describe("The chosen headless (or ghost-mannequin) front + back outfit turnaround sheet on neutral mid-gray"),
+  outfitSheets: z.array(z.string()).optional().describe("Other outfit turnarounds made for this look"),
+  headwear: HeadwearMode
+    .optional()
+    .describe('How headwear or face-mounted costume pieces are handled: "none" (clean headless collar), "ghost" (hat/hood/helmet on outfit sheet over an empty gray void), or "face" (strapped beard/wimple/facial blood baked into this look\'s portrait and face sheet)'),
+  sheet: z.string().optional().describe("Legacy or manual combined character sheet (face + front/back body in one image); used when separate face and outfit sheets aren't set"),
+  sheets: z.array(z.string()).optional().describe("The other combined sheets made for this look"),
 };
 
 /**
- * A character, place, prop or style that made shots keep the same from shot to shot: who or what it is, in words that
- * go into every prompt that names it (@cat), and pictures that models are given to match. Shared by every cut.
+ * A character, shared wardrobe, place, prop or style that made shots keep the same from shot to shot: who or what it
+ * is, in words that go into every prompt that names it (@cat), and pictures that models are given to match. Shared by
+ * every cut.
  */
 export const CastMember = z.object({
   id: z.string().describe("What prompts call it: @cat"),
   name: z.string(),
-  kind: z.enum(["character", "place", "prop", "style"]),
+  kind: z.enum(["character", "wardrobe", "place", "prop", "style"]),
   about: z
     .string()
     .optional()
