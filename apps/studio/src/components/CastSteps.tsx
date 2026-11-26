@@ -382,7 +382,7 @@ export function CharacterSteps({
 
   // Step 1: face photos & portrait.
   const own = [...new Set([...(m.images ?? []), ...(m.kept ?? []), ...(m.seen ?? []).map((s) => s.asset)])].filter((a) => isOwnPhoto(asset(a)));
-  const settled = variant ? [m.portrait, m.faceSheet, m.sheet, ...(m.images ?? [])].find(image) : undefined;
+  const settled = variant ? [m.faceSheet, m.portrait, m.sheet, ...(m.images ?? [])].find(image) : undefined;
   const faceChoices = [...new Set([...(settled ? [settled] : []), ...own, ...(look.faces ?? [])])].filter(image);
   const faceDefault = variant && settled ? [settled] : own;
   const faces = look.faces ?? faceDefault;
@@ -669,8 +669,9 @@ export function CharacterSteps({
   const hasLegacySheet = !!(look.sheet || look.sheets?.length || going.some((j) => jobMatches(j, "sheet")));
   const hasDecoupledReady = !!(ing.faceSheet && ing.outfitSheet);
   const hasFacePhotos = faces.length > 0;
+  const hasOwnPortrait = !!look.portrait;
   const canFaceSheet = hasFacePhotos || !!sheetFace || !!m.about;
-  const usePortraitForFaceSheet = !hasFacePhotos ? !!sheetFace : !sheetFace ? false : faceSource === "portrait";
+  const usePortraitForFaceSheet = hasOwnPortrait ? (!hasFacePhotos ? true : faceSource === "portrait") : !hasFacePhotos && !!sheetFace;
 
   return (
     <div className="cast-steps">
@@ -706,11 +707,30 @@ export function CharacterSteps({
         {!faceChoices.length && <span className="dim small cast-none">Add reference photos (or drag image files here). Without photos, portraits are generated from the description.</span>}
         <label>
           <span>
-            Who they are <span className="dim">· face, hair &amp; build in every look</span>
+            Who they are <span className="dim">· {variant ? "shared across all looks" : "face, hair & build in every look"}</span>
           </span>
           <TextField multiline value={m.about ?? ""} placeholder="A 17-year-old with long straight ginger-red hair, pale freckled skin, light eyes" onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))} />
         </label>
         {describe}
+        {variant && (
+          <label>
+            <span>
+              Face changes in this look <span className="dim">· only for this look&apos;s portrait &amp; 360° face sheet</span>
+            </span>
+            <TextField
+              multiline
+              value={variant.faceAbout ?? ""}
+              placeholder="Stage blood smeared across brow and cheek; bruised eye; wet tangled hair (leave blank if the face doesn't change)"
+              onCommit={(v) =>
+                edit((x) => {
+                  const target = x.variants!.find((item) => item.id === variant.id)!;
+                  if (v.trim()) target.faceAbout = v.trim();
+                  else delete target.faceAbout;
+                })
+              }
+            />
+          </label>
+        )}
         <div className="cast-step-sub">
           {made(
             "portrait",
@@ -736,7 +756,7 @@ export function CharacterSteps({
               : "No 360° face sheet yet. Generated directly from your selected face photos.",
           variant && headwear !== "face" ? m.faceSheet : undefined,
         )}
-        {hasFacePhotos && sheetFace && (
+        {hasFacePhotos && hasOwnPortrait && (
           <div className="cast-source-row small">
             <span className="dim">Source</span>
             <div className="segmented small" role="group" aria-label="360° face sheet source">
@@ -744,17 +764,17 @@ export function CharacterSteps({
                 type="button"
                 className={faceSource === "photos" ? "on" : ""}
                 onClick={() => setFaceSource("photos")}
-                title="Generate directly from your raw face photos (ignores the chosen portrait — best for real likeness and natural facial hair)"
+                title="Generate directly from your selected Step 1 face references (ignores the chosen portrait)"
               >
-                Face photos ({faces.length})
+                Face refs ({faces.length})
               </button>
               <button
                 type="button"
                 className={faceSource === "portrait" ? "on" : ""}
                 onClick={() => setFaceSource("portrait")}
-                title="Anchor on the chosen portrait first, with face photos for side angles"
+                title="Anchor on this look's chosen portrait first, with Step 1 refs for side angles"
               >
-                Portrait + photos
+                Portrait + refs
               </button>
             </div>
           </div>
@@ -833,12 +853,18 @@ export function CharacterSteps({
           </select>
         </label>
         <label>
-          {variant ? "What's different in this look" : "What they wear"}
+          {variant ? (
+            <span>
+              Outfit changes in this look <span className="dim">· only for this look&apos;s outfit sheet &amp; shots</span>
+            </span>
+          ) : (
+            "What they wear"
+          )}
           {variant ? (
             <TextField
               multiline
               value={variant.about}
-              placeholder="Battle-tattered & mud-splattered; soaked from the rain; bloodied forehead"
+              placeholder="Battle-tattered & mud-splattered doublet; dark stains down the front; torn sleeve"
               onCommit={(t) => edit((x) => void (x.variants!.find((v) => v.id === variant.id)!.about = t))}
             />
           ) : (

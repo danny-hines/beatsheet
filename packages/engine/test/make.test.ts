@@ -2303,10 +2303,21 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
     expect(will.outfitSheet).toBe("will-outfit-sheet");
 
     // 4. Outfit variant edits directly from the plain outfitSheet (still zero face photos / zero realPeople).
+    store.updateFile(PROJECT, (d) => {
+      d.cast!.find((m) => m.id === "will")!.variants![0]!.faceAbout = "stage blood smeared across brow and cheek";
+    });
+    const battleFaceReq = make.requestFor(PROJECT, { op: "image", sheet: "will/battle", sheetKind: "face-sheet", usePortrait: false });
+    expect(battleFaceReq.refs).toEqual(["will-face-sheet"]);
+    expect(battleFaceReq.sent).toContain("base 360-degree face sheet");
+    expect(battleFaceReq.sent).toContain("stage blood smeared across brow and cheek");
+    expect(battleFaceReq.sent).not.toContain("torn, mud-splattered doublet");
+    expect(battleFaceReq.sent).not.toContain("dark wool doublet");
+
     const battleReq = make.requestFor(PROJECT, { op: "image", sheet: "will/battle", sheetKind: "outfit-sheet" });
     expect(battleReq.refs).toEqual(["will-outfit-sheet"]);
     expect(battleReq.realPeople).toBeUndefined();
     expect(battleReq.sent).toContain("torn, mud-splattered doublet");
+    expect(battleReq.sent).not.toContain("stage blood smeared across brow and cheek");
     make.startMake(PROJECT, { op: "image", sheet: "will/battle", sheetKind: "outfit-sheet", count: 1 });
     await make.driveJobs(PROJECT);
     will = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "will")!;

@@ -1075,7 +1075,11 @@ export const CastMember = z.object({
     .array(
       z.object({
         id: z.string(),
-        about: z.string().describe("What's different: wearing a tiny black eye mask"),
+        about: z.string().describe("What's different in this look (outfit/state: wearing a tiny black eye mask, battle-tattered doublet)"),
+        faceAbout: z
+          .string()
+          .optional()
+          .describe("For a character variant: what changes on the face or hair in this look (e.g. stage blood on brow and cheek, bruised eye, wet hair) — used for this variant's portrait and 360° face sheet without pulling in wardrobe text"),
         images: z.array(z.string()).optional().describe("The pictures models are given for this look, in order; with none, the plain one's"),
         kept: z.array(z.string()).optional(),
         ...LookSteps,

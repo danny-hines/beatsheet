@@ -619,16 +619,35 @@ function lookRefs(
   }
 
   if (kind === "face-sheet") {
-    // 360° face turnaround: anchor on the chosen portrait (unless `usePortrait === false`), plus extra raw face photos
-    // from other angles so side/3/4 geometry and natural facial hair stay grounded in reality. Never pull in wardrobe photos!
+    // 360° face turnaround:
+    // - On a variant: edit directly from the plain look's chosen 360° faceSheet (unless the user explicitly selected
+    //   different `variant.faces` or anchored on `variant.portrait`). Never silently fall back to raw ownPhotos when
+    //   a base faceSheet exists!
+    // - On the plain look: anchor on `look.portrait` when `usePortrait !== false`, plus `look.faces ?? ownPhotos`.
+    const baseFaceSheet = variant && asset(member.faceSheet) ? member.faceSheet : undefined;
     const settled = variant ? [member.faceSheet, member.portrait, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
-    const anchor = usePortrait ? [look.portrait, settled].find(asset) : undefined;
+    const anchor = variant
+      ? usePortrait
+        ? [look.portrait, settled].find(asset)
+        : look.faces?.length
+          ? undefined
+          : (baseFaceSheet ?? settled)
+      : usePortrait && asset(look.portrait)
+        ? look.portrait
+        : undefined;
     const extraFaces = (look.faces ?? (variant && anchor ? [] : ownPhotos(project, member))).filter((id) => asset(id) && id !== anchor);
     const maxFaces = Math.max(1, pictures - (stylePic ? 1 : 0));
     const faces = [...(anchor ? [anchor] : []), ...extraFaces].slice(0, maxFaces);
     const withStyle = !!stylePic && faces.length < pictures;
     const words: string[] = [];
-    if (anchor) {
+    const firstIsBaseFaceSheet = !!variant && !!faces[0] && faces[0] === member.faceSheet;
+    if (firstIsBaseFaceSheet) {
+      words.push(
+        faces.length > 1
+          ? `The first reference picture is ${who}'s base 360-degree face sheet, and the next ${faces.length - 1 === 1 ? "picture is another photo" : `${faces.length - 1} pictures are additional photos`} of ${who}: keep the exact same 3x2 grid layout, camera angles, neutral mid-gray studio background, bare neck and shoulders, face, natural hair and natural facial hair across all six panels, changing only what is specified for this look.`
+          : `The first reference picture is ${who}'s base 360-degree face sheet: keep the exact same 3x2 grid layout, camera angles, neutral mid-gray studio background, bare neck and shoulders, face, natural hair and natural facial hair across all six panels, changing only what is specified for this look.`,
+      );
+    } else if (anchor) {
       const role = [look.faceSheet, member.faceSheet].includes(anchor) ? "360-degree face sheet" : [look.portrait, member.portrait].includes(anchor) ? "portrait" : "sheet";
       if (faces.length > 1) {
         words.push(
@@ -750,14 +769,19 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   // One that keeps a clip's camera or uses reference audio runs on reference-to-video, so a start frame goes first among its refs.
   if ((camera || audioRefs?.length) && start) refs = [...new Set([start, ...(refs ?? [])])];
 
-  // For a bare 360° face sheet or bare portrait (headwear !== "face"), scrub body clothing from the @mention expansion
-  // so the face study stays collarless/unclothed rather than dressing the portrait.
+  // For a bare 360° face sheet or bare portrait (headwear !== "face"), scrub body clothing AND variant wardrobe notes
+  // (`variant.about`, which lives in Step 3 Wardrobe) from the @mention expansion so wardrobe items like fake beards or
+  // doublets never leak onto the bare face turnaround — keeping only `variant.faceAbout`.
   const memberHeadwear = member ? (variant?.headwear ?? member.headwear) : undefined;
   const bareFaceSheet = !!member && !member.nonHuman && (sheetKind === "face-sheet" || (sheetKind === "portrait" && (memberHeadwear === "none" || memberHeadwear === "ghost"))) && memberHeadwear !== "face";
   const promptUses = bareFaceSheet
     ? uses.map((u) =>
         u.member.id === member!.id
-          ? { ...u, member: { ...u.member, wears: undefined, outfit: undefined }, ...(u.variant ? { variant: { ...u.variant, outfit: undefined } } : {}) }
+          ? {
+              ...u,
+              member: { ...u.member, wears: undefined, outfit: undefined },
+              ...(u.variant ? { variant: { ...u.variant, about: "", outfit: undefined } } : {}),
+            }
           : u,
       )
     : uses;
@@ -806,7 +830,8 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
     }
   }
   // A variant's sheet starts from the base one, which models copy view for view; the difference has to be in all of them.
-  // A variant's portrait starts from photos in other clothes, so it says what's different too.
+  // Bare face sheets / bare portraits only carry face changes (`variant.faceAbout`), never wardrobe text (`variant.about`);
+  // outfit sheets carry only wardrobe changes (`variant.about`).
   if (variant && !ask.prompt) {
     const scope =
       sheetKind === "portrait"
@@ -816,7 +841,12 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
           : sheetKind === "outfit-sheet"
             ? "In this outfit variant (both front and back views)"
             : "In every view";
-    sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${scope}: ${variant.about}.`;
+    const diff = bareFaceSheet
+      ? variant.faceAbout?.trim()
+      : sheetKind === "outfit-sheet"
+        ? variant.about?.trim()
+        : [variant.faceAbout?.trim(), variant.about?.trim()].filter(Boolean).join("; ");
+    if (diff) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${scope}: ${diff}.`;
   }
   const sheetAspect =
     sheetKind === "portrait"

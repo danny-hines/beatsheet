@@ -946,7 +946,7 @@ export type PackedCastRef = {
 const described = (u: CastUse, uses: CastUse[], allCast?: CastMember[]) => {
   const own = u.style && !uses.some((x) => x.id === u.style!.id) ? `in the style of ${u.style.name}${u.style.about ? `: ${u.style.about}` : ""}` : "";
   const linked = u.member.kind === "character" ? resolveWardrobe(u.variant?.outfit ?? u.member.outfit, allCast)?.about : undefined;
-  const about = [u.member.about, u.member.wears, linked, u.variant?.about, own].filter(Boolean).join("; ");
+  const about = [u.member.about, u.member.wears, linked, u.variant?.faceAbout, u.variant?.about, own].filter(Boolean).join("; ");
   return about ? `${u.member.name} (${about})` : u.member.name;
 };
 
