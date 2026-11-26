@@ -162,6 +162,18 @@ ipcMain.handle("beatsheet:pick-footage", async (_e, kind: "files" | "folder" = "
   return r.canceled || !r.filePaths.length ? null : r.filePaths;
 });
 
+ipcMain.handle("beatsheet:pick-images", async () => {
+  const options: Electron.OpenDialogOptions = {
+    title: "Add reference photos",
+    message: "Choose one or more photos",
+    buttonLabel: "Add",
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "Photos", extensions: ["jpg", "jpeg", "png", "heic", "heif", "webp"] }],
+  };
+  const r = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options);
+  return r.canceled || !r.filePaths.length ? null : r.filePaths;
+});
+
 // The camera and microphone: macOS asks the person once, and remembers. Windows has one switch for desktop apps.
 ipcMain.handle("beatsheet:media-access", async (_e, kind: "camera" | "microphone") => {
   if (WINDOWS) return systemPreferences.getMediaAccessStatus(kind) === "denied" ? "denied" : "granted";

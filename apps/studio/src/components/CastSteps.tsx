@@ -7,13 +7,243 @@
  */
 import type { MakeJob, SheetKind } from "@beatsheet/engine";
 import { characterIngredients, lookGiven, resolveWardrobe, type Asset, type CastLook, type CastMember, type HeadwearMode } from "@beatsheet/schema";
-import { useState, type HTMLAttributes, type ReactNode } from "react";
-import { ASSET_DRAG, hideBroken, posterUrl } from "../lib";
+import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type HTMLAttributes, type ReactNode } from "react";
+import { ASSET_DRAG, desktop, hideBroken, posterUrl } from "../lib";
 import { actions, useProject } from "../store";
 import { madeWith, modelLabel } from "./Takes";
 import { PopMenu, TextField } from "./ui";
 import { Viewer } from "./Viewer";
 import { Icon } from "./Icon";
+
+export type CastPhotoRole = "faces" | "wardrobe" | "images";
+
+const IMAGE_FILE_RE = /\.(jpe?g|png|webp|heic|heif)$/i;
+
+/** Reads a browser File as base64 without the data-URL prefix. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? "").replace(/^data:[^;]+;base64,/, ""));
+    reader.onerror = () => reject(reader.error ?? new Error(`Couldn't read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** Uploads local file paths or File objects into a project and attaches them to a cast member's photo strip. */
+export async function uploadCastPhotos(
+  projectId: string,
+  memberId: string,
+  opts: { paths?: string[]; files?: File[]; look?: string; role: CastPhotoRole },
+): Promise<{ assets?: string[]; error?: string }> {
+  let paths = opts.paths?.filter(Boolean);
+  let filesPayload: { name: string; data: string }[] | undefined;
+  if (!paths?.length && opts.files?.length) {
+    const imageFiles = opts.files.filter((f) => f.type.startsWith("image/") || IMAGE_FILE_RE.test(f.name));
+    if (!imageFiles.length) return { error: "Only image files (JPG, PNG, WebP, HEIC) can be added as reference photos." };
+    const pathFor = desktop?.pathFor;
+    const desktopPaths = pathFor ? imageFiles.map((f) => pathFor(f)).filter(Boolean) : [];
+    if (desktopPaths.length === imageFiles.length) paths = desktopPaths;
+    else {
+      filesPayload = await Promise.all(imageFiles.map(async (f) => ({ name: f.name, data: await fileToBase64(f) })));
+    }
+  }
+  if (!paths?.length && !filesPayload?.length) return {};
+  const res = await fetch(`/api/projects/${projectId}/cast/${memberId}/photos`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      ...(paths?.length ? { paths } : { files: filesPayload }),
+      ...(opts.look ? { look: opts.look } : {}),
+      role: opts.role,
+    }),
+  }).catch(() => undefined);
+  if (!res) return { error: "Couldn't reach the engine" };
+  const j = (await res.json().catch(() => ({}))) as { assets?: string[]; error?: string };
+  return res.ok ? j : { error: j.error ?? "Couldn't add those photos" };
+}
+
+/** Whether a drag event carries OS files (from Finder / Explorer) in addition to in-app asset drags. */
+export const hasFileDrop = (e: DragEvent) => Array.from(e.dataTransfer.types).includes("Files");
+
+/**
+ * Dashed "+ Add photo" tile that sits at the end of a reference-photo strip: lets the user pick photos from their
+ * computer (native multi-select dialog in the desktop app, file input in a browser) or pick existing photos already
+ * in the project library.
+ */
+export function AddPhotoTile({
+  projectId,
+  memberId,
+  variantId,
+  role,
+  existing,
+  onPickAsset,
+  label = "Add photo",
+  compact,
+}: {
+  projectId: string;
+  memberId: string;
+  variantId?: string;
+  role: CastPhotoRole;
+  existing: string[];
+  onPickAsset: (assetId: string) => void;
+  label?: string;
+  compact?: boolean;
+}) {
+  const p = useProject();
+  const [menu, setMenu] = useState<{ x: number; y: number }>();
+  const [libAt, setLibAt] = useState<CSSProperties>();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const libRef = useRef<HTMLDivElement>(null);
+
+  const libraryImages = p.assets
+    .filter((a) => a.kind === "image" && !a.cutout)
+    .sort((a, b) => Number(isOwnPhoto(b)) - Number(isOwnPhoto(a)));
+  const hasLibraryChoices = libraryImages.some((a) => !existing.includes(a.id));
+
+  useEffect(() => {
+    if (!libAt) return;
+    const close = () => setLibAt(undefined);
+    const out = (e: Event) => !libRef.current?.contains(e.target as Node) && !btnRef.current?.contains(e.target as Node) && close();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("pointerdown", out, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", out, true);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("resize", close);
+    };
+  }, [libAt]);
+
+  const fromComputer = async () => {
+    setMenu(undefined);
+    setErr("");
+    if (desktop?.pickImages) {
+      const paths = await desktop.pickImages();
+      if (!paths?.length) return;
+      setBusy(true);
+      const r = await uploadCastPhotos(projectId, memberId, { paths, look: variantId, role });
+      setBusy(false);
+      if (r.error) setErr(r.error);
+    } else if (desktop?.pickFootage) {
+      const paths = await desktop.pickFootage("files");
+      if (!paths?.length) return;
+      setBusy(true);
+      const r = await uploadCastPhotos(projectId, memberId, { paths, look: variantId, role });
+      setBusy(false);
+      if (r.error) setErr(r.error);
+    } else {
+      fileInput.current?.click();
+    }
+  };
+
+  const onFilesPicked = async (list: FileList | null) => {
+    const files = list ? Array.from(list) : [];
+    if (fileInput.current) fileInput.current.value = "";
+    if (!files.length) return;
+    setErr("");
+    setBusy(true);
+    const r = await uploadCastPhotos(projectId, memberId, { files, look: variantId, role });
+    setBusy(false);
+    if (r.error) setErr(r.error);
+  };
+
+  const openLibrary = () => {
+    setMenu(undefined);
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const width = Math.min(420, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    setLibAt(r.bottom + 320 > window.innerHeight && r.top > window.innerHeight - r.bottom ? { left, bottom: window.innerHeight - r.top + 6, width } : { left, top: r.bottom + 6, width });
+  };
+
+  const onClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (busy) return;
+    if (hasLibraryChoices) {
+      setMenu({ x: e.clientX, y: e.clientY });
+    } else {
+      void fromComputer();
+    }
+  };
+
+  return (
+    <>
+      <span className={`cast-pic cast-add-wrap ${compact ? "compact" : ""}`.trim()}>
+        <button
+          ref={btnRef}
+          type="button"
+          className="cast-add-photo"
+          disabled={busy}
+          onClick={onClick}
+          title={hasLibraryChoices ? "Add photos from your computer or pick from this project's library (you can also drag image files here)" : "Choose photos from your computer (or drag image files here)"}
+        >
+          <span className="cast-add-plus">{busy ? "…" : "+"}</span>
+          <span className="small">{busy ? "Adding…" : label}</span>
+        </button>
+        {err && <span className="warn small cast-add-err">{err}</span>}
+      </span>
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
+        multiple
+        hidden
+        onChange={(e) => void onFilesPicked(e.target.files)}
+      />
+      {menu && (
+        <PopMenu {...menu} onClose={() => setMenu(undefined)}>
+          <button role="menuitem" onClick={() => void fromComputer()}>
+            Choose from computer…
+          </button>
+          <button role="menuitem" onClick={openLibrary}>
+            Pick from project library…
+          </button>
+        </PopMenu>
+      )}
+      {libAt && (
+        <div ref={libRef} className="cast-lib-picker" style={libAt} role="dialog" aria-label="Pick photos from project library">
+          <div className="cast-lib-head">
+            <span className="small">Pick from project library</span>
+            <span className="spacer" />
+            <button type="button" className="link small" onClick={() => (setLibAt(undefined), void fromComputer())}>
+              From computer…
+            </button>
+            <button type="button" className="link small" onClick={() => setLibAt(undefined)}>
+              Done
+            </button>
+          </div>
+          <div className="cast-lib-grid">
+            {libraryImages.map((a) => {
+              const has = existing.includes(a.id);
+              const by = madeWith(a) ?? (isOwnPhoto(a) ? "Photo" : undefined);
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={`cast-lib-item ${has ? "has" : ""}`}
+                  onClick={() => !has && onPickAsset(a.id)}
+                  disabled={has}
+                  title={has ? `${a.label ?? a.id} (already added)` : `Add ${a.label ?? a.id}`}
+                >
+                  <img src={posterUrl(projectId, a.id)} alt="" onError={hideBroken} />
+                  {by && <span className="badge">{by}</span>}
+                  {has && (
+                    <span className="cast-lib-check" aria-hidden="true">
+                      <Icon name="check" size={11} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 type Variant = NonNullable<CastMember["variants"]>[number];
 type Made = "portrait" | "faceSheet" | "outfitSheet" | "sheet";
@@ -85,7 +315,7 @@ export function CharacterSteps({
   canMake: boolean;
   /** Short readout of the selected model(s) and count (e.g. "2× Nano Banana 2.1 · ~$0.08"). */
   makeSummary?: string;
-  onMake: (sheetKind: SheetKind) => void;
+  onMake: (sheetKind: SheetKind, opts?: { usePortrait?: boolean }) => void;
   edit: (fn: (m: CastMember) => void) => void;
   /** Writing who they are from their pictures (a link), under the words. */
   describe?: ReactNode;
@@ -94,6 +324,7 @@ export function CharacterSteps({
   const [viewing, setViewing] = useState<{ row: "faces" | "wardrobe" | Made | "before"; items: string[]; at: number }>();
   const [menu, setMenu] = useState<{ x: number; y: number }>();
   const [cutting, setCutting] = useState("");
+  const [dropError, setDropError] = useState("");
   const [dragging, setDragging] = useState(false);
   const [over, setOver] = useState<Spot>();
   const look: CastLook = variant ?? m;
@@ -115,11 +346,24 @@ export function CharacterSteps({
   const faceChoices = [...new Set([...(settled ? [settled] : []), ...own, ...(look.faces ?? [])])].filter(image);
   const faceDefault = variant && settled ? [settled] : own;
   const faces = look.faces ?? faceDefault;
+  const [faceSource, setFaceSource] = useState<"photos" | "portrait">(faces.length > 0 ? "photos" : "portrait");
   const toggleFace = (a: string) =>
     editLook((l) => {
       const now = l.faces ?? faceDefault;
       l.faces = now.includes(a) ? now.filter((x) => x !== a) : [...now, a];
     });
+  const removeFacePhoto = (a: string) =>
+    editLook(
+      (l) => {
+        if (l.faces) l.faces = l.faces.filter((x) => x !== a);
+        if (l.images) l.images = l.images.filter((x) => x !== a);
+        if (l.kept) l.kept = l.kept.filter((x) => x !== a);
+        tidy(l);
+      },
+      (x) => {
+        if (!variant && x.seen) x.seen = x.seen.filter((s) => s.asset !== a);
+      },
+    );
 
   // Wardrobe & shared wardrobe options.
   const wardrobe = look.wardrobe ?? [];
@@ -209,17 +453,25 @@ export function CharacterSteps({
   const dropOn = (to: Exclude<Spot, "before">): HTMLAttributes<HTMLElement> => ({
     className: `take-strip ${over === to ? "drop-on" : ""}`,
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(PICTURE_DRAG)) return;
+      const acceptFiles = (to === "faces" || to === "wardrobe") && hasFileDrop(e);
+      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(PICTURE_DRAG) && !acceptFiles) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(to);
     },
     onDragLeave: (e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(undefined),
     onDrop: (e) => {
-      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
-      const a = e.dataTransfer.getData(ASSET_DRAG) || d.asset;
       setOver(undefined);
       setDragging(false);
+      if ((to === "faces" || to === "wardrobe") && e.dataTransfer.files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        setDropError("");
+        void uploadCastPhotos(projectId, m.id, { files: Array.from(e.dataTransfer.files), look: variant?.id, role: to }).then((r) => r.error && setDropError(r.error));
+        return;
+      }
+      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
+      const a = e.dataTransfer.getData(ASSET_DRAG) || d.asset;
       if (!a || !image(a)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -348,7 +600,7 @@ export function CharacterSteps({
       <>
         <div {...dropOn(kind)}>
           {chosen ? (
-            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom(kind, chosen)} onOpen={() => open(kind, all, chosen)} />
+            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom(kind, chosen)} onOpen={() => open(kind, all, chosen)} onRemove={() => takeOut(kind, chosen)} />
           ) : inheritedPic ? (
             <Picture projectId={projectId} id={inheritedPic} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => open(kind, [inheritedPic], inheritedPic)} />
           ) : (
@@ -376,6 +628,9 @@ export function CharacterSteps({
 
   const hasLegacySheet = !!(look.sheet || look.sheets?.length || going.some((j) => jobMatches(j, "sheet")));
   const hasDecoupledReady = !!(ing.faceSheet && ing.outfitSheet);
+  const hasFacePhotos = faces.length > 0;
+  const canFaceSheet = hasFacePhotos || !!sheetFace || !!m.about;
+  const usePortraitForFaceSheet = !hasFacePhotos ? !!sheetFace : !sheetFace ? false : faceSource === "portrait";
 
   return (
     <div className="cast-steps">
@@ -395,10 +650,20 @@ export function CharacterSteps({
               off={!faces.includes(a)}
               tick={{ on: faces.includes(a), toggle: () => toggleFace(a) }}
               onOpen={() => open("faces", faceChoices, a)}
+              onRemove={a === settled ? undefined : () => removeFacePhoto(a)}
             />
           ))}
-          {!faceChoices.length && <span className="dim small cast-none">No photos yet: right-click one in the Library to add it, or drag one here. Without any, portraits are made from words.</span>}
+          <AddPhotoTile
+            projectId={projectId}
+            memberId={m.id}
+            variantId={variant?.id}
+            role="faces"
+            existing={faceChoices}
+            onPickAsset={(aid) => put(aid, undefined, "faces")}
+          />
         </div>
+        {dropError && <span className="warn small">{dropError}</span>}
+        {!faceChoices.length && <span className="dim small cast-none">Add reference photos (or drag image files here). Without photos, portraits are generated from the description.</span>}
         <label>
           <span>
             Who they are <span className="dim">· face, hair &amp; build in every look</span>
@@ -421,24 +686,49 @@ export function CharacterSteps({
         </div>
       </Step>
 
-      <Step n={2} done={!!(look.faceSheet || (variant && headwear !== "face" && m.faceSheet))} title="360° face sheet" note="· 6-angle bare turnaround from portrait">
+      <Step n={2} done={!!(look.faceSheet || (variant && headwear !== "face" && m.faceSheet))} title="360° face sheet" note="· 6-angle bare turnaround">
         {made(
           "faceSheet",
           variant && m.faceSheet && headwear !== "face"
             ? `Inherits ${plainLabel}'s 360° face sheet — no need to remake unless the face changes.`
-            : "No 360° face sheet yet. Generated from the chosen portrait + angled face photos.",
+            : usePortraitForFaceSheet
+              ? "No 360° face sheet yet. Generated from the chosen portrait + angled face photos."
+              : "No 360° face sheet yet. Generated directly from your selected face photos.",
           variant && headwear !== "face" ? m.faceSheet : undefined,
+        )}
+        {hasFacePhotos && sheetFace && (
+          <div className="cast-source-row small">
+            <span className="dim">Source</span>
+            <div className="segmented small" role="group" aria-label="360° face sheet source">
+              <button
+                type="button"
+                className={faceSource === "photos" ? "on" : ""}
+                onClick={() => setFaceSource("photos")}
+                title="Generate directly from your raw face photos (ignores the chosen portrait — best for real likeness and natural facial hair)"
+              >
+                Face photos ({faces.length})
+              </button>
+              <button
+                type="button"
+                className={faceSource === "portrait" ? "on" : ""}
+                onClick={() => setFaceSource("portrait")}
+                title="Anchor on the chosen portrait first, with face photos for side angles"
+              >
+                Portrait + photos
+              </button>
+            </div>
+          </div>
         )}
         <div className="make-row">
           <button
-            className={!!sheetFace && !look.faceSheet && !(variant && headwear !== "face" && m.faceSheet) ? "primary" : ""}
-            disabled={!canMake || !sheetFace}
-            onClick={() => onMake("face-sheet")}
+            className={canFaceSheet && !look.faceSheet && !(variant && headwear !== "face" && m.faceSheet) ? "primary" : ""}
+            disabled={!canMake || !canFaceSheet}
+            onClick={() => onMake("face-sheet", { usePortrait: usePortraitForFaceSheet })}
             title="3×2 six-panel turnaround (left profile, front, right profile, left 3/4, back, right 3/4) on neutral mid-gray"
           >
             Make 360° face sheet
           </button>
-          {!sheetFace ? <span className="dim small">Choose a portrait first so all 6 angles match it.</span> : makeSummary && <span className="dim small">{makeSummary}</span>}
+          {!canFaceSheet ? <span className="dim small">Add face photos, a description, or choose a portrait first.</span> : makeSummary && <span className="dim small">{makeSummary}</span>}
         </div>
       </Step>
 
@@ -522,7 +812,15 @@ export function CharacterSteps({
           {inherited.map((a) => (
             <Picture key={a} projectId={projectId} id={a} borrowed by={by(a)} onOpen={() => open("wardrobe", inherited, a)} />
           ))}
-          {!wardrobe.length && !inherited.length && <span className="dim small cast-none">Drag a costume photo here (optional), or:</span>}
+          <AddPhotoTile
+            projectId={projectId}
+            memberId={m.id}
+            variantId={variant?.id}
+            role="wardrobe"
+            existing={[...wardrobe, ...inherited]}
+            onPickAsset={(aid) => put(aid, undefined, "wardrobe")}
+            label="Add costume photo"
+          />
         </div>
         <div className="make-row small">
           <button className="link small" disabled={!own.length || cutting.startsWith("Cutting")} onClick={(e) => setMenu({ x: e.clientX, y: e.clientY })} title="The clothes they wear in one of their photos, cut below the face">
@@ -634,7 +932,16 @@ export function CharacterSteps({
             const a = item.id;
             const row = viewing.row;
             if (row === "faces")
-              return <button onClick={() => toggleFace(a)}>{faces.includes(a) ? "Don't take the face from it" : "Take the face from it"}</button>;
+              return (
+                <>
+                  <button onClick={() => toggleFace(a)}>{faces.includes(a) ? "Don't take the face from it" : "Take the face from it"}</button>
+                  {a !== settled && (
+                    <button className="danger" onClick={() => (removeFacePhoto(a), setViewing(undefined))}>
+                      Remove photo
+                    </button>
+                  )}
+                </>
+              );
             if (row === "wardrobe")
               return wardrobe.includes(a) ? (
                 <button className="danger" onClick={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}>
@@ -737,15 +1044,22 @@ export function WardrobeSteps({
   const dropOn = (to: "wardrobe" | "outfitSheet" | "outfitSheets"): HTMLAttributes<HTMLElement> => ({
     className: `take-strip ${over === to ? "drop-on" : ""}`,
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(ASSET_DRAG)) return;
+      const acceptFiles = to === "wardrobe" && hasFileDrop(e);
+      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !acceptFiles) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(to);
     },
     onDragLeave: (e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(undefined),
     onDrop: (e) => {
-      const a = e.dataTransfer.getData(ASSET_DRAG);
       setOver(undefined);
+      if (to === "wardrobe" && e.dataTransfer.files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        void uploadCastPhotos(projectId, m.id, { files: Array.from(e.dataTransfer.files), look: variant?.id, role: "wardrobe" });
+        return;
+      }
+      const a = e.dataTransfer.getData(ASSET_DRAG);
       if (!a || !image(a)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -830,14 +1144,22 @@ export function WardrobeSteps({
           {inherited.map((a) => (
             <Picture key={a} projectId={projectId} id={a} borrowed by={by(a)} onOpen={() => setViewing({ row: "wardrobe", items: inherited, at: inherited.indexOf(a) })} />
           ))}
-          {!wardrobe.length && !inherited.length && <span className="dim small cast-none">Drag costume reference photos here (optional).</span>}
+          <AddPhotoTile
+            projectId={projectId}
+            memberId={m.id}
+            variantId={variant?.id}
+            role="wardrobe"
+            existing={[...wardrobe, ...inherited]}
+            onPickAsset={(aid) => editLook((l) => void (l.wardrobe = [...(l.wardrobe ?? []).filter((x) => x !== aid), aid]))}
+            label="Add costume photo"
+          />
         </div>
       </Step>
 
       <Step n={2} done={!!chosen} title="Outfit sheet" note={headwear === "ghost" ? "· ghost-mannequin front & back" : "· headless front & back"}>
         <div {...dropOn("outfitSheet")}>
           {chosen ? (
-            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: all, at: 0 })} />
+            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: all, at: 0 })} onRemove={() => takeOut(chosen)} />
           ) : variant && m.outfitSheet ? (
             <Picture projectId={projectId} id={m.outfitSheet} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: [m.outfitSheet!], at: 0 })} />
           ) : (
@@ -956,6 +1278,18 @@ export function NonHumanSteps({
       const now = l.faces ?? refDefault;
       l.faces = now.includes(a) ? now.filter((x) => x !== a) : [...now, a];
     });
+  const removeRefPhoto = (a: string) =>
+    editLook(
+      (l) => {
+        if (l.faces) l.faces = l.faces.filter((x) => x !== a);
+        if (l.images) l.images = l.images.filter((x) => x !== a);
+        if (l.kept) l.kept = l.kept.filter((x) => x !== a);
+        tidy(l);
+      },
+      (x) => {
+        if (!variant && x.seen) x.seen = x.seen.filter((s) => s.asset !== a);
+      },
+    );
 
   const choose = (kind: "portrait" | "sheet", a: string) =>
     editLook((l) => {
@@ -1011,17 +1345,24 @@ export function NonHumanSteps({
   const dropOn = (to: "faces" | "portrait" | "portraits" | "sheet" | "sheets"): HTMLAttributes<HTMLElement> => ({
     className: `take-strip ${over === to ? "drop-on" : ""}`,
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(PICTURE_DRAG)) return;
+      const acceptFiles = to === "faces" && hasFileDrop(e);
+      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(PICTURE_DRAG) && !acceptFiles) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(to);
     },
     onDragLeave: (e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(undefined),
     onDrop: (e) => {
-      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
-      const a = e.dataTransfer.getData(ASSET_DRAG) || d.asset;
       setOver(undefined);
       setDragging(false);
+      if (to === "faces" && e.dataTransfer.files?.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        void uploadCastPhotos(projectId, m.id, { files: Array.from(e.dataTransfer.files), look: variant?.id, role: "faces" });
+        return;
+      }
+      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
+      const a = e.dataTransfer.getData(ASSET_DRAG) || d.asset;
       if (!a || !image(a)) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1067,7 +1408,7 @@ export function NonHumanSteps({
       <>
         <div {...dropOn(kind)}>
           {chosen ? (
-            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom(kind, chosen)} onOpen={() => open(kind, all, chosen)} />
+            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom(kind, chosen)} onOpen={() => open(kind, all, chosen)} onRemove={() => takeOut(kind, chosen)} />
           ) : inheritedPic ? (
             <Picture projectId={projectId} id={inheritedPic} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => open(kind, [inheritedPic], inheritedPic)} />
           ) : (
@@ -1118,10 +1459,19 @@ export function NonHumanSteps({
               off={!refs.includes(a)}
               tick={{ on: refs.includes(a), toggle: () => toggleRef(a) }}
               onOpen={() => open("faces", refChoices, a)}
+              onRemove={a === settled ? undefined : () => removeRefPhoto(a)}
             />
           ))}
-          {!refChoices.length && <span className="dim small cast-none">No reference photos yet: drag photos here, or describe them below to generate from scratch.</span>}
+          <AddPhotoTile
+            projectId={projectId}
+            memberId={m.id}
+            variantId={variant?.id}
+            role="faces"
+            existing={refChoices}
+            onPickAsset={(aid) => put(aid, undefined, "faces")}
+          />
         </div>
+        {!refChoices.length && <span className="dim small cast-none">Add reference photos (or drag image files here), or describe them below to generate from scratch.</span>}
         <label>
           <span>
             Who or what they are <span className="dim">· species, markings, silhouette, materials</span>
@@ -1202,7 +1552,17 @@ export function NonHumanSteps({
           actions={(item) => {
             const a = item.id;
             const row = viewing.row;
-            if (row === "faces") return <button onClick={() => toggleRef(a)}>{refs.includes(a) ? "Don't use as reference" : "Use as reference"}</button>;
+            if (row === "faces")
+              return (
+                <>
+                  <button onClick={() => toggleRef(a)}>{refs.includes(a) ? "Don't use as reference" : "Use as reference"}</button>
+                  {a !== settled && (
+                    <button className="danger" onClick={() => (removeRefPhoto(a), setViewing(undefined))}>
+                      Remove photo
+                    </button>
+                  )}
+                </>
+              );
             if (row === "portrait" || row === "sheet")
               return (
                 <>

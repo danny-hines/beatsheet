@@ -13,6 +13,7 @@ process.env.BEATSHEET_HOME = join(root, "home");
 
 // Adding an asset probes it and makes previews; here it only records it.
 vi.mock("../src/ingest.ts", async () => {
+  const { basename } = await import("node:path");
   const { loadFile, updateFile } = await import("../src/store.ts");
   return {
     addAsset: async (id: string, file: string, meta: { id?: string; label?: string; tags?: string[]; provenance?: Asset["provenance"] }) => {
@@ -23,16 +24,39 @@ vi.mock("../src/ingest.ts", async () => {
       updateFile(id, (d) => void d.assets.push(asset));
       return asset;
     },
+    importMedia: async (id: string, given: string[]) => {
+      const { doc } = loadFile(id);
+      const added: Asset[] = [];
+      const skipped: { file: string; asset: string }[] = [];
+      const used = new Set(doc.assets.map((a) => a.id));
+      for (const p of given) {
+        const name = basename(p);
+        const dup = doc.assets.find((a) => basename(a.path) === name);
+        if (dup) {
+          skipped.push({ file: name, asset: dup.id });
+          continue;
+        }
+        const base = name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-") || "photo";
+        let aid = base;
+        for (let n = 2; used.has(aid); n++) aid = `${base}-${n}`;
+        used.add(aid);
+        const asset: Asset = { id: aid, kind: "image", path: p, label: name, provenance: { source: "import" } };
+        added.push(asset);
+      }
+      if (added.length) updateFile(id, (d) => void d.assets.push(...added));
+      return { added, skipped };
+    },
   };
 });
 
+let addCastPhotos: typeof import("../src/castfrom.ts").addCastPhotos;
 let castFromSubject: typeof import("../src/castfrom.ts").castFromSubject;
 let momentsOf: typeof import("../src/castfrom.ts").momentsOf;
 let store: typeof import("../src/store.ts");
 const dir = join(process.env.BEATSHEET_PROJECTS!, "family");
 
 beforeAll(async () => {
-  ({ castFromSubject, momentsOf } = await import("../src/castfrom.ts"));
+  ({ addCastPhotos, castFromSubject, momentsOf } = await import("../src/castfrom.ts"));
   store = await import("../src/store.ts");
   mkdirSync(dir, { recursive: true });
   // A 1000×500 photo of two people: Theo's face at the left, and someone not named yet at the right.
@@ -125,5 +149,33 @@ describe("cast from someone found in the footage", () => {
     const { project } = store.loadProject("family");
     expect(project.cast!.find((m) => m.id === "mia")!.seen).toEqual([{ asset: "walk", subject: "person-1" }, { asset: "mia-still" }, { asset: "mia-still-2" }, { asset: "mia-still-3" }]);
     expect(project.assets.filter((a) => a.id.startsWith("mia-still")).map((a) => a.provenance?.params?.at)).toEqual([0.4, 2.5, 4.2]);
+  });
+
+  it("imports and attaches new reference photos (or reuses existing ones) into faces or wardrobe", async () => {
+    const sample = await sharp({ create: { width: 80, height: 80, channels: 3, background: "#c85a32" } }).jpeg().toBuffer();
+    const extraPath = join(dir, "theo-side.jpg");
+    writeFileSync(extraPath, sample);
+    // Explicit faces list already set on Theo: adding a new file appends to seen AND faces.
+    store.updateFile("family", (d) => {
+      const theo = d.cast!.find((m) => m.id === "theo")!;
+      theo.faces = ["theo-still"];
+    });
+    const res1 = await addCastPhotos("family", "theo", { paths: [extraPath], role: "faces" });
+    expect(res1.assets).toEqual(["theo-side"]);
+    const theo = store.loadProject("family").project.cast!.find((m) => m.id === "theo")!;
+    expect(theo.faces).toEqual(["theo-still", "theo-side"]);
+    expect(theo.seen?.some((s) => s.asset === "theo-side")).toBe(true);
+
+    // Uploaded base64 file into wardrobe role attaches cleanly, and re-uploading an existing filename reuses its asset id.
+    const res2 = await addCastPhotos("family", "theo", {
+      files: [{ name: "doublet.jpg", data: sample.toString("base64") }],
+      role: "wardrobe",
+    });
+    expect(res2.assets).toEqual(["doublet"]);
+    expect(store.loadProject("family").project.cast!.find((m) => m.id === "theo")!.wardrobe).toEqual(["doublet"]);
+
+    const resDup = await addCastPhotos("family", "theo", { paths: [join(dir, "beach.jpg")], role: "wardrobe" });
+    expect(resDup.assets).toEqual(["beach"]);
+    expect(store.loadProject("family").project.cast!.find((m) => m.id === "theo")!.wardrobe).toEqual(["doublet", "beach"]);
   });
 });

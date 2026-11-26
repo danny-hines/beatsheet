@@ -5,13 +5,13 @@
  * head and shoulders, and added beside the clip. Sheets and descriptions are made from those stills.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
 import sharp from "sharp";
-import { slugify, type Asset, type CastMember } from "@beatsheet/schema";
-import { addAsset } from "./ingest.ts";
+import { PICTURES_EACH, slugify, type Asset, type CastMember } from "@beatsheet/schema";
+import { addAsset, importMedia } from "./ingest.ts";
 import { pictureBytes } from "./media.ts";
 import { assetPath, cachePaths, projectDir } from "./paths.ts";
 import { loadProject, updateFile } from "./store.ts";
@@ -181,4 +181,90 @@ export async function castFromSubject(projectId: string, ask: { asset: string; s
   const { joined } = await followPeople(projectId, [a.id]).catch(() => ({ joined: [] as { member: string; by: string; speaker: string }[] }));
   const voice = joined.find((j) => j.member === member && j.by === "face")?.speaker;
   return { member, still: stills[0]!.id, stills: stills.map((x) => x.id), ...(voice ? { voice } : {}) };
+}
+
+export type CastPhotoRole = "faces" | "wardrobe" | "images";
+
+/**
+ * Brings one or more reference photos (from local file paths or uploaded bytes) into the project and attaches them
+ * directly to a cast member (or one of its variant looks): into `faces` (+ `seen`), `wardrobe`, or `images`/`kept`.
+ * Photos already in the project are reused rather than duplicated or rejected.
+ */
+export async function addCastPhotos(
+  projectId: string,
+  castId: string,
+  ask: {
+    paths?: string[];
+    files?: { name: string; data: string }[];
+    look?: string;
+    role?: CastPhotoRole;
+  },
+): Promise<{ assets: string[] }> {
+  const { project } = loadProject(projectId);
+  const member = project.cast?.find((m) => m.id === castId);
+  if (!member) throw new Error(`No cast member "${castId}"`);
+  if (ask.look && !member.variants?.some((v) => v.id === ask.look)) throw new Error(`No look "${ask.look}" on @${castId}`);
+
+  const role: CastPhotoRole = ask.role ?? (member.kind === "wardrobe" ? "wardrobe" : member.kind === "character" ? "faces" : "images");
+  let tempDir: string | undefined;
+  const given: string[] = [...(ask.paths ?? [])];
+  try {
+    if (ask.files?.length) {
+      tempDir = mkdtempSync(join(tmpdir(), "beatsheet-cast-photo-"));
+      for (const [i, f] of ask.files.entries()) {
+        const cleanName = basename(f.name || `photo-${i + 1}.jpg`).replace(/[^\w.\- ]+/g, "_") || `photo-${i + 1}.jpg`;
+        const ext = extname(cleanName) || ".jpg";
+        const stem = basename(cleanName, extname(cleanName)) || `photo-${i + 1}`;
+        let target = join(tempDir, `${stem}${ext}`);
+        for (let n = 2; existsSync(target); n++) target = join(tempDir, `${stem}-${n}${ext}`);
+        const raw = f.data.replace(/^data:[^;]+;base64,/, "");
+        writeFileSync(target, Buffer.from(raw, "base64"));
+        given.push(target);
+      }
+    }
+    if (!given.length) throw new Error("Choose at least one photo to add");
+
+    const { added, skipped } = await importMedia(projectId, given, { label: `${member.name || member.id} photos` });
+    const latest = loadProject(projectId).project;
+    const assetIds = [
+      ...added.filter((a) => a.kind === "image").map((a) => a.id),
+      ...skipped
+        .map((s) => s.asset)
+        .filter((aid) => latest.assets.find((a) => a.id === aid)?.kind === "image"),
+    ];
+    const unique = [...new Set(assetIds)];
+    if (!unique.length) throw new Error("No photos found in the selected files");
+
+    updateFile(projectId, (d) => {
+      const m = d.cast?.find((x) => x.id === castId);
+      if (!m) return;
+      const target = ask.look ? m.variants?.find((v) => v.id === ask.look) : m;
+      if (!target) return;
+      if (role === "wardrobe") {
+        target.wardrobe = [...new Set([...(target.wardrobe ?? []), ...unique])];
+      } else if (role === "faces") {
+        const seen = (m.seen ??= []);
+        for (const aid of unique) {
+          if (!seen.some((s) => s.asset === aid)) seen.push({ asset: aid });
+        }
+        // If this look already tracks an explicit `faces` selection (or is a variant), include the new photos right away.
+        if (target.faces || ask.look) {
+          target.faces = [...new Set([...(target.faces ?? []), ...unique])];
+        }
+      } else {
+        const curImages = [...(target.images ?? [])];
+        const curKept = [...(target.kept ?? [])];
+        for (const aid of unique) {
+          if (curImages.includes(aid) || curKept.includes(aid)) continue;
+          if (curImages.length < PICTURES_EACH) curImages.push(aid);
+          else curKept.push(aid);
+        }
+        if (curImages.length) target.images = curImages;
+        if (curKept.length) target.kept = curKept;
+      }
+    });
+    return { assets: unique };
+  } finally {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  }
 }

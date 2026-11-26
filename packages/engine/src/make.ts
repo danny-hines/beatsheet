@@ -378,6 +378,12 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
    * With `sheet`, for a character: a head-and-shoulders portrait instead (shorthand for `sheetKind: "portrait"`).
    */
   portrait?: boolean;
+  /**
+   * With `sheet` and `sheetKind: "face-sheet"` (or `"sheet"`): whether to anchor on the look's chosen portrait first
+   * (default true). Pass false to generate directly from the character's raw face photos instead (helpful when the
+   * chosen portrait is costumed, stylized, or drifted from the real reference photos).
+   */
+  usePortrait?: boolean;
   /** Optional override for how decoupled character face + outfit ingredients are packaged for the model. */
   castPack?: CastPackStrategy;
   /** Cast and sets in it beyond the ones the prompt names. */
@@ -509,18 +515,18 @@ function sheetPrompt(
     const faceWear =
       headwear === "face"
         ? ", keeping anything worn directly on the head or face consistently across every angle"
-        : ", bare neck and shoulders with no clothes or headwear";
-    const grid = `presented as a single, perfectly symmetrical 3x2 grid (three columns, two rows) of six identical-sized head-and-shoulders panels separated by thin clean dark gutter lines against a seamless neutral mid-gray studio background, neutral relaxed expression${faceWear}. Top row left: full left side profile; top row middle: direct frontal view facing the camera; top row right: full right side profile; bottom row left: left three-quarter view; bottom row middle: direct back of head view; bottom row right: right three-quarter view. Identical hair, skin, features and proportions across all six panels`;
+        : ", bare neck and shoulders with no clothes or headwear — preserve their exact natural hair and any natural facial hair (keep any beard, goatee, mustache or stubble exactly as shown in the reference photos, without shaving or adding facial hair)";
+    const grid = `presented as a single, perfectly symmetrical 3x2 grid (three columns, two rows) of six identical-sized head-and-shoulders panels separated by thin clean dark gutter lines against a seamless neutral mid-gray studio background, neutral relaxed expression${faceWear}. Top row left: full left side profile; top row middle: direct frontal view facing the camera; top row right: full right side profile; bottom row left: left three-quarter view; bottom row middle: direct back of head view; bottom row right: right three-quarter view. Identical facial likeness, natural hair, natural facial hair, skin texture, features and proportions across all six panels`;
     return style
-      ? `A 360-degree multi-panel character face study of @${id}, ${grid}. Nothing else in the picture and no text or labels, in the style of @${style}.`
+      ? `A 360-degree multi-panel character face study of @${id}, ${grid}. Nothing else in the picture and no text or labels, in the style of @${style} (keep the seamless neutral mid-gray studio background and bare neck/shoulders — apply only the rendering medium and camera/color feel of @${style}, never scenery or clothing from it).`
       : `A hyper-realistic multi-panel photographic character face study of @${id}, ${grid}. Soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
   }
 
   if (kind === "portrait") {
     if (headwear === "none" || headwear === "ghost") {
       return style
-        ? `A head-and-shoulders portrait of @${id} facing the camera with a neutral relaxed expression, bare neck and shoulders, no hat or costume on the head, on a plain neutral mid-gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
-        : `A photographic head-and-shoulders portrait of @${id} facing the camera with a neutral relaxed expression, bare neck and shoulders, no hat or costume on the head, on a plain neutral mid-gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+        ? `A head-and-shoulders portrait of @${id} facing the camera with a neutral relaxed expression, bare neck and shoulders, no hat or costume on the head, preserving their exact natural hair and any natural facial hair shown in the reference photos, on a plain neutral mid-gray background, nothing else in the picture and no text or labels, in the style of @${style} (keep the neutral mid-gray studio background and bare shoulders — apply only the rendering medium and camera/color feel of @${style}, never scenery or clothing from it).`
+        : `A photographic head-and-shoulders portrait of @${id} facing the camera with a neutral relaxed expression, bare neck and shoulders, no hat or costume on the head, preserving their exact natural hair and any natural facial hair shown in the reference photos, on a plain neutral mid-gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
     }
     return style
       ? `A head-and-shoulders portrait of @${id} facing the camera, with anything worn on the head or face, on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
@@ -554,6 +560,7 @@ function lookRefs(
   kind: SheetKind,
   pictures: number,
   styled: string | undefined,
+  usePortrait = true,
 ): { refs: string[]; words: string } {
   const variant = variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   const look = variant ?? member;
@@ -612,11 +619,11 @@ function lookRefs(
   }
 
   if (kind === "face-sheet") {
-    // 360° face turnaround: anchor on the chosen portrait (or base faceSheet for a variant), plus extra raw face photos
-    // from other angles when available so side/3/4 geometry is grounded in reality. Never pull in wardrobe photos!
+    // 360° face turnaround: anchor on the chosen portrait (unless `usePortrait === false`), plus extra raw face photos
+    // from other angles so side/3/4 geometry and natural facial hair stay grounded in reality. Never pull in wardrobe photos!
     const settled = variant ? [member.faceSheet, member.portrait, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
-    const anchor = [look.portrait, settled].find(asset);
-    const extraFaces = (look.faces ?? (variant ? [] : ownPhotos(project, member))).filter((id) => asset(id) && id !== anchor);
+    const anchor = usePortrait ? [look.portrait, settled].find(asset) : undefined;
+    const extraFaces = (look.faces ?? (variant && anchor ? [] : ownPhotos(project, member))).filter((id) => asset(id) && id !== anchor);
     const maxFaces = Math.max(1, pictures - (stylePic ? 1 : 0));
     const faces = [...(anchor ? [anchor] : []), ...extraFaces].slice(0, maxFaces);
     const withStyle = !!stylePic && faces.length < pictures;
@@ -625,13 +632,15 @@ function lookRefs(
       const role = [look.faceSheet, member.faceSheet].includes(anchor) ? "360-degree face sheet" : [look.portrait, member.portrait].includes(anchor) ? "portrait" : "sheet";
       if (faces.length > 1) {
         words.push(
-          `The first reference picture is ${who}'s chosen ${role}, and the next ${faces.length - 1 === 1 ? "picture is another photo" : `${faces.length - 1} pictures are additional photos`} of ${who} from other angles: keep ${who}'s exact face, hair, skin, bone structure and proportions across all six panels.`,
+          `The first reference picture is ${who}'s chosen ${role}, and the next ${faces.length - 1 === 1 ? "picture is another photo" : `${faces.length - 1} pictures are additional photos`} of ${who} from other angles: keep ${who}'s exact face, natural hair, natural facial hair (any beard, goatee, mustache or stubble), skin texture, bone structure and proportions across all six panels.`,
         );
       } else {
-        words.push(`The first reference picture is ${who}'s chosen ${role}: keep ${who}'s exact face, hair, skin and features across all six panels.`);
+        words.push(`The first reference picture is ${who}'s chosen ${role}: keep ${who}'s exact face, natural hair, natural facial hair, skin texture and features across all six panels.`);
       }
     } else if (faces.length) {
-      words.push(`The reference photos show ${who}: keep ${who}'s exact face, hair, skin, features and proportions across all six panels.`);
+      words.push(
+        `The reference photos show ${who}: preserve ${who}'s exact face, natural hair, natural facial hair (keep any beard, goatee, mustache or stubble exactly as photographed — do not clean-shave or add facial hair), skin texture, bone structure and proportions across all six panels.`,
+      );
     }
     if (withStyle) words.push("The last reference picture shows the style to draw it in, not who or what it is.");
     return { refs: [...faces, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
@@ -641,7 +650,7 @@ function lookRefs(
   const headwear: HeadwearMode | undefined = variant?.headwear ?? member.headwear;
   const barePortrait = portrait && (headwear === "none" || headwear === "ghost");
   const settled = variant ? [member.portrait, member.faceSheet, member.sheet, ...(member.images ?? [])].find(asset) : undefined;
-  const chosen = portrait ? undefined : [look.portrait, settled].find(asset);
+  const chosen = portrait || !usePortrait ? undefined : [look.portrait, settled].find(asset);
   const faces = (chosen ? [chosen] : (look.faces ?? (portrait && settled ? [settled] : ownPhotos(project, member)))).filter(asset);
   const wardrobe = barePortrait ? [] : ((variant?.wardrobe?.length ? variant.wardrobe : member.wardrobe) ?? []).filter(asset);
   const w = wardrobe.slice(0, Math.max(0, pictures - 1));
@@ -756,7 +765,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
 
   if (!refs && ask.op === "image" && member && (member.kind === "character" || member.kind === "wardrobe")) {
     // A character's portrait, 360° face sheet, outfit turnaround, or combined sheet comes from its look's steps.
-    const made = lookRefs(project, member, variantId, sheetKind!, pictures, style(member.style) ?? lookStyle);
+    const made = lookRefs(project, member, variantId, sheetKind!, pictures, style(member.style) ?? lookStyle, ask.usePortrait !== false);
     if (made.refs.length) {
       refs = made.refs;
       sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${made.words}`;

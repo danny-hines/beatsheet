@@ -691,6 +691,12 @@ const makeArgs = {
     .describe(
       'Shorthand for sheetKind: "portrait". Makes a head-and-shoulders portrait from the look\'s face photos (or the plain look\'s chosen portrait for a variant) to lock likeness first.',
     ),
+  usePortrait: z
+    .boolean()
+    .optional()
+    .describe(
+      'With sheetKind "face-sheet" (or "sheet"): whether to anchor on the chosen portrait first (default true). Pass false to generate directly from raw face reference photos instead.',
+    ),
   castPack: z
     .enum(["split-360", "split-single", "combined"])
     .optional()
@@ -811,6 +817,7 @@ type MakeToolArgs = {
   sheet?: string;
   sheetKind?: SheetKind;
   portrait?: boolean;
+  usePortrait?: boolean;
   castPack?: CastPackStrategy;
   prompt?: string;
   cast?: string[];

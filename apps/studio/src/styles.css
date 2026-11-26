@@ -1342,6 +1342,22 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .cast-steps .take-strip.drop-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .cast-pic-tick { position: absolute; right: 2px; bottom: 2px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 1px solid var(--on-scrim); border-radius: 50%; background: var(--scrim); color: var(--on-scrim); }
 .cast-pic-tick.on { border-color: var(--good); background: var(--good); color: var(--bg); }
+/* "+ Add photo" dashed tile, project-library photo picker, and 360° source toggle. */
+.cast-add-wrap { display: inline-flex; flex-direction: column; gap: 4px; }
+.cast-add-photo { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; height: 72px; min-width: 96px; padding: 6px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-2); background: transparent; color: var(--dim); cursor: pointer; }
+.cast-add-photo:hover:not(:disabled) { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cast-add-plus { font-size: 20px; line-height: 1; font-weight: 400; }
+.cast-add-err { max-width: 220px; }
+.cast-source-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cast-lib-picker { position: fixed; z-index: 60; display: flex; flex-direction: column; gap: 8px; max-height: 320px; padding: 10px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--panel); box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.45)); }
+.cast-lib-head { display: flex; align-items: center; gap: 10px; }
+.cast-lib-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; overflow-y: auto; padding-right: 2px; }
+.cast-lib-item { position: relative; aspect-ratio: 4 / 3; padding: 0; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--well); overflow: hidden; cursor: pointer; }
+.cast-lib-item:hover:not(:disabled) { border-color: var(--accent); }
+.cast-lib-item.has { opacity: 0.55; cursor: default; }
+.cast-lib-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cast-lib-item .badge { position: absolute; left: 3px; bottom: 3px; }
+.cast-lib-check { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--good); color: var(--bg); }
 .slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
 .slot { position: relative; display: grid; place-items: center; aspect-ratio: 4 / 3; border: 1px dashed var(--line-2); border-radius: var(--r-2); }
 .slot .cast-pic, .slot .cast-pic .take { width: 100%; height: 100%; aspect-ratio: auto; }
@@ -1582,6 +1598,7 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .cast-page .cast-step { gap: 8px; padding: 12px 0 8px; }
 .cast-page .take-strip { flex-wrap: wrap; gap: 8px; }
 .cast-page .cast-pic .take, .cast-page .cast-pic .take.pending { height: 128px; }
+.cast-page .cast-add-photo { height: 128px; min-width: 128px; }
 .cast-page .cast-pic.chosen .take { height: 264px; }
 .cast-page .slots { grid-template-columns: repeat(3, minmax(0, 240px)); gap: 8px; }
 .cast-page .slot .cast-pic .take { height: 100%; }

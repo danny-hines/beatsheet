@@ -27,7 +27,7 @@ import { cancelSamInstall, installSam, removeSam, samStatus } from "./sam.ts";
 import { setSamToken } from "./sam-cuda.ts";
 import { cancelKokoroInstall, installKokoro, kokoroStatus, removeKokoro } from "./kokoro.ts";
 import { narrate } from "./narrate.ts";
-import { castFromSubject, wardrobeFrom } from "./castfrom.ts";
+import { addCastPhotos, castFromSubject, wardrobeFrom, type CastPhotoRole } from "./castfrom.ts";
 import { stillFromClip } from "./frames.ts";
 import { describeCast } from "./describe.ts";
 import { cancelJobs, chooseProvider, driveJobs, estimate, listJobs, makeChoices, providerRows, mergeInJobs, renameInJobs, retryJobs, spentSince, startMake, startMakeAll, startPicked, turnBudget, type MakeAsk, type SheetKind } from "./make.ts";
@@ -691,6 +691,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           sheet: q.get("sheet") ?? undefined,
           ...(sheetKind ? { sheetKind } : {}),
           ...(q.get("portrait") === "1" ? { portrait: true } : {}),
+          ...(q.get("usePortrait") === "0" ? { usePortrait: false } : {}),
           ...(castPack ? { castPack } : {}),
           start: q.get("start") ?? undefined,
           ...(q.get("end") === "none" ? { end: null } : q.get("end") ? { end: q.get("end")! } : {}),
@@ -1155,6 +1156,19 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!body.asset) return json(res, 400, { error: "From which photo?" });
     try {
       return json(res, 200, await wardrobeFrom(id, { asset: body.asset, look: body.look ? `${parts[3]}/${body.look}` : parts[3] }));
+    } catch (err) {
+      return json(res, 400, { error: said(err) });
+    }
+  }
+  if (section === "projects" && id && action === "cast" && parts[3] && parts[4] === "photos" && req.method === "POST") {
+    const body = JSON.parse((await readBody(req)) || "{}") as {
+      paths?: string[];
+      files?: { name: string; data: string }[];
+      look?: string;
+      role?: CastPhotoRole;
+    };
+    try {
+      return json(res, 200, await addCastPhotos(id, parts[3], body));
     } catch (err) {
       return json(res, 400, { error: said(err) });
     }

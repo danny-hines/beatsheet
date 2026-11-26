@@ -11,7 +11,7 @@ import { lineUp } from "../multicam";
 import { actions, useProject, useStore } from "../store";
 import { cost, Failed, fitOf, madeWith, modelLabel, money, pickOf, useChoices, useMake, WhyNot } from "./Takes";
 import { Viewer } from "./Viewer";
-import { CharacterSteps, isOwnPhoto, NonHumanSteps, Picture, PICTURE_DRAG, WardrobeSteps } from "./CastSteps";
+import { AddPhotoTile, CharacterSteps, hasFileDrop, isOwnPhoto, NonHumanSteps, Picture, PICTURE_DRAG, uploadCastPhotos, WardrobeSteps } from "./CastSteps";
 import { PopMenu, TextField } from "./ui";
 import { VoicePicker } from "./Voices";
 import { Icon } from "./Icon";
@@ -427,8 +427,15 @@ function CastPanel({ id }: { id: string }) {
     actions.edit((d) => void (d.cast = d.cast!.filter((x) => x.id !== id)));
     actions.select(undefined);
   };
-  const makeIt = (sheetKind: SheetKind) => {
-    const ask = { op: "image" as const, sheet, sheetKind, count, ...(sheetKind === "portrait" ? { portrait: true } : {}) };
+  const makeIt = (sheetKind: SheetKind, opts?: { usePortrait?: boolean }) => {
+    const ask = {
+      op: "image" as const,
+      sheet,
+      sheetKind,
+      count,
+      ...(sheetKind === "portrait" ? { portrait: true } : {}),
+      ...(opts?.usePortrait === false ? { usePortrait: false } : {}),
+    };
     void make(picks?.length ? activePicks.map((x) => ({ ...ask, ...pickOf(x) })) : ask);
   };
 
@@ -440,9 +447,10 @@ function CastPanel({ id }: { id: string }) {
   const lookName = variant ? `@${id}/${variant.id}` : `@${id}`;
   // Where what's made comes from, said once, under the buttons.
   const sources = `Pictures are made from ${given.length || borrowed?.length ? "this look's pictures" : photos.length ? "the photos below" : "the description"}`;
-  const describeLink = (!!m.images?.length || photos.length > 0) && (
+  const hasPics = !!(m.images?.length || m.faces?.length || m.wardrobe?.length || m.portrait || m.faceSheet || m.outfitSheet || m.sheet || photos.length > 0);
+  const describeLink = hasPics && (
     <p className="small">
-      <button className="link small" disabled={describing === "Looking…"} onClick={() => void describe()} title="Gemini looks at its pictures and writes what it looks like">
+      <button className="link small" disabled={describing === "Looking…"} onClick={() => void describe()} title="Uses your connected agent (or a vision key) to inspect the pictures and write a description">
         {describing === "Looking…" ? "Looking at its pictures…" : m.about ? "Describe it again from its pictures" : "Describe it from its pictures"}
       </button>
       {describing && describing !== "Looking…" && <span className="warn"> {describing}</span>}
@@ -607,6 +615,8 @@ function CastPanel({ id }: { id: string }) {
             <LookPictures
               key={look}
               projectId={projectId}
+              memberId={m.id}
+              variantId={variant?.id}
               lookKey={sheet}
               lookName={lookName}
               given={given}
@@ -974,6 +984,8 @@ type Dragged = { look?: string; row?: Row; i?: number; asset?: string };
  */
 function LookPictures({
   projectId,
+  memberId,
+  variantId,
   lookKey,
   lookName,
   given,
@@ -986,6 +998,8 @@ function LookPictures({
   onMoveTo,
 }: {
   projectId: string;
+  memberId: string;
+  variantId?: string;
   lookKey: string;
   lookName: string;
   given: string[];
@@ -1030,16 +1044,20 @@ function LookPictures({
   });
   const dropOn = (row: Row, i: number, spot: string): HTMLAttributes<HTMLElement> => ({
     onDragOver: (e) => {
-      if (!e.dataTransfer.types.includes(PICTURE_DRAG)) return;
+      if (!e.dataTransfer.types.includes(PICTURE_DRAG) && !hasFileDrop(e)) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(spot);
     },
     onDrop: (e) => {
-      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
       setOver(undefined);
       e.preventDefault();
       e.stopPropagation();
+      if (e.dataTransfer.files?.length) {
+        void uploadCastPhotos(projectId, memberId, { files: Array.from(e.dataTransfer.files), look: variantId, role: "images" });
+        return;
+      }
+      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
       if (d.asset) {
         if (asset(d.asset)?.kind === "image") put(d.asset, undefined, { row, i });
       } else if (d.look === lookKey && d.row && d.i !== undefined) {
@@ -1103,6 +1121,14 @@ function LookPictures({
             </div>
           </span>
         ))}
+        <AddPhotoTile
+          projectId={projectId}
+          memberId={memberId}
+          variantId={variantId}
+          role="images"
+          existing={all}
+          onPickAsset={(aid) => put(aid, undefined, g.length < PICTURES_EACH ? { row: "given", i: g.length } : { row: "kept", i: k.length })}
+        />
         {!k.length && !going.length && <span className="dim small kept-empty">Portraits and sheets you make wait here.</span>}
       </div>
       {large &&

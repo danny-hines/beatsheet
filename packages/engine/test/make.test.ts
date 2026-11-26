@@ -2278,7 +2278,12 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
     expect(faceReq.refs).toEqual(["will-portrait", "will-p1", "will-p2"]);
     expect(faceReq.sent).toContain("3x2");
     expect(faceReq.sent).toContain("bare neck and shoulders");
+    expect(faceReq.sent).toContain("natural facial hair");
     expect(faceReq.sent).not.toContain("dark wool doublet");
+    // 2b. With usePortrait: false, face-sheet skips the chosen portrait and anchors directly on raw face photos (avoids costumed-portrait bleed).
+    const rawFaceReq = make.requestFor(PROJECT, { op: "image", sheet: "will", sheetKind: "face-sheet", usePortrait: false });
+    expect(rawFaceReq.refs).toEqual(["will-p1", "will-p2"]);
+    expect(rawFaceReq.sent).toContain("do not clean-shave or add facial hair");
     make.startMake(PROJECT, { op: "image", sheet: "will", sheetKind: "face-sheet", count: 1 });
     await make.driveJobs(PROJECT);
     will = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "will")!;
