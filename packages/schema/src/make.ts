@@ -869,6 +869,19 @@ export type CharacterIngredients = {
 export function characterIngredients(use: Pick<CastUse, "member" | "variant">, cast?: CastMember[]): CharacterIngredients {
   const m = use.member;
   const v = use.variant;
+  if (m.nonHuman) {
+    const variantOwn = !!(v?.sheet || v?.portrait || v?.images?.length);
+    const legacySheet = v ? (v.sheet ?? (!variantOwn ? m.sheet : undefined)) : m.sheet;
+    const portrait = v ? (v.portrait ?? (!variantOwn ? m.portrait : undefined)) : m.portrait;
+    const legacyImages = v?.images?.length ? v.images : (!variantOwn ? m.images : undefined);
+    return {
+      ...(portrait ? { portrait } : {}),
+      ...(legacySheet ? { legacySheet } : {}),
+      ...(legacyImages?.length ? { legacyImages } : {}),
+      variantFace: !!v?.portrait,
+      variantOutfit: !!v?.sheet,
+    };
+  }
   const variantFace = !!(v?.faceSheet || v?.portrait);
   const portrait = variantFace ? v?.portrait : m.portrait;
   const faceSheet = variantFace ? v?.faceSheet : m.faceSheet;

@@ -122,7 +122,23 @@ export function NumberField({
  * A small menu at a point (a right-click, a ⋯): it takes the focus, and closes on a click outside, Escape, or the
  * window moving under it. Opens leftward near the right edge.
  */
-export function PopMenu({ x, y, onClose, children }: { x: number; y: number; onClose: () => void; children: ReactNode }) {
+export function PopMenu({
+  x,
+  y,
+  onClose,
+  className = "",
+  width = 220,
+  estHeight = 220,
+  children,
+}: {
+  x: number;
+  y: number;
+  onClose: () => void;
+  className?: string;
+  width?: number;
+  estHeight?: number;
+  children: ReactNode;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     ref.current?.querySelector("button")?.focus();
@@ -141,9 +157,12 @@ export function PopMenu({ x, y, onClose, children }: { x: number; y: number; onC
       document.removeEventListener("scroll", onClose, true);
     };
   }, [onClose]);
-  const place = x > window.innerWidth - 240 ? { right: window.innerWidth - x, top: y } : { left: x, top: y };
+  const place = {
+    ...(x > window.innerWidth - width - 16 ? { right: Math.max(12, window.innerWidth - x) } : { left: Math.max(12, x) }),
+    top: Math.max(12, Math.min(y, window.innerHeight - estHeight)),
+  };
   return (
-    <div className="card-menu" style={place} ref={ref} role="menu">
+    <div className={`card-menu ${className}`.trim()} style={place} ref={ref} role="menu">
       {children}
     </div>
   );

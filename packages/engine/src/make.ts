@@ -472,6 +472,19 @@ function sheetPrompt(
       ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
       : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
 
+  if (member.kind === "character" && member.nonHuman) {
+    if (kind === "portrait") {
+      return style
+        ? `A clean full-figure hero study of @${id} from a three-quarter front angle on a seamless neutral mid-gray studio background, showing full proportions, markings, colors and details clearly, nothing else in the picture and no text or labels, in the style of @${style}.`
+        : `A photographic full-figure hero study of @${id} from a three-quarter front angle on a seamless neutral mid-gray studio background, showing full proportions, markings, colors and details clearly, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+    }
+    const views =
+      "arranged cleanly side by side on a seamless neutral mid-gray studio background: front view, three-quarter view, side profile, and back view, keeping identical proportions, silhouette, markings, colors and details across every view";
+    return style
+      ? `A multi-angle full-body character turnaround sheet of @${id}, ${views}. Nothing else in the picture and no text or labels, in the style of @${style}.`
+      : `A photographic multi-angle full-body character turnaround sheet of @${id}, ${views}. Soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+  }
+
   const headwear: HeadwearMode | undefined =
     variant?.headwear ?? member.headwear ?? (member.kind === "character" ? resolveWardrobe(variant?.outfit ?? member.outfit, allCast)?.headwear : undefined);
 
@@ -547,6 +560,31 @@ function lookRefs(
   const asset = (id: string | undefined) => (id ? project.assets.find((a) => a.id === id && a.kind === "image") : undefined);
   const stylePic = styled ? project.cast?.find((m) => m.id === styled)?.images?.[0] : undefined;
   const who = member.name || member.id;
+
+  if (member.kind === "character" && member.nonHuman) {
+    const portrait = kind === "portrait";
+    const settled = variant ? [member.sheet, member.portrait, ...(member.images ?? [])].find(asset) : undefined;
+    const anchor = portrait ? (variant ? settled : undefined) : [look.portrait, settled].find(asset);
+    const extras = (look.faces ?? (variant ? [] : ownPhotos(project, member))).filter((id) => asset(id) && id !== anchor);
+    const maxRefs = Math.max(1, pictures - (stylePic ? 1 : 0));
+    const refs = [...(anchor ? [anchor] : []), ...extras].slice(0, maxRefs);
+    const withStyle = !!stylePic && refs.length < pictures;
+    const words: string[] = [];
+    if (anchor) {
+      const role = [look.sheet, member.sheet].includes(anchor) ? "turnaround sheet" : "hero still";
+      if (refs.length > 1) {
+        words.push(
+          `The first reference picture is ${who}'s chosen ${role}, and the next ${refs.length - 1 === 1 ? "picture is another photo" : `${refs.length - 1} pictures are additional photos`} of ${who}: keep ${who}'s exact proportions, silhouette, markings, colors and details across every view.`,
+        );
+      } else {
+        words.push(`The first reference picture is ${who}'s chosen ${role}: keep ${who}'s exact proportions, silhouette, markings, colors and details across every view.`);
+      }
+    } else if (refs.length) {
+      words.push(`The reference photos show ${who}: keep ${who}'s exact proportions, silhouette, markings, colors and details across every view.`);
+    }
+    if (withStyle) words.push("The last reference picture shows the style to draw it in, not who or what it is.");
+    return { refs: [...refs, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
+  }
 
   if (kind === "outfit-sheet" || member.kind === "wardrobe") {
     // Outfit turnarounds NEVER pull in face photos: clean garments only (and for variants, edit directly from the base outfitSheet!).
@@ -664,6 +702,9 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   if (member && sheetKind === "outfit-sheet" && member.kind !== "character" && member.kind !== "wardrobe") {
     throw new Error(`An outfit sheet is of a character or wardrobe; @${castId} is a ${member.kind}`);
   }
+  if (member?.kind === "character" && member.nonHuman && (sheetKind === "face-sheet" || sheetKind === "outfit-sheet")) {
+    throw new Error(`@${castId} is a non-human character and uses a full-body turnaround sheet ("sheet") or hero still ("portrait"), not ${sheetKind}`);
+  }
   const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   const needs = shot ? shotNeeds(project, shot.id, ask.op) : undefined;
   const format = project.formats[0]!;
@@ -703,7 +744,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   // For a bare 360° face sheet or bare portrait (headwear !== "face"), scrub body clothing from the @mention expansion
   // so the face study stays collarless/unclothed rather than dressing the portrait.
   const memberHeadwear = member ? (variant?.headwear ?? member.headwear) : undefined;
-  const bareFaceSheet = !!member && (sheetKind === "face-sheet" || (sheetKind === "portrait" && (memberHeadwear === "none" || memberHeadwear === "ghost"))) && memberHeadwear !== "face";
+  const bareFaceSheet = !!member && !member.nonHuman && (sheetKind === "face-sheet" || (sheetKind === "portrait" && (memberHeadwear === "none" || memberHeadwear === "ghost"))) && memberHeadwear !== "face";
   const promptUses = bareFaceSheet
     ? uses.map((u) =>
         u.member.id === member!.id
@@ -770,7 +811,9 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   }
   const sheetAspect =
     sheetKind === "portrait"
-      ? "4:5"
+      ? member?.nonHuman
+        ? "1:1"
+        : "4:5"
       : sheetKind === "face-sheet"
         ? "3:2"
         : sheetKind === "outfit-sheet"

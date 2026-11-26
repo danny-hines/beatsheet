@@ -8,13 +8,16 @@ import { castOf, lookGiven, mergeLook, PICTURES_EACH, renameCast, speakerLabel, 
 import { useMemo, useState, type HTMLAttributes } from "react";
 import { hideBroken, posterUrl } from "../lib";
 import { lineUp } from "../multicam";
-import { actions, getState, setState, useProject, useStore } from "../store";
+import { actions, useProject, useStore } from "../store";
 import { cost, Failed, fitLabel, fitOf, madeWith, modelLabel, money, useChoices, useMake, WhyNot } from "./Takes";
 import { Viewer } from "./Viewer";
-import { CharacterSteps, isOwnPhoto, Picture, PICTURE_DRAG, WardrobeSteps } from "./CastSteps";
+import { CharacterSteps, isOwnPhoto, NonHumanSteps, Picture, PICTURE_DRAG, WardrobeSteps } from "./CastSteps";
 import { PopMenu, TextField } from "./ui";
 import { VoicePicker } from "./Voices";
 import { Icon } from "./Icon";
+
+const CAST_THUMBS = import.meta.glob<string>("../assets/cast/*.webp", { eager: true, query: "?url", import: "default" });
+const castThumb = (id: string) => CAST_THUMBS[`../assets/cast/${id}.webp`];
 
 export type Kind = CastMember["kind"];
 export const KINDS: [Kind, string][] = [
@@ -25,6 +28,15 @@ export const KINDS: [Kind, string][] = [
   ["style", "Style"],
 ];
 export const WORD: Record<Kind, string> = { character: "character", wardrobe: "wardrobe", place: "set", prop: "prop", style: "style" };
+
+const NEW_CAST_OPTIONS: { id: string; kind: Kind; nonHuman?: boolean; thumb: string; title: string; subtitle: string }[] = [
+  { id: "human", kind: "character", thumb: "human", title: "Person", subtitle: "Face turnaround + swappable outfits" },
+  { id: "nonhuman", kind: "character", nonHuman: true, thumb: "nonhuman", title: "Creature / Non-human", subtitle: "Pets, robots, dragons — full-body sheet" },
+  { id: "wardrobe", kind: "wardrobe", thumb: "wardrobe", title: "Wardrobe", subtitle: "Reusable costume or uniform across cast" },
+  { id: "place", kind: "place", thumb: "place", title: "Set", subtitle: "Recurring location or environment" },
+  { id: "prop", kind: "prop", thumb: "prop", title: "Prop", subtitle: "Hero object, vehicle, or held item" },
+  { id: "style", kind: "style", thumb: "style", title: "Style", subtitle: "Visual look, film stock, or art medium" },
+];
 /** What a description of each kind looks like: the specifics a model can draw. */
 const ABOUT_EXAMPLE: Record<Kind, string> = {
   character: "Woman in her forties, short curly gray hair, round tortoiseshell glasses, mustard cardigan, warm crooked smile",
@@ -42,18 +54,20 @@ const castIdFor = (name: string, taken: string[], fallback: string) => {
   return id;
 };
 /** The id a member gets before it has a name; naming it gives it one from the name. */
-const UNNAMED = /^(character|wardrobe|place|prop|style)(-\d+)?$/;
+const UNNAMED = /^(character|creature|wardrobe|place|prop|style)(-\d+)?$/;
 
 /** Makes a cast member (from pictures, when there are some) and opens it in Make → Cast & sets so creation always has full room. */
-export function newMember(kind: Kind, from: Asset[] = []) {
+export function newMember(kind: Kind, from: Asset[] = [], opts?: { nonHuman?: boolean }) {
   let id = "";
+  const nonHuman = kind === "character" && !!opts?.nonHuman;
   actions.edit((d) => {
     const cast = (d.cast ??= []);
-    id = castIdFor("", cast.map((m) => m.id), kind);
+    id = castIdFor("", cast.map((m) => m.id), nonHuman ? "creature" : kind);
     cast.push({
       id,
       name: "",
       kind,
+      ...(nonHuman ? { nonHuman: true } : {}),
       ...(from.length
         ? kind === "wardrobe"
           ? { wardrobe: from.map((a) => a.id), seen: from.map((a) => ({ asset: a.id })) }
@@ -62,6 +76,34 @@ export function newMember(kind: Kind, from: Asset[] = []) {
     });
   });
   actions.openCast(id);
+}
+
+/** Enlarged visual picker for adding a new cast member, wardrobe, set, prop, or style. */
+export function NewCastMenu({ x, y, onClose }: { x: number; y: number; onClose: () => void }) {
+  return (
+    <PopMenu x={x} y={y} onClose={onClose} className="cast-new-menu" width={344} estHeight={430}>
+      <div className="cast-new-head">Add to cast &amp; sets</div>
+      {NEW_CAST_OPTIONS.map((opt) => (
+        <button
+          key={opt.id}
+          role="menuitem"
+          className="cast-new-item"
+          onClick={() => {
+            onClose();
+            newMember(opt.kind, [], opt.nonHuman ? { nonHuman: true } : undefined);
+          }}
+        >
+          <span className="cast-new-thumb">
+            <img src={castThumb(opt.thumb)} alt="" />
+          </span>
+          <span className="cast-new-text">
+            <span className="cast-new-title">{opt.title}</span>
+            <span className="cast-new-sub">{opt.subtitle}</span>
+          </span>
+        </button>
+      ))}
+    </PopMenu>
+  );
 }
 
 /** Adds pictures to where a cast member is seen (and for a wardrobe, straight to its wardrobe references). */
@@ -130,32 +172,6 @@ export function lookStyleName(p: { cast?: CastMember[]; look?: { style?: string 
   return m ? label(m) : "Photographic";
 }
 
-/**
- * Asks the agent to look through the Library for who and what recurs and propose them as the cast (a cast hand-off,
- * where the person keeps the ones they want).
- */
-export async function findCast() {
-  const { projectId, cutId } = getState();
-  await actions.flushSave();
-  const res = await fetch("/api/turn/ask", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      project: projectId,
-      cut: cutId,
-      text: "Find the cast in my photos and clips: who and what recurs (people, pets, places, things), grouped with the pictures each is in, as a cast hand-off so I can keep the ones I want. The make skill says how.",
-    }),
-  });
-  if (!res.ok) {
-    setState({ notice: ((await res.json().catch(() => ({}))) as { error?: string }).error ?? "The agent didn't get that." });
-    if (res.status === 409) actions.setSettingsOpen(true);
-    return;
-  }
-  // The agent's panel, where its answer comes, even if Make had it folded away.
-  actions.setMakeWide(false);
-  actions.setSide("agent");
-}
-
 /** The picture that stands for a cast member: its chosen portrait, 360° face sheet, outfit sheet, combined sheet, or a photo it's seen in. */
 export const castPicture = (p: Project, m: CastMember): string | undefined =>
   m.portrait ??
@@ -177,19 +193,12 @@ export function CastList() {
   const selection = useStore((s) => s.selection);
   const [adding, setAdding] = useState<{ x: number; y: number }>();
   const cast = p.cast ?? [];
-  // Enough of the person's own pictures that someone or somewhere could recur in them.
-  const pictures = p.assets.filter((a) => (a.kind === "image" || a.kind === "video") && a.provenance?.source !== "generated").length;
   return (
     <div className="cast-list">
       <div className="library-group dim small cast-head">
         Cast &amp; sets
         <span className="spacer" />
-        {pictures >= 3 && (
-          <button className="link small" onClick={() => void findCast()} title="The agent looks through your photos and clips for who and what recurs, and you keep the ones you want">
-            Find in my photos
-          </button>
-        )}
-        <button className="link small" onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })} title="A character, set, prop or style, from a description">
+        <button className="link small" onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })} title="Add a person, creature, wardrobe, set, prop, or style">
           + New
         </button>
       </div>
@@ -204,7 +213,7 @@ export function CastList() {
               <span className={`asset-row-label ${m.name ? "" : "dim"}`}>{label(m)}</span>
               <span className="asset-row-meta small">
                 <span className="mono">@{m.id}</span>
-                <span className="tag">{WORD[m.kind]}</span>
+                <span className="tag">{m.kind === "character" && m.nonHuman ? "creature" : WORD[m.kind]}</span>
                 {![m, ...(m.variants ?? [])].some((l) => lookGiven(l).length || l.outfit) && <span className="dim">no pictures</span>}
               </span>
             </span>
@@ -212,22 +221,7 @@ export function CastList() {
         );
       })}
       {!cast.length && <p className="dim small library-empty">Right-click a photo to make a character or a set from it.</p>}
-      {adding && (
-        <PopMenu {...adding} onClose={() => setAdding(undefined)}>
-          {KINDS.map(([k, name]) => (
-            <button
-              key={k}
-              role="menuitem"
-              onClick={() => {
-                setAdding(undefined);
-                newMember(k);
-              }}
-            >
-              {name}
-            </button>
-          ))}
-        </PopMenu>
-      )}
+      {adding && <NewCastMenu {...adding} onClose={() => setAdding(undefined)} />}
     </div>
   );
 }
@@ -249,7 +243,10 @@ export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: nu
       {photos.length > 0 && (
         <>
           <button role="menuitem" onClick={pick(() => newMember("character", photos))}>
-            Make a character from {these}
+            Make a person from {these}
+          </button>
+          <button role="menuitem" onClick={pick(() => newMember("character", photos, { nonHuman: true }))}>
+            Make a creature / pet from {these}
           </button>
           <button role="menuitem" onClick={pick(() => newMember("wardrobe", photos))}>
             Make a wardrobe from {these}
@@ -453,6 +450,16 @@ function CastPanel({ id }: { id: string }) {
       <div className="insp-head">
         <IdField value={m.id} onRename={reId} />
         <span className="spacer" />
+        {m.kind === "character" && (
+          <div className="segmented small" role="group" aria-label="Character type" title="Humans split face & wardrobe; non-humans (pets, robots, dragons) use a full-body turnaround sheet">
+            <button className={!m.nonHuman ? "on" : ""} onClick={() => edit((x) => void delete x.nonHuman)}>
+              Human
+            </button>
+            <button className={m.nonHuman ? "on" : ""} onClick={() => edit((x) => void (x.nonHuman = true))}>
+              Non-human
+            </button>
+          </div>
+        )}
         <select value={m.kind} onChange={(e) => edit((x) => void (x.kind = e.target.value as Kind))} aria-label="Kind">
           {KINDS.map(([k, name]) => (
             <option key={k} value={k}>
@@ -461,7 +468,7 @@ function CastPanel({ id }: { id: string }) {
           ))}
         </select>
       </div>
-      <TextField value={m.name} placeholder={`Name this ${WORD[m.kind]}`} autoFocus={!m.name} onCommit={rename} />
+      <TextField value={m.name} placeholder={`Name this ${m.kind === "character" && m.nonHuman ? "creature / non-human" : WORD[m.kind]}`} autoFocus={!m.name} onCommit={rename} />
 
       {m.kind !== "style" && (
         <div className="looks" role="tablist" aria-label="Looks">
@@ -501,7 +508,20 @@ function CastPanel({ id }: { id: string }) {
           <span className="spacer" />
           <span className="dim nowrap">{nShots ? `in ${nShots} shot${nShots === 1 ? "" : "s"}` : "in no shots yet"}</span>
         </div>
-        {m.kind === "character" ? (
+        {m.kind === "character" && m.nonHuman ? (
+          <NonHumanSteps
+            key={look}
+            projectId={projectId}
+            member={m}
+            variant={variant}
+            plainLabel={PLAIN_LABEL[m.kind]}
+            going={going.filter((j) => j.sheet === sheet)}
+            canMake={!!picked.length && !sending}
+            onMake={makeIt}
+            edit={edit}
+            describe={describeLink}
+          />
+        ) : m.kind === "character" ? (
           <CharacterSteps
             key={look}
             projectId={projectId}

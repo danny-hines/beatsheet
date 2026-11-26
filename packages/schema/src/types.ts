@@ -1048,6 +1048,10 @@ export const CastMember = z.object({
   id: z.string().describe("What prompts call it: @cat"),
   name: z.string(),
   kind: z.enum(["character", "wardrobe", "place", "prop", "style"]),
+  nonHuman: z
+    .boolean()
+    .optional()
+    .describe("For a character: true for pets, animals, robots, dragons or creatures that use a full-body turnaround sheet without a human face/wardrobe split"),
   about: z
     .string()
     .optional()

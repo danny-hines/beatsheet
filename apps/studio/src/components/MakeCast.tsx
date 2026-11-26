@@ -6,8 +6,7 @@ import { useState } from "react";
 import type { CastMember } from "@beatsheet/schema";
 import { hideBroken, posterUrl } from "../lib";
 import { actions, useProject, useStore } from "../store";
-import { castPicture, CastView, findCast, KINDS, label, newMember, shotsWith, WORD, type Kind } from "./Cast";
-import { PopMenu } from "./ui";
+import { castPicture, CastView, KINDS, label, NewCastMenu, shotsWith, WORD, type Kind } from "./Cast";
 import { Icon } from "./Icon";
 
 const PLURAL: Record<Kind, string> = { character: "Characters", wardrobe: "Wardrobes", place: "Sets", prop: "Props", style: "Styles" };
@@ -23,6 +22,7 @@ function needs(m: CastMember): string | undefined {
   const pictured = looks.some((l) => l.sheet || l.faceSheet || l.outfitSheet || l.portrait || l.images?.length);
   if (!pictured) return m.seen?.length ? "Photos, no portrait or sheet yet" : m.about ? "Described, no pictures yet" : "Nothing yet";
   if (m.kind === "character") {
+    if (m.nonHuman) return looks.some((l) => l.sheet) ? undefined : "No turnaround sheet yet";
     const hasLegacy = looks.some((l) => l.sheet);
     const hasFace = looks.some((l) => l.faceSheet || l.portrait);
     const hasOutfit = looks.some((l) => l.outfitSheet || l.outfit);
@@ -36,34 +36,12 @@ export function CastPage() {
   const projectId = useStore((s) => s.projectId)!;
   const [adding, setAdding] = useState<{ x: number; y: number }>();
   const cast = p.cast ?? [];
-  // Enough of the person's own pictures that someone or somewhere could recur in them.
-  const pictures = p.assets.filter((a) => (a.kind === "image" || a.kind === "video") && a.provenance?.source !== "generated").length;
   const add = (
     <>
-      {pictures >= 3 && (
-        <button onClick={() => void findCast()} title="The agent looks through your photos and clips for who and what recurs, and you keep the ones you want">
-          Find in my photos
-        </button>
-      )}
-      <button className={cast.length ? "" : "primary"} onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })} title="A character, set, prop or style, from a description">
+      <button className={cast.length ? "" : "primary"} onClick={(e) => setAdding({ x: e.clientX, y: e.clientY })} title="Add a person, creature, wardrobe, set, prop, or style">
         <Icon name="add" size={12} /> New
       </button>
-      {adding && (
-        <PopMenu {...adding} onClose={() => setAdding(undefined)}>
-          {KINDS.map(([k, name]) => (
-            <button
-              key={k}
-              role="menuitem"
-              onClick={() => {
-                setAdding(undefined);
-                newMember(k);
-              }}
-            >
-              {name}
-            </button>
-          ))}
-        </PopMenu>
-      )}
+      {adding && <NewCastMenu {...adding} onClose={() => setAdding(undefined)} />}
     </>
   );
   if (!cast.length) {

@@ -896,10 +896,335 @@ export function WardrobeSteps({
   );
 }
 
-/** One step of a look: its number (a tick once it's done), its name, and what it's for. */
-function Step({ n, done, title, note, children }: { n: number; done: boolean; title: string; note: string; children: ReactNode }) {
+/**
+ * A non-human character (pet, animal, robot, dragon, creature): reference photos + description, an optional full-figure
+ * hero still, and a multi-angle full-body turnaround sheet — with no human wardrobe or headless-body pipeline.
+ */
+export function NonHumanSteps({
+  projectId,
+  member: m,
+  variant,
+  plainLabel,
+  going,
+  canMake,
+  onMake,
+  edit,
+  describe,
+}: {
+  projectId: string;
+  member: CastMember;
+  variant?: Variant;
+  plainLabel: string;
+  going: MakeJob[];
+  canMake: boolean;
+  onMake: (sheetKind: SheetKind) => void;
+  edit: (fn: (m: CastMember) => void) => void;
+  describe?: ReactNode;
+}) {
+  const p = useProject();
+  const [viewing, setViewing] = useState<{ row: "faces" | "portrait" | "sheet" | "before"; items: string[]; at: number }>();
+  const [dragging, setDragging] = useState(false);
+  const [over, setOver] = useState<"faces" | "portrait" | "portraits" | "sheet" | "sheets">();
+  const look: CastLook = variant ?? m;
+  const asset = (id?: string) => (id ? p.assets.find((a) => a.id === id) : undefined);
+  const image = (id?: string) => asset(id)?.kind === "image";
+  const editLook = (fn: (l: CastLook) => void, also?: (x: CastMember) => void) =>
+    edit((x) => {
+      fn(variant ? x.variants!.find((v) => v.id === variant.id)! : x);
+      also?.(x);
+    });
+  const tidy = (l: CastLook) => {
+    for (const k of ["images", "kept", "faces", "portraits", "sheets"] as const) if (l[k] && !l[k]!.length && k !== "faces") delete l[k];
+  };
+
+  const own = [...new Set([...(m.images ?? []), ...(m.kept ?? []), ...(m.seen ?? []).map((s) => s.asset)])].filter((a) => isOwnPhoto(asset(a)));
+  const settled = variant ? [m.sheet, m.portrait, ...(m.images ?? [])].find(image) : undefined;
+  const refChoices = [...new Set([...(settled ? [settled] : []), ...own, ...(look.faces ?? [])])].filter(image);
+  const refDefault = variant && settled ? [settled] : own;
+  const refs = look.faces ?? refDefault;
+  const toggleRef = (a: string) =>
+    editLook((l) => {
+      const now = l.faces ?? refDefault;
+      l.faces = now.includes(a) ? now.filter((x) => x !== a) : [...now, a];
+    });
+
+  const choose = (kind: "portrait" | "sheet", a: string) =>
+    editLook((l) => {
+      const prev = l[kind];
+      l[kind] = a;
+      l[OTHERS[kind]] = [...(prev && prev !== a ? [prev] : []), ...(l[OTHERS[kind]] ?? []).filter((x) => x !== a)];
+      tidy(l);
+    });
+  const takeOut = (kind: "portrait" | "sheet", a: string) =>
+    editLook((l) => {
+      if (l[kind] === a) delete l[kind];
+      l[OTHERS[kind]] = (l[OTHERS[kind]] ?? []).filter((x) => x !== a);
+      tidy(l);
+    });
+
+  const put = (a: string, from: Spot | undefined, to: "faces" | "portrait" | "portraits" | "sheet" | "sheets") =>
+    editLook(
+      (l) => {
+        if (from === "before") {
+          l.images = l.images?.filter((x) => x !== a);
+          l.kept = l.kept?.filter((x) => x !== a);
+        }
+        for (const kind of ["portrait", "sheet"] as const)
+          if (from === kind || from === OTHERS[kind]) {
+            if (l[kind] === a) delete l[kind];
+            l[OTHERS[kind]] = l[OTHERS[kind]]?.filter((x) => x !== a);
+          }
+        if (to === "faces") {
+          if (!isOwnPhoto(asset(a))) l.faces = [...new Set([...(l.faces ?? refDefault), a])];
+          else if (l.faces && !l.faces.includes(a)) l.faces = [...l.faces, a];
+        } else if (to === "portrait" || to === "sheet") {
+          const prev = l[to];
+          l[to] = a;
+          l[OTHERS[to]] = [...(prev && prev !== a ? [prev] : []), ...(l[OTHERS[to]] ?? []).filter((x) => x !== a)];
+        } else l[to] = [...(l[to] ?? []).filter((x) => x !== a), a];
+        tidy(l);
+      },
+      (x) => void (to === "faces" && isOwnPhoto(asset(a)) && !x.seen?.some((s) => s.asset === a) && (x.seen = [...(x.seen ?? []), { asset: a }])),
+    );
+
+  const dragFrom = (from: Spot, a: string): HTMLAttributes<HTMLSpanElement> => ({
+    draggable: true,
+    onDragStart: (e) => {
+      e.dataTransfer.setData(PICTURE_DRAG, JSON.stringify({ asset: a, from } satisfies Dragged));
+      e.dataTransfer.effectAllowed = "move";
+      setDragging(true);
+    },
+    onDragEnd: () => {
+      setDragging(false);
+      setOver(undefined);
+    },
+  });
+  const dropOn = (to: "faces" | "portrait" | "portraits" | "sheet" | "sheets"): HTMLAttributes<HTMLElement> => ({
+    className: `take-strip ${over === to ? "drop-on" : ""}`,
+    onDragOver: (e) => {
+      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(PICTURE_DRAG)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setOver(to);
+    },
+    onDragLeave: (e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(undefined),
+    onDrop: (e) => {
+      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
+      const a = e.dataTransfer.getData(ASSET_DRAG) || d.asset;
+      setOver(undefined);
+      setDragging(false);
+      if (!a || !image(a)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      put(a, d.from, to);
+    },
+  });
+
+  const before = [...(look.images ?? []), ...(look.kept ?? [])];
+  const fromBefore = (a: string, to: "portrait" | "sheet" | "faces" | null) =>
+    editLook(
+      (l) => {
+        l.images = l.images?.filter((x) => x !== a);
+        l.kept = l.kept?.filter((x) => x !== a);
+        if (to === "portrait" || to === "sheet") {
+          if (l[to]) l[OTHERS[to]] = [l[to]!, ...(l[OTHERS[to]] ?? [])];
+          l[to] = a;
+        } else if (to === "faces" && l.faces) l.faces = [...l.faces, a];
+        tidy(l);
+      },
+      (x) => void (to === "faces" && !x.seen?.some((s) => s.asset === a) && (x.seen = [...(x.seen ?? []), { asset: a }])),
+    );
+
+  const by = (a: string) => madeWith(asset(a)) ?? (isOwnPhoto(asset(a)) ? "Photo" : undefined);
+  const open = (row: NonNullable<typeof viewing>["row"], items: string[], a: string) => setViewing({ row, items, at: Math.max(0, items.indexOf(a)) });
+  const canGenerate = !!(m.about || variant?.about || refs.length || look.portrait || settled);
+  const gets = look.sheet
+    ? "the chosen full-body turnaround sheet"
+    : look.portrait
+      ? "the chosen hero still, until a turnaround sheet is chosen"
+      : variant && (m.sheet || m.portrait)
+        ? `${plainLabel}'s ${m.sheet ? "turnaround sheet" : "hero still"}, with what's different in words`
+        : before.length
+          ? `${Math.min(before.length, 3) === 1 ? "a picture" : `${Math.min(before.length, 3)} pictures`} from before the steps`
+          : "no picture yet, only the words";
+
+  const made = (kind: "portrait" | "sheet", labelWord: string, pluralWord: string, emptyHint: string, inheritedPic?: string) => {
+    const otherKey = kind === "portrait" ? ("portraits" as const) : ("sheets" as const);
+    const chosen = look[kind];
+    const others = look[otherKey] ?? [];
+    const all = [...(chosen ? [chosen] : []), ...others];
+    const pendingJobs = going.filter((j) => jobMatches(j, kind));
+    return (
+      <>
+        <div {...dropOn(kind)}>
+          {chosen ? (
+            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom(kind, chosen)} onOpen={() => open(kind, all, chosen)} />
+          ) : inheritedPic ? (
+            <Picture projectId={projectId} id={inheritedPic} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => open(kind, [inheritedPic], inheritedPic)} />
+          ) : (
+            <span className="dim small cast-none">{emptyHint}</span>
+          )}
+        </div>
+        {(others.length > 0 || dragging || pendingJobs.length > 0) && (
+          <>
+            <div className="dim small">
+              Other {pluralWord} · {others.length}
+              {others.length ? " · click one to see it large and choose it, or drag it onto the chosen one" : ""}
+            </div>
+            <div {...dropOn(otherKey)}>
+              {others.map((a) => (
+                <Picture key={a} projectId={projectId} id={a} by={by(a)} dnd={dragFrom(otherKey, a)} onOpen={() => open(kind, all, a)} onRemove={() => takeOut(kind, a)} />
+              ))}
+              {pendingJobs.map((j) => (
+                <span key={j.id} className="cast-pic">
+                  <div className="take pending" title={`A ${labelWord} from ${modelLabel(j.model)} on its way`}>
+                    {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
+                    <br />
+                    {modelLabel(j.model)}
+                  </div>
+                </span>
+              ))}
+            </div>
+          </>
+        )}
+      </>
+    );
+  };
+
   return (
-    <section className="cast-step">
+    <div className="cast-steps">
+      <div className="cast-gets small">
+        <span className="dim">Models get </span>
+        {gets}
+      </div>
+
+      <Step n={1} done={!!(refs.length || m.about || variant?.about)} title="Reference & identity" note="· photos & description">
+        <div {...dropOn("faces")}>
+          {refChoices.map((a) => (
+            <Picture
+              key={a}
+              projectId={projectId}
+              id={a}
+              by={a === settled ? `${plainLabel}'s` : by(a)}
+              off={!refs.includes(a)}
+              tick={{ on: refs.includes(a), toggle: () => toggleRef(a) }}
+              onOpen={() => open("faces", refChoices, a)}
+            />
+          ))}
+          {!refChoices.length && <span className="dim small cast-none">No reference photos yet: drag photos here, or describe them below to generate from scratch.</span>}
+        </div>
+        <label>
+          <span>
+            Who or what they are <span className="dim">· species, markings, silhouette, materials</span>
+          </span>
+          <TextField
+            multiline
+            value={m.about ?? ""}
+            placeholder="Orange tabby cat, white chest and paws, green eyes, notch in left ear — or friendly brushed-brass helper robot with glowing amber eyes"
+            onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))}
+          />
+        </label>
+        {describe}
+        {variant && (
+          <label>
+            What&apos;s different in this look
+            <TextField
+              multiline
+              value={variant.about}
+              placeholder="Wearing a tiny black eye mask; battle-scarred armor; soaked from the rain"
+              onCommit={(t) => edit((x) => void (x.variants!.find((v) => v.id === variant.id)!.about = t))}
+            />
+          </label>
+        )}
+      </Step>
+
+      <Step n={2} done={!!(look.portrait || (variant && m.portrait))} title="Hero still" note="· optional 1:1 full-figure anchor">
+        {made(
+          "portrait",
+          "hero still",
+          "hero stills",
+          "Optional — generate to lock design & markings before making the full turnaround, or skip straight to Step 3.",
+          variant && !look.portrait ? m.portrait : undefined,
+        )}
+        <div className="make-row">
+          <button disabled={!canMake || !canGenerate} onClick={() => onMake("portrait")} title="Full-figure 1:1 three-quarter hero study on neutral mid-gray">
+            Make hero stills
+          </button>
+        </div>
+      </Step>
+
+      <Step n={3} wide done={!!look.sheet} title="Full-body turnaround sheet" note="· 16:9 front, 3/4, side & back views on mid-gray">
+        {made(
+          "sheet",
+          "turnaround sheet",
+          "turnaround sheets",
+          variant && m.sheet
+            ? `No variant turnaround yet — generating one edits directly from ${plainLabel}'s turnaround sheet.`
+            : "No turnaround sheet yet. Made from your reference photos, chosen hero still, or description.",
+          variant && !look.sheet ? m.sheet : undefined,
+        )}
+        <div className="make-row">
+          <button className={canGenerate && !look.sheet ? "primary" : ""} disabled={!canMake || !canGenerate} onClick={() => onMake("sheet")} title="Multi-angle full-body turnaround sheet (front, 3/4, side profile, back) on neutral mid-gray">
+            Make turnaround sheet
+          </button>
+          {!canGenerate && <span className="dim small">Add a description or reference photo first.</span>}
+        </div>
+      </Step>
+
+      {before.length > 0 && (
+        <details className="cast-fold" open>
+          <summary>Pictures from before the steps · {before.length}</summary>
+          <p className="dim small">Drag onto Hero still or Turnaround sheet, or click one to sort it.</p>
+          <div className="take-strip">
+            {before.map((a) => (
+              <Picture key={a} projectId={projectId} id={a} by={by(a)} dnd={dragFrom("before", a)} onOpen={() => open("before", before, a)} onRemove={() => fromBefore(a, null)} />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {viewing && (
+        <Viewer
+          projectId={projectId}
+          items={viewing.items.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : isOwnPhoto(asset(a)) ? "reference photo" : ""].filter(Boolean).join(" · ") }))}
+          at={viewing.at}
+          onClose={() => setViewing(undefined)}
+          actions={(item) => {
+            const a = item.id;
+            const row = viewing.row;
+            if (row === "faces") return <button onClick={() => toggleRef(a)}>{refs.includes(a) ? "Don't use as reference" : "Use as reference"}</button>;
+            if (row === "portrait" || row === "sheet")
+              return (
+                <>
+                  {look[row] === a ? <span className="dim small">Chosen {row === "portrait" ? "hero still" : "turnaround sheet"}</span> : <button onClick={() => choose(row, a)}>Use this one</button>}
+                  {(look[row] === a || look[OTHERS[row]]?.includes(a)) && (
+                    <button className="danger" onClick={() => takeOut(row, a)}>
+                      Take out
+                    </button>
+                  )}
+                </>
+              );
+            return (
+              <>
+                <button onClick={() => fromBefore(a, "portrait")}>It&apos;s the hero still</button>
+                <button onClick={() => fromBefore(a, "sheet")}>It&apos;s the turnaround sheet</button>
+                <button onClick={() => fromBefore(a, "faces")}>Reference photo</button>
+                <button className="danger" onClick={() => fromBefore(a, null)}>
+                  Take out
+                </button>
+              </>
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** One step of a look: its number (a tick once it's done), its name, and what it's for. */
+function Step({ n, done, wide, title, note, children }: { n: number; done: boolean; wide?: boolean; title: string; note: string; children: ReactNode }) {
+  return (
+    <section className={`cast-step ${wide ? "wide" : ""}`.trim()}>
       <div className="cast-step-head">
         <span className={`cast-step-n ${done ? "done" : ""}`}>{done ? <Icon name="check" size={10} /> : n}</span>
         <span className="cast-step-title">{title}</span>

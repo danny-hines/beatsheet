@@ -2216,11 +2216,21 @@ function overview(id: string, cut?: string, format?: string): string {
         ...(l.wardrobe?.length ? [`wardrobe refs ${l.wardrobe.join(", ")}`] : []),
         ...(l.images?.length ? [`pictures ${l.images.join(", ")}`] : []),
       ].join("; ");
+    const nonHumanSteps = (l: CastLook) =>
+      [
+        l.portrait ? `hero still ${l.portrait}` : "no hero still chosen",
+        ...(l.portraits?.length ? [`other hero stills ${l.portraits.join(", ")}`] : []),
+        l.sheet ? `turnaround sheet ${l.sheet}` : "no turnaround sheet chosen",
+        ...(l.sheets?.length ? [`other sheets ${l.sheets.join(", ")}`] : []),
+        ...(l.faces?.length ? [`reference photos ${l.faces.join(", ")}`] : []),
+        ...(l.images?.length ? [`pictures from before ${l.images.join(", ")}`] : []),
+      ].join("; ");
     const pics = (l: CastLook) => `${l.images?.length ? `pictures ${l.images.join(", ")}` : "no pictures yet"}${list("kept", l.kept)}`;
     for (const m of p.cast) {
-      const look = (l: CastLook) => (m.kind === "character" ? steps(l) : m.kind === "wardrobe" ? wardrobeSteps(l) : pics(l));
+      const look = (l: CastLook) => (m.kind === "character" ? (m.nonHuman ? nonHumanSteps(l) : steps(l)) : m.kind === "wardrobe" ? wardrobeSteps(l) : pics(l));
+      const kindTag = m.kind === "character" && m.nonHuman ? "character, non-human" : m.kind;
       lines.push(
-        `- @${m.id} "${m.name}" (${m.kind})${m.about ? `: ${m.about}` : " (no description yet)"}${m.wears ? ` · wears: ${m.wears}` : ""} · ${look(m)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${look(v)})`).join(", ")}` : ""}`,
+        `- @${m.id} "${m.name}" (${kindTag})${m.about ? `: ${m.about}` : " (no description yet)"}${m.wears && !m.nonHuman ? ` · wears: ${m.wears}` : ""} · ${look(m)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${look(v)})`).join(", ")}` : ""}`,
       );
     }
   }

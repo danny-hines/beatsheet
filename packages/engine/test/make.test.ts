@@ -2412,4 +2412,51 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
     expect(String(sentSeedance.input.prompt)).toContain("@Image1 is Galileo's 360-degree face sheet");
     expect(String(sentSeedance.input.prompt)).toContain("@Image2 is Galileo's outfit turnaround");
   });
+
+  it("generates full-body hero stills and multi-angle turnaround sheets for non-human characters without wardrobe or cropped-neck prompts", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const petPhoto = join(dir, "mochi-photo.png");
+    await sharp({ create: { width: 120, height: 120, channels: 3, background: { r: 220, g: 130, b: 60 } } }).png().toFile(petPhoto);
+
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push({ id: "mochi-photo", kind: "image", path: petPhoto, label: "Mochi", provenance: { source: "import" } });
+      d.cast!.push({
+        id: "mochi",
+        name: "Mochi",
+        kind: "character",
+        nonHuman: true,
+        about: "orange tabby cat, white chest and paws, notch in left ear",
+        seen: [{ asset: "mochi-photo" }],
+        variants: [{ id: "heist", about: "wearing a tiny black eye mask" }],
+      });
+    });
+
+    // Rejects human-only face-sheet and outfit-sheet kinds cleanly.
+    expect(() => make.requestFor(PROJECT, { op: "image", sheet: "mochi", sheetKind: "face-sheet" })).toThrow(/non-human character/);
+    expect(() => make.requestFor(PROJECT, { op: "image", sheet: "mochi", sheetKind: "outfit-sheet" })).toThrow(/non-human character/);
+
+    // Hero still (portrait): 1:1 full-figure study, never "bare neck and shoulders" or "head-and-shoulders".
+    const heroReq = make.requestFor(PROJECT, { op: "image", sheet: "mochi", sheetKind: "portrait" });
+    expect(heroReq.aspect).toBe("1:1");
+    expect(heroReq.refs).toEqual(["mochi-photo"]);
+    expect(heroReq.sent).toContain("full-figure hero study");
+    expect(heroReq.sent).not.toContain("bare neck and shoulders");
+
+    // Full-body turnaround sheet: 16:9 multi-angle front/3/4/side/back, never "cropped at the neck", works directly from pet photo!
+    const sheetReq = make.requestFor(PROJECT, { op: "image", sheet: "mochi", sheetKind: "sheet" });
+    expect(sheetReq.aspect).toBe("16:9");
+    expect(sheetReq.refs).toEqual(["mochi-photo"]);
+    expect(sheetReq.sent).toContain("multi-angle full-body character turnaround sheet");
+    expect(sheetReq.sent).not.toContain("cropped at the neck");
+
+    make.startMake(PROJECT, { op: "image", sheet: "mochi", sheetKind: "sheet", count: 1 });
+    await make.driveJobs(PROJECT);
+    const mochi = store.loadProject(PROJECT).project.cast!.find((m) => m.id === "mochi")!;
+    expect(mochi.sheet).toBe("mochi-sheet");
+
+    // Variant (@mochi/heist) anchors on the plain full-body turnaround sheet.
+    const heistReq = make.requestFor(PROJECT, { op: "image", sheet: "mochi/heist", sheetKind: "sheet" });
+    expect(heistReq.refs).toEqual(["mochi-sheet"]);
+    expect(heistReq.sent).toContain("wearing a tiny black eye mask");
+  });
 });

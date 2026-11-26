@@ -1666,4 +1666,29 @@ describe("decoupled face & wardrobe sheets and model-adaptive cast packing", () 
     expect(mergedGalileo.faceSheets).toContain("galileo-face-360");
     expect(mergedGalileo.outfitSheets).toContain("galileo-outfit-clean");
   });
+
+  it("handles non-human characters (pets, robots, dragons) with full-body turnaround sheets and no wardrobe split", () => {
+    const dragon: CastMember = {
+      id: "spark",
+      name: "Spark",
+      kind: "character",
+      nonHuman: true,
+      about: "small emerald dragon with copper horns and tattered leather saddle",
+      portrait: "spark-hero",
+      sheet: "spark-turnaround",
+      variants: [{ id: "armored", about: "clad in forged iron scale barding", sheet: "spark-armored-sheet" }],
+    };
+    expect(characterIngredients({ member: dragon }, [dragon])).toMatchObject({
+      portrait: "spark-hero",
+      legacySheet: "spark-turnaround",
+    });
+    expect(characterIngredients({ member: dragon }, [dragon]).faceSheet).toBeUndefined();
+    expect(characterIngredients({ member: dragon }, [dragon]).outfitSheet).toBeUndefined();
+    expect(packCastPictures(castOf("@spark flies overhead", [dragon]), { max: 10, strategy: "split-360", cast: [dragon] })).toMatchObject([
+      { asset: "spark-turnaround", role: "sheet" },
+    ]);
+    expect(packCastPictures(castOf("@spark/armored lands", [dragon]), { max: 10, strategy: "split-single", cast: [dragon] })).toMatchObject([
+      { asset: "spark-armored-sheet", role: "sheet" },
+    ]);
+  });
 });
