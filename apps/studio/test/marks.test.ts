@@ -41,7 +41,7 @@ describe("service marks", () => {
     // Read here rather than through marks.ts: vitest keeps a module's list of files until the module itself changes.
     const found = import.meta.glob<string>("../src/marks/*.{svg,png}", { eager: true, query: "?url", import: "default" });
     const shipped = Object.fromEntries(Object.entries(found).map(([path, url]) => [path.replace("../src/", "./"), url]));
-    for (const id of ["antigravity", "comfyui", "elevenlabs", "fal", "gemini", "higgsfield", "openai", "replicate", "tein"]) expect(markFile(id, shipped), id).toBeDefined();
+    for (const id of ["antigravity", "comfyui", "elevenlabs", "fal", "gemini", "higgsfield", "openai", "openrouter", "replicate", "tein"]) expect(markFile(id, shipped), id).toBeDefined();
     for (const id of ["codex", "chatgpt", "openai-whisper"]) expect(markFile(id, shipped), id).toEqual(markFile("openai", shipped));
     // Held until their owners say yes (marks/README.md).
     for (const id of ["claude", "muse", "muse-code", "meta", "runway"]) expect(markFile(id, shipped), id).toBeUndefined();

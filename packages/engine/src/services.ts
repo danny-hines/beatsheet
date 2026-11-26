@@ -98,6 +98,20 @@ export const SERVICES: Service[] = [
     verify: (key) => tryKey("https://api.meta.ai/v1/models", { Authorization: `Bearer ${key}` }, () => "Key works"),
   },
   {
+    id: "openrouter",
+    label: "OpenRouter",
+    does: "Many makers' image and video models on one key at list prices: Nano Banana, GPT Image, Muse Image, FLUX 3, Seedream, Wan 3.0, Seedance 2.5, Gemini Omni, MiniMax H3, and HeyGen Avatar 6 lip sync.",
+    unlocks: ["images", "video"],
+    keyUrl: "https://openrouter.ai/settings/keys",
+    verify: (key) =>
+      tryKey(`${process.env.BEATSHEET_OPENROUTER ?? "https://openrouter.ai/api/v1"}/key`, { Authorization: `Bearer ${key}` }, (b) => {
+        const d = b.data as { label?: unknown; limit_remaining?: unknown; is_free_tier?: unknown } | undefined;
+        const left = typeof d?.limit_remaining === "number" ? `$${num(d.limit_remaining)} left on key` : "";
+        const free = d?.is_free_tier === true && !left ? "free tier" : "";
+        return [d?.label ? String(d.label) : "Key works", left || free].filter(Boolean).join(" · ");
+      }),
+  },
+  {
     id: "runway",
     label: "Runway",
     does: "Other makers' models on one key: video (Kling, Seedance, Wan, MiniMax H3, Gemini Omni) and images (Nano Banana, GPT Image, Muse Image). A take its moderation turns down is still charged.",

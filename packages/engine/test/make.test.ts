@@ -21,7 +21,7 @@ vi.mock("../src/settings.ts", async (importOriginal) => {
   const real = await importOriginal<typeof import("../src/settings.ts")>();
   return {
     ...real,
-    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein", "runway", "higgsfield"].includes(id) ? "test-key" : undefined),
+    getSecret: async (id: string) => (["fal", "openai", "meta", "gemini", "tein", "runway", "higgsfield", "openrouter"].includes(id) ? "test-key" : undefined),
     readSettings: () => ({ services: { fal: { addedAt: "2026-10-28" }, openai: { addedAt: "2026-10-29" }, meta: { addedAt: "2026-10-29" }, ...settings.services }, checks: {}, make: settings.make }),
   };
 });
@@ -86,6 +86,13 @@ let higgsfield: {
   jobs: Map<string, string>;
   made: Map<string, { moderated: boolean; still: boolean }>;
   cancelled: string[];
+};
+// And for OpenRouter: key check, synchronous images, and async video jobs (signed URL or authenticated /content).
+let openrouter: {
+  images: Record<string, unknown>[];
+  videos: Record<string, unknown>[];
+  jobs: Map<string, { fail?: string; failCost?: number; unsignedOnly?: boolean }>;
+  authedDownloads: number;
 };
 let refuse: string | undefined;
 let server: Server;
@@ -245,6 +252,59 @@ beforeAll(async () => {
         }
         return send(404, { detail: "Not Found" });
       }
+      if (url.startsWith("/openrouter/")) {
+        if (req.headers.authorization !== "Bearer test-key") return send(401, { error: { code: 401, message: "Invalid API key" } });
+        const path = url.slice("/openrouter".length);
+        if (req.method === "GET" && path === "/key") {
+          return send(200, { data: { label: "sk-or-v1-test", limit: 25, limit_remaining: 18.5, is_free_tier: false } });
+        }
+        if (req.method === "POST" && path === "/images") {
+          const input = JSON.parse(body) as Record<string, unknown>;
+          if (String(input.prompt).includes("broke")) return send(402, { error: { code: 402, message: "Insufficient credits" } });
+          if (String(input.prompt).includes("huge")) return send(413, { error: { code: 413, message: "Payload too large" } });
+          if (refuse && String(input.prompt).includes(refuse)) return send(400, { error: { code: 400, message: "Provider returned error", metadata: { raw: "Safety policy blocked" } } });
+          openrouter.images.push(input);
+          return send(200, {
+            created: 1795000000,
+            data: [{ b64_json: Buffer.from("an openrouter picture").toString("base64"), media_type: input.output_format === "jpeg" ? "image/jpeg" : "image/png" }],
+            usage: { cost: 0.0195 },
+          });
+        }
+        if (req.method === "POST" && path === "/videos") {
+          const input = JSON.parse(body) as Record<string, unknown>;
+          if (String(input.prompt ?? "").includes("broke")) return send(402, { error: { code: 402, message: "Insufficient credits" } });
+          if (String(input.prompt ?? "").includes("huge")) return send(413, { error: { code: 413, message: "Request payload too large" } });
+          openrouter.videos.push(input);
+          const id = `gen-vid-${openrouter.videos.length}`;
+          const prompt = String(input.prompt ?? "");
+          openrouter.jobs.set(id, {
+            ...(refuse && prompt.includes(refuse) ? { fail: "Upstream moderation blocked", failCost: prompt.includes("billed") ? 0.44 : 0 } : {}),
+            ...(prompt.includes("unsigned") ? { unsignedOnly: true } : {}),
+          });
+          return send(202, { id, polling_url: `/api/v1/videos/${id}`, status: "pending" });
+        }
+        const content = path.match(/^\/videos\/([^/]+)\/content$/);
+        if (req.method === "GET" && content) {
+          openrouter.authedDownloads++;
+          return send(200, readFileSync(clipMade), "video/mp4");
+        }
+        const vid = path.match(/^\/videos\/([^/]+)$/)?.[1];
+        const info = vid ? openrouter.jobs.get(vid) : undefined;
+        if (req.method === "GET" && vid && info) {
+          const n = (polls.get(vid) ?? 0) + 1;
+          polls.set(vid, n);
+          if (n < 3) return send(200, { id: vid, polling_url: `/api/v1/videos/${vid}`, status: n === 1 ? "pending" : "in_progress" });
+          if (info.fail) return send(200, { id: vid, polling_url: `/api/v1/videos/${vid}`, status: "failed", error: info.fail, usage: { cost: info.failCost ?? 0 } });
+          return send(200, {
+            id: vid,
+            polling_url: `/api/v1/videos/${vid}`,
+            status: "completed",
+            ...(info.unsignedOnly ? { unsigned_urls: [`/api/v1/videos/${vid}/content`] } : { urls: [`${base}/out/${vid}.mp4`] }),
+            usage: { cost: 0.4412 },
+          });
+        }
+        return send(404, { error: { code: 404, message: "Not found" } });
+      }
       if (req.headers.authorization !== "Key test-key" && !url.startsWith("/out/") && !url.startsWith("/upload/")) return send(401, { detail: "no" });
       if (url.startsWith("/rest/storage/upload/initiate")) {
         seen.uploads++;
@@ -286,6 +346,7 @@ beforeAll(async () => {
   process.env.BEATSHEET_TEIN = `${base}/tein`;
   process.env.BEATSHEET_RUNWAY = `${base}/runway`;
   process.env.BEATSHEET_HIGGSFIELD = `${base}/higgsfield`;
+  process.env.BEATSHEET_OPENROUTER = `${base}/openrouter`;
   make = await import("../src/make.ts");
   store = await import("../src/store.ts");
 });
@@ -302,6 +363,7 @@ beforeEach(() => {
   tein = { submits: [], keys: [], uploads: 0, jobs: new Map() };
   runway = { submits: [], uploads: [], stored: 0, tasks: new Map(), cancelled: [] };
   higgsfield = { submits: [], keys: [], uploads: [], stored: 0, estimates: [], jobs: new Map(), made: new Map(), cancelled: [] };
+  openrouter = { images: [], videos: [], jobs: new Map(), authedDownloads: 0 };
   refuse = undefined;
   plans.ready = [];
   plans.asks = [];
@@ -1680,5 +1742,204 @@ describe("stills from services that answer in one request", () => {
     await make.driveJobs(PROJECT);
     expect(seen.direct).toHaveLength(1);
     expect(make.listJobs(PROJECT)[0]).toMatchObject({ status: "done", asset: "s1-take" });
+  });
+});
+
+describe("OpenRouter as a provider", () => {
+  const connect = () => void (settings.services = { openrouter: { addedAt: "2026-11-26" } });
+  const job = (id: string) => make.listJobs(PROJECT).find((j) => j.id === id)!;
+
+  it("verifies keys against /key and reports key label and remaining limit", async () => {
+    const { SERVICES } = await import("../src/services.ts");
+    const svc = SERVICES.find((s) => s.id === "openrouter")!;
+    expect(await svc.verify("test-key")).toMatchObject({ ok: true, detail: "sk-or-v1-test · $18.5 left on key" });
+    expect(await svc.verify("wrong")).toMatchObject({ ok: false, detail: "That key was refused" });
+  });
+
+  it("makes stills synchronously with inline data-URL references and records exact usage.cost", async () => {
+    connect();
+    provider({ image: "openrouter" });
+    const { fit, jobs } = make.startMake(PROJECT, { op: "image", sheet: "cat", model: "seedream-5-5", count: 1 });
+    expect(fit).toMatchObject({ model: "seedream-5-5", route: "openrouter", where: "OpenRouter", endpoint: "bytedance-seed/seedream-5-5", aspect: "16:9", usd: 0.02 });
+    await make.driveJobs(PROJECT);
+    expect(openrouter.images).toHaveLength(1);
+    expect(openrouter.images[0]).toMatchObject({
+      model: "bytedance-seed/seedream-5-5",
+      aspect_ratio: "16:9",
+      resolution: "1K",
+      output_format: "jpeg",
+      response_format: "b64_json",
+      seed: expect.any(Number),
+      input_references: [{ type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } }],
+    });
+    expect(job(jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter", charged: true, usd: 0.0195 });
+    const sheet = store.loadProject(PROJECT).project.assets.find((a) => a.id === "cat-sheet")!;
+    expect(sheet.provenance).toMatchObject({ provider: "openrouter", model: "bytedance-seed/seedream-5-5", costUsd: 0.0195, refs: ["cat-photo"] });
+    expect(readFileSync(sheet.path, "utf8")).toBe("an openrouter picture");
+  });
+
+  it("animates a board on Seedance 2.5 via OpenRouter, supports authenticated /content fallback, and handles failures", async () => {
+    make.startMake(PROJECT, { op: "image", shot: "s2" });
+    await make.driveJobs(PROJECT);
+    connect();
+    // OpenRouter's Seedance 2.5 is cheaper than fal, so it wins automatically without changing the preferred provider.
+    const ask = { op: "video" as const, shot: "s2", prompt: "A red kite climbs over the hill", start: "s2-take", model: "seedance-2.5" };
+    expect(make.makeChoices(PROJECT, ask).choices.ready.find((f) => f.model === "seedance-2.5")).toMatchObject({ route: "openrouter", also: [{ route: "fal" }] });
+
+    const { fit, jobs } = make.startMake(PROJECT, ask);
+    expect(fit).toMatchObject({ model: "seedance-2.5", route: "openrouter", endpoint: "bytedance/seedance-2.5", seconds: 4 });
+    await make.driveJobs(PROJECT);
+    expect(openrouter.videos[0]).toMatchObject({
+      model: "bytedance/seedance-2.5",
+      prompt: "A red kite climbs over the hill",
+      duration: 4,
+      resolution: "480p",
+      generate_audio: true,
+      seed: expect.any(Number),
+      frame_images: [{ type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) }, frame_type: "first_frame" }],
+    });
+    expect(openrouter.videos[0]).not.toHaveProperty("aspect_ratio");
+    expect(job(jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter", charged: true, usd: 0.4412, remote: { id: "gen-vid-1" } });
+
+    // Authenticated /videos/{id}/content download when OpenRouter returns only unsigned_urls.
+    const fallback = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "An unsigned alley shot", model: "heygen-video-1" });
+    await make.driveJobs(PROJECT);
+    expect(openrouter.authedDownloads).toBe(1);
+    expect(job(fallback.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter", charged: true, usd: 0.4412 });
+
+    // Failed job with $0 cost is not charged; billed upstream moderation keeps charged: true and exact cost.
+    refuse = "blocked";
+    const unbilled = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "A blocked scene", model: "wan-3", via: "openrouter" });
+    await make.driveJobs(PROJECT);
+    expect(job(unbilled.jobs[0]!.id)).toMatchObject({ status: "failed", error: "Upstream moderation blocked" });
+    expect(job(unbilled.jobs[0]!.id).charged).toBeFalsy();
+
+    const billed = make.startMake(PROJECT, { op: "video", shot: "s1", prompt: "A blocked billed scene", model: "wan-3", via: "openrouter" });
+    await make.driveJobs(PROJECT);
+    expect(job(billed.jobs[0]!.id)).toMatchObject({ status: "failed", charged: true, usd: 0.44 });
+  });
+
+  it("lip-syncs a board with HeyGen Avatar 6 on OpenRouter using compact MP3 speech data URL", async () => {
+    connect();
+    make.startMake(PROJECT, { op: "image", shot: "s2", model: "flux3-klein", via: "openrouter" });
+    await make.driveJobs(PROJECT);
+    // Add a voiced line heard while shot s2 plays.
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const lineFile = join(dir, "vo", "main", "line1.wav");
+    mkdirSync(join(dir, "vo", "main"), { recursive: true });
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "pcm_s16le", lineFile]);
+    store.updateProject(PROJECT, (p) => {
+      p.voice = { leadIn: 0, defaultGap: 0.2, tail: 0, lines: [{ id: "boast", text: "I own this alley.", file: "vo/main/line1.wav", duration: 2, words: [] }] };
+      p.shots.find((s) => s.id === "s2")!.start = { kind: "line", line: "boast" };
+    });
+
+    const talk = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", speech: { lines: ["boast"] }, prompt: "Smirks and speaks calmly", model: "heygen-avatar-6" });
+    expect(talk.fit).toMatchObject({ model: "heygen-avatar-6", route: "openrouter", endpoint: "heygen/heygen-avatar-6", seconds: 4.2 });
+    await make.driveJobs(PROJECT);
+    const sent = openrouter.videos.at(-1)!;
+    expect(sent).toEqual({
+      model: "heygen/heygen-avatar-6",
+      prompt: "Smirks and speaks calmly",
+      resolution: "1080p",
+      input_references: [
+        { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
+        { type: "audio_url", audio_url: { url: expect.stringMatching(/^data:audio\/mpeg;base64,/) } },
+      ],
+    });
+    expect(job(talk.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter", charged: true, usd: 0.4412 });
+  });
+
+  it("maps OpenRouter error codes cleanly and builds every still and video input shape", async () => {
+    const { openrouterImage, openrouterImageInput, openrouterVideoInput, openrouterSubmit } = await import("../src/openrouter.ts");
+    await expect(openrouterImage("openrouter-image-1k", "google/gemini-nano-banana-2.1", "wrong", { prompt: "x" })).rejects.toMatchObject({ message: expect.stringContaining("OpenRouter refused the key"), final: true });
+    await expect(openrouterImage("openrouter-image-1k", "google/gemini-nano-banana-2.1", "test-key", { prompt: "broke" })).rejects.toMatchObject({ message: expect.stringContaining("out of credits"), final: true, funds: true });
+    await expect(openrouterImage("openrouter-image-1k", "google/gemini-nano-banana-2.1", "test-key", { prompt: "huge" })).rejects.toMatchObject({ message: expect.stringContaining("too large"), final: true });
+    refuse = "unsafe";
+    await expect(openrouterImage("openrouter-image-1k", "google/gemini-nano-banana-2.1", "test-key", { prompt: "unsafe" })).rejects.toMatchObject({ message: "Provider returned error: Safety policy blocked", final: true });
+    await expect(openrouterSubmit("test-key", { model: "alibaba/wan-3.0", prompt: "broke" })).rejects.toMatchObject({ funds: true, final: true });
+
+    // Input shape unit checks across image and video adapters.
+    expect(openrouterImageInput("openrouter-gpt-image", "openai/gpt-image-2.6-flare", { prompt: "x", aspect: "9:16", refs: ["u"] })).toEqual({
+      model: "openai/gpt-image-2.6-flare",
+      prompt: "x",
+      response_format: "b64_json",
+      aspect_ratio: "9:16",
+      quality: "medium",
+      output_format: "jpeg",
+      output_compression: 92,
+      input_references: [{ type: "image_url", image_url: { url: "u" } }],
+    });
+    expect(openrouterVideoInput("openrouter-seedance-2.5", "bytedance/seedance-2.5", { prompt: "x", quality: "final", seconds: 7, aspect: "9:16", refs: ["a"], camera: { url: "v", blockout: true } })).toEqual({
+      model: "bytedance/seedance-2.5",
+      prompt: "x The reference picture shows who and what is in it. The reference video is a blockout: keep its camera exactly (the move, the framing, the timing and where the cuts fall). Its grey set and its striped stand-ins only mark where things are and how big; none of them appears in the result.",
+      duration: 7,
+      resolution: "1080p",
+      generate_audio: true,
+      aspect_ratio: "9:16",
+      input_references: [
+        { type: "image_url", image_url: { url: "a" } },
+        { type: "video_url", video_url: { url: "v" } },
+      ],
+    });
+    expect(openrouterVideoInput("openrouter-gemini-omni", "google/gemini-omni-1.2-flash", { prompt: "x", quality: "final", seconds: 12, start: "u", end: "v", aspect: "4:5" })).toEqual({
+      model: "google/gemini-omni-1.2-flash",
+      prompt: "x",
+      duration: 12,
+      resolution: "1080p",
+      aspect_ratio: "9:16",
+      generate_audio: true,
+      frame_images: [
+        { type: "image_url", image_url: { url: "u" }, frame_type: "first_frame" },
+        { type: "image_url", image_url: { url: "v" }, frame_type: "last_frame" },
+      ],
+    });
+    expect(openrouterVideoInput("openrouter-hailuo-3", "minimax/hailuo-3", { prompt: "x", seconds: 6, aspect: "16:9", refs: ["r"] })).toEqual({
+      model: "minimax/hailuo-3",
+      prompt: "x The reference picture shows who and what is in it.",
+      duration: 6,
+      resolution: "2K",
+      generate_audio: true,
+      aspect_ratio: "16:9",
+      input_references: [{ type: "image_url", image_url: { url: "r" } }],
+    });
+    expect(openrouterVideoInput("openrouter-heygen-video", "heygen/heygen-video-1", { prompt: "x", seconds: 8, start: "u", end: "v", seed: 42 })).toEqual({
+      model: "heygen/heygen-video-1",
+      prompt: "x",
+      duration: 8,
+      resolution: "480p",
+      seed: 42,
+      frame_images: [{ type: "image_url", image_url: { url: "u" }, frame_type: "first_frame" }],
+    });
+    expect(openrouterImageInput("openrouter-image-1k-jpeg-plain", "minimax/minimax-h3-image", { prompt: "x", aspect: "16:9", seed: 9, refs: ["u"] })).toEqual({
+      model: "minimax/minimax-h3-image",
+      prompt: "x",
+      response_format: "b64_json",
+      aspect_ratio: "16:9",
+      resolution: "1K",
+      output_format: "jpeg",
+      input_references: [{ type: "image_url", image_url: { url: "u" } }],
+    });
+    expect(openrouterVideoInput("openrouter-happyhorse", "alibaba/happyhorse-1.1", { prompt: "x", quality: "final", seconds: 5, aspect: "16:9", refs: ["a"], seed: 11 })).toEqual({
+      model: "alibaba/happyhorse-1.1",
+      prompt: "x The reference picture shows who and what is in it.",
+      duration: 5,
+      resolution: "1080p",
+      aspect_ratio: "16:9",
+      seed: 11,
+      input_references: [{ type: "image_url", image_url: { url: "a" } }],
+    });
+    expect(openrouterVideoInput("openrouter-grok-video", "x-ai/grok-imagine-video-1.5", { prompt: "x", quality: "final", seconds: 1, start: "u", end: "v" })).toEqual({
+      model: "x-ai/grok-imagine-video-1.5",
+      prompt: "x",
+      duration: 1,
+      resolution: "1080p",
+      generate_audio: true,
+      frame_images: [
+        { type: "image_url", image_url: { url: "u" }, frame_type: "first_frame" },
+        { type: "image_url", image_url: { url: "v" }, frame_type: "last_frame" },
+      ],
+    });
+    expect(() => openrouterImageInput("unknown", "m", { prompt: "x" })).toThrow('no way to ask OpenRouter for "unknown" still models yet');
+    expect(() => openrouterVideoInput("unknown", "m", { prompt: "x" })).toThrow('no way to ask OpenRouter for "unknown" video models yet');
   });
 });

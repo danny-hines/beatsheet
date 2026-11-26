@@ -678,8 +678,8 @@ describe("more cast than a model takes pictures of", () => {
     const prompt = "@mom, @dad, @kid and @cat at breakfast in @kitchen, a @mug on the table";
     const uses = castOf(prompt, cast);
     const pictured = castPictures(uses, fewestStillRefs(CATALOG));
-    // The first Nano Banana takes 4; the others take more (Nano Banana 2.1, 14), and are given more once picked.
-    expect([fewestStillRefs(CATALOG), maxStillRefs(CATALOG)]).toEqual([4, 14]);
+    // The first Nano Banana takes 4; the others take more (MiniMax H3 Image, 16), and are given more once picked.
+    expect([fewestStillRefs(CATALOG), maxStillRefs(CATALOG)]).toEqual([4, 16]);
     expect(pictured.map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic"]);
     expect(castPictures(uses, 10).map((p) => p.asset)).toEqual(["mom-pic", "dad-pic", "kid-pic", "cat-pic", "mug-pic", "kitchen-pic"]);
     // Everyone is still described; only the pictured are named as references.
@@ -1110,7 +1110,7 @@ describe("keeping a clip's camera", () => {
     // Without a clip the same take costs its own seconds at the plain rate.
     const plain = fitModel(seedance, { op: "video", prompt: "x", seconds: 7, aspect: "9:16", via: "tein" }, { fal, tein });
     expect(plain.ok && plain.usd).toBeCloseTo(8 * 0.1355, 3);
-    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein", "runway", "higgsfield"] } });
+    expect(fitModel(seedance, ask, {})).toMatchObject({ ok: false, why: { kind: "connect", services: ["fal", "tein", "runway", "higgsfield", "openrouter"] } });
   });
 
   it("is billed by Runway for the clip at half the take's rate, and never less than its least for a take", () => {
@@ -1212,5 +1212,102 @@ describe("keeping a clip's camera", () => {
     expect(followed).not.toHaveProperty("start");
     // Going back to a take that kept no camera, the shot keeps none.
     expect(showTake(followed, plain, [take, plain], 4)).not.toHaveProperty("camera");
+  });
+});
+
+describe("OpenRouter catalog routes and curated models", () => {
+  const openrouter = { openrouter: { label: "OpenRouter", state: "ready" } } satisfies Record<string, ServiceState>;
+  const camera = { cut: "blockout", format: "vertical", from: 0, to: 7 };
+
+  it("offers hosted stills including FLUX 3 Image Klein and Seedream 5.5, and enforces Nano Banana's 3-ref cap", () => {
+    const klein = CATALOG.find((m) => m.id === "flux3-klein")!;
+    expect(fitModel(klein, { op: "image", prompt: "x", aspect: "9:16" }, openrouter)).toMatchObject({
+      ok: true,
+      route: "openrouter",
+      endpoint: "black-forest-labs/flux-3-image-klein",
+      usd: 0.009,
+    });
+    // Local ComfyUI still beats OpenRouter when both are connected, with OpenRouter listed in also.
+    const comfy: ServiceState = { label: "ComfyUI", state: "ready" };
+    expect(fitModel(klein, { op: "image", prompt: "x" }, { ...openrouter, comfy })).toMatchObject({
+      ok: true,
+      route: "comfy",
+      usd: 0,
+      also: [{ route: "openrouter", usd: 0.009 }],
+    });
+
+    const seedream = CATALOG.find((m) => m.id === "seedream-5-5")!;
+    expect(fitModel(seedream, { op: "image", prompt: "x", refs: ["a", "b"] }, openrouter)).toMatchObject({
+      ok: true,
+      route: "openrouter",
+      endpoint: "bytedance-seed/seedream-5-5",
+      usd: 0.02,
+    });
+
+    const nb1 = CATALOG.find((m) => m.id === "nano-banana")!;
+    expect(fitModel(nb1, { op: "image", prompt: "x", refs: ["a", "b", "c"] }, openrouter)).toMatchObject({ ok: true, route: "openrouter" });
+    expect(fitModel(nb1, { op: "image", prompt: "x", refs: ["a", "b", "c", "d"], via: "openrouter" }, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", fix: "drop-refs" },
+    });
+  });
+
+  it("prices Seedance 2.5 and Seedance 2.5 Flash at BytePlus token rates, including camera blockouts, and refuses real people", () => {
+    const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
+    const flash = CATALOG.find((m) => m.id === "seedance-2.5-flash")!;
+    const ask = { op: "video" as const, prompt: "x", camera, seconds: 7, aspect: "9:16" };
+    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, openrouter);
+    expect(rough).toMatchObject({ ok: true, route: "openrouter", endpoint: "bytedance/seedance-2.5", seconds: 7 });
+    expect(rough.ok && rough.usd).toBeCloseTo(14 * 0.066, 3);
+    const final = fitModel(seedance, { ...ask, quality: "final" }, openrouter);
+    expect(final.ok && final.usd).toBeCloseTo(14 * 0.3482, 3);
+    const flashRough = fitModel(flash, { ...ask, refs: ["board"] }, openrouter);
+    expect(flashRough).toMatchObject({ ok: true, route: "openrouter", endpoint: "bytedance/seedance-2.5-flash", seconds: 7 });
+    expect(flashRough.ok && flashRough.usd).toBeCloseTo(14 * 0.0443, 3);
+    expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
+    expect(fitModel(flash, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit" } });
+  });
+
+  it("offers HeyGen Video 1, Gemini Omni 1.2 Flash, and HeyGen Avatar 6 lip-sync rough and final tiers", () => {
+    const hgVid = CATALOG.find((m) => m.id === "heygen-video-1")!;
+    expect(fitModel(hgVid, { op: "video", prompt: "x", start: "board", seconds: 5, quality: "rough" }, openrouter)).toMatchObject({ ok: true, seconds: 6, usd: 0.12 });
+    expect(fitModel(hgVid, { op: "video", prompt: "x", start: "board", seconds: 5, quality: "final" }, openrouter)).toMatchObject({ ok: true, seconds: 6, usd: 0.6 });
+    expect(fitModel(hgVid, { op: "video", prompt: "x", start: "board", end: "last", seconds: 5 }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit", fix: "drop-end" } });
+
+    const omni12 = CATALOG.find((m) => m.id === "gemini-omni-1.2-flash")!;
+    expect(fitModel(omni12, { op: "video", prompt: "x", seconds: 14, aspect: "9:16", quality: "final" }, openrouter)).toMatchObject({ ok: true, seconds: 15, usd: Math.round(15 * 0.1043 * 1000) / 1000 });
+
+    const speech = { lines: ["l1"], from: 0, to: 5 };
+    const talking = { op: "video" as const, prompt: "smiles and gestures", start: "board", speech, seconds: 5, realPeople: ["Danny"] };
+    expect(chooseModels(CATALOG, { ...talking, quality: "rough" }, openrouter).auto).toMatchObject({ model: "heygen-avatar-6-turbo", route: "openrouter", seconds: 6, usd: 0.3 });
+    expect(chooseModels(CATALOG, { ...talking, quality: "final" }, openrouter).auto).toMatchObject({ model: "heygen-avatar-6", route: "openrouter", seconds: 6, usd: 0.6 });
+  });
+
+  it("supports Grok 1s clips, HappyHorse 1.1, Seedance 2.0 Mini, MiniMax H3 Image, MAI-Image-2.7 and FLUX 3 Image", () => {
+    const grokLite = CATALOG.find((m) => m.id === "grok-imagine-video-1.5-lite")!;
+    const grok = CATALOG.find((m) => m.id === "grok-imagine-video-1.5")!;
+    expect(fitModel(grokLite, { op: "video", prompt: "quick flash cut", start: "board", seconds: 0.8 }, openrouter)).toMatchObject({ ok: true, seconds: 1, usd: 0.02 });
+    expect(fitModel(grokLite, { op: "video", prompt: "x", start: "a", end: "b", seconds: 2 }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit", fix: "drop-end" } });
+    expect(fitModel(grok, { op: "video", prompt: "x", start: "a", end: "b", seconds: 2, quality: "final" }, openrouter)).toMatchObject({ ok: true, seconds: 2, usd: 0.5 });
+
+    const hh = CATALOG.find((m) => m.id === "happyhorse-1.1")!;
+    expect(fitModel(hh, { op: "video", prompt: "x", refs: ["a"], seconds: 5, quality: "final" }, openrouter)).toMatchObject({ ok: true, seconds: 6, usd: Math.round(6 * 0.1278 * 1000) / 1000 });
+    expect(fitModel(hh, { op: "video", prompt: "x", start: "a", end: "b", seconds: 5 }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit", fix: "drop-end" } });
+
+    const s20 = CATALOG.find((m) => m.id === "seedance-2.0-mini")!;
+    const miniCam = fitModel(s20, { op: "video", prompt: "x", camera, seconds: 7, aspect: "9:16" }, openrouter);
+    expect(miniCam).toMatchObject({ ok: true, route: "openrouter", endpoint: "bytedance/seedance-2.0-mini", seconds: 7 });
+    expect(miniCam.ok && miniCam.usd).toBeCloseTo(14 * 0.0216, 3);
+    expect(fitModel(s20, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit" } });
+
+    const h3Img = CATALOG.find((m) => m.id === "minimax-h3-image")!;
+    expect(fitModel(h3Img, { op: "image", prompt: "x", refs: Array.from({ length: 16 }, (_, i) => `r${i}`) }, openrouter)).toMatchObject({ ok: true, usd: 0.01 });
+
+    const mai = CATALOG.find((m) => m.id === "mai-image-2.7")!;
+    expect(fitModel(mai, { op: "image", prompt: "x", aspect: "4:5", refs: ["a", "b", "c", "d", "e"] }, openrouter)).toMatchObject({ ok: true, aspect: "3:4", usd: 0.045 });
+    expect(fitModel(mai, { op: "image", prompt: "x", refs: ["a", "b", "c", "d", "e", "f"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit", fix: "drop-refs" } });
+
+    const flux3 = CATALOG.find((m) => m.id === "flux-3-image")!;
+    expect(fitModel(flux3, { op: "image", prompt: "x", aspect: "16:9" }, openrouter)).toMatchObject({ ok: true, endpoint: "black-forest-labs/flux-3-image", usd: 0.048 });
   });
 });

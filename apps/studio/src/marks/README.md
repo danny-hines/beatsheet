@@ -27,6 +27,7 @@ All fetched 2026-11-21.
 | `antigravity.svg` | Antigravity's site icon | `https://antigravity.google/favicon.svg` | Google's, as for `gemini.png` |
 | `fal.png` | fal's site icon, 512px | the `rel="icon"` on fal.ai | none published that we found |
 | `higgsfield.png` | Higgsfield's site icon, 192px | `https://higgsfield.ai/icon.png` | none published that we found |
+| `openrouter.png` | OpenRouter's site icon, 512px | `https://openrouter.ai/favicon/glyph.png` | fetched 2026-11-26; none published that we found |
 | `replicate.mask.svg` | Replicate's pinned-tab icon, made to be tinted | the `mask-icon` on replicate.com | none published that we found |
 | `tein.svg` | Tein's site icon (it turns light on a dark page by itself) | `https://tein.ai/favicon.svg` | none published that we found |
 

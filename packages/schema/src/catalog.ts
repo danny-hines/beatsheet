@@ -16,6 +16,12 @@
  * docs, so it may not be open to every account. Its stills are GPT Image 2.5 (the version before the one here, which
  * it sells as Marketing Studio Image) and its own Soul 2; Seedream 5 Pro, Kling Image 4.0 and the rest it sells aren't
  * in the catalog.
+ *
+ * OpenRouter's routes are from openrouter.ai/openapi.json, /api/v1/images/models and /api/v1/videos/models (read 26
+ * November 2026): a curated subset of its catalog (overlapping models plus HeyGen Avatar 6, HeyGen Video 1, HappyHorse
+ * 1.1, Grok Imagine Video 1.5 / Lite, Gemini Omni 1.2 Flash, Seedance 2.5 Flash / 2.0 Mini, MiniMax H3 Image,
+ * MAI-Image-2.7, FLUX 3 Image and Seedream 5.5), priced at upstream list rates. None has made a take for real yet.
+ * OpenRouter returns the exact charge in `usage.cost`, which the take records in place of the estimate here.
  */
 import type { CatalogModel } from "./make.ts";
 
@@ -45,6 +51,8 @@ export const CATALOG: CatalogModel[] = [
       },
       // Runway: 4 credits at 1K.
       { via: "runway", shape: "nano_banana_2.1", endpoints: { text: "nano_banana_2.1", refs: "nano_banana_2.1" }, price: { perImage: 0.04 } },
+      // OpenRouter: Google Vertex / AI Studio list token rate ($0.00003/token, about 3.4¢ at 1K).
+      { via: "openrouter", shape: "openrouter-image-1k", endpoints: { text: "google/gemini-nano-banana-2.1", refs: "google/gemini-nano-banana-2.1" }, price: { perImage: 0.034 } },
     ],
   },
   {
@@ -63,6 +71,8 @@ export const CATALOG: CatalogModel[] = [
       { via: "gemini", shape: "gemini-image", endpoints: { text: "gemini-2.5-flash-image", refs: "gemini-2.5-flash-image" }, price: { perImage: 0.039 } },
       // Runway: 5 credits an image, and three references at most.
       { via: "runway", shape: "gemini_2.5_flash", endpoints: { text: "gemini_2.5_flash", refs: "gemini_2.5_flash" }, price: { perImage: 0.05 }, takes: { refs: 3 } },
+      // OpenRouter: Google Vertex token rate (~3.9¢ an image), three references at most.
+      { via: "openrouter", shape: "openrouter-image", endpoints: { text: "google/gemini-2.5-flash-image", refs: "google/gemini-2.5-flash-image" }, price: { perImage: 0.039 }, takes: { refs: 3 } },
     ],
   },
   {
@@ -81,6 +91,8 @@ export const CATALOG: CatalogModel[] = [
       { via: "muse-code", shape: "plan", endpoints: { text: "muse-image-1.0", refs: "muse-image-1.0" }, price: { perImage: 0 } },
       // Runway: 1 credit an image.
       { via: "runway", shape: "muse_image", endpoints: { text: "muse_image", refs: "muse_image" }, price: { perImage: 0.01 } },
+      // OpenRouter: Meta's flat $0.01 an image.
+      { via: "openrouter", shape: "openrouter-image-jpeg", endpoints: { text: "meta/muse-image", refs: "meta/muse-image" }, price: { perImage: 0.01 } },
     ],
   },
   {
@@ -123,6 +135,8 @@ export const CATALOG: CatalogModel[] = [
         price: { perImage: 0.06 },
         note: "Priced by the picture's shape here, from 4¢ tall or wide to 9¢ square, and 1¢ more for each reference.",
       },
+      // OpenRouter: OpenAI's own token rates ($5/M text, $8/M image in, $30/M out), about 4¢ at medium quality.
+      { via: "openrouter", shape: "openrouter-gpt-image", endpoints: { text: "openai/gpt-image-2.6-flare", refs: "openai/gpt-image-2.6-flare" }, price: { perImage: 0.04 } },
     ],
   },
   {
@@ -155,6 +169,88 @@ export const CATALOG: CatalogModel[] = [
         price: { perImage: 0.06 },
         note: "Priced by the picture's shape here, from 4¢ tall or wide to 9¢ square, and 1¢ more for each reference.",
       },
+      // OpenRouter: OpenAI's own token rates, about 4¢ at medium quality.
+      { via: "openrouter", shape: "openrouter-gpt-image", endpoints: { text: "openai/gpt-image-2.6-sunburst", refs: "openai/gpt-image-2.6-sunburst" }, price: { perImage: 0.04 } },
+    ],
+  },
+  {
+    id: "seedream-5-5",
+    label: "Seedream 5.5",
+    by: "ByteDance Seed",
+    note: "ByteDance Seed's image model at 2¢ a picture: keeps characters and objects across up to 10 reference pictures, with seeds.",
+    ops: ["image"],
+    takes: { refs: 10 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    wait: 20,
+    // openrouter.ai/api/v1/images/models/bytedance-seed/seedream-5-5/endpoints: $0.02 at 1K, plus $0.008 per reference
+    // picture; the take records OpenRouter's usage.cost in place of the estimate.
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-image-1k-jpeg",
+        endpoints: { text: "bytedance-seed/seedream-5-5", refs: "bytedance-seed/seedream-5-5" },
+        price: { perImage: 0.02 },
+        note: "Each reference picture adds 0.8¢ here, which the estimate leaves out (the take records what OpenRouter charged).",
+      },
+    ],
+  },
+  {
+    id: "minimax-h3-image",
+    label: "MiniMax H3 Image",
+    by: "MiniMax",
+    note: "Top open-weight image model for photorealism and editing: up to 16 reference pictures for about a cent.",
+    ops: ["image"],
+    takes: { refs: 16 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    wait: 15,
+    // openrouter.ai/api/v1/images/models/minimax/minimax-h3-image/endpoints: token-priced ($0.0000038/output token,
+    // about 0.5–1¢ at 1K); the take records OpenRouter's usage.cost in place of the estimate.
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-image-1k-jpeg-plain",
+        endpoints: { text: "minimax/minimax-h3-image", refs: "minimax/minimax-h3-image" },
+        price: { perImage: 0.01 },
+      },
+    ],
+  },
+  {
+    id: "mai-image-2.7",
+    label: "MAI-Image-2.7",
+    by: "Microsoft AI",
+    note: "Precision image generation and instruction-following edits, competing with GPT Image on strict edits and text; up to 5 reference pictures.",
+    ops: ["image"],
+    takes: { refs: 5 },
+    aspects: ["16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
+    wait: 25,
+    // openrouter.ai/api/v1/images/models/microsoft/mai-image-2.7/endpoints: token-priced ($5/M text, $8/M image in,
+    // $34/M image out, about 4.5¢ at 1K); the take records OpenRouter's usage.cost.
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-image",
+        endpoints: { text: "microsoft/mai-image-2.7", refs: "microsoft/mai-image-2.7" },
+        price: { perImage: 0.045 },
+      },
+    ],
+  },
+  {
+    id: "flux-3-image",
+    label: "FLUX 3 Image",
+    by: "Black Forest Labs",
+    note: "Black Forest Labs' flagship still model: strong layout control, typography and multi-reference editing across up to 10 pictures.",
+    ops: ["image"],
+    takes: { refs: 10 },
+    aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+    wait: 20,
+    // openrouter.ai/api/v1/images/models/black-forest-labs/flux-3-image/endpoints: $0.048 an image at 1K.
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-image-1k",
+        endpoints: { text: "black-forest-labs/flux-3-image", refs: "black-forest-labs/flux-3-image" },
+        price: { perImage: 0.048 },
+      },
     ],
   },
   {
@@ -174,7 +270,7 @@ export const CATALOG: CatalogModel[] = [
     id: "flux3-klein",
     label: "FLUX 3 Image Klein",
     by: "Black Forest Labs",
-    note: "Open weights: stills and boards on your own graphics card through ComfyUI, in seconds and for nothing; keeps a character from reference pictures.",
+    note: "Open weights: stills and boards on your own graphics card through ComfyUI for nothing, or hosted through OpenRouter for under a cent; keeps a character from reference pictures.",
     ops: ["image"],
     takes: { refs: 10 },
     aspects: ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
@@ -191,6 +287,13 @@ export const CATALOG: CatalogModel[] = [
         endpoints: { text: "flux3-klein", refs: "flux3-klein" },
         price: { perImage: 0 },
         commercial: { use: "limited", why: "The FLUX Kommunity License allows commercial use of what it makes for people and companies making under $5M a year" },
+      },
+      // OpenRouter: Black Forest Labs hosted API at $0.009 an image at 1K.
+      {
+        via: "openrouter",
+        shape: "openrouter-image-1k-jpeg",
+        endpoints: { text: "black-forest-labs/flux-3-image-klein", refs: "black-forest-labs/flux-3-image-klein" },
+        price: { perImage: 0.009 },
       },
     ],
   },
@@ -269,6 +372,13 @@ export const CATALOG: CatalogModel[] = [
         endpoints: { text: "alibaba/wan-3.0/text-to-video", start: "alibaba/wan-3.0/image-to-video", refs: "alibaba/wan-3.0/reference-to-video" },
         price: { perSecond: 0.0375, finalPerSecond: 0.15 },
       },
+      // OpenRouter: $0.05 a second at 480p and $0.20 at 1080p, matching fal and Runway.
+      {
+        via: "openrouter",
+        shape: "openrouter-wan-3",
+        endpoints: { text: "alibaba/wan-3.0", start: "alibaba/wan-3.0", refs: "alibaba/wan-3.0" },
+        price: { perSecond: 0.05, finalPerSecond: 0.2 },
+      },
     ],
   },
   {
@@ -301,6 +411,14 @@ export const CATALOG: CatalogModel[] = [
         price: { perSecond: 0.1 },
         note: "Each picture it's given here (a start or end frame, a reference) adds 2¢, which the estimate leaves out.",
       },
+      // OpenRouter: minimax/hailuo-3 renders at 2K only ($0.13/s, plus $0.04 per reference picture).
+      {
+        via: "openrouter",
+        shape: "openrouter-hailuo-3",
+        endpoints: { text: "minimax/hailuo-3", start: "minimax/hailuo-3", refs: "minimax/hailuo-3" },
+        price: { perSecond: 0.13 },
+        note: "Renders at 2K here; each reference picture adds 4¢, which the estimate leaves out.",
+      },
       // The open weights (pruned INT8, with the NVFP4 text encoder) from a board, and an end frame if there is one:
       // 124 to 362 frames at 24 a second (comfy.ts). The MiniMax H3 Community License grants rights only outside the
       // EU, UK, South Korea and US; Comfy sells the commercial license for output made locally (docs/MODELS.md).
@@ -312,6 +430,50 @@ export const CATALOG: CatalogModel[] = [
         takes: { refs: 0 },
         wait: 900,
         commercial: { use: "no", why: "The MiniMax H3 Community License grants nothing in the US, EU, UK or South Korea, and commercial use of what it makes needs a license bought through Comfy (fal's H3 has no such limit)" },
+      },
+    ],
+  },
+  {
+    id: "heygen-video-1",
+    label: "HeyGen Video 1",
+    by: "HeyGen",
+    note: "Top-six in blind votes for pennies: 5 to 30 seconds from a board or a prompt, roughs at 480p (2¢/s) and finals at 1080p (10¢/s), with its own sound.",
+    ops: ["video"],
+    takes: { start: true },
+    lengths: Array.from({ length: 26 }, (_, i) => i + 5),
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    wait: 150,
+    // OpenRouter: heygen/heygen-video-1 ($0.02/s at 480p and $0.10/s at 1080p; long clips step up to $0.045/s and
+    // $0.105/s; the take records OpenRouter's usage.cost).
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-heygen-video",
+        endpoints: { text: "heygen/heygen-video-1", start: "heygen/heygen-video-1" },
+        price: { perSecond: 0.02, finalPerSecond: 0.1 },
+        note: "Longer clips step up to 4.5¢/s at 480p and 10.5¢/s at 1080p; the take records what OpenRouter charged.",
+      },
+    ],
+  },
+  {
+    id: "happyhorse-1.1",
+    label: "HappyHorse 1.1",
+    by: "Alibaba",
+    note: "Top-tier cinematic motion and native audio-visual sync at 12.8¢/s for 1080p finals (9.9¢/s at 720p): 3 to 15 seconds from a prompt, board or reference pictures.",
+    ops: ["video"],
+    takes: { start: true, refs: 9 },
+    lengths: Array.from({ length: 13 }, (_, i) => i + 3),
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    wait: 150,
+    // OpenRouter: alibaba/happyhorse-1.1 ($0.0988/s at 720p, $0.1278/s at 1080p). First frame only (no last_frame).
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-happyhorse",
+        endpoints: { text: "alibaba/happyhorse-1.1", start: "alibaba/happyhorse-1.1", refs: "alibaba/happyhorse-1.1" },
+        price: { perSecond: 0.0988, finalPerSecond: 0.1278 },
       },
     ],
   },
@@ -425,6 +587,100 @@ export const CATALOG: CatalogModel[] = [
         },
         price: { perSecond: 0.1177, finalPerSecond: 0.6518, camera: { perSecond: 0.1387, finalPerSecond: 0.7858, takeOnly: true } },
       },
+      // OpenRouter: BytePlus token rates ($0.0000107/token at 480p, $0.0000117 at 1080p; with video input, $0.0000064
+      // at 480p and $0.000007 at 1080p — half of fal's rates). Whether it draws real people there isn't said, so it's
+      // taken not to. The take records OpenRouter's usage.cost.
+      {
+        via: "openrouter",
+        shape: "openrouter-seedance-2.5",
+        endpoints: {
+          text: "bytedance/seedance-2.5",
+          start: "bytedance/seedance-2.5",
+          refs: "bytedance/seedance-2.5",
+          camera: "bytedance/seedance-2.5",
+        },
+        price: { perSecond: 0.1103, finalPerSecond: 0.582, camera: { perSecond: 0.066, finalPerSecond: 0.3482 } },
+      },
+    ],
+  },
+  {
+    id: "seedance-2.5-flash",
+    label: "Seedance 2.5 Flash",
+    by: "ByteDance",
+    note: "The faster, cheaper rough tier of Seedance 2.5: 4 to 30 seconds at 480p with its own sound, up to 30 reference pictures, and keeps a blockout's camera. Won't draw real people.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 } },
+    lengths: Array.from({ length: 27 }, (_, i) => i + 4),
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    refusesRealPeople: true,
+    wait: 120,
+    // OpenRouter: bytedance/seedance-2.5-flash ($0.000007/token at 480p, $0.0000043 with video input — about 65% of
+    // Seedance 2.5's 480p rate). The take records OpenRouter's usage.cost.
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-seedance-2.5-flash",
+        endpoints: {
+          text: "bytedance/seedance-2.5-flash",
+          start: "bytedance/seedance-2.5-flash",
+          refs: "bytedance/seedance-2.5-flash",
+          camera: "bytedance/seedance-2.5-flash",
+        },
+        price: { perSecond: 0.0721, camera: { perSecond: 0.0443 } },
+      },
+    ],
+  },
+  {
+    id: "seedance-2.0-mini",
+    label: "Seedance 2.0 Mini",
+    by: "ByteDance",
+    note: "Ultra-cheap Seedance rough tier: 4 to 15 seconds at 480p (~3.6¢/s, ~2.2¢/s for camera blockouts) with sound and references. Won't draw real people.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true, end: true, refs: 9, camera: { min: 2, max: 15 } },
+    lengths: Array.from({ length: 12 }, (_, i) => i + 4),
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    refusesRealPeople: true,
+    wait: 90,
+    // OpenRouter: bytedance/seedance-2.0-mini ($0.0000035/token at 480p, $0.0000021 with video input — half of
+    // Seedance 2.5 Flash). The take records OpenRouter's usage.cost.
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-seedance-2.5-flash",
+        endpoints: {
+          text: "bytedance/seedance-2.0-mini",
+          start: "bytedance/seedance-2.0-mini",
+          refs: "bytedance/seedance-2.0-mini",
+          camera: "bytedance/seedance-2.0-mini",
+        },
+        price: { perSecond: 0.0361, camera: { perSecond: 0.0216 } },
+      },
+    ],
+  },
+  {
+    id: "gemini-omni-1.2-flash",
+    label: "Gemini Omni 1.2 Flash",
+    by: "Google",
+    note: "The newer Gemini Omni Flash: 3 to 15 seconds, wide or tall, roughs at 360p (2.3¢/s) and finals at 1080p (10.4¢/s), with native sound. Won't draw real people.",
+    ops: ["video"],
+    takes: { start: true, end: true },
+    lengths: Array.from({ length: 13 }, (_, i) => i + 3),
+    aspects: ["16:9", "9:16"],
+    sound: true,
+    refusesRealPeople: true,
+    wait: 120,
+    // OpenRouter: google/gemini-omni-1.2-flash ($0.023172/s at 360p, $0.104256/s at 1080p, sound included).
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-gemini-omni",
+        endpoints: { text: "google/gemini-omni-1.2-flash", start: "google/gemini-omni-1.2-flash" },
+        price: { perSecond: 0.0232, finalPerSecond: 0.1043 },
+      },
     ],
   },
   {
@@ -453,6 +709,58 @@ export const CATALOG: CatalogModel[] = [
         shape: "gemini_omni_flash_1.1",
         endpoints: { text: "gemini_omni_flash_1.1", start: "gemini_omni_flash_1.1" },
         price: { perSecond: 0.034, finalPerSecond: 0.15 },
+      },
+      // OpenRouter: google/gemini-omni-1.1-flash ($0.0337925/s at 360p, $0.15204/s at 1080p, sound included).
+      {
+        via: "openrouter",
+        shape: "openrouter-gemini-omni",
+        endpoints: { text: "google/gemini-omni-1.1-flash", start: "google/gemini-omni-1.1-flash" },
+        price: { perSecond: 0.0338, finalPerSecond: 0.152 },
+      },
+    ],
+  },
+  {
+    id: "grok-imagine-video-1.5-lite",
+    label: "Grok Imagine Video 1.5 Lite",
+    by: "xAI",
+    note: "Cheap roughs down to 1 second (1 to 15s, 2¢/s at 480p) with native sound and looser action/mature moderation; first frame only.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true },
+    lengths: Array.from({ length: 15 }, (_, i) => i + 1),
+    aspects: ["21:9", "16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
+    sound: true,
+    wait: 90,
+    // OpenRouter: x-ai/grok-imagine-video-1.5-lite ($0.02/s at 480p, $0.14/s at 1080p, plus $0.01 per input image).
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-grok-video",
+        endpoints: { text: "x-ai/grok-imagine-video-1.5-lite", start: "x-ai/grok-imagine-video-1.5-lite" },
+        price: { perSecond: 0.02, finalPerSecond: 0.14 },
+        note: "An input frame adds 1¢ here, which the estimate leaves out (the take records what OpenRouter charged).",
+      },
+    ],
+  },
+  {
+    id: "grok-imagine-video-1.5",
+    label: "Grok Imagine Video 1.5",
+    by: "xAI",
+    note: "Short or long clips down to 1 second (1 to 15s) with start/end frames, native sound, and looser moderation for action or horror shots.",
+    ops: ["video"],
+    takes: { start: true, end: true },
+    lengths: Array.from({ length: 15 }, (_, i) => i + 1),
+    aspects: ["21:9", "16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
+    sound: true,
+    wait: 150,
+    // OpenRouter: x-ai/grok-imagine-video-1.5 ($0.08/s at 480p, $0.25/s at 1080p, plus $0.01 per input image).
+    routes: [
+      {
+        via: "openrouter",
+        shape: "openrouter-grok-video",
+        endpoints: { text: "x-ai/grok-imagine-video-1.5", start: "x-ai/grok-imagine-video-1.5" },
+        price: { perSecond: 0.08, finalPerSecond: 0.25 },
+        note: "Each input frame adds 1¢ here, which the estimate leaves out (the take records what OpenRouter charged).",
       },
     ],
   },
@@ -629,6 +937,34 @@ export const CATALOG: CatalogModel[] = [
     // fal.ai/models/minimax/h3-max/lip-sync/image-to-video: $0.05 a second at 480p, $0.16 at 1080p, as long as what it
     // says; past 15 seconds it's 1.2 times that, which the estimate leaves out.
     routes: [{ via: "fal", shape: "h3-max-lipsync", endpoints: { talk: "minimax/h3-max/lip-sync/image-to-video" }, price: { perSecond: 0.05, finalPerSecond: 0.16 } }],
+  },
+  {
+    id: "heygen-avatar-6-turbo",
+    label: "HeyGen Avatar 6 Turbo",
+    by: "HeyGen",
+    note: "Makes a board talk with expressive head and face motion driven by the voice: faster 1080p tier at 5¢ a second, up to 5 minutes. Takes real people.",
+    ops: ["video"],
+    tier: "rough",
+    takes: { start: true, speech: true },
+    lengths: { min: 1, max: 300 },
+    aspects: ["any"],
+    wait: 120,
+    // OpenRouter: heygen/heygen-avatar-6-turbo ($0.05/s at 1080p, $0.0875/s at 2K; duration follows the supplied audio).
+    routes: [{ via: "openrouter", shape: "openrouter-heygen-avatar", endpoints: { talk: "heygen/heygen-avatar-6-turbo" }, price: { perSecond: 0.05 } }],
+  },
+  {
+    id: "heygen-avatar-6",
+    label: "HeyGen Avatar 6",
+    by: "HeyGen",
+    note: "HeyGen's flagship avatar model: turns a board and a voice into an expressive, lip-synced 1080p talking video at 10¢ a second, up to 5 minutes. Takes real people.",
+    ops: ["video"],
+    tier: "final",
+    takes: { start: true, speech: true },
+    lengths: { min: 1, max: 300 },
+    aspects: ["any"],
+    wait: 180,
+    // OpenRouter: heygen/heygen-avatar-6 ($0.10/s at 1080p, $0.145/s at 2K; duration follows the supplied audio).
+    routes: [{ via: "openrouter", shape: "openrouter-heygen-avatar", endpoints: { talk: "heygen/heygen-avatar-6" }, price: { perSecond: 0.1 } }],
   },
   {
     id: "sync-3",

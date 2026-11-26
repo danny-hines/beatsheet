@@ -841,7 +841,7 @@ server.registerTool(
         .array(z.string())
         .optional()
         .describe("Several model ids from list_models instead of model: the same request made with each, count takes apiece, to compare (a cast member's sheets from two or three still models) and keep the best"),
-      via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one ready place (e.g. "fal", "tein", "runway", "higgsfield", "openai", "chatgpt", "comfy"). Default: your own hardware when it can make it, else the person\'s preferred service if set, else the cheapest or free ready route'),
+      via: z.string().optional().describe('Where to make it, when list_models says a model runs in more than one ready place (e.g. "fal", "openrouter", "tein", "runway", "higgsfield", "openai", "chatgpt", "comfy"). Default: your own hardware when it can make it, else the person\'s preferred service if set, else the cheapest or free ready route'),
       anyway: z.boolean().optional().describe("Make a clip that was held because a character it's about isn't in its frames: you've looked and they are there (an edit that didn't name them), or they aren't meant to be seen"),
     },
   },

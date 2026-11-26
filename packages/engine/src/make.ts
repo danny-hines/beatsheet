@@ -97,6 +97,7 @@ import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubm
 import { teinCancel, teinInput, teinStatus, teinSubmit, teinUpload } from "./tein.ts";
 import { runwayCancel, runwayInput, runwayStatus, runwaySubmit, runwayUpload } from "./runway.ts";
 import { higgsfieldCancel, higgsfieldEstimate, higgsfieldInput, higgsfieldStatus, higgsfieldSubmit, higgsfieldUpload } from "./higgsfield.ts";
+import { openrouterDataUrl, openrouterImage, openrouterImageInput, openrouterStatus, openrouterSubmit, openrouterVideoInput } from "./openrouter.ts";
 import { addAsset } from "./ingest.ts";
 import { unletterbox } from "./letterbox.ts";
 import { assetPath, cachePaths, cleanPath, mediaPath, projectDir } from "./paths.ts";
@@ -906,6 +907,11 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     else if (fit.route === "fal") built = falInput(shape, stand);
     else if (fit.route === "runway") built = runwayInput(shape, fit.endpoint, { ...stand, refs: r.op === "video" && r.start ? undefined : stand.refs }).body;
     else if (fit.route === "higgsfield") built = higgsfieldInput(shape, fit.endpoint, { ...stand, refs: r.start ? undefined : stand.refs }).body;
+    else if (fit.route === "openrouter")
+      built =
+        r.op === "image"
+          ? openrouterImageInput(shape, fit.endpoint, stand)
+          : openrouterVideoInput(shape, fit.endpoint, { ...stand, refs: r.start ? undefined : stand.refs });
   } catch {
     // A shape built some other way: the request as asked for.
   }
@@ -1013,7 +1019,9 @@ export async function cancelJobs(projectId: string, ids: string[]): Promise<Make
   const out: MakeJob[] = [];
   for (const job of jobs) {
     const key = keys.get(job.route);
-    if (job.remote && key) await (job.route === "tein" ? teinCancel : job.route === "runway" ? runwayCancel : job.route === "higgsfield" ? higgsfieldCancel : falCancel)(key, job.remote);
+    // OpenRouter has no remote video cancel endpoint; stop tracking locally.
+    if (job.remote && key && job.route !== "openrouter")
+      await (job.route === "tein" ? teinCancel : job.route === "runway" ? runwayCancel : job.route === "higgsfield" ? higgsfieldCancel : falCancel)(key, job.remote);
     if (job.comfy) await comfyCancel(job.comfy.url, job.comfy.id);
     out.push(saveJob(projectId, { ...job, status: "canceled" }));
   }
@@ -1178,6 +1186,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
   if (job.route === "tein" && key) return stepTein(projectId, job, key);
   if (job.route === "runway" && key) return stepRunway(projectId, job, key);
   if (job.route === "higgsfield" && key) return stepHiggsfield(projectId, job, key);
+  if (job.route === "openrouter" && key) return stepOpenRouter(projectId, job, key);
   if (job.route !== "fal" || !key) throw new FalError(`beatsheet can't run ${job.route} jobs yet`, true);
   if (!job.remote) {
     const { project, dir } = loadProject(projectId, job.cut);
@@ -1366,6 +1375,95 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
   await finish(projectId, job, { url: s.url });
 }
 
+/**
+ * A job on OpenRouter (openrouter.ts): stills answer synchronously in one request (saved immediately like direct.ts),
+ * while video starts an async job followed until completion. Local inputs go inline as base64 data URLs, and
+ * OpenRouter's exact `usage.cost` replaces the catalog estimate.
+ */
+async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
+  if (job.op === "image") {
+    if (job.file) return finish(projectId, job, { file: job.file });
+    if (job.status === "running") {
+      updateJob(projectId, job, { charged: true });
+      throw new FalError("The engine stopped while this was being made, so the picture was lost (and may have been charged). Try again to make it again.", true);
+    }
+    const { project, dir } = loadProject(projectId, job.cut);
+    const r = job.request;
+    for (const id of r.refs ?? []) {
+      if (!project.assets.some((x) => x.id === id)) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+    }
+    const refs = r.refs && (await Promise.all(r.refs.map(async (id) => openrouterDataUrl(await refFile(project, dir, id, r.cast)))));
+    job = updateJob(projectId, job, { status: "running" });
+    const beat = setInterval(() => {
+      try {
+        utimesSync(lockFile(projectId, job.id), new Date(), new Date());
+      } catch {
+        // The lock is gone; the job's own save says what happened.
+      }
+    }, 10_000);
+    let out: { bytes: Buffer; contentType: string; usd?: number };
+    try {
+      out = await openrouterImage(job.shape, job.endpoint, key, { prompt: r.sent ?? r.prompt, aspect: r.aspect, seed: r.seed, refs });
+    } catch (err) {
+      const now = readJob(projectId, job.id) ?? job;
+      if (now.status === "running") saveJob(projectId, { ...now, status: "queued" });
+      throw err;
+    } finally {
+      clearInterval(beat);
+    }
+    const folder = join(projectDir(projectId), "made", "takes");
+    mkdirSync(folder, { recursive: true });
+    const file = join(folder, `${job.id}${EXT[out.contentType] ?? ".jpg"}`);
+    writeFileSync(file, out.bytes);
+    const now = readJob(projectId, job.id) ?? job;
+    job = saveJob(projectId, { ...now, file, charged: true, ...(out.usd !== undefined ? { usd: out.usd } : {}) });
+    if (now.status === "canceled") return;
+    await finish(projectId, job, { file });
+    return;
+  }
+  if (!job.remote) {
+    const { project, dir } = loadProject(projectId, job.cut);
+    const r = job.request;
+    const picture = (id: string) => {
+      const a = project.assets.find((x) => x.id === id);
+      if (!a) throw new FalError(`The picture "${id}" isn't in the project any more`, true);
+      return a;
+    };
+    const encode = (id: string) => openrouterDataUrl(assetPath(project, dir, picture(id)));
+    const encodeRef = async (id: string) => openrouterDataUrl(await refFile(project, dir, picture(id).id, r.cast));
+    // Give wide/tall-only models (Gemini Omni) the board's orientation even when aspect was left to the start frame.
+    const first = r.start ? picture(r.start) : undefined;
+    const format = project.formats[0]!;
+    const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
+    const body = openrouterVideoInput(job.shape, job.endpoint, {
+      prompt: r.sent ?? r.prompt,
+      quality: job.quality,
+      seconds: r.seconds,
+      aspect: r.aspect ?? boardAspect,
+      seed: r.seed,
+      start: r.start && encode(r.start),
+      end: r.end && encode(r.end),
+      // Standard video models drop references when a start frame is present (frame_images takes precedence on OpenRouter).
+      refs: r.start ? undefined : r.refs && (await Promise.all(r.refs.map(encodeRef))),
+      audio: r.speech && openrouterDataUrl(await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.mp3`))),
+      camera: r.camera && { url: openrouterDataUrl(await cameraClip(projectId, project, dir, job)), blockout: "cut" in r.camera },
+    });
+    const remote = await openrouterSubmit(key, body);
+    updateJob(projectId, job, { status: "running", remote });
+    return;
+  }
+  const s = await openrouterStatus(key, job.remote);
+  if (s.state !== "done") {
+    if (job.status !== "running" || job.position !== undefined) updateJob(projectId, job, { status: "running", position: undefined });
+    return;
+  }
+  if (s.usd !== undefined && (s.usd > 0 || !s.error) && (!job.charged || s.usd !== job.usd)) job = updateJob(projectId, job, { charged: true, usd: s.usd });
+  if (s.error) throw new FalError(s.error, true);
+  if (!s.url) throw new FalError("OpenRouter finished but didn't send a file", true);
+  if (!job.charged) job = updateJob(projectId, job, { charged: true });
+  await finish(projectId, job, { url: s.url, ...(s.auth ? { headers: { Authorization: `Bearer ${key}` } } : {}) });
+}
+
 const exec = promisify(execFile);
 
 /**
@@ -1378,6 +1476,8 @@ const CAMERA_BYTES: Record<string, { most: number; said: string }> = {
   runway: { most: 200 * 1024 * 1024, said: "Runway takes" },
   // Higgsfield's pages give no limit for a reference video; this is the most its other video inputs are said to take.
   higgsfield: { most: 200 * 1024 * 1024, said: "beatsheet sends Higgsfield" },
+  // OpenRouter takes inline base64 data URLs in JSON; keep clips compact to stay under its request size limit.
+  openrouter: { most: 5.5 * 1024 * 1024, said: "beatsheet sends OpenRouter" },
 };
 /** The fewest pixels Seedance takes in a reference video, and the frame rates it takes. */
 const CAMERA_PIXELS = 407_696;
@@ -1744,8 +1844,8 @@ function oneAtATime(projectId: string, fn: () => Promise<void>): Promise<void> {
 }
 
 /** Downloads a take from where the service has it into made/takes/. */
-async function download(projectId: string, job: MakeJob, out: { url: string; contentType?: string }): Promise<string> {
-  const res = await fetch(out.url, { signal: AbortSignal.timeout(10 * 60_000) }).catch((err: unknown) => {
+async function download(projectId: string, job: MakeJob, out: { url: string; contentType?: string; headers?: Record<string, string> }): Promise<string> {
+  const res = await fetch(out.url, { headers: out.headers, signal: AbortSignal.timeout(10 * 60_000) }).catch((err: unknown) => {
     throw new FalError(`Couldn't download the take (${err instanceof Error ? err.message : String(err)})`, false);
   });
   if (!res.ok) throw new FalError(`Couldn't download the take (${res.status})`, res.status === 404 || res.status === 410);
@@ -1760,7 +1860,7 @@ async function download(projectId: string, job: MakeJob, out: { url: string; con
 const EXT: Record<string, string> = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp", "video/mp4": ".mp4", "video/quicktime": ".mov" };
 
 /** A finished take: where the service has it, or the file it was already saved to. */
-type Taken = { url: string; contentType?: string; seed?: number } | { file: string; seed?: undefined };
+type Taken = { url: string; contentType?: string; headers?: Record<string, string>; seed?: number } | { file: string; seed?: undefined };
 
 /**
  * Downloads the take into made/takes/ (unless it's there already) and adds it as an asset, once: a job picked up again

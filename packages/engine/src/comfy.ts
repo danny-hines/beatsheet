@@ -875,7 +875,8 @@ export async function laySound(pieces: { file: string; from: number; at: number 
   );
   const mix = `[0:a]${pieces.map((_, i) => `[s${i}]`).join("")}amix=inputs=${pieces.length + 1}:duration=first:normalize=0[out]`;
   const inputs = pieces.flatMap((p) => ["-i", p.file]);
-  await exec("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-t", seconds.toFixed(3), "-i", "anullsrc=r=44100:cl=mono", ...inputs, "-filter_complex", [...chains, mix].join(";"), "-map", "[out]", "-c:a", "pcm_s16le", dest]);
+  const codec = dest.endsWith(".mp3") ? ["-c:a", "libmp3lame", "-b:a", "128k"] : ["-c:a", "pcm_s16le"];
+  await exec("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-t", seconds.toFixed(3), "-i", "anullsrc=r=44100:cl=mono", ...inputs, "-filter_complex", [...chains, mix].join(";"), "-map", "[out]", ...codec, dest]);
 }
 
 /** A take without its sound: one that lip-syncs comes back saying the line, which the cut's voice already plays. */

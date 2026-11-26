@@ -306,7 +306,28 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
 
 /** Whether a family of models takes a seed, so one can be chosen and recorded for each take. */
 export const takesSeed = (shape: string) =>
-  ["nano-banana", "wan", "wan-3", "scail-2", "minimax-h3", "minimax-h3-max", "minimax-h3-max-turbo", "flux3-klein", "infinitetalk", "infinitalk", "h3-max-lipsync", "latentsync", "longcat-avatar"].includes(shape);
+  [
+    "nano-banana",
+    "wan",
+    "wan-3",
+    "scail-2",
+    "minimax-h3",
+    "minimax-h3-max",
+    "minimax-h3-max-turbo",
+    "flux3-klein",
+    "infinitetalk",
+    "infinitalk",
+    "h3-max-lipsync",
+    "latentsync",
+    "longcat-avatar",
+    "openrouter-image-1k-jpeg",
+    "openrouter-wan-3",
+    "openrouter-seedance-2.5",
+    "openrouter-seedance-2.5-flash",
+    "openrouter-gemini-omni",
+    "openrouter-heygen-video",
+    "openrouter-happyhorse",
+  ].includes(shape);
 
 /** The file a finished request made: the first picture, or the video. */
 export function falOutput(result: Record<string, unknown>): { url: string; contentType?: string; seed?: number } | undefined {

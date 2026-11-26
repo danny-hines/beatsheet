@@ -529,7 +529,7 @@ describe("what each machine can run", () => {
     expect(reason(follow, "scail-2")).toEqual({ kind: "machine", service: "comfy", reason: "Needs an NVIDIA graphics card (its fp8 weights don't run on Apple's chips or a processor), and this computer has Apple M3 Pro" });
     const fromBoard = make.makeChoices(PROJECT, board).choices;
     expect(fromBoard.auto?.model).toBe("wan-2.2-5b");
-    expect(reason(make.makeChoices(PROJECT, { op: "image", prompt: "A stone hall" }).choices, "flux3-klein")).toMatchObject({ kind: "machine", reason: expect.stringContaining("its INT8 weights don't run on Apple's chips") });
+    expect(reason(make.makeChoices(PROJECT, { op: "image", prompt: "A stone hall", via: "comfy" }).choices, "flux3-klein")).toMatchObject({ kind: "machine", reason: expect.stringContaining("its INT8 weights don't run on Apple's chips") });
     // A Mac with too little memory for even that.
     settings.comfy.device = { type: "mps", name: "Apple M2", memoryGb: 16 };
     expect(reason(make.makeChoices(PROJECT, board).choices, "wan-2.2-5b")).toMatchObject({ kind: "machine", reason: "Needs about 32 GB of memory, and this computer's Apple M2 has 16 GB" });
