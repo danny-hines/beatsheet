@@ -1076,7 +1076,7 @@ function TrayTake({
   const video = a.kind === "video";
   return (
     <button
-      className={`tray-take ${looking ? "looking" : ""} ${showing ? "on" : ""}`}
+      className={`tray-take ${looking ? "viewing" : ""} ${showing ? "on" : ""}`}
       style={{ aspectRatio: a.width && a.height ? `${a.width} / ${a.height}` : "16 / 9" }}
       onClick={onLook}
       onDoubleClick={onUse}
