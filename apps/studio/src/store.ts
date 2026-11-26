@@ -184,33 +184,52 @@ export function useTimeline(): Timeline {
 
 // ---- Saving.
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let saveInFlight: Promise<void> | undefined;
 function scheduleSave() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveNow, 600);
+  saveTimer = setTimeout(() => void saveNow(), 600);
 }
 async function saveNow() {
+  if (saveInFlight) {
+    await saveInFlight;
+    if (state.save !== "dirty") return;
+  }
   const { doc, projectId } = state;
   if (!doc || !projectId) return;
   setState({ save: "saving" });
+  const run = (async () => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project: doc, version: state.version }),
+      });
+      if (res.status === 409) {
+        await actions.reload("This project changed on disk (probably a finished job or the agent), so your last edit wasn't saved. Reloaded the latest version.");
+        return;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const msg = body.issues?.map((i: { path: string; message: string }) => `${i.path}: ${i.message}`).join("\n");
+        throw new Error(msg || body.error || `save failed (${res.status})`);
+      }
+      const { version } = (await res.json()) as { version: string };
+      if (state.doc === doc) {
+        setState({ save: "saved", saveError: undefined, version });
+      } else {
+        setState({ save: "dirty", saveError: undefined, version });
+        scheduleSave();
+      }
+    } catch (err) {
+      const msg = String(err instanceof Error ? err.message : err);
+      setState({ save: "error", saveError: msg, notice: `Couldn't save: ${msg}` });
+    }
+  })();
+  saveInFlight = run;
   try {
-    const res = await fetch(`/api/projects/${projectId}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ project: doc, version: state.version }),
-    });
-    if (res.status === 409) {
-      await actions.reload("This project changed on disk (probably the agent), so your last edit wasn't saved. Reloaded the latest version.");
-      return;
-    }
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const msg = body.issues?.map((i: { path: string; message: string }) => `${i.path}: ${i.message}`).join("\n");
-      throw new Error(msg || body.error || `save failed (${res.status})`);
-    }
-    const { version } = (await res.json()) as { version: string };
-    setState(state.doc === doc ? { save: "saved", saveError: undefined, version } : { version });
-  } catch (err) {
-    setState({ save: "error", saveError: String(err instanceof Error ? err.message : err) });
+    await run;
+  } finally {
+    if (saveInFlight === run) saveInFlight = undefined;
   }
 }
 

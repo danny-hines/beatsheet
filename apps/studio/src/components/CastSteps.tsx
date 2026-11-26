@@ -655,7 +655,7 @@ export function CharacterSteps({
             </div>
             <div {...dropOn(OTHERS[kind])}>
               {others.map((a) => (
-                <Picture key={a} projectId={projectId} id={a} by={by(a)} dnd={dragFrom(OTHERS[kind], a)} onOpen={() => open(kind, all, a)} onRemove={() => takeOut(kind, a)} />
+                <Picture key={a} projectId={projectId} id={a} by={by(a)} dnd={dragFrom(OTHERS[kind], a)} onOpen={() => open(kind, all, a)} onChoose={() => choose(kind, a)} onRemove={() => takeOut(kind, a)} />
               ))}
               {pending(kind)}
               {!others.length && <span className="dim small cast-none">Drop one here to keep it to choose from later.</span>}
@@ -988,59 +988,86 @@ export function CharacterSteps({
         </details>
       )}
 
-      {viewing && (
-        <Viewer
-          projectId={projectId}
-          items={viewing.items.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : isOwnPhoto(asset(a)) ? "their own photo" : ""].filter(Boolean).join(" · ") }))}
-          at={viewing.at}
-          onClose={() => setViewing(undefined)}
-          actions={(item) => {
-            const a = item.id;
-            const row = viewing.row;
-            if (row === "faces")
+      {viewing && (() => {
+        const liveItems = (() => {
+          const row = viewing.row;
+          if (row === "faces") return faceChoices;
+          if (row === "wardrobe") return wardrobe.length ? wardrobe : inherited;
+          if (row === "before") return before;
+          if (row === "outfitSheet" && linkedWardrobe) return ing.outfitSheet ? [ing.outfitSheet] : [];
+          const c = look[row];
+          const rest = look[OTHERS[row]] ?? [];
+          if (!c && !rest.length) return viewing.items;
+          return [...(c ? [c] : []), ...rest];
+        })();
+        return (
+          <Viewer
+            projectId={projectId}
+            items={liveItems.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : isOwnPhoto(asset(a)) ? "their own photo" : ""].filter(Boolean).join(" · ") }))}
+            at={Math.min(viewing.at, Math.max(0, liveItems.length - 1))}
+            onClose={() => setViewing(undefined)}
+            actions={(item) => {
+              const a = item.id;
+              const row = viewing.row;
+              if (row === "faces")
+                return (
+                  <>
+                    <button onClick={() => toggleFace(a)}>{faces.includes(a) ? "Don't take the face from it" : "Take the face from it"}</button>
+                    {a !== settled && (
+                      <button className="danger" onClick={() => (removeFacePhoto(a), setViewing(undefined))}>
+                        Remove photo
+                      </button>
+                    )}
+                  </>
+                );
+              if (row === "wardrobe")
+                return wardrobe.includes(a) ? (
+                  <button className="danger" onClick={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}>
+                    Take out
+                  </button>
+                ) : null;
+              if (row === "outfitSheet" && linkedWardrobe)
+                return <span className="dim small">From shared @{linkedRef}</span>;
+              if (row === "portrait" || row === "faceSheet" || row === "outfitSheet" || row === "sheet")
+                return (
+                  <>
+                    {look[row] === a ? (
+                      <span className="dim small">Chosen {MADE_LABEL[row]}</span>
+                    ) : (
+                      <button
+                        className="primary"
+                        onClick={() => {
+                          choose(row, a);
+                          setViewing(undefined);
+                        }}
+                      >
+                        Use this one
+                      </button>
+                    )}
+                    {(look[row] === a || look[OTHERS[row]]?.includes(a)) && (
+                      <button className="danger" onClick={() => takeOut(row, a)}>
+                        Take out
+                      </button>
+                    )}
+                  </>
+                );
               return (
                 <>
-                  <button onClick={() => toggleFace(a)}>{faces.includes(a) ? "Don't take the face from it" : "Take the face from it"}</button>
-                  {a !== settled && (
-                    <button className="danger" onClick={() => (removeFacePhoto(a), setViewing(undefined))}>
-                      Remove photo
-                    </button>
-                  )}
+                  <button onClick={() => fromBefore(a, "portrait")}>It&apos;s the portrait</button>
+                  <button onClick={() => fromBefore(a, "faceSheet")}>It&apos;s the 360° face sheet</button>
+                  <button onClick={() => fromBefore(a, "outfitSheet")}>It&apos;s the outfit sheet</button>
+                  <button onClick={() => fromBefore(a, "sheet")}>It&apos;s the combined sheet</button>
+                  {isOwnPhoto(asset(a)) && <button onClick={() => fromBefore(a, "faces")}>A face photo</button>}
+                  <button onClick={() => fromBefore(a, "wardrobe")}>Wardrobe</button>
+                  <button className="danger" onClick={() => fromBefore(a, null)}>
+                    Take out
+                  </button>
                 </>
               );
-            if (row === "wardrobe")
-              return wardrobe.includes(a) ? (
-                <button className="danger" onClick={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}>
-                  Take out
-                </button>
-              ) : null;
-            if (row === "portrait" || row === "faceSheet" || row === "outfitSheet" || row === "sheet")
-              return (
-                <>
-                  {look[row] === a ? <span className="dim small">Chosen {MADE_LABEL[row]}</span> : <button onClick={() => choose(row, a)}>Use this one</button>}
-                  {(look[row] === a || look[OTHERS[row]]?.includes(a)) && (
-                    <button className="danger" onClick={() => takeOut(row, a)}>
-                      Take out
-                    </button>
-                  )}
-                </>
-              );
-            return (
-              <>
-                <button onClick={() => fromBefore(a, "portrait")}>It&apos;s the portrait</button>
-                <button onClick={() => fromBefore(a, "faceSheet")}>It&apos;s the 360° face sheet</button>
-                <button onClick={() => fromBefore(a, "outfitSheet")}>It&apos;s the outfit sheet</button>
-                <button onClick={() => fromBefore(a, "sheet")}>It&apos;s the combined sheet</button>
-                {isOwnPhoto(asset(a)) && <button onClick={() => fromBefore(a, "faces")}>A face photo</button>}
-                <button onClick={() => fromBefore(a, "wardrobe")}>Wardrobe</button>
-                <button className="danger" onClick={() => fromBefore(a, null)}>
-                  Take out
-                </button>
-              </>
-            );
-          }}
-        />
-      )}
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -1071,6 +1098,7 @@ export function WardrobeSteps({
 }) {
   const p = useProject();
   const [viewing, setViewing] = useState<{ row: "wardrobe" | "outfitSheet"; items: string[]; at: number }>();
+  const [dragging, setDragging] = useState(false);
   const [over, setOver] = useState<"wardrobe" | "outfitSheet" | "outfitSheets">();
   const look: CastLook = variant ?? m;
   const asset = (id?: string) => (id ? p.assets.find((a) => a.id === id) : undefined);
@@ -1107,11 +1135,40 @@ export function WardrobeSteps({
       tidy(l);
     });
 
+  const put = (a: string, from: Spot | undefined, to: "wardrobe" | "outfitSheet" | "outfitSheets") =>
+    editLook((l) => {
+      if (from === "wardrobe" && to !== "wardrobe") l.wardrobe = l.wardrobe?.filter((x) => x !== a);
+      if (from === "outfitSheet" || from === "outfitSheets") {
+        if (l.outfitSheet === a) delete l.outfitSheet;
+        l.outfitSheets = l.outfitSheets?.filter((x) => x !== a);
+      }
+      if (to === "wardrobe") l.wardrobe = [...(l.wardrobe ?? []).filter((x) => x !== a), a];
+      else if (to === "outfitSheet") {
+        const prev = l.outfitSheet;
+        l.outfitSheet = a;
+        l.outfitSheets = [...(prev && prev !== a ? [prev] : []), ...(l.outfitSheets ?? []).filter((x) => x !== a)];
+      } else l.outfitSheets = [...(l.outfitSheets ?? []).filter((x) => x !== a), a];
+      tidy(l);
+    });
+
+  const dragFrom = (from: "wardrobe" | "outfitSheet" | "outfitSheets", a: string): HTMLAttributes<HTMLSpanElement> => ({
+    draggable: true,
+    onDragStart: (e) => {
+      e.dataTransfer.setData(PICTURE_DRAG, JSON.stringify({ asset: a, from } satisfies Dragged));
+      e.dataTransfer.effectAllowed = "move";
+      setDragging(true);
+    },
+    onDragEnd: () => {
+      setDragging(false);
+      setOver(undefined);
+    },
+  });
+
   const dropOn = (to: "wardrobe" | "outfitSheet" | "outfitSheets"): HTMLAttributes<HTMLElement> => ({
     className: `take-strip ${over === to ? "drop-on" : ""}`,
     onDragOver: (e) => {
       const acceptFiles = to === "wardrobe" && hasFileDrop(e);
-      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !acceptFiles) return;
+      if (!e.dataTransfer.types.includes(ASSET_DRAG) && !e.dataTransfer.types.includes(PICTURE_DRAG) && !acceptFiles) return;
       e.preventDefault();
       e.stopPropagation();
       setOver(to);
@@ -1119,19 +1176,19 @@ export function WardrobeSteps({
     onDragLeave: (e) => !e.currentTarget.contains(e.relatedTarget as Node) && setOver(undefined),
     onDrop: (e) => {
       setOver(undefined);
+      setDragging(false);
       if (to === "wardrobe" && e.dataTransfer.files?.length) {
         e.preventDefault();
         e.stopPropagation();
         void uploadCastPhotos(projectId, m.id, { files: Array.from(e.dataTransfer.files), look: variant?.id, role: "wardrobe" });
         return;
       }
-      const a = e.dataTransfer.getData(ASSET_DRAG);
+      const d = JSON.parse(e.dataTransfer.getData(PICTURE_DRAG) || "{}") as Dragged;
+      const a = e.dataTransfer.getData(ASSET_DRAG) || d.asset;
       if (!a || !image(a)) return;
       e.preventDefault();
       e.stopPropagation();
-      if (to === "wardrobe") editLook((l) => void (l.wardrobe = [...(l.wardrobe ?? []).filter((x) => x !== a), a]));
-      else if (to === "outfitSheet") choose(a);
-      else editLook((l) => void (l.outfitSheets = [...(l.outfitSheets ?? []).filter((x) => x !== a), a]));
+      put(a, d.from, to);
     },
   });
 
@@ -1203,6 +1260,7 @@ export function WardrobeSteps({
               projectId={projectId}
               id={a}
               by={by(a)}
+              dnd={dragFrom("wardrobe", a)}
               onOpen={() => setViewing({ row: "wardrobe", items: wardrobe, at: wardrobe.indexOf(a) })}
               onRemove={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}
             />
@@ -1225,19 +1283,31 @@ export function WardrobeSteps({
       <Step n={2} done={!!chosen} title="Outfit sheet" note={headwear === "ghost" ? "· ghost-mannequin front & back" : "· headless front & back"}>
         <div {...dropOn("outfitSheet")}>
           {chosen ? (
-            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: all, at: 0 })} onRemove={() => takeOut(chosen)} />
+            <Picture projectId={projectId} id={chosen} main by={by(chosen)} className="chosen" dnd={dragFrom("outfitSheet", chosen)} onOpen={() => setViewing({ row: "outfitSheet", items: all, at: 0 })} onRemove={() => takeOut(chosen)} />
           ) : variant && m.outfitSheet ? (
             <Picture projectId={projectId} id={m.outfitSheet} borrowed by={`From ${plainLabel}`} className="chosen" onOpen={() => setViewing({ row: "outfitSheet", items: [m.outfitSheet!], at: 0 })} />
           ) : (
             <span className="dim small cast-none">No outfit sheet yet.</span>
           )}
         </div>
-        {(others.length > 0 || going.length > 0) && (
+        {(others.length > 0 || dragging || going.length > 0) && (
           <>
-            <div className="dim small">Other outfit sheets · {others.length}</div>
+            <div className="dim small">
+              Other outfit sheets · {others.length}
+              {others.length ? " · click one to see it large and choose it, or drag it onto the chosen one" : ""}
+            </div>
             <div {...dropOn("outfitSheets")}>
               {others.map((a) => (
-                <Picture key={a} projectId={projectId} id={a} by={by(a)} onOpen={() => setViewing({ row: "outfitSheet", items: all, at: all.indexOf(a) })} onRemove={() => takeOut(a)} />
+                <Picture
+                  key={a}
+                  projectId={projectId}
+                  id={a}
+                  by={by(a)}
+                  dnd={dragFrom("outfitSheets", a)}
+                  onOpen={() => setViewing({ row: "outfitSheet", items: all, at: all.indexOf(a) })}
+                  onChoose={() => choose(a)}
+                  onRemove={() => takeOut(a)}
+                />
               ))}
               {going.map((j) => (
                 <span key={j.id} className="cast-pic">
@@ -1248,6 +1318,7 @@ export function WardrobeSteps({
                   </div>
                 </span>
               ))}
+              {!others.length && <span className="dim small cast-none">Drop one here to keep it to choose from later.</span>}
             </div>
           </>
         )}
@@ -1260,33 +1331,48 @@ export function WardrobeSteps({
         </div>
       </Step>
 
-      {viewing && (
-        <Viewer
-          projectId={projectId}
-          items={viewing.items.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : ""].filter(Boolean).join(" · ") }))}
-          at={viewing.at}
-          onClose={() => setViewing(undefined)}
-          actions={(item) => {
-            const a = item.id;
-            if (viewing.row === "wardrobe")
-              return wardrobe.includes(a) ? (
-                <button className="danger" onClick={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}>
-                  Take out
-                </button>
-              ) : null;
-            return (
-              <>
-                {chosen === a ? <span className="dim small">Chosen outfit sheet</span> : <button onClick={() => choose(a)}>Use this one</button>}
-                {(chosen === a || others.includes(a)) && (
-                  <button className="danger" onClick={() => takeOut(a)}>
+      {viewing && (() => {
+        const liveItems = viewing.row === "wardrobe" ? (wardrobe.length ? wardrobe : inherited) : all.length ? all : viewing.items;
+        return (
+          <Viewer
+            projectId={projectId}
+            items={liveItems.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : ""].filter(Boolean).join(" · ") }))}
+            at={Math.min(viewing.at, Math.max(0, liveItems.length - 1))}
+            onClose={() => setViewing(undefined)}
+            actions={(item) => {
+              const a = item.id;
+              if (viewing.row === "wardrobe")
+                return wardrobe.includes(a) ? (
+                  <button className="danger" onClick={() => editLook((l) => void ((l.wardrobe = l.wardrobe!.filter((x) => x !== a)), tidy(l)))}>
                     Take out
                   </button>
-                )}
-              </>
-            );
-          }}
-        />
-      )}
+                ) : null;
+              return (
+                <>
+                  {chosen === a ? (
+                    <span className="dim small">Chosen outfit sheet</span>
+                  ) : (
+                    <button
+                      className="primary"
+                      onClick={() => {
+                        choose(a);
+                        setViewing(undefined);
+                      }}
+                    >
+                      Use this one
+                    </button>
+                  )}
+                  {(chosen === a || others.includes(a)) && (
+                    <button className="danger" onClick={() => takeOut(a)}>
+                      Take out
+                    </button>
+                  )}
+                </>
+              );
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -1489,7 +1575,7 @@ export function NonHumanSteps({
             </div>
             <div {...dropOn(otherKey)}>
               {others.map((a) => (
-                <Picture key={a} projectId={projectId} id={a} by={by(a)} dnd={dragFrom(otherKey, a)} onOpen={() => open(kind, all, a)} onRemove={() => takeOut(kind, a)} />
+                <Picture key={a} projectId={projectId} id={a} by={by(a)} dnd={dragFrom(otherKey, a)} onOpen={() => open(kind, all, a)} onChoose={() => choose(kind, a)} onRemove={() => takeOut(kind, a)} />
               ))}
               {pendingJobs.map((j) => (
                 <span key={j.id} className="cast-pic">
@@ -1609,50 +1695,73 @@ export function NonHumanSteps({
         </details>
       )}
 
-      {viewing && (
-        <Viewer
-          projectId={projectId}
-          items={viewing.items.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : isOwnPhoto(asset(a)) ? "reference photo" : ""].filter(Boolean).join(" · ") }))}
-          at={viewing.at}
-          onClose={() => setViewing(undefined)}
-          actions={(item) => {
-            const a = item.id;
-            const row = viewing.row;
-            if (row === "faces")
+      {viewing && (() => {
+        const liveItems = (() => {
+          const row = viewing.row;
+          if (row === "faces") return refChoices;
+          if (row === "before") return before;
+          const c = look[row];
+          const rest = look[OTHERS[row]] ?? [];
+          if (!c && !rest.length) return viewing.items;
+          return [...(c ? [c] : []), ...rest];
+        })();
+        return (
+          <Viewer
+            projectId={projectId}
+            items={liveItems.map((a) => ({ id: a, caption: [a, madeWith(asset(a)) ? `made with ${madeWith(asset(a))}` : isOwnPhoto(asset(a)) ? "reference photo" : ""].filter(Boolean).join(" · ") }))}
+            at={Math.min(viewing.at, Math.max(0, liveItems.length - 1))}
+            onClose={() => setViewing(undefined)}
+            actions={(item) => {
+              const a = item.id;
+              const row = viewing.row;
+              if (row === "faces")
+                return (
+                  <>
+                    <button onClick={() => toggleRef(a)}>{refs.includes(a) ? "Don't use as reference" : "Use as reference"}</button>
+                    {a !== settled && (
+                      <button className="danger" onClick={() => (removeRefPhoto(a), setViewing(undefined))}>
+                        Remove photo
+                      </button>
+                    )}
+                  </>
+                );
+              if (row === "portrait" || row === "sheet")
+                return (
+                  <>
+                    {look[row] === a ? (
+                      <span className="dim small">Chosen {row === "portrait" ? "hero still" : "turnaround sheet"}</span>
+                    ) : (
+                      <button
+                        className="primary"
+                        onClick={() => {
+                          choose(row, a);
+                          setViewing(undefined);
+                        }}
+                      >
+                        Use this one
+                      </button>
+                    )}
+                    {(look[row] === a || look[OTHERS[row]]?.includes(a)) && (
+                      <button className="danger" onClick={() => takeOut(row, a)}>
+                        Take out
+                      </button>
+                    )}
+                  </>
+                );
               return (
                 <>
-                  <button onClick={() => toggleRef(a)}>{refs.includes(a) ? "Don't use as reference" : "Use as reference"}</button>
-                  {a !== settled && (
-                    <button className="danger" onClick={() => (removeRefPhoto(a), setViewing(undefined))}>
-                      Remove photo
-                    </button>
-                  )}
+                  <button onClick={() => fromBefore(a, "portrait")}>It&apos;s the hero still</button>
+                  <button onClick={() => fromBefore(a, "sheet")}>It&apos;s the turnaround sheet</button>
+                  <button onClick={() => fromBefore(a, "faces")}>Reference photo</button>
+                  <button className="danger" onClick={() => fromBefore(a, null)}>
+                    Take out
+                  </button>
                 </>
               );
-            if (row === "portrait" || row === "sheet")
-              return (
-                <>
-                  {look[row] === a ? <span className="dim small">Chosen {row === "portrait" ? "hero still" : "turnaround sheet"}</span> : <button onClick={() => choose(row, a)}>Use this one</button>}
-                  {(look[row] === a || look[OTHERS[row]]?.includes(a)) && (
-                    <button className="danger" onClick={() => takeOut(row, a)}>
-                      Take out
-                    </button>
-                  )}
-                </>
-              );
-            return (
-              <>
-                <button onClick={() => fromBefore(a, "portrait")}>It&apos;s the hero still</button>
-                <button onClick={() => fromBefore(a, "sheet")}>It&apos;s the turnaround sheet</button>
-                <button onClick={() => fromBefore(a, "faces")}>Reference photo</button>
-                <button className="danger" onClick={() => fromBefore(a, null)}>
-                  Take out
-                </button>
-              </>
-            );
-          }}
-        />
-      )}
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -1686,6 +1795,7 @@ export function Picture({
   dnd,
   tick,
   onOpen,
+  onChoose,
   onRemove,
 }: {
   projectId: string;
@@ -1698,6 +1808,7 @@ export function Picture({
   dnd?: HTMLAttributes<HTMLSpanElement>;
   tick?: { on: boolean; toggle: () => void };
   onOpen: () => void;
+  onChoose?: () => void;
   onRemove?: () => void;
 }) {
   const what = by === "Photo" ? "their own photo" : by === "Clip" ? "a clip" : by ? `made with ${by}` : "";
@@ -1711,6 +1822,19 @@ export function Picture({
       {tick && (
         <button className={`cast-pic-tick ${tick.on ? "on" : ""}`} onClick={tick.toggle} title={tick.on ? "Used: click to leave it out" : "Not used: click to use it"} aria-label={tick.on ? "Leave it out" : "Use it"} aria-pressed={tick.on}>
           {tick.on && <Icon name="check" size={12} />}
+        </button>
+      )}
+      {onChoose && (
+        <button
+          type="button"
+          className="cast-pic-use"
+          onClick={(e) => {
+            e.stopPropagation();
+            onChoose();
+          }}
+          title="Use this as the chosen picture"
+        >
+          Use
         </button>
       )}
       {onRemove && (

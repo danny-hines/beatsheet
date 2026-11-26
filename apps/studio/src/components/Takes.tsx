@@ -86,6 +86,7 @@ export function useMake(match: (j: MakeJob) => boolean, key: string) {
     setError("");
     setSending(true);
     try {
+      await actions.flushSave();
       const body = Array.isArray(ask) ? { asks: ask } : ask;
       const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const j = (await res.json()) as { jobs?: MakeJob[]; error?: string };

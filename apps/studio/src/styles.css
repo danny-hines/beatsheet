@@ -1291,7 +1291,9 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .cast-pic .take { height: 72px; aspect-ratio: 16 / 9; }
 .cast-pic .take:disabled { opacity: 1; }
 .cast-pic-remove { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: none; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); opacity: 0; }
-.cast-pic:hover .cast-pic-remove, .cast-pic-remove:focus-visible { opacity: 1; }
+.cast-pic-use { position: absolute; right: 3px; bottom: 3px; padding: 1px 6px; font-size: var(--t-2); line-height: 1.4; border: 1px solid var(--accent); border-radius: var(--r-1); background: color-mix(in srgb, var(--well) 90%, transparent); color: var(--accent); opacity: 0; cursor: pointer; }
+.cast-pic-use:hover { background: var(--accent); color: var(--bg); }
+.cast-pic:hover .cast-pic-remove, .cast-pic-remove:focus-visible, .cast-pic:hover .cast-pic-use, .cast-pic-use:focus-visible { opacity: 1; }
 .cast-pic .take { cursor: zoom-in; }
 .cast-pic .take img { object-fit: contain; }
 .cast-pic.borrowed { opacity: 0.5; }

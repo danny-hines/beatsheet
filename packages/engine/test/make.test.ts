@@ -2290,12 +2290,14 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
     expect(will.faceSheet).toBe("will-face-sheet");
     expect(store.loadProject(PROJECT).project.assets.find((a) => a.id === "will-face-sheet")?.tags).toContain("face-sheet");
 
-    // 3. Headless Outfit Sheet (1:1): sends ZERO face photos and clears realPeople so real-person filters don't block costumes!
+    // 3. Headless Outfit Sheet (1:1): sends ZERO face photos, clears realPeople, and forbids visible mannequin hands/limbs!
     const outfitReq = make.requestFor(PROJECT, { op: "image", sheet: "will", sheetKind: "outfit-sheet" });
     expect(outfitReq.aspect).toBe("1:1");
     expect(outfitReq.refs).toBeUndefined();
     expect(outfitReq.realPeople).toBeUndefined();
     expect(outfitReq.sent).toContain("headless");
+    expect(outfitReq.sent).toContain("NO hands, NO wrists, NO fingers");
+    expect(outfitReq.sent).not.toContain("invisible ghost mannequin");
     expect(outfitReq.sent).toContain("dark wool doublet");
     make.startMake(PROJECT, { op: "image", sheet: "will", sheetKind: "outfit-sheet", count: 1 });
     await make.driveJobs(PROJECT);

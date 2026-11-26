@@ -60,6 +60,7 @@ export function MakeView() {
   const cutId = useStore((s) => s.cutId);
   const page = useStore((s) => s.makePage);
   const sel = useStore((s) => s.selection);
+  const notice = useStore((s) => s.notice);
   const { jobs, setJobs, cancel, retry } = useJobs();
   const [creating, setCreating] = useState<CreateLaunch>();
 
@@ -104,6 +105,14 @@ export function MakeView() {
         onTab={() => setCreating(undefined)}
         onCreate={() => openCreate({ draft: shot ? { shot: shot.id } : undefined })}
       />
+      {notice && (
+        <div className="notice">
+          {notice}
+          <button className="link" onClick={actions.dismissNotice}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="make-scroll" ref={scroller} onScroll={(e) => void (places.current[where] = e.currentTarget.scrollTop)}>
         {creating ? (
           <CreatePage

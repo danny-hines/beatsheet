@@ -503,11 +503,13 @@ function sheetPrompt(
     const subject = outfitDesc ? `the outfit (${outfitDesc})` : `the outfit for ${member.name || member.id}`;
     const headClause =
       headwear === "ghost"
-        ? "The costume includes its headwear (hat, hood, veil, helmet or mask) holding its natural 3D shape in position above the collar over an empty neutral-gray void — completely faceless with no head, no mannequin and no skin inside."
-        : "Displayed as a standalone costume on an invisible ghost mannequin: completely headless, the collar ends cleanly at the neck with empty neutral-gray background above it, no head, no face and no skin.";
-    const layout = `a two-panel turnaround sheet arranged side by side against a seamless neutral mid-gray studio background: left panel shows a full-body frontal view in a neutral standing pose; right panel shows a full-body rear view (back profile) in the identical neutral standing pose. ${headClause}`;
+        ? "The costume includes its headwear (hat, hood, veil, helmet or mask) floating in position above the collar over an empty neutral-gray void — completely faceless with no head, no neck, no mannequin and no skin inside."
+        : "Completely headless: the collar ends cleanly at an empty hollow neckline with only seamless neutral mid-gray background above it — no head, no neck, no face, no mannequin head stub and no skin.";
+    const noBodyParts =
+      "Hollow garments holding their natural 3D volume with empty air inside — NO visible mannequin, NO dummy, NO gray plastic or clay body form, NO hands, NO wrists, NO fingers, NO skin, and NO body parts of any kind (the sleeves end cleanly at empty hollow open cuffs against the neutral mid-gray background, with no hands or gloves unless gloves are explicitly described).";
+    const layout = `a two-panel turnaround sheet arranged side by side against a seamless neutral mid-gray studio background: left panel shows a full-body frontal view in a neutral standing pose; right panel shows a full-body rear view (back profile) in the identical neutral standing pose. ${headClause} ${noBodyParts}`;
     return style
-      ? `An outfit turnaround sheet of ${subject}: ${layout} Nothing else in the picture and no text or labels, in the style of @${style}.`
+      ? `An outfit turnaround sheet of ${subject}: ${layout} Nothing else in the picture and no text or labels, in the style of @${style} (keep the seamless neutral mid-gray studio background — apply only the rendering medium and camera/color feel of @${style}, never scenery or a person from it).`
       : `A photographic outfit turnaround sheet of ${subject}: ${layout} Soft even studio light, realistic fabric and textures, photographed rather than drawn, nothing else in the picture and no text or labels.`;
   }
 
