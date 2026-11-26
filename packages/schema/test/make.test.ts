@@ -15,6 +15,7 @@ import {
   driveWindow,
   fitModel,
   followTakes,
+  hasTimelineAudioRef,
   preferredOf,
   providersOf,
   HANDLE,
@@ -1141,6 +1142,41 @@ describe("keeping a clip's camera", () => {
     expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, higgsfield)).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
   });
 
+  it("supports MAGI-2 on Higgsfield at a flat 8¢/s for boards, refs, long takes and blockouts", () => {
+    const magi = CATALOG.find((m) => m.id === "magi-2")!;
+    const higgsfield = { higgsfield: { label: "Higgsfield", state: "ready" } } satisfies Record<string, ServiceState>;
+    // Blockout camera take: flat $0.08/s on output seconds only for both rough and final.
+    const camRough = fitModel(magi, { ...ask, refs: ["board"] }, higgsfield);
+    expect(camRough).toMatchObject({ ok: true, route: "higgsfield", endpoint: "sand/magi-2/reference-to-video", seconds: 7, aspect: "9:16", usd: 0.56 });
+    expect(fitModel(magi, { ...ask, quality: "final" }, higgsfield)).toMatchObject({ ok: true, route: "higgsfield", seconds: 7, usd: 0.56 });
+    // Board with end frame, text-to-video, and 10-ref cap.
+    expect(fitModel(magi, { op: "video", prompt: "x", start: "a", end: "b", seconds: 5, quality: "final" }, higgsfield)).toMatchObject({
+      ok: true,
+      route: "higgsfield",
+      endpoint: "sand/magi-2/image-to-video",
+      seconds: 5,
+      usd: 0.4,
+    });
+    expect(fitModel(magi, { op: "video", prompt: "x", seconds: 30, aspect: "21:9" }, higgsfield)).toMatchObject({
+      ok: true,
+      route: "higgsfield",
+      endpoint: "sand/magi-2/text-to-video",
+      seconds: 30,
+      aspect: "21:9",
+      usd: 2.4,
+    });
+    expect(fitModel(magi, { op: "video", prompt: "x", refs: Array.from({ length: 10 }, (_, i) => `r${i}`), seconds: 4 }, higgsfield)).toMatchObject({ ok: true, seconds: 5, usd: 0.4 });
+    expect(fitModel(magi, { op: "video", prompt: "x", refs: Array.from({ length: 11 }, (_, i) => `r${i}`), seconds: 4 }, higgsfield)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", fix: "drop-refs" },
+    });
+    // Follows 2–30s clips and is chosen ahead of Seedance 2.5 when Higgsfield is ready.
+    expect(fitModel(magi, { ...ask, camera: { ...camera, to: 1.5 }, seconds: 1.5 }, higgsfield)).toMatchObject({ ok: false, why: { reason: "Follows 2s of clip at least; this is 1.5s" } });
+    expect(chooseModels(CATALOG, ask, higgsfield).auto).toMatchObject({ model: "magi-2", route: "higgsfield", usd: 0.56 });
+    // Not marked refusesRealPeople, so it remains available for real people on Higgsfield.
+    expect(fitModel(magi, { op: "video", prompt: "x", start: "board", seconds: 5, realPeople: ["Mara"] }, higgsfield)).toMatchObject({ ok: true, route: "higgsfield" });
+  });
+
   it("runs through fal too, which bills the clip's seconds as well at its own lower rate, and draws no real people", () => {
     const rough = fitModel(seedance, { ...ask, refs: ["board"] }, { fal });
     expect(rough).toMatchObject({ ok: true, route: "fal", endpoint: "bytedance/seedance-2.5/us/reference-to-video", seconds: 7, aspect: "9:16" });
@@ -1309,5 +1345,129 @@ describe("OpenRouter catalog routes and curated models", () => {
 
     const flux3 = CATALOG.find((m) => m.id === "flux-3-image")!;
     expect(fitModel(flux3, { op: "image", prompt: "x", aspect: "16:9" }, openrouter)).toMatchObject({ ok: true, endpoint: "black-forest-labs/flux-3-image", usd: 0.048 });
+  });
+});
+
+describe("multimodal reference audio (audioRefs)", () => {
+  const services: Record<string, ServiceState> = {
+    fal: { label: "fal", state: "ready" },
+    higgsfield: { label: "Higgsfield", state: "ready" },
+    runway: { label: "Runway", state: "ready" },
+    openrouter: { label: "OpenRouter", state: "ready" },
+    tein: { label: "Tein", state: "ready" },
+  };
+  const magi2 = CATALOG.find((m) => m.id === "magi-2")!;
+  const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
+  const wan3 = CATALOG.find((m) => m.id === "wan-3")!;
+  const h3 = CATALOG.find((m) => m.id === "minimax-h3")!;
+  const kling4 = CATALOG.find((m) => m.id === "kling-4")!;
+  const music5 = { kind: "music" as const, from: 0, to: 5 };
+  const voiceShort = { kind: "voice" as const, cast: "cat", asset: "cat-vo", from: 0, to: 1 };
+
+  it("validates model and route audio limits, rejecting start frames, unsupported models, and over-long routes", () => {
+    // MAGI-2 accepts audioRefs with refs and blockout camera, no lead handle on timeline-synced refs.
+    expect(fitModel(magi2, { op: "video", prompt: "x", refs: ["board"], audioRefs: [music5], seconds: 5, aspect: "9:16" }, services)).toMatchObject({
+      ok: true,
+      route: "higgsfield",
+      endpoint: "sand/magi-2/reference-to-video",
+      seconds: 5,
+      usd: 0.4,
+    });
+    expect(fitModel(magi2, { op: "video", prompt: "x", start: "board", audioRefs: [music5], seconds: 5 }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: expect.stringContaining("not a start frame") },
+    });
+    expect(fitModel(kling4, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5 }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: "Doesn't take reference audio" },
+    });
+
+    // Short clips (< minSeconds=2) count as 2s against combined total.
+    expect(fitModel(magi2, { op: "video", prompt: "x", audioRefs: Array.from({ length: 6 }, () => voiceShort), seconds: 5 }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: "Takes up to 5 audio references; this has 6" },
+    });
+
+    // Wan 3.0: Higgsfield takes up to 30s, fal and Runway cap at 15s, OpenRouter doesn't take audioRefs.
+    const long20 = { kind: "music" as const, from: 0, to: 20 };
+    expect(fitModel(wan3, { op: "video", prompt: "x", audioRefs: [long20], seconds: 20 }, services)).toMatchObject({ ok: true, route: "higgsfield" });
+    expect(fitModel(wan3, { op: "video", prompt: "x", audioRefs: [long20], seconds: 20, via: "fal" }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", fix: "split", reason: expect.stringContaining("Higgsfield") },
+    });
+    expect(fitModel(wan3, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5, via: "openrouter" }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: expect.stringContaining("Doesn't take reference audio on OpenRouter") },
+    });
+
+    // Seedance 2.5: Tein doesn't take audioRefs, OpenRouter/Runway cap at 3 clips / 15s, fal/Higgsfield take up to 10 / 30s.
+    expect(fitModel(seedance, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5, via: "tein" }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: expect.stringContaining("Doesn't take reference audio on Tein") },
+    });
+    expect(fitModel(seedance, { op: "video", prompt: "x", audioRefs: [long20], seconds: 20, via: "openrouter" }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", fix: "split", reason: expect.stringContaining("OpenRouter") },
+    });
+    // Real person + audioRefs on Seedance: Tein doesn't support audioRefs, and other routes refuse real people.
+    expect(fitModel(seedance, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5, realPeople: ["Mara"] }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: "Doesn't take reference audio on Tein" },
+    });
+
+    // MiniMax H3: only Runway takes referenceAudio; fal/OpenRouter/ComfyUI don't.
+    expect(fitModel(h3, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5 }, services)).toMatchObject({ ok: true, route: "runway", endpoint: "hailuo3" });
+    expect(fitModel(h3, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5, via: "fal" }, services)).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: expect.stringContaining("it does on Runway") },
+    });
+  });
+
+  it("disables lead handles on timeline-synced audioRefs and preserves audioRefs across showTake, renameCast and checkCut", () => {
+    expect(hasTimelineAudioRef([music5])).toBe(true);
+    expect(hasTimelineAudioRef([voiceShort])).toBe(false);
+    expect(takeLead({ audioRefs: [music5], seconds: 5, shotSeconds: 3 }, 5, () => undefined)).toBe(0);
+    expect(takeLead({ audioRefs: [voiceShort], seconds: 5, shotSeconds: 3 }, 5, () => undefined)).toBe(0.5);
+
+    const take: Asset = {
+      id: "aud-take",
+      kind: "video",
+      path: "aud-take.mp4",
+      duration: 5,
+      provenance: { source: "generated", provider: "higgsfield", params: { model: "magi-2", prompt: "dances on the beat", audioRefs: [music5, voiceShort], seconds: 5 } },
+    };
+    const shown = showTake({ kind: "generated", prompt: "cat", takes: ["aud-take"] }, take, [take], 5);
+    expect(shown.audioRefs).toEqual([music5, voiceShort]);
+
+    // checkCut validates voiceSample and audioRefs references; renameCast updates voice audioRefs on shots and provenance.
+    const proj = Project.parse({
+      id: "p",
+      title: "t",
+      recipe: "film",
+      brief: { goal: "g" },
+      formats: [{ id: "f", label: "9:16", width: 1080, height: 1920, fps: 30 }],
+      stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])),
+      spine: "shots",
+      assets: [take, { id: "cat-vo", kind: "voice", path: "vo.wav", duration: 3 }],
+      cast: [{ id: "cat", name: "Cat", kind: "character", voiceSample: "cat-vo" }],
+      voice: { lines: [{ id: "l1", text: "Hi", duration: 2, words: [] }] },
+      tracks: [{ id: "pic", kind: "picture", label: "Pic" }],
+      shots: [{ id: "s1", track: "pic", duration: 5, fidelity: "rough", content: { kind: "generated", prompt: "x", take: "aud-take", takes: ["aud-take"], audioRefs: [voiceShort, { kind: "speech", lines: ["l1"], from: 0, to: 2 }] } }],
+      notes: [],
+    });
+    expect(checkCut(proj)).toEqual([]);
+
+    const bad = Project.parse({
+      ...proj,
+      cast: [{ id: "cat", name: "Cat", kind: "character", voiceSample: "missing-vo" }],
+      shots: [{ id: "s1", track: "pic", duration: 5, fidelity: "rough", content: { kind: "generated", prompt: "x", audioRefs: [{ kind: "voice", cast: "ghost", asset: "missing-a", from: 0, to: 2 }, { kind: "speech", lines: ["nope"], from: 0, to: 2 }] } }],
+    });
+    expect(checkCut(bad).map((i) => i.message)).toEqual(['unknown asset "missing-vo"', 'no cast member "ghost"', 'unknown asset "missing-a"', 'unknown line "nope"']);
+
+    const file: ProjectFile = withCut({ schema: SCHEMA_VERSION, cuts: [], ...proj } as never, proj);
+    expect(renameCast(file, "cat", "marmalade")).toBe(true);
+    const s1 = file.cuts[0]!.shots[0]!.content;
+    expect(s1.kind === "generated" && s1.audioRefs?.[0]).toMatchObject({ kind: "voice", cast: "marmalade" });
+    expect((file.assets[0]!.provenance!.params!.audioRefs as { cast?: string }[])[1]?.cast).toBe("marmalade");
   });
 });

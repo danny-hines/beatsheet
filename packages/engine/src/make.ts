@@ -29,6 +29,7 @@ import {
   driveWindow,
   FIDELITY,
   fitModel,
+  hasTimelineAudioRef,
   isCameraBlockout,
   isCameraSheet,
   missingFromFrames,
@@ -43,6 +44,8 @@ import {
   speechWindow,
   takeLead,
   type Asset,
+  type AudioRef,
+  type AudioRefRole,
   type Camera,
   type CastMember,
   type Choices,
@@ -59,6 +62,7 @@ import {
   type ShotContent,
   type Speech,
   type Stretch,
+  type Transcript,
 } from "@beatsheet/schema";
 import {
   chunksFor,
@@ -97,7 +101,7 @@ import {
 } from "./comfy.ts";
 import { DIRECT, directImage } from "./direct.ts";
 import { PLAN_ROUTES, planImage, planStates } from "./plans.ts";
-import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, SHEET_LINE, takesSeed, type CameraKind, type FalRequest } from "./fal.ts";
+import { falCancel, FalError, falInput, falOutput, falResult, falStatus, falSubmit, falUpload, SHEET_LINE, takesSeed, type CameraKind, type FalAudioRef, type FalRequest } from "./fal.ts";
 import { teinCancel, teinInput, teinStatus, teinSubmit, teinUpload } from "./tein.ts";
 import { runwayCancel, runwayInput, runwayStatus, runwaySubmit, runwayUpload } from "./runway.ts";
 import { higgsfieldCancel, higgsfieldEstimate, higgsfieldInput, higgsfieldStatus, higgsfieldSubmit, higgsfieldUpload } from "./higgsfield.ts";
@@ -152,6 +156,8 @@ export type MakeJob = {
     cameraKind?: CameraKind;
     /** Local pre-processed conditioning video file (e.g. swap mesh/depth composite or clay face mask) sent in place of the raw clip. */
     cameraFile?: string;
+    /** Multimodal reference audio clips sent on reference-to-video (music beat, voiced lines, character voice timbre, or an audio clip). */
+    audioRefs?: AudioRef[];
     seconds?: number;
     aspect?: string;
     seed?: number;
@@ -332,8 +338,18 @@ export function chooseProvider(op: MakeOp, id: string | null) {
 /** Routes that run on the person's own machines rather than a service with a key. */
 const LOCAL_ROUTES = OWN_HARDWARE;
 
+/** Multimodal reference audio as the tools and studio ask for it (shorthands or explicit stretches). */
+export type AudioRefAsk =
+  | AudioRef
+  | "music"
+  | "speech"
+  | { kind: "music"; from?: number; to?: number; label?: string }
+  | { kind: "speech"; lines?: string[]; from?: number; to?: number; label?: string }
+  | { kind: "voice"; cast: string; asset?: string; from?: number; to?: number; label?: string }
+  | { kind: "asset"; asset: string; from?: number; to?: number; role?: AudioRefRole; label?: string };
+
 /** Something to make, as the agent's tools and the studio ask for it. */
-export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive" | "speech" | "clip" | "camera">> & {
+export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive" | "speech" | "clip" | "camera" | "audioRefs">> & {
   op: MakeOp;
   cut?: string;
   /** A placeholder or generated shot it's for: its length, the cut's shape and its description fill in what's missing, and the takes land on it. */
@@ -380,6 +396,12 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
   cameraKind?: CameraKind;
   /** Local pre-processed conditioning video file sent in place of the raw asset stretch. */
   cameraFile?: string;
+  /**
+   * Multimodal reference audio clips sent on reference-to-video (MAGI-2, Seedance 2.5, Wan 3.0, MiniMax H3 on Runway).
+   * Combines with reference pictures and 3D camera blockouts; any start frame is promoted to a reference picture.
+   * Without it, a generated shot whose takes used audioRefs keeps them unless this take copies movement or lip-syncs; null for none.
+   */
+  audioRefs?: AudioRefAsk[] | null;
   /** Save the finished clip as a version of an existing clip stretch (relight, swap, etc.). */
   versionOf?: MakeJob["versionOf"];
   model?: string;
@@ -518,10 +540,15 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     ask.op === "video" && said
       ? speechFor(project, shot, said, clip ? clip.to - clip.from : needs?.seconds, uses.filter((u) => u.member.kind === "character").map((u) => u.member.id))
       : undefined;
+  const keptAudio = ask.audioRefs === undefined ? (shown && !ask.drive && !ask.speech && !ask.clip ? shown.audioRefs : undefined) : ask.audioRefs ?? undefined;
+  const audioRefs =
+    ask.op === "video" && keptAudio?.length
+      ? audioRefsFor(projectId, project, shot, keptAudio, needs?.seconds, uses.filter((u) => u.member.kind === "character").map((u) => u.member.id))
+      : undefined;
 
   let refs = ask.refs?.length ? ask.refs : undefined;
-  // One that keeps a clip's camera is made from references, so the picture it would start from goes first among them.
-  if (camera && start) refs = [...new Set([start, ...(refs ?? [])])];
+  // One that keeps a clip's camera or uses reference audio runs on reference-to-video, so a start frame goes first among its refs.
+  if ((camera || audioRefs?.length) && start) refs = [...new Set([start, ...(refs ?? [])])];
   let sent = castPrompt(prompt, uses);
   if (!refs && ask.op === "image" && member?.kind === "character") {
     // A character's portrait and sheet come from its look's steps: the face, then the wardrobe.
@@ -564,12 +591,15 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
   if (variant && !ask.prompt) sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${portrait ? "In this portrait" : "In every view"}: ${variant.about}.`;
   const sheetAspect = portrait ? "4:5" : member && (member.kind === "character" || member.kind === "prop") ? "16:9" : undefined;
   const people = realPeople(uses, project.assets);
-  const along = clip ?? drive ?? speech ?? camera;
-  // A clip that ended on a frame ends on it again; one that copies movement, says a line or keeps a clip's camera doesn't take one.
-  const lastEnd = ask.op === "video" && start && !along && shot?.content.kind === "generated" ? shot.content.end : undefined;
-  const end = camera ? undefined : ask.end === undefined ? lastEnd : (ask.end ?? undefined);
+  const timelineAudio = audioRefs?.find((a) => a.kind === "music" || a.kind === "speech");
+  const along = clip ?? drive ?? speech ?? camera ?? timelineAudio;
+  // A clip that ended on a frame ends on it again; one that copies movement, says a line, keeps a camera or uses audioRefs doesn't take one.
+  const lastEnd = ask.op === "video" && start && !along && !audioRefs?.length && shot?.content.kind === "generated" ? shot.content.end : undefined;
+  const end = camera || audioRefs?.length ? undefined : ask.end === undefined ? lastEnd : (ask.end ?? undefined);
   const absent =
-    ask.op === "video" && !clip ? missingFromFrames(project, [...(start && !camera ? [start] : []), ...(end ? [end] : []), ...(refs ?? [])], uses, [prompt, shot?.intent ?? ""]) : [];
+    ask.op === "video" && !clip
+      ? missingFromFrames(project, [...(start && !camera && !audioRefs?.length ? [start] : []), ...(end ? [end] : []), ...(refs ?? [])], uses, [prompt, shot?.intent ?? ""])
+      : [];
   return {
     op: ask.op,
     prompt,
@@ -578,8 +608,8 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     // Some services won't draw real people, so they're ruled out for a shot with one in it.
     ...(people.length ? { realPeople: people } : {}),
     quality: ask.quality ?? (ask.op === "video" ? "rough" : undefined),
-    // A clip whose mouths are changed is the picture; it doesn't start from another. Nor does one made from references.
-    start: clip || camera ? undefined : start,
+    // A clip whose mouths are changed is the picture; it doesn't start from another. Nor does one made from camera/audio references.
+    start: clip || camera || audioRefs?.length ? undefined : start,
     end,
     refs,
     ...(absent.length ? { absent } : {}),
@@ -587,7 +617,8 @@ export function requestFor(projectId: string, ask: MakeAsk, pictures = fewestSti
     ...(speech ? { speech } : {}),
     ...(clip ? { clip } : {}),
     ...(camera ? { camera } : {}),
-    // A take that follows a clip is as long as the stretch it follows, and one that lip-syncs as what it says.
+    ...(audioRefs?.length ? { audioRefs } : {}),
+    // A take that follows a clip is as long as the stretch it follows, and one that lip-syncs or syncs to music/speech as its span.
     seconds: along ? Math.round((along.to - along.from) * 1000) / 1000 : (ask.seconds ?? (ask.op === "video" ? needs?.seconds : undefined)),
     aspect: ask.aspect ?? sheetAspect ?? aspectOf(format.width, format.height),
     count: ask.count,
@@ -714,6 +745,128 @@ function speechFor(project: Project, shot: Shot | undefined, ask: NonNullable<Ma
   const silent = lines.filter((l) => !voiced.find((v) => v.id === l.id)?.file);
   if (silent.length) throw new Error(`${silent.map((l) => `"${l.id}"`).join(", ")} ${silent.length === 1 ? "isn't" : "aren't"} voiced yet: narrate it first`);
   return { lines: lines.map((l) => l.id), from: r3(from), to: r3(to) };
+}
+
+const AUDIO_ASSET_KINDS = ["audio", "music", "voice", "sfx", "video"];
+
+/** Best contiguous spoken stretch (up to 10s) of a labeled speaker inside a transcribed asset, for voice-timbre references. */
+function speakerSpan(projectId: string, assetId: string, speaker: string): { from: number; to: number } | undefined {
+  let t: Transcript | undefined;
+  try {
+    t = JSON.parse(readFileSync(join(projectDir(projectId), "transcripts", `${assetId}.json`), "utf8")) as Transcript;
+  } catch {
+    return undefined;
+  }
+  const runs: { from: number; to: number }[] = [];
+  let cur: { from: number; to: number } | undefined;
+  for (const w of t?.words ?? []) {
+    if (w.speaker !== speaker) {
+      cur = undefined;
+      continue;
+    }
+    if (cur && w.s - cur.to <= 1.5 && w.e - cur.from <= 10) cur.to = w.e;
+    else {
+      cur = { from: w.s, to: Math.min(w.e, w.s + 10) };
+      runs.push(cur);
+    }
+  }
+  if (!runs.length) return undefined;
+  const best = runs.reduce((a, b) => (b.to - b.from > a.to - a.from ? b : a));
+  return { from: r3(Math.max(0, best.from - 0.1)), to: r3(best.to + 0.1) };
+}
+
+/**
+ * Resolves user/agent audio reference asks (shorthands like "music", "speech", { kind: "voice", cast }, or explicit
+ * asset stretches) into concrete `AudioRef` entries with exact `[from, to]` seconds so `fitModel` can validate limits.
+ */
+function audioRefsFor(
+  projectId: string,
+  project: Project,
+  shot: Shot | undefined,
+  asks: AudioRefAsk[],
+  shotSeconds: number | undefined,
+  cast: string[],
+): AudioRef[] {
+  const tl = resolveTimeline(project, project.formats[0]!.id);
+  const span = shot && tl.shots.find((s) => s.id === shot.id);
+  const out: AudioRef[] = [];
+  for (const raw of asks) {
+    const item = raw === "music" ? { kind: "music" as const } : raw === "speech" ? { kind: "speech" as const } : raw;
+    if (item.kind === "music") {
+      if (!project.music?.cues.length || !tl.cues.length) throw new Error("This cut has no music cues yet: add a song first");
+      let from: number, to: number;
+      if (item.from !== undefined && item.to !== undefined) [from, to] = [item.from, item.to];
+      else if (span && Number.isFinite(span.start) && Number.isFinite(span.end)) [from, to] = [item.from ?? span.start, item.to ?? span.end];
+      else {
+        const first = tl.cues[0]!;
+        from = item.from ?? first.start;
+        to = item.to ?? Math.min(first.end, from + (shotSeconds ?? 5));
+      }
+      if (!Number.isFinite(from) || !Number.isFinite(to) || !(to - from >= 0.1)) throw new Error("Can't tell which stretch of music to follow: pick a shot or pass from/to seconds");
+      const hits = tl.cues.filter((c) => c.end > from + 1e-6 && c.start < to - 1e-6);
+      if (!hits.length) throw new Error(`No music plays between ${r3(from)}s and ${r3(to)}s`);
+      const label = item.label ?? (project.assets.find((a) => a.id === hits[0]!.asset)?.label || "music");
+      out.push({ kind: "music", from: r3(from), to: r3(to), ...(label ? { label } : {}) });
+    } else if (item.kind === "speech") {
+      const voiced = project.voice?.lines ?? [];
+      if (item.lines?.length && item.from !== undefined && item.to !== undefined) {
+        const unknown = item.lines.filter((id) => !voiced.some((l) => l.id === id));
+        if (unknown.length) throw new Error(`No line ${unknown.map((id) => `"${id}"`).join(", ")} in this cut's voice`);
+        const silent = item.lines.filter((id) => !voiced.find((l) => l.id === id)?.file);
+        if (silent.length) throw new Error(`${silent.map((id) => `"${id}"`).join(", ")} ${silent.length === 1 ? "isn't" : "aren't"} voiced yet: narrate it first`);
+        if (!(item.to - item.from >= 0.1)) throw new Error(`Reference speech stretch between ${item.from}s and ${item.to}s is empty`);
+        const label = item.label ?? (item.lines.length === 1 ? `line ${item.lines[0]}` : `${item.lines.length} voiced lines`);
+        out.push({ kind: "speech", lines: item.lines, from: r3(item.from), to: r3(item.to), label });
+      } else {
+        const resolved = speechFor(project, shot, { ...(item.lines ? { lines: item.lines } : {}) }, shotSeconds, cast);
+        if (!("lines" in resolved)) throw new Error("Expected voice lines for speech audio reference");
+        const from = item.from ?? resolved.from;
+        const to = item.to ?? resolved.to;
+        if (!(to - from >= 0.1)) throw new Error(`Reference speech stretch between ${from}s and ${to}s is empty`);
+        const label = item.label ?? (resolved.lines.length === 1 ? `line ${resolved.lines[0]}` : `${resolved.lines.length} voiced lines`);
+        out.push({ kind: "speech", lines: resolved.lines, from: r3(from), to: r3(to), label });
+      }
+    } else if (item.kind === "voice") {
+      const m = project.cast?.find((x) => x.id === item.cast);
+      if (!m) throw new Error(`No cast member "${item.cast}" for voice reference`);
+      let assetId = item.asset ?? m.voiceSample;
+      let fallbackSpan: { from: number; to: number } | undefined;
+      if (!assetId && m.heard?.length) {
+        for (const h of m.heard) {
+          const a = project.assets.find((x) => x.id === h.asset && AUDIO_ASSET_KINDS.includes(x.kind));
+          if (!a) continue;
+          const sp = speakerSpan(projectId, a.id, h.speaker);
+          assetId = a.id;
+          fallbackSpan = sp;
+          if (sp) break;
+        }
+      }
+      if (!assetId) throw new Error(`@${m.id} has no voice sample yet: set voiceSample on the cast member, transcribe a clip where they speak, or pass an asset`);
+      const a = project.assets.find((x) => x.id === assetId);
+      if (!a) throw new Error(`No file "${assetId}" for @${m.id}'s voice reference`);
+      if (!AUDIO_ASSET_KINDS.includes(a.kind)) throw new Error(`"${assetId}" is a ${a.kind}; a voice reference must be audio or video`);
+      const end = a.duration ?? Infinity;
+      const from = Math.max(0, item.from ?? fallbackSpan?.from ?? 0);
+      const to = Math.min(end, item.to ?? fallbackSpan?.to ?? Math.min(end, from + 10));
+      if (!Number.isFinite(to)) throw new Error(`Say where to stop in "${a.id}" (its length isn't known)`);
+      if (!(to - from >= 0.1)) throw new Error(`Nothing to sample in "${a.id}" between ${from}s and ${to}s`);
+      const label = item.label ?? `${m.name}'s voice`;
+      out.push({ kind: "voice", cast: m.id, asset: a.id, from: r3(from), to: r3(to), label });
+    } else {
+      const a = project.assets.find((x) => x.id === item.asset);
+      if (!a) throw new Error(`No file "${item.asset}" for audio reference`);
+      if (!AUDIO_ASSET_KINDS.includes(a.kind)) throw new Error(`"${item.asset}" is a ${a.kind}; an audio reference must be audio or video`);
+      const end = a.duration ?? Infinity;
+      const from = Math.max(0, item.from ?? 0);
+      const to = Math.min(end, item.to ?? (shotSeconds !== undefined ? from + shotSeconds : Math.min(end, from + 10)));
+      if (!Number.isFinite(to)) throw new Error(`Say where to stop in "${a.id}" (its length isn't known)`);
+      if (!(to - from >= 0.1)) throw new Error(`Nothing to sample in "${a.id}" between ${from}s and ${to}s`);
+      const role = item.role ?? (a.kind === "voice" ? "voice" : a.kind === "music" ? "music" : undefined);
+      const label = item.label ?? a.label ?? a.id;
+      out.push({ kind: "asset", asset: a.id, from: r3(from), to: r3(to), ...(role ? { role } : {}), ...(label ? { label } : {}) });
+    }
+  }
+  return out;
 }
 
 /** The clips among some requests that would have a model make someone up, and who. One that can't be made says so when it's started. */
@@ -906,6 +1059,7 @@ export function startMakeAll(projectId: string, asks: MakeAsk[], opts: { spendab
           ...(p.req.camera ? { camera: p.req.camera } : {}),
           ...(p.ask.cameraKind ? { cameraKind: p.ask.cameraKind } : {}),
           ...(p.ask.cameraFile ? { cameraFile: p.ask.cameraFile } : {}),
+          ...(p.req.audioRefs?.length ? { audioRefs: p.req.audioRefs } : {}),
           seconds: p.fit.seconds,
           aspect: p.fit.aspect,
           seed: takesSeed(p.shape) ? randomInt(2 ** 31) : undefined,
@@ -948,6 +1102,8 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     camera: r.camera && !sheet ? { url: "beatsheet:camera", blockout: isCameraBlockout(r.camera), ...(ask.cameraKind ? { kind: ask.cameraKind } : {}) } : undefined,
     video: r.drive || r.clip ? "beatsheet:clip" : undefined,
     audio: r.speech ? "beatsheet:sound" : undefined,
+    audioRefs: r.audioRefs?.map((a, i) => ({ url: `beatsheet:audio-${i}`, role: audioRefRole(a), label: a.label })),
+    muteAudio: hasTimelineAudioRef(r.audioRefs) || undefined,
   };
   let built: Record<string, unknown> | undefined;
   try {
@@ -985,6 +1141,7 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
     ...(r.drive ? { drive: r.drive } : {}),
     ...(r.clip ? { clip: r.clip } : {}),
     ...(r.speech ? { speech: r.speech } : {}),
+    ...(r.audioRefs?.length ? { audioRefs: r.audioRefs } : {}),
     told: told ?? r.sent ?? r.prompt,
   };
 }
@@ -996,7 +1153,7 @@ export function planChanges(was: PlannedTake, now: PlannedTake): string[] {
   const pics = (p: PlannedTake) => p.pictures.map((x) => `${x.as}:${x.asset}`).join(",");
   if (pics(was) !== pics(now)) out.push(`its pictures would be ${now.pictures.map((x) => x.asset).join(", ") || "none"}`);
   if (was.told !== now.told) out.push("its words changed");
-  const along = (p: PlannedTake) => JSON.stringify([p.camera, p.drive, p.clip, p.speech]);
+  const along = (p: PlannedTake) => JSON.stringify([p.camera, p.drive, p.clip, p.speech, p.audioRefs]);
   if (along(was) !== along(now)) out.push("the stretch it follows changed");
   if (was.seconds !== now.seconds || was.aspect !== now.aspect || was.count !== now.count) out.push(`it would be ${now.count} × ${now.seconds ?? "?"}s at ${now.aspect ?? "its own shape"}`);
   return out;
@@ -1095,10 +1252,12 @@ function remapJobs(projectId: string, { key, text }: { key: (key: string) => str
     const sheet = job.sheet && key(job.sheet);
     const cast = job.request.cast?.map(key);
     const prompt = text(job.request.prompt);
-    if (sheet === job.sheet && prompt === job.request.prompt && cast?.join() === job.request.cast?.join()) continue;
+    const audioRefs = job.request.audioRefs?.map((a) => (a.kind === "voice" ? { ...a, cast: key(a.cast) } : a));
+    const audioChanged = JSON.stringify(audioRefs) !== JSON.stringify(job.request.audioRefs);
+    if (sheet === job.sheet && prompt === job.request.prompt && cast?.join() === job.request.cast?.join() && !audioChanged) continue;
     // Read again just before writing: the job may have moved on since the list was read.
     const now = readJob(projectId, job.id) ?? job;
-    saveJob(projectId, { ...now, ...(sheet ? { sheet } : {}), request: { ...now.request, prompt, ...(cast ? { cast } : {}) } });
+    saveJob(projectId, { ...now, ...(sheet ? { sheet } : {}), request: { ...now.request, prompt, ...(cast ? { cast } : {}), ...(audioRefs ? { audioRefs } : {}) } });
     moved++;
   }
   return moved;
@@ -1251,6 +1410,7 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
     };
     const baseRefs = r.refs && (await Promise.all(r.refs.map(uploadRef)));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => falUpload(key, f), baseRefs);
+    const aud = await audioRefArgs(project, dir, job, (f) => falUpload(key, f), ".wav");
     const input = falInput(job.shape, {
       prompt: cam.prompt,
       quality: job.quality,
@@ -1262,6 +1422,8 @@ async function step(projectId: string, job: MakeJob, key: string | undefined) {
       refs: cam.refs,
       video: r.drive ? await falUpload(key, await driveClip(project, dir, job)) : r.clip && (await falUpload(key, await dubClip(project, dir, job))),
       audio: r.speech && (await falUpload(key, await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.wav`)))),
+      audioRefs: aud.audioRefs,
+      muteAudio: aud.muteAudio,
       camera: cam.camera,
     });
     const remote = await falSubmit(key, job.endpoint, input);
@@ -1354,6 +1516,7 @@ async function stepRunway(projectId: string, job: MakeJob, key: string) {
     // A clip's references don't go with a start frame there (runwayInput), so they aren't sent up either.
     const baseRefs = job.op === "video" && r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => runwayUpload(key, f), baseRefs);
+    const aud = await audioRefArgs(project, dir, job, (f) => runwayUpload(key, f), ".wav");
     const input = runwayInput(job.shape, job.endpoint, {
       prompt: cam.prompt,
       quality: job.quality,
@@ -1362,6 +1525,8 @@ async function stepRunway(projectId: string, job: MakeJob, key: string) {
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
       refs: cam.refs,
+      audioRefs: aud.audioRefs,
+      muteAudio: aud.muteAudio,
       camera: cam.camera,
     });
     const { remote, usd } = await runwaySubmit(key, input);
@@ -1406,6 +1571,7 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
     // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
     const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(uploadRef)));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => higgsfieldUpload(key, f), baseRefs);
+    const aud = await audioRefArgs(project, dir, job, (f) => higgsfieldUpload(key, f), ".wav");
     const input = higgsfieldInput(job.shape, job.endpoint, {
       prompt: cam.prompt,
       quality: job.quality,
@@ -1415,6 +1581,8 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
       start: r.start && (await upload(r.start)),
       end: r.end && (await upload(r.end)),
       refs: cam.refs,
+      audioRefs: aud.audioRefs,
+      muteAudio: aud.muteAudio,
       camera: cam.camera,
       // The clip whose movement a take copies (Kling's motion control).
       video: r.drive && (await higgsfieldUpload(key, await driveClip(project, dir, job))),
@@ -1499,6 +1667,7 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
     // Standard video models drop references when a start frame is present (frame_images takes precedence on OpenRouter).
     const baseRefs = r.start ? undefined : r.refs && (await Promise.all(r.refs.map(encodeRef)));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => openrouterDataUrl(f), baseRefs);
+    const aud = await audioRefArgs(project, dir, job, (f) => openrouterDataUrl(f), ".mp3");
     const body = openrouterVideoInput(job.shape, job.endpoint, {
       prompt: cam.prompt,
       quality: job.quality,
@@ -1509,6 +1678,8 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
       end: r.end && encode(r.end),
       refs: cam.refs,
       audio: r.speech && openrouterDataUrl(await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.mp3`))),
+      audioRefs: aud.audioRefs,
+      muteAudio: aud.muteAudio,
       camera: cam.camera,
     });
     const remote = await openrouterSubmit(key, body);
@@ -1769,6 +1940,81 @@ async function speechSound(project: Project, dir: string, job: MakeJob, dest: st
   }
   await laySound(pieces, Math.max(seconds ?? 0, w.to - w.from), dest);
   return dest;
+}
+
+/** Semantic prompt role for a resolved `AudioRef`. */
+function audioRefRole(a: AudioRef): AudioRefRole | undefined {
+  if (a.kind === "music") return "music";
+  if (a.kind === "speech") return "dialogue";
+  if (a.kind === "voice") return "voice";
+  return a.role;
+}
+
+/**
+ * Prepares and uploads multimodal reference audio files for a video job:
+ * - `music`: lays overlapping cut music cues over `[from, to]`;
+ * - `speech`: lays the cut's voiced lines over `[from, to]`;
+ * - `voice` / `asset`: trims `[from, to]` (using cleaned voices when available for voice/dialogue roles).
+ * Each clip is padded with trailing silence up to the route's `minSeconds` (default 2s) so short clips never fail API checks.
+ */
+async function audioRefArgs(
+  project: Project,
+  dir: string,
+  job: MakeJob,
+  upload: (file: string) => Promise<string> | string,
+  ext: ".wav" | ".mp3" = ".wav",
+): Promise<{ audioRefs?: FalAudioRef[]; muteAudio?: boolean }> {
+  const list = job.request.audioRefs;
+  if (!list?.length) return {};
+  const model = CATALOG.find((m) => m.id === job.model);
+  const route = model?.routes.find((r) => r.via === job.route && r.endpoints[shapeOf(job.request)] === job.endpoint);
+  const routeAudio = route?.takes?.audio;
+  const minSeconds = (routeAudio && typeof routeAudio === "object" ? routeAudio.minSeconds : model?.takes.audio?.minSeconds) ?? 2;
+  const work = join(dir, ".cache", "audioref");
+  mkdirSync(work, { recursive: true });
+  const tl = list.some((a) => a.kind === "music" || a.kind === "speech") ? resolveTimeline(project, project.formats[0]!.id) : undefined;
+  const out: FalAudioRef[] = [];
+  for (const [i, ar] of list.entries()) {
+    const dest = join(work, `${job.id}-${i}${ext}`);
+    const span = Math.max(0.1, ar.to - ar.from);
+    const dur = Math.max(minSeconds, span);
+    let pieces: { file: string; from: number; at: number; duration?: number }[];
+    if (ar.kind === "music") {
+      const hits = (tl?.cues ?? []).filter((c) => c.end > ar.from + 1e-6 && c.start < ar.to - 1e-6);
+      if (!hits.length) throw new FalError("The music cue this take was asked to follow isn't in this stretch any more", true);
+      pieces = hits.map((m) => {
+        const a = project.assets.find((x) => x.id === m.asset);
+        if (!a) throw new FalError(`The music track "${m.asset}" isn't in the project any more`, true);
+        const s0 = Math.max(ar.from, m.start);
+        const s1 = Math.min(ar.to, m.end);
+        return { file: assetPath(project, dir, a), from: Math.max(0, m.trackFrom + (s0 - m.start)), at: s0 - ar.from, duration: Math.max(0.05, s1 - s0) };
+      });
+    } else if (ar.kind === "speech") {
+      const at = new Map((tl?.lines ?? []).map((l) => [l.id, l.start]));
+      pieces = ar.lines.flatMap((id) => {
+        const line = project.voice?.lines.find((l) => l.id === id);
+        const start = at.get(id);
+        if (!line?.file || start === undefined || !Number.isFinite(start)) throw new FalError(`The line "${id}" isn't voiced in this cut any more`, true);
+        const offset = start - ar.from;
+        if (offset >= span) return [];
+        const pieceFrom = Math.max(0, -offset);
+        const pieceAt = Math.max(0, offset);
+        const avail = Math.min(Math.max(0.05, line.duration - pieceFrom), Math.max(0.05, span - pieceAt));
+        return [{ file: mediaPath(project, dir, line.file), from: pieceFrom, at: pieceAt, duration: avail }];
+      });
+      if (!pieces.length) throw new FalError("None of the referenced voice lines fall in this stretch any more", true);
+    } else {
+      const a = project.assets.find((x) => x.id === ar.asset);
+      if (!a) throw new FalError(`The audio reference "${ar.asset}" isn't in the project any more`, true);
+      const preferClean = ar.kind === "voice" || ar.role === "voice" || ar.role === "dialogue";
+      const clean = preferClean ? cleanPath(dir, a) : undefined;
+      const file = clean && existsSync(clean) ? clean : assetPath(project, dir, a);
+      pieces = [{ file, from: Math.max(0, ar.from), at: 0, duration: span }];
+    }
+    await laySound(pieces, dur, dest);
+    out.push({ url: await upload(dest), role: audioRefRole(ar), ...(ar.label ? { label: ar.label } : {}) });
+  }
+  return { audioRefs: out, muteAudio: hasTimelineAudioRef(list) || undefined };
 }
 
 /** The sides a service takes a clip to dub at, when it's particular: Kling's lip sync, 720 to 1920 pixels. */
@@ -2051,9 +2297,9 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
   // A still that came back letterboxed would make a clip with the bars in it; a file that won't read is left as it is.
   const bars = job.op === "image" ? await unletterbox(file).catch(() => undefined) : undefined;
   const r = job.request;
-  // One that lip-syncs comes back saying its line, which the cut's voice plays already (ComfyUI's takes are trimmed
-  // silent); a file that won't read is left as it is.
-  if (r.speech && !("file" in out)) await silence(file).catch(() => undefined);
+  // One that lip-syncs or follows timeline-synced music/speech comes back with audio the cut's own mix already plays
+  // (ComfyUI's takes are trimmed silent); strip its track to prevent echo. A file that won't read is left as it is.
+  if ((r.speech || hasTimelineAudioRef(r.audioRefs)) && !("file" in out)) await silence(file).catch(() => undefined);
   const v = job.versionOf;
   if (v && (v.keepAudio || v.audioFile)) {
     const { project, dir } = loadProject(projectId, job.cut);
@@ -2069,7 +2315,8 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
     }
   }
   const followed = r.camera && "asset" in r.camera ? r.camera.asset : undefined;
-  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, followed, v?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined].filter((x): x is string => !!x);
+  const audioAssets = (r.audioRefs ?? []).flatMap((a) => ("asset" in a ? [a.asset] : []));
+  const from = [r.start, r.end, ...(r.refs ?? []), r.drive?.asset, r.clip?.asset, followed, v?.asset, r.speech && "asset" in r.speech ? r.speech.asset : undefined, ...audioAssets].filter((x): x is string => !!x);
   return addAsset(projectId, file, {
     id: v ? `${v.asset}-${v.tag ?? "version"}` : job.sheet ? `${job.sheet.replace("/", "-")}-${job.portrait ? "portrait" : "sheet"}` : `${job.shot ?? job.op}-take`,
     label: v?.label ?? (r.prompt.length > 60 ? `${r.prompt.slice(0, 57).trimEnd()}…` : r.prompt),
@@ -2100,6 +2347,7 @@ async function bringIn(projectId: string, job: MakeJob, out: Taken): Promise<Ass
         ...(r.clip ? { clip: r.clip } : {}),
         ...(r.camera ? { camera: r.camera } : {}),
         ...(r.cameraKind ? { cameraKind: r.cameraKind } : {}),
+        ...(r.audioRefs?.length ? { audioRefs: r.audioRefs } : {}),
         ...(v?.params ?? {}),
         ...(job.comfy ? { workflow: `${job.endpoint}.${job.comfy.profile}` } : {}),
         ...(bars ? { letterbox: `removed ${bars.top + bars.bottom}px of bars` } : {}),
@@ -2163,7 +2411,7 @@ async function attach(projectId: string, job: MakeJob, asset: Asset) {
         const spare = takeLead(r, asset.kind === "video" ? asset.duration : undefined, (id) => p.assets.find((a) => a.id === id)?.duration);
         // What it was made from: the clip's own board and movement, for one whose mouths were changed.
         const made = dubbed ? g : r;
-        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, camera: kept, speech: _p, ...rest } = g;
+        const { start: _s, end: _e, in: _i, refs: _r, drive: _d, camera: kept, speech: _p, audioRefs: keptAudio, ...rest } = g;
         Object.assign(rest, {
           take: asset.id,
           ...(asset.kind === "video" ? { clipPrompt: r.prompt } : { prompt: r.prompt }),
@@ -2173,9 +2421,10 @@ async function attach(projectId: string, job: MakeJob, asset: Asset) {
           ...(made.end ? { end: made.end } : {}),
           ...(made.refs?.length ? { refs: made.refs } : {}),
           ...(made.drive ? { drive: made.drive } : {}),
-          // The camera this take kept; one with its mouths changed is still the clip that kept one.
+          // The camera and audio references this take kept; one with its mouths changed is still the clip that kept them.
           ...(dubbed ? (kept ? { camera: kept } : {}) : r.camera ? { camera: cameraOnShot(r.camera) } : {}),
           ...(r.speech ? { speech: speechOnShot(r.speech) } : {}),
+          ...(dubbed ? (keptAudio?.length ? { audioRefs: keptAudio } : {}) : r.audioRefs?.length ? { audioRefs: r.audioRefs } : {}),
           ...(spare > 0 ? { in: Math.round(spare * 1000) / 1000 } : {}),
         });
         s.content = rest;
@@ -2195,6 +2444,7 @@ export function describeJob(j: MakeJob): string {
   const d = j.request.drive;
   const s = j.request.speech;
   const c = j.request.clip;
+  const ar = j.request.audioRefs;
   const what = [
     j.shot ? `shot ${j.shot}` : j.sheet ? `sheet for @${j.sheet}` : j.op,
     model,
@@ -2204,6 +2454,7 @@ export function describeJob(j: MakeJob): string {
     d ? `following ${d.asset} ${d.from}–${d.to}s` : "",
     s ? `saying ${"lines" in s ? `line${s.lines.length === 1 ? "" : "s"} ${s.lines.join(", ")}` : `${s.asset} ${s.from}–${s.to}s`}` : "",
     c ? `with the mouths changed in ${c.asset} ${c.from}–${c.to}s` : "",
+    ar?.length ? `with ${ar.length} audio ref${ar.length === 1 ? "" : "s"}` : "",
   ]
     .filter(Boolean)
     .join(" · ");

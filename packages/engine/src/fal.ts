@@ -9,7 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
-import type { Quality } from "@beatsheet/schema";
+import type { AudioRefRole, Quality } from "@beatsheet/schema";
 import { sizeFor } from "./direct.ts";
 
 const QUEUE = process.env.BEATSHEET_FAL_QUEUE ?? "https://queue.fal.run";
@@ -107,6 +107,9 @@ export async function falUpload(key: string, file: string): Promise<string> {
 /** What a reference video guides: a raw clip's camera, a 3D blockout, a clip being relit, a character swap, or a clay facial performance. */
 export type CameraKind = "clip" | "blockout" | "relight" | "swap" | "perform";
 
+/** A multimodal reference audio clip sent alongside reference pictures/videos (e.g. music rhythm, spoken lines, voice timbre, ambience). */
+export type FalAudioRef = { url: string; role?: AudioRefRole; label?: string };
+
 /**
  * A request in the terms every adapter understands; pictures, the stretch of a clip a take follows or changes the
  * mouths in (`video`), and what it says (`audio`) are already URLs fal can fetch. A model that makes roughs and finals
@@ -123,6 +126,10 @@ export type FalAsk = {
   refs?: string[];
   video?: string;
   audio?: string;
+  /** Multimodal reference audio clips sent on reference-to-video endpoints. */
+  audioRefs?: FalAudioRef[];
+  /** Turn off native audio output when the model supports it (e.g. MAGI-2 guided by timeline-synced music or speech). */
+  muteAudio?: boolean;
   /** A clip whose camera/lighting/performance/swap conditioning the take keeps, and what kind of guide it is. */
   camera?: { url: string; blockout: boolean; kind?: CameraKind };
 };
@@ -151,6 +158,25 @@ export const cameraLine = (camera: FalAsk["camera"], name: string) => {
   if (kind === "perform")
     return ` ${name} is a neutral 3D clay facial-performance guide carrying exact head motion, eye blinks, brow movement and mouth expressions: transfer every expression and head turn onto the character in the reference picture with photorealistic skin and detail; none of the grey clay sculpt appears in the finished video.`;
   return ` ${name} sets the camera: keep its move, its framing, its timing and where its cuts fall.`;
+};
+
+/**
+ * What's said of reference audio clips a take follows, naming each as the service calls it (`@Audio1` on fal Seedance 2.5,
+ * or "The reference audio" / "Audio 1" elsewhere) with clear instructions for its role (music beat, spoken dialogue,
+ * character voice timbre, or ambience).
+ */
+export const audioLine = (refs: FalAsk["audioRefs"], name: (n: number, total: number) => string): string => {
+  if (!refs?.length) return "";
+  const parts = refs.map((a, i) => {
+    const tag = name(i + 1, refs.length);
+    const who = a.label ? ` (${a.label})` : "";
+    if (a.role === "music") return `${tag}${who} is the music track: sync the movement, pacing, gestures and cuts to its beat and rhythm.`;
+    if (a.role === "dialogue") return `${tag}${who} is the spoken dialogue: match the character's lip movements, facial expressions and timing to it.`;
+    if (a.role === "voice") return `${tag}${who} is the voice reference: match its speaker's voice timbre, tone and cadence when speaking.`;
+    if (a.role === "ambience") return `${tag}${who} is the ambience reference: match its sonic atmosphere and soundscape.`;
+    return `${tag}${who} is an audio reference to follow in timing, mood and sound.`;
+  });
+  return ` ${parts.join(" ")}`;
 };
 
 /** Whole seconds, for models that only make those. */
@@ -216,31 +242,37 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
         ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
       };
     }
-    case "wan-3":
+    case "wan-3": {
       // Wan 3.0: roughs at 480p, finals at 1080p (it defaults to 1080p), whole seconds, with its own sound. Its prompt
-      // expansion is left on, as fal recommends.
+      // expansion is left on, as fal recommends. Reference audio goes in reference_audio_urls (up to 5 clips, ≤15s total).
+      const audio = audioLine(ask.audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`));
       return {
-        prompt: withRefs(ask, (n) => `Image ${n}`),
+        prompt: `${withRefs(ask, (n) => `Image ${n}`)}${audio}`,
         duration: whole(ask.seconds),
         resolution: ask.quality === "final" ? "1080p" : "480p",
         ...(ask.refs?.length ? { reference_image_urls: ask.refs } : {}),
+        ...(ask.audioRefs?.length ? { reference_audio_urls: ask.audioRefs.map((a) => a.url) } : {}),
         ...(ask.start ? { start_image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
         ...(ask.end ? { end_image_url: ask.end } : {}),
         ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
       };
-    case "seedance-2.5":
+    }
+    case "seedance-2.5": {
       // Seedance 2.5: roughs at 480p, finals at 1080p, whole seconds as a string, with its own sound (the same price
-      // either way). References are @Image1, @Image2… to it, and a clip whose camera it keeps is @Video1 (on its
-      // reference-to-video endpoint, which takes clips of 1.8 to 30.2 seconds beside the pictures).
+      // either way). References are @Image1, @Image2… to it, a clip whose camera it keeps is @Video1, and reference
+      // audio clips are @Audio1, @Audio2… (audio_urls, up to 10 clips, ≤30s combined).
+      const audio = audioLine(ask.audioRefs, (n) => `@Audio${n}`);
       return {
-        prompt: `${withRefs(ask, (n) => `@Image${n}`)}${cameraLine(ask.camera, "@Video1")}`,
+        prompt: `${withRefs(ask, (n) => `@Image${n}`)}${cameraLine(ask.camera, "@Video1")}${audio}`,
         duration: String(whole(ask.seconds)),
         resolution: ask.quality === "final" ? "1080p" : "480p",
         ...(ask.refs?.length ? { image_urls: ask.refs } : {}),
         ...(ask.camera ? { video_urls: [ask.camera.url] } : {}),
+        ...(ask.audioRefs?.length ? { audio_urls: ask.audioRefs.map((a) => a.url) } : {}),
         ...(ask.start ? { image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
         ...(ask.end ? { end_image_url: ask.end } : {}),
       };
+    }
     case "kling-4":
       // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds. fal takes no seed, sound switch or negative prompt for it.
       return {
@@ -323,6 +355,7 @@ export const takesSeed = (shape: string) =>
     "nano-banana",
     "wan",
     "wan-3",
+    "magi-2",
     "scail-2",
     "minimax-h3",
     "minimax-h3-max",

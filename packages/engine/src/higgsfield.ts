@@ -22,7 +22,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
-import { cameraLine, FalError, whole, type FalAsk, type FalRequest } from "./fal.ts";
+import { audioLine, cameraLine, FalError, whole, type FalAsk, type FalRequest } from "./fal.ts";
 
 const API = process.env.BEATSHEET_HIGGSFIELD ?? "https://api.higgsfield.ai";
 
@@ -77,7 +77,7 @@ async function call(key: string, to: string, init: RequestInit = {}, model?: str
 }
 
 /** The kinds of file Higgsfield's storage takes. */
-const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".wav": "audio/wav", ".mp4": "video/mp4" };
+const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".wav": "audio/wav", ".mp3": "audio/mpeg", ".mp4": "video/mp4" };
 
 /**
  * Puts a picture or a clip in Higgsfield's storage and gives its public address, for inputs like a start frame:
@@ -86,7 +86,7 @@ const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg
  */
 export async function higgsfieldUpload(key: string, file: string): Promise<string> {
   const type = TYPES[extname(file).toLowerCase()];
-  if (!type) throw new FalError(`Higgsfield takes JPEG, PNG, WebP and GIF pictures, WAV sound and MP4 video, and ${basename(file)} is none of them`, true);
+  if (!type) throw new FalError(`Higgsfield takes JPEG, PNG, WebP and GIF pictures, WAV and MP3 sound and MP4 video, and ${basename(file)} is none of them`, true);
   const r = await call(key, "/files/generate-upload-url", { method: "POST", body: JSON.stringify({ content_type: type }) });
   if (typeof r.upload_url !== "string" || typeof r.public_url !== "string") throw new FalError(`Higgsfield didn't say where to put ${basename(file)}`, false);
   const headers = { "Content-Type": type, ...((r.upload_headers as Record<string, string> | undefined) ?? {}) };
@@ -146,10 +146,11 @@ export async function higgsfieldCancel(key: string, req: FalRequest): Promise<vo
   await call(key, req.cancel, { method: "POST" }).catch(() => undefined);
 }
 
-/** The shapes each of its still models makes; the nearest to what's wanted is asked for. */
+/** The shapes models with a fixed aspect list make; the nearest to what's wanted is asked for. */
 const SHAPES: Record<string, string[]> = {
   "gpt-image-2.5": ["21:9", "16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
   "soul-2": ["16:9", "3:2", "4:3", "1:1", "3:4", "2:3", "9:16"],
+  "magi-2": ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
 };
 const ratio = (aspect: string) => {
   const [w, h] = aspect.split(":").map(Number);
@@ -176,9 +177,33 @@ export function higgsfieldInput(shape: string, model: string, ask: FalAsk): Higg
   // The board a take starts from shows who's in it: where a request takes only references, it goes as the one picture.
   const pictures = fromReferences ? (ask.refs?.length ? ask.refs : ask.start ? [ask.start] : []) : [];
   const shown = pictures.length ? ` ${pictures.length === 1 ? "The reference picture shows" : `The ${pictures.length} reference pictures show`} who and what is in it.` : "";
+  const audio = fromReferences ? audioLine(ask.audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`)) : "";
+  const audioUrls = fromReferences && ask.audioRefs?.length ? { audio_urls: ask.audioRefs.map((a) => a.url) } : {};
   const shaped = ask.aspect ? { aspect_ratio: ask.aspect } : {};
   const body = ((): Record<string, unknown> => {
     switch (shape) {
+      case "magi-2": {
+        // Sand.ai MAGI-2: 1080p only (25 fps), 4 to 30 seconds, native audio on by default, optional integer seed.
+        // Its image-to-video endpoint defaults aspect_ratio to 16:9 when omitted, so send the nearest supported ratio when known.
+        // audio_urls is accepted even when generate_audio is false (e.g. timeline-synced music or speech).
+        const aspect = nearest(shape, ask.aspect);
+        const base = {
+          duration: whole(ask.seconds),
+          resolution: "1080p",
+          ...(aspect ? { aspect_ratio: aspect } : {}),
+          ...(ask.seed !== undefined ? { seed: ask.seed } : {}),
+        };
+        if (fromPicture) return { prompt: ask.prompt, image_url: ask.start, ...(ask.end ? { end_image_url: ask.end } : {}), ...base };
+        if (!fromReferences) return { prompt: ask.prompt, ...base };
+        return {
+          prompt: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}${audio}`,
+          ...base,
+          ...(ask.muteAudio ? { generate_audio: false } : {}),
+          ...(pictures.length ? { image_urls: pictures } : {}),
+          ...(ask.camera ? { video_urls: [ask.camera.url] } : {}),
+          ...audioUrls,
+        };
+      }
       case "seedance-2.5": {
         // Seedance 2.5: roughs at 480p, finals at 1080p, 4 to 30 seconds, with its own sound (on unless turned off). A
         // clip whose camera it keeps goes as a reference video beside the pictures, at the dearer rate; the clip's own
@@ -187,11 +212,12 @@ export function higgsfieldInput(shape: string, model: string, ask: FalAsk): Higg
         if (fromPicture) return { prompt: ask.prompt, image_url: ask.start, ...(ask.end ? { end_image_url: ask.end } : {}), ...size };
         if (!fromReferences) return { prompt: ask.prompt, ...size, ...shaped };
         return {
-          prompt: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}`,
+          prompt: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}${audio}`,
           ...size,
           ...shaped,
           ...(pictures.length ? { image_urls: pictures } : {}),
           ...(ask.camera ? { video_urls: [ask.camera.url] } : {}),
+          ...audioUrls,
         };
       }
       case "kling-v4.0":
@@ -218,7 +244,7 @@ export function higgsfieldInput(shape: string, model: string, ask: FalAsk): Higg
         // picture it keeps the picture's shape ("adaptive", which is what it does unless told).
         const size = { duration: whole(ask.seconds), resolution: final ? "1080p" : "480p", ...(ask.seed ? { seed: ask.seed } : {}) };
         if (fromPicture) return { prompt: ask.prompt, image_url: ask.start, ...(ask.end ? { end_image_url: ask.end } : {}), ...size };
-        return { prompt: `${ask.prompt}${shown}`, ...size, ...shaped, ...(pictures.length ? { image_urls: pictures } : {}) };
+        return { prompt: `${ask.prompt}${shown}${audio}`, ...size, ...shaped, ...(pictures.length ? { image_urls: pictures } : {}), ...audioUrls };
       }
       case "gpt-image-2.5": {
         // GPT Image 2.5 (Flare or Sunburst, by the model's address), which Higgsfield sells as Marketing Studio Image:

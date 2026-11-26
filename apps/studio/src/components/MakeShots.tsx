@@ -14,6 +14,7 @@ import {
   PREVIS_BY_ID,
   PREVIS_MOVES,
   type Asset,
+  type AudioRef,
   type Camera,
   type Fidelity,
   type MakeOp,
@@ -59,6 +60,7 @@ export function draftFromAssetOrJob(a?: Asset, job?: MakeJob, shotId?: string): 
     drive?: { asset: string; from: number; to?: number };
     speech?: unknown;
     clip?: unknown;
+    audioRefs?: AudioRef[];
   };
   const prompt = job?.request.prompt ?? params.prompt ?? a?.provenance?.prompt ?? "";
   const model = job?.model ?? params.model;
@@ -69,9 +71,11 @@ export function draftFromAssetOrJob(a?: Asset, job?: MakeJob, shotId?: string): 
   const drive = job?.request.drive ?? params.drive;
   const speech = job?.request.speech ?? params.speech;
   const clip = job?.request.clip ?? params.clip;
+  const audioRefs = job?.request.audioRefs ?? params.audioRefs;
   const start = job?.request.start ?? params.start;
   const end = job?.request.end ?? params.end;
-  const refs = job?.request.refs ?? a?.provenance?.refs;
+  const audioAssetIds = new Set((audioRefs ?? []).flatMap((x) => ("asset" in x ? [x.asset] : [])));
+  const refs = job?.request.refs ?? a?.provenance?.refs?.filter((id) => !audioAssetIds.has(id));
 
   let inputMode: MakeDraft["inputMode"] = op === "image" ? (refs?.length ? "refs" : "text") : "board";
   let useBlockout = false;
@@ -92,7 +96,7 @@ export function draftFromAssetOrJob(a?: Asset, job?: MakeJob, shotId?: string): 
       inputMode = "speech";
     } else if (start) {
       inputMode = "board";
-    } else if (refs?.length) {
+    } else if (refs?.length || audioRefs?.length) {
       inputMode = "refs";
     } else {
       inputMode = "text";
@@ -111,6 +115,7 @@ export function draftFromAssetOrJob(a?: Asset, job?: MakeJob, shotId?: string): 
       ...(start ? { start } : {}),
       ...(end ? { end } : {}),
       ...(refs?.length ? { refs } : {}),
+      ...(audioRefs?.length ? { audioRefs } : {}),
       ...(useBlockout ? { useBlockout } : {}),
       ...(blockoutMode ? { blockoutMode } : {}),
       ...(drive ? { drive } : {}),
@@ -369,6 +374,7 @@ function ShotCard({ shot, n, seconds, aspect, going }: { shot: Shot; n: number; 
   const hasBlockout = !!shot.blockout?.beats.length || !!(c.kind === "generated" && c.camera && ("blockout" in c.camera || "cut" in c.camera));
   const hasDrive = !!(c.kind === "generated" && c.drive);
   const hasSpeech = !!(c.kind === "generated" && c.speech);
+  const hasAudioRefs = !!(c.kind === "generated" && c.audioRefs?.length);
   const takeGuide = take ? guideOfAsset(projectId, doc, cutId, take) : undefined;
   return (
     <button
@@ -426,6 +432,11 @@ function ShotCard({ shot, n, seconds, aspect, going }: { shot: Shot; n: number; 
             </span>
           )}
           {hasSpeech && <span className="pill small">Lip sync</span>}
+          {hasAudioRefs && (
+            <span className="pill small" title="Guided by reference audio">
+              Audio ref
+            </span>
+          )}
         </span>
       </span>
     </button>
@@ -942,8 +953,11 @@ export function Given({ a }: { a: Asset }) {
     drive?: { asset?: string };
     clip?: { asset?: string };
     camera?: Camera & { snapshot?: string; snapshotKind?: "video" | "image" };
+    audioRefs?: AudioRef[];
   };
   const camAsset = asked.camera && "asset" in asked.camera ? asked.camera.asset : undefined;
+  const audioRefs = asked.audioRefs ?? [];
+  const audioOnlyIds = new Set(audioRefs.flatMap((ar) => ("asset" in ar && p.assets.find((x) => x.id === ar.asset)?.kind !== "image" ? [ar.asset] : [])));
   const part = (id: string) =>
     id === asked.start
       ? "Starts from"
@@ -956,13 +970,21 @@ export function Given({ a }: { a: Asset }) {
             : id === camAsset
               ? "Camera of"
               : "Reference";
-  const from = [...new Set([asked.start, asked.end, asked.drive?.asset, asked.clip?.asset, camAsset, ...(made.refs ?? [])].filter((id): id is string => !!id))];
+  const from = [...new Set([asked.start, asked.end, asked.drive?.asset, asked.clip?.asset, camAsset, ...(made.refs ?? [])].filter((id): id is string => !!id && !audioOnlyIds.has(id)))];
   const camBlockout = asked.camera && ("blockout" in asked.camera || "cut" in asked.camera) ? asked.camera : undefined;
   const told = asked.prompt ?? made.prompt;
-  if (!from.length && !camBlockout && !told) return null;
+  if (!from.length && !camBlockout && !audioRefs.length && !told) return null;
+  const audioText = (ar: AudioRef) =>
+    ar.kind === "music"
+      ? `Music ${round2(ar.from)}–${round2(ar.to)}s`
+      : ar.kind === "speech"
+        ? `Lines ${ar.lines.join(", ")}`
+        : ar.kind === "voice"
+          ? `@${ar.cast} voice`
+          : `${ar.label ?? ar.asset} ${round2(ar.from)}–${round2(ar.to)}s`;
   return (
     <div className="given">
-      {(from.length > 0 || camBlockout) && (
+      {(from.length > 0 || camBlockout || audioRefs.length > 0) && (
         <div className="given-pics">
           <span className="dim small">Made from</span>
           {camBlockout && (
@@ -997,6 +1019,24 @@ export function Given({ a }: { a: Asset }) {
               <button key={id} className="given-pic" disabled={!x} onClick={() => actions.select({ kind: "asset", id })} title={`${part(id)}: ${x ? (x.label ?? id) : `${id} (not in the project any more)`}`}>
                 {x && <img src={posterUrl(projectId, id)} loading="lazy" alt="" onError={hideBroken} />}
                 <span>{part(id)}</span>
+              </button>
+            );
+          })}
+          {audioRefs.map((ar, idx) => {
+            const targetId = "asset" in ar ? ar.asset : undefined;
+            const target = targetId ? p.assets.find((y) => y.id === targetId) : undefined;
+            return (
+              <button
+                key={`aud-${idx}`}
+                className="given-pic audio"
+                disabled={!target}
+                onClick={() => target && actions.select({ kind: "asset", id: target.id })}
+                title={`Audio reference: ${audioText(ar)}`}
+              >
+                <span className="given-pic-icon">
+                  <Icon name={ar.kind === "music" ? "music" : "mic"} size={16} />
+                </span>
+                <span>{audioText(ar)}</span>
               </button>
             );
           })}

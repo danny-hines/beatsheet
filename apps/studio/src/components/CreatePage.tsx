@@ -4,7 +4,7 @@
  * paired with a live Flight Check showing everything that will be sent and what it costs.
  */
 import { useEffect, useMemo, useState } from "react";
-import type { MakeAsk, MakeDraft, MakeInputMode, MakeJob, MakePlan } from "@beatsheet/engine";
+import type { AudioRefAsk, MakeAsk, MakeDraft, MakeInputMode, MakeJob, MakePlan } from "@beatsheet/engine";
 import {
   aspectOf,
   blockoutDuration,
@@ -15,6 +15,7 @@ import {
   PREVIS_MOVES,
   resolveTimeline,
   type Asset,
+  type AudioRefRole,
   type CatalogModel,
   type MakeOp,
   type Quality,
@@ -59,6 +60,7 @@ function modelBadges(m: CatalogModel | undefined): string[] {
   else if (m.takes.refs) out.push("16-frame sheet");
   if (m.takes.drive) out.push("Motion copy");
   if (m.takes.speech) out.push(m.takes.clip ? "Lip sync + Dub" : "Lip sync");
+  if (m.takes.audio) out.push("Audio refs");
   if (m.sound) out.push("Sound");
   return out;
 }
@@ -127,13 +129,17 @@ export function CreatePage({
     initial.drive ?? (initShot?.content.kind === "generated" ? initShot.content.drive : undefined),
   );
   const [speechDub, setSpeechDub] = useState(!!initial.speechDub);
+  const [audioRefs, setAudioRefs] = useState<AudioRefAsk[]>(
+    initial.audioRefs ?? (initShot?.content.kind === "generated" && initShot.content.audioRefs?.length ? initShot.content.audioRefs : []),
+  );
+  const [audioRole, setAudioRole] = useState<AudioRefRole>("voice");
   const [seconds, setSeconds] = useState<number>(initial.seconds ?? 5);
   const [aspect, setAspect] = useState<string>(initial.aspect ?? defaultAspect);
   const [count, setCount] = useState<number>(initial.count ?? (initOp === "image" ? 2 : 1));
   const [activeStep, setActiveStep] = useState<number>(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
-  const [pickingSlot, setPickingSlot] = useState<"start" | "end" | "ref" | undefined>();
+  const [pickingSlot, setPickingSlot] = useState<"start" | "end" | "ref" | "audio" | undefined>();
   const [overSlot, setOverSlot] = useState<string>();
 
   const shot = shotId ? p.shots.find((s) => s.id === shotId) : undefined;
@@ -142,6 +148,9 @@ export function CreatePage({
   const legacyBlockouts = useMemo(() => blockoutCuts(doc, cutId), [doc, cutId]);
   const clips = useMemo(() => p.assets.filter((a) => a.kind === "video" && !a.cutout && !a.version && a.provenance?.source !== "generated"), [p.assets]);
   const images = useMemo(() => p.assets.filter((a) => a.kind === "image" && !a.cutout), [p.assets]);
+  const audioAssets = useMemo(() => p.assets.filter((a) => ["audio", "music", "voice", "sfx", "video"].includes(a.kind) && !a.cutout), [p.assets]);
+  const voiceCast = useMemo(() => (p.cast ?? []).filter((m) => m.kind === "character" && (m.voiceSample || m.heard?.length)), [p.cast]);
+  const hasShotMusic = !!p.music?.cues.length && (!shot || (!!resolved && tl.cues.some((c) => c.end > resolved.start + 1e-6 && c.start < resolved.end - 1e-6)));
 
   // Apply a recipe step from Smart Prep.
   const applyStep = (idx: number, d: MakeDraft) => {
@@ -153,6 +162,7 @@ export function CreatePage({
     setPrompt(d.prompt);
     if (d.start) setStart(d.start);
     if (d.refs) setRefs(d.refs);
+    if (d.audioRefs) setAudioRefs(d.audioRefs);
     if (d.blockoutMode) setBlockoutMode(d.blockoutMode);
     if (d.blockoutPreset) setBlockoutPreset(d.blockoutPreset);
     if (d.seconds) setSeconds(d.seconds);
@@ -171,6 +181,8 @@ export function CreatePage({
       if (inputMode === "blockout" && !refs.includes(b)) setRefs([b, ...refs]);
     }
     if (s.blockout) setBlockoutMode(s.blockout.mode ?? "video");
+    if (s.content.kind === "generated" && s.content.audioRefs?.length) setAudioRefs(s.content.audioRefs);
+    else setAudioRefs([]);
     if (!prompt.trim()) setPrompt(shotPrompt(s, op));
   };
 
@@ -211,6 +223,7 @@ export function CreatePage({
   const activeStart = op === "video" && (inputMode === "board" || inputMode === "drive" || (inputMode === "speech" && !(speechDub && showingVideo))) ? start : undefined;
   const activeEnd = op === "video" && inputMode === "board" && activeStart ? end : undefined;
   const activeRefs = op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout")) ? refs : [];
+  const activeAudioRefs = op === "video" && (inputMode === "refs" || inputMode === "blockout") ? audioRefs : [];
   const activeDrive = op === "video" && inputMode === "drive" && drive ? { drive: drive.asset, from: drive.from, to: drive.to } : { drive: "none" };
   const activeSpeech = op === "video" && inputMode === "speech" ? { speech: "lines", ...(speechDub && showingVideo ? { clip: "take" } : {}) } : { speech: "none" };
   const effectiveSeconds = op === "video" ? (shotSeconds ?? seconds) : undefined;
@@ -227,6 +240,7 @@ export function CreatePage({
     start: activeStart,
     end: op === "video" ? (activeEnd ?? "none") : undefined,
     refs: activeRefs.length ? activeRefs.join(",") : undefined,
+    audioRefs: op === "video" ? (activeAudioRefs.length ? JSON.stringify(activeAudioRefs) : "none") : undefined,
     ...(op === "video" ? activeDrive : {}),
     ...(op === "video" ? activeSpeech : {}),
     ...activeCameraQuery,
@@ -252,7 +266,28 @@ export function CreatePage({
 
   // Max references allowed by the currently selected model + route.
   const maxRefs = activeRoute?.takes?.refs ?? catalogModel?.takes.refs ?? (op === "image" ? 10 : 10);
+  const routeAudio = activeRoute?.takes?.audio;
+  const audioLimits = routeAudio === false ? undefined : routeAudio ?? catalogModel?.takes.audio;
+  const maxAudioRefs = audioLimits?.max ?? 5;
   const takesEnd = op === "video" && inputMode === "board" && (catalogModel ? !!catalogModel.takes.end && activeRoute?.takes?.end !== false : true);
+
+  const addAudioRef = (next: AudioRefAsk) => {
+    if (inputMode === "board") {
+      setInputMode("refs");
+      if (start && !refs.includes(start)) setRefs([start, ...refs]);
+    }
+    setAudioRefs((prev) => [...prev, next]);
+  };
+
+  const describeAudioRef = (a: AudioRefAsk): { role: string; text: string } => {
+    if (a === "music") return { role: "Music", text: "Shot's music slice" };
+    if (a === "speech") return { role: "Lines", text: "Shot's voiced lines" };
+    if (a.kind === "music") return { role: "Music", text: a.label ?? (a.from !== undefined && a.to !== undefined ? `${a.from}–${a.to}s` : "Music slice") };
+    if (a.kind === "speech") return { role: "Lines", text: a.label ?? (a.lines?.length ? a.lines.join(", ") : "Voiced lines") };
+    if (a.kind === "voice") return { role: "Voice", text: `@${a.cast} voice` };
+    const name = p.assets.find((x) => x.id === a.asset)?.label ?? a.asset;
+    return { role: a.role ? a.role[0]!.toUpperCase() + a.role.slice(1) : "Audio", text: name };
+  };
 
   // Auto-resolved cast pictures when no manual ref list overrides stills.
   const autoCastPics = useMemo(() => (op === "image" && !refs.length ? castPictures(castOf(prompt, p.cast), maxRefs || 4) : []), [op, refs.length, prompt, p.cast, maxRefs]);
@@ -313,6 +348,7 @@ export function CreatePage({
                     ? { cut: legacyCut, mode: blockoutMode }
                     : null
                 : null,
+            audioRefs: activeAudioRefs.length ? activeAudioRefs : null,
             ...(effectiveSeconds ? { seconds: effectiveSeconds } : {}),
           }
         : {}),
@@ -782,6 +818,83 @@ export function CreatePage({
                   )}
                 </div>
               )}
+
+              {/* Audio References slot (Video refs, blockout, or board with audio-capable model) */}
+              {op === "video" && (inputMode === "refs" || inputMode === "blockout" || (inputMode === "board" && (!pickedModelId || !!audioLimits))) && (
+                <div className="slot-card slot-wide">
+                  <div className="slot-head">
+                    <strong>
+                      Audio references {audioLimits ? `(${audioRefs.length} / ${maxAudioRefs}, optional)` : "(MAGI-2, Seedance 2.5, Wan 3.0)"}
+                    </strong>
+                    {audioRefs.length > 0 && (
+                      <button className="link small" onClick={() => setAudioRefs([])}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  {audioRefs.length > 0 && (
+                    <div className="slot-audio-list">
+                      {audioRefs.map((ar, idx) => {
+                        const info = describeAudioRef(ar);
+                        return (
+                          <span key={idx} className="slot-audio-chip">
+                            <span className="pill small">{info.role}</span>
+                            <span className="small">{info.text}</span>
+                            <button
+                              className="link small"
+                              onClick={() => setAudioRefs(audioRefs.filter((_, j) => j !== idx))}
+                              aria-label="Remove audio reference"
+                            >
+                              <Icon name="close" size={10} />
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div className="make-row small">
+                    {hasShotMusic && (
+                      <button
+                        className="small"
+                        disabled={audioRefs.length >= maxAudioRefs || audioRefs.some((a) => a === "music" || (typeof a === "object" && a.kind === "music"))}
+                        onClick={() => addAudioRef("music")}
+                        title="Sync motion to the cut's music over this shot (output audio muted so it never echoes)"
+                      >
+                        + Shot's music
+                      </button>
+                    )}
+                    {heardLines.length > 0 && heardLines.every((l) => l.voiced) && (
+                      <button
+                        className="small"
+                        disabled={audioRefs.length >= maxAudioRefs || audioRefs.some((a) => a === "speech" || (typeof a === "object" && a.kind === "speech"))}
+                        onClick={() => addAudioRef("speech")}
+                        title="Match lip movement and acting to the cut's voiced lines over this shot (output audio muted)"
+                      >
+                        + Shot's voiced lines
+                      </button>
+                    )}
+                    {voiceCast.map((m) => (
+                      <button
+                        key={m.id}
+                        className="small"
+                        disabled={audioRefs.length >= maxAudioRefs || audioRefs.some((a) => typeof a === "object" && a.kind === "voice" && a.cast === m.id)}
+                        onClick={() => addAudioRef({ kind: "voice", cast: m.id })}
+                        title={`Match ${m.name}'s voice timbre for spoken dialogue`}
+                      >
+                        + @{m.id} voice
+                      </button>
+                    ))}
+                    {audioAssets.length > 0 && (
+                      <button className="small" disabled={audioRefs.length >= maxAudioRefs} onClick={() => setPickingSlot("audio")}>
+                        + Audio from Library…
+                      </button>
+                    )}
+                  </div>
+                  {inputMode === "board" && !audioRefs.length && (
+                    <p className="dim small">Adding reference audio switches to References mode and moves your board into Reference pictures automatically.</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -838,7 +951,7 @@ export function CreatePage({
             )}
           </p>
 
-          {(flightPics.length > 0 || (op === "video" && inputMode === "blockout" && (hasShotBlockout || legacyCut))) && (
+          {(flightPics.length > 0 || (op === "video" && inputMode === "blockout" && (hasShotBlockout || legacyCut)) || activeAudioRefs.length > 0) && (
             <div className="flight-sends">
               <span className="dim small">Will upload</span>
               <div className="flight-pics">
@@ -853,6 +966,16 @@ export function CreatePage({
                     <span>{blockoutMode === "sheet" ? "16-frame sheet" : "Blockout MP4"}</span>
                   </div>
                 )}
+                {activeAudioRefs.map((ar, i) => {
+                  const info = describeAudioRef(ar);
+                  return (
+                    <div key={`audio-${i}`} className="flight-pic audio" title={`${info.role}: ${info.text}`}>
+                      <span>
+                        {info.role}: {info.text}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -890,34 +1013,62 @@ export function CreatePage({
         </aside>
       </div>
 
-      {/* Inline picture picker overlay */}
+      {/* Inline picture / audio picker overlay */}
       {pickingSlot && (
         <div className="modal-back" onClick={() => setPickingSlot(undefined)}>
           <div className="modal asset-pick-modal" onClick={(e) => e.stopPropagation()}>
             <div className="make-row">
-              <h3>Pick a picture for {pickingSlot === "start" ? "start frame" : pickingSlot === "end" ? "end frame" : "reference"}</h3>
+              <h3>
+                {pickingSlot === "audio"
+                  ? "Pick reference audio"
+                  : `Pick a picture for ${pickingSlot === "start" ? "start frame" : pickingSlot === "end" ? "end frame" : "reference"}`}
+              </h3>
               <span className="spacer" />
+              {pickingSlot === "audio" && (
+                <select value={audioRole} onChange={(e) => setAudioRole(e.target.value as AudioRefRole)} aria-label="Audio role">
+                  <option value="voice">Voice timbre</option>
+                  <option value="music">Music / beat</option>
+                  <option value="dialogue">Spoken dialogue</option>
+                  <option value="ambience">Ambience</option>
+                </select>
+              )}
               <button className="icon" onClick={() => setPickingSlot(undefined)} aria-label="Close">
                 <Icon name="close" size={12} />
               </button>
             </div>
             <div className="asset-pick-grid">
-              {images.map((img) => (
-                <button
-                  key={img.id}
-                  className="asset-pick-card"
-                  onClick={() => {
-                    if (pickingSlot === "start") setStart(img.id);
-                    else if (pickingSlot === "end") setEnd(img.id);
-                    else if (!refs.includes(img.id)) setRefs([...refs, img.id]);
-                    setPickingSlot(undefined);
-                  }}
-                  title={img.label ?? img.id}
-                >
-                  <img src={posterUrl(projectId, img.id)} loading="lazy" alt="" onError={hideBroken} />
-                  <span className="small">{img.label ?? img.id}</span>
-                </button>
-              ))}
+              {pickingSlot === "audio"
+                ? audioAssets.map((aud) => (
+                    <button
+                      key={aud.id}
+                      className="asset-pick-card"
+                      onClick={() => {
+                        addAudioRef({ kind: "asset", asset: aud.id, role: audioRole });
+                        setPickingSlot(undefined);
+                      }}
+                      title={aud.label ?? aud.id}
+                    >
+                      <span className="pill small">{aud.kind}</span>
+                      <span className="small">{aud.label ?? aud.id}</span>
+                      {aud.duration !== undefined && <span className="dim small">{round2(aud.duration)}s</span>}
+                    </button>
+                  ))
+                : images.map((img) => (
+                    <button
+                      key={img.id}
+                      className="asset-pick-card"
+                      onClick={() => {
+                        if (pickingSlot === "start") setStart(img.id);
+                        else if (pickingSlot === "end") setEnd(img.id);
+                        else if (!refs.includes(img.id)) setRefs([...refs, img.id]);
+                        setPickingSlot(undefined);
+                      }}
+                      title={img.label ?? img.id}
+                    >
+                      <img src={posterUrl(projectId, img.id)} loading="lazy" alt="" onError={hideBroken} />
+                      <span className="small">{img.label ?? img.id}</span>
+                    </button>
+                  ))}
             </div>
           </div>
         </div>

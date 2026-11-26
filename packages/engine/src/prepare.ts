@@ -17,7 +17,7 @@ import {
   type Quality,
 } from "@beatsheet/schema";
 import { quickAsk } from "./agent/fast.ts";
-import { connectedStates, preferredProvider } from "./make.ts";
+import { connectedStates, preferredProvider, type AudioRefAsk } from "./make.ts";
 import { loadProject } from "./store.ts";
 
 export type MakeInputMode = "text" | "board" | "refs" | "blockout" | "drive" | "speech";
@@ -38,6 +38,7 @@ export type MakeDraft = {
   drive?: { asset: string; from: number; to?: number };
   speech?: boolean;
   speechDub?: boolean;
+  audioRefs?: AudioRefAsk[];
   seconds?: number;
   aspect?: string;
   count: number;
@@ -76,7 +77,7 @@ Rules:
     - "drive" if copying movement from an existing footage clip (scail-2 / wan-2.2-animate / kling-motion-control).
     - "speech" if lip-syncing dialogue lines (minimax-h3-lipsync / kling-avatar / sync-3 / etc.).
     - "board" if starting from a still board (default for most video shots).
-    - "refs" if animating from reference pictures without a start frame.
+    - "refs" if animating from reference pictures (or multimodal reference audio: music beat, voiced lines, character voice timbre, or an audio clip — supported on magi-2, seedance-2.5, wan-3, and minimax-h3 on Runway) without a locked start frame.
     - "text" only if generating video from words alone.
 - Keep @cast mentions (like @cat) in prompts when referencing cast members.
 - Reply ONLY with a single valid JSON object (no markdown fences, no commentary) matching:

@@ -462,6 +462,49 @@ export const Reframe = z.object({
 });
 export type Reframe = z.infer<typeof Reframe>;
 
+export const AudioRefRole = z.enum(["voice", "music", "dialogue", "ambience"]);
+export type AudioRefRole = z.infer<typeof AudioRefRole>;
+
+/**
+ * Reference audio sent to a multimodal video model (MAGI-2, Seedance 2.5, Wan 3.0, MiniMax H3 on Runway):
+ * - `music`: the cut's music track over `[from, to]` (seconds in the cut) for beat-synced motion;
+ * - `speech`: the cut's voiced lines over `[from, to]` (seconds in the cut) for scene acting/lip-sync with refs or blockouts;
+ * - `voice`: a cast member's voice timbre sample (`asset` slice `[from, to]` in seconds of that asset);
+ * - `asset`: any audio or video asset slice `[from, to]` in seconds of that asset, with an optional `role`.
+ */
+export const AudioRef = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("music"),
+    from: z.number().min(0),
+    to: z.number().min(0),
+    label: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("speech"),
+    lines: z.array(z.string()),
+    from: z.number().min(0),
+    to: z.number().min(0),
+    label: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("voice"),
+    cast: z.string(),
+    asset: z.string(),
+    from: z.number().min(0),
+    to: z.number().min(0),
+    label: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("asset"),
+    asset: z.string(),
+    from: z.number().min(0),
+    to: z.number().min(0),
+    role: AudioRefRole.optional(),
+    label: z.string().optional(),
+  }),
+]);
+export type AudioRef = z.infer<typeof AudioRef>;
+
 export const EASES = ["linear", "in", "out", "in-out", "hold"] as const;
 
 /**
@@ -633,6 +676,10 @@ export const ShotContent = z.discriminatedUnion("kind", [
       })
       .optional()
       .describe("For video takes that lip-sync: the start picture is made to say this, or the mouths in the clip the shot showed are changed to. The take comes in silent; the line plays from the cut's voice"),
+    audioRefs: z
+      .array(AudioRef)
+      .optional()
+      .describe("Reference audio sent to multimodal video models (MAGI-2, Seedance 2.5, Wan 3.0, MiniMax H3 on Runway): music beat, voiced lines, character voice timbre, or an audio clip"),
     in: z.number().optional().describe("Seconds into the take: takes are made a little longer than the shot, so it can be retimed"),
     reframe: z.record(z.string(), Reframe).optional().describe("Per format id, as for a clip: where the take sits in a format of another shape"),
     effects: z.array(ClipEffect).optional().describe("As for a clip, following a subject found on the take"),
@@ -847,7 +894,8 @@ export const PlannedTake = z.object({
   drive: Stretch.optional().describe("The stretch of a clip whose movement it copies"),
   clip: Stretch.optional().describe("The stretch of a clip whose mouths it changes"),
   speech: z.union([z.object({ lines: z.array(z.string()), from: z.number(), to: z.number() }), Stretch]).optional(),
-  told: z.string().describe("The words as the service gets them, with what the engine adds about the pictures and the blockout"),
+  audioRefs: z.array(AudioRef).optional().describe("Reference audio sent with the take (music slice, voiced lines, character voice timbre, or an audio clip)"),
+  told: z.string().describe("The words as the service gets them, with what the engine adds about the pictures, the blockout and the reference audio"),
   started: z.array(z.string()).optional().describe("The jobs picking it started"),
 });
 export type PlannedTake = z.infer<typeof PlannedTake>;
@@ -994,6 +1042,7 @@ export const CastMember = z.object({
     .optional()
     .describe("The same one in another look (an outfit, a state, a time of day): @cat/heist"),
   voice: z.string().optional().describe("For a character: the voice that reads its lines"),
+  voiceSample: z.string().optional().describe("For a character: an audio or video asset id used as their reference voice timbre"),
   style: z.string().optional().describe("For one drawn unlike the rest (a cartoon cat in a photographed street): the id of a style in the cast. Default the look's"),
 });
 export type CastMember = z.infer<typeof CastMember>;

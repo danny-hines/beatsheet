@@ -126,7 +126,7 @@ export const SERVICES: Service[] = [
   {
     id: "higgsfield",
     label: "Higgsfield",
-    does: "Video from other makers' models on one prepaid balance (Kling, Seedance, Wan), and stills: GPT Image 2.5 and its own Soul 2. Its key is two parts; paste them as one, ID:SECRET.",
+    does: "Video from other makers' models on one prepaid balance (MAGI-2, Kling, Seedance, Wan), and stills: GPT Image 2.5 and its own Soul 2. Its key is two parts; paste them as one, ID:SECRET.",
     unlocks: ["video", "images"],
     keyUrl: "https://open.higgsfield.ai/api-keys",
     async verify(key) {

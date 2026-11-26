@@ -205,7 +205,8 @@ beforeAll(async () => {
           const type = (JSON.parse(body) as { content_type: string }).content_type;
           higgsfield.uploads.push(type);
           const n = higgsfield.uploads.length;
-          return send(200, { public_url: `${base}/out/hf-upload-${n}.${type === "video/mp4" ? "mp4" : "jpg"}`, upload_url: `${base}/higgsfield-store/${n}`, content_type: type, upload_headers: { "Content-Type": type, "x-amz-tagging": "retention=temporary" } });
+          const ext = type === "video/mp4" ? "mp4" : type === "audio/wav" ? "wav" : type === "audio/mpeg" ? "mp3" : "jpg";
+          return send(200, { public_url: `${base}/out/hf-upload-${n}.${ext}`, upload_url: `${base}/higgsfield-store/${n}`, content_type: type, upload_headers: { "Content-Type": type, "x-amz-tagging": "retention=temporary" } });
         }
         const followed = path.match(/^requests\/([^/]+)\/(status|cancel)$/);
         if (followed) {
@@ -2056,5 +2057,169 @@ describe("OpenRouter as a provider", () => {
     });
     expect(() => openrouterImageInput("unknown", "m", { prompt: "x" })).toThrow('no way to ask OpenRouter for "unknown" still models yet');
     expect(() => openrouterVideoInput("unknown", "m", { prompt: "x" })).toThrow('no way to ask OpenRouter for "unknown" video models yet');
+  });
+});
+
+describe("multimodal reference audio (audioRefs)", () => {
+  const connect = () => void (settings.services = { higgsfield: { addedAt: "2026-11-26" }, runway: { addedAt: "2026-11-26" }, openrouter: { addedAt: "2026-11-26" } });
+  const hasAudioStream = (file: string) => {
+    const out = execFileSync("ffprobe", ["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", file], { encoding: "utf8" }).trim();
+    return out.includes("audio");
+  };
+
+  it("maps audioRefs into provider inputs and role-specific prompt lines across fal, Higgsfield, Runway and OpenRouter", async () => {
+    const { audioLine, falInput } = await import("../src/fal.ts");
+    const { higgsfieldInput } = await import("../src/higgsfield.ts");
+    const { runwayInput } = await import("../src/runway.ts");
+    const { openrouterVideoInput } = await import("../src/openrouter.ts");
+
+    const refs = [
+      { url: "https://cdn/beat.wav", role: "music" as const, label: "theme" },
+      { url: "https://cdn/cat.wav", role: "voice" as const, label: "Cat's voice" },
+    ];
+    expect(audioLine(refs, (n) => `@Audio${n}`)).toContain("@Audio1 (theme) is the music track");
+    expect(audioLine(refs, (n) => `@Audio${n}`)).toContain("@Audio2 (Cat's voice) is the voice reference");
+
+    // fal Seedance 2.5 (@Audio1, audio_urls) & Wan 3.0 (reference_audio_urls).
+    expect(falInput("seedance-2.5", { prompt: "Dances.", seconds: 5, refs: ["i1"], audioRefs: refs })).toMatchObject({
+      audio_urls: ["https://cdn/beat.wav", "https://cdn/cat.wav"],
+      image_urls: ["i1"],
+      prompt: expect.stringContaining("@Audio1 (theme) is the music track"),
+    });
+    expect(falInput("wan-3", { prompt: "Dances.", seconds: 5, audioRefs: [refs[0]!] })).toMatchObject({
+      reference_audio_urls: ["https://cdn/beat.wav"],
+      prompt: expect.stringContaining("The reference audio (theme) is the music track"),
+    });
+
+    // Higgsfield MAGI-2 (audio_urls + generate_audio: false when muteAudio), Seedance 2.5, Wan 3.0.
+    expect(
+      higgsfieldInput("magi-2", "sand/magi-2/reference-to-video", {
+        prompt: "Dances.",
+        seconds: 5,
+        aspect: "9:16",
+        refs: ["i1"],
+        audioRefs: [refs[0]!],
+        muteAudio: true,
+      }).body,
+    ).toMatchObject({
+      audio_urls: ["https://cdn/beat.wav"],
+      image_urls: ["i1"],
+      generate_audio: false,
+      aspect_ratio: "9:16",
+    });
+    expect(higgsfieldInput("seedance-2.5", "bytedance/seedance-2.5/reference-to-video", { prompt: "x", seconds: 5, audioRefs: [refs[1]!] }).body).toMatchObject({
+      audio_urls: ["https://cdn/cat.wav"],
+    });
+    expect(higgsfieldInput("wan-3.0", "alibaba/wan-3.0/reference-to-video", { prompt: "x", seconds: 5, audioRefs: [refs[1]!] }).body).toMatchObject({
+      audio_urls: ["https://cdn/cat.wav"],
+    });
+
+    // Runway Seedance 2.5, Wan 3.0 and MiniMax H3 (hailuo3) use referenceAudio.
+    expect(runwayInput("seedance2_5", "seedance2_5", { prompt: "x", seconds: 5, audioRefs: [refs[0]!] })).toMatchObject({
+      path: "text_to_video",
+      body: { referenceAudio: [{ type: "audio", uri: "https://cdn/beat.wav" }] },
+    });
+    expect(runwayInput("wan3", "wan3", { prompt: "x", seconds: 5, audioRefs: [refs[0]!] }).body).toMatchObject({
+      referenceAudio: [{ type: "audio", uri: "https://cdn/beat.wav" }],
+    });
+    expect(runwayInput("hailuo3", "hailuo3", { prompt: "x", seconds: 5, audioRefs: [refs[0]!] }).body).toMatchObject({
+      referenceAudio: [{ type: "audio", uri: "https://cdn/beat.wav" }],
+    });
+
+    // OpenRouter Seedance 2.5 adds audio_url entries to input_references.
+    expect(openrouterVideoInput("openrouter-seedance-2.5", "bytedance/seedance-2.5", { prompt: "x", seconds: 5, refs: ["i1"], audioRefs: [refs[0]!] })).toMatchObject({
+      input_references: [
+        { type: "image_url", image_url: { url: "i1" } },
+        { type: "audio_url", audio_url: { url: "https://cdn/beat.wav" } },
+      ],
+    });
+  });
+
+  it("runs MAGI-2 with music audioRef + board + blockout (muting output audio) and with a short padded cast voiceSample (keeping output audio)", async () => {
+    connect();
+    // Create a board still on s2.
+    make.startMake(PROJECT, { op: "image", shot: "s2", count: 1 });
+    await make.driveJobs(PROJECT);
+
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const songFile = join(dir, "song.wav");
+    const voiceFile = join(dir, "cat-voice.wav");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=10", "-c:a", "pcm_s16le", songFile]);
+    // 0.8s voice sample (< 2s minSeconds) so we verify automatic silence padding to 2s.
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=660:duration=0.8", "-c:a", "pcm_s16le", voiceFile]);
+    const blockoutClip = join(dir, "blockout.mp4");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=540x960:r=25:d=4", "-pix_fmt", "yuv420p", blockoutClip]);
+    make.setRenderStretch(async (_id, { out }) => writeFileSync(out, readFileSync(blockoutClip)));
+
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push(
+        { id: "song", kind: "music", path: songFile, label: "Alley Beat", duration: 10 },
+        { id: "cat-voice", kind: "voice", path: voiceFile, label: "Cat sample", duration: 0.8 },
+      );
+      d.cast!.find((m) => m.id === "cat")!.voiceSample = "cat-voice";
+    });
+    store.updateProject(PROJECT, (p) => {
+      p.music = { cues: [{ id: "m1", asset: "song", from: 0 }] };
+      const s2 = p.shots.find((s) => s.id === "s2")!;
+      s2.blockout = { beats: [{ id: "b1", duration: 4, component: "kit:Previs", props: { move: "orbit" } }] };
+    });
+
+    // 1. Plan & run MAGI-2 with start: "board" + camera: "blockout" + audioRefs: ["music"].
+    const musicAsk = { op: "video" as const, shot: "s2", start: "board", camera: "blockout" as const, audioRefs: ["music" as const], prompt: "The cat struts to the beat.", model: "magi-2", count: 1 };
+    const planned = make.planTake(PROJECT, musicAsk);
+    expect(planned.pictures).toEqual([{ asset: "s2-take", as: "ref" }]);
+    expect(planned.audioRefs).toEqual([{ kind: "music", from: 2.5, to: 5.7, label: "Alley Beat" }]);
+    expect(planned.told).toContain("The reference audio (Alley Beat) is the music track");
+
+    const started = make.startMake(PROJECT, musicAsk);
+    expect(started.fit).toMatchObject({ model: "magi-2", route: "higgsfield", endpoint: "sand/magi-2/reference-to-video", seconds: 4 });
+    await make.driveJobs(PROJECT);
+
+    const musicSubmit = higgsfield.submits.at(-1)!;
+    expect(musicSubmit.model).toBe("sand/magi-2/reference-to-video");
+    expect(musicSubmit.body).toMatchObject({
+      image_urls: [expect.stringMatching(/hf-upload-\d+\.jpg$/)],
+      video_urls: [expect.stringMatching(/hf-upload-\d+\.mp4$/)],
+      audio_urls: [expect.stringMatching(/hf-upload-\d+\.wav$/)],
+      generate_audio: false,
+      duration: 4,
+      resolution: "1080p",
+    });
+    expect(higgsfield.uploads).toContain("audio/wav");
+
+    const musicTake = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-2")!;
+    expect(musicTake.provenance?.params?.audioRefs).toEqual([{ kind: "music", from: 2.5, to: 5.7, label: "Alley Beat" }]);
+    // Timeline-synced music ref strips output audio so it never echoes over the cut's song.
+    expect(hasAudioStream(musicTake.path)).toBe(false);
+    expect(shot("s2").content).toMatchObject({ kind: "generated", take: "s2-take-2", audioRefs: [{ kind: "music", from: 2.5, to: 5.7, label: "Alley Beat" }] });
+
+    // 2. Run MAGI-2 with a short (0.8s) cast voice timbre sample: padded to 2s, generate_audio kept on, output keeps its audio stream.
+    const voiceStarted = make.startMake(PROJECT, {
+      op: "video",
+      shot: "s2",
+      start: "board",
+      camera: null,
+      audioRefs: [{ kind: "voice", cast: "cat" }],
+      prompt: 'The cat says: "Welcome to my alley."',
+      model: "magi-2",
+      count: 1,
+    });
+    await make.driveJobs(PROJECT);
+
+    const voiceSubmit = higgsfield.submits.at(-1)!;
+    expect(voiceSubmit.body).toMatchObject({
+      audio_urls: [expect.stringMatching(/hf-upload-\d+\.wav$/)],
+      image_urls: [expect.stringMatching(/hf-upload-\d+\.jpg$/)],
+    });
+    expect(voiceSubmit.body).not.toHaveProperty("generate_audio");
+    // Verify the prepared WAV cached for upload was padded up to 2.0s.
+    const preparedWav = join(dir, ".cache", "audioref", `${voiceStarted.jobs[0]!.id}-0.wav`);
+    const wavDur = Number(execFileSync("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", preparedWav], { encoding: "utf8" }).trim());
+    expect(wavDur).toBeCloseTo(2, 1);
+
+    const voiceTake = store.loadProject(PROJECT).project.assets.find((a) => a.id === "s2-take-3")!;
+    // Voice timbre reference preserves generated audio on the output clip.
+    expect(hasAudioStream(voiceTake.path)).toBe(true);
+    expect(voiceTake.provenance?.refs).toContain("cat-voice");
   });
 });

@@ -397,12 +397,13 @@ function Sends({ planned: m, pics, onOpen }: { planned: PlannedTake; pics: SendP
   const shotBlockout = m.camera && "blockout" in m.camera ? m.camera : undefined;
   const legacyBlockout = m.camera && !shotBlockout && "cut" in m.camera ? m.camera : undefined;
   const hasBlockout = !!shotBlockout || !!legacyBlockout;
+  const audioRefs = m.audioRefs ?? [];
   return (
     <span className="turn-sends">
       <span className="small">
         <strong>{m.started?.length ? "Started" : "Picking this sends"}</strong> <span className="dim">to {m.label} on {m.where} · {facts}</span>
       </span>
-      {pics.length + (hasBlockout ? 1 : 0) > 0 ? (
+      {pics.length + (hasBlockout ? 1 : 0) + audioRefs.length > 0 ? (
         <span className="turn-sends-pics">
           {pics.map((p) => (
             <span
@@ -451,6 +452,38 @@ function Sends({ planned: m, pics, onOpen }: { planned: PlannedTake; pics: SendP
               </span>
             </span>
           )}
+          {audioRefs.map((ar, idx) => {
+            const part =
+              ar.kind === "music"
+                ? "Audio · Music"
+                : ar.kind === "speech"
+                  ? "Audio · Lines"
+                  : ar.kind === "voice"
+                    ? `Audio · @${ar.cast}`
+                    : `Audio${ar.role ? ` · ${ar.role}` : ""}`;
+            const detail =
+              ar.kind === "music"
+                ? `${ar.label ? `${ar.label}, ` : ""}${round1(ar.from)}–${round1(ar.to)}s`
+                : ar.kind === "speech"
+                  ? `${ar.lines.join(", ")}, ${round1(ar.from)}–${round1(ar.to)}s`
+                  : ar.kind === "voice"
+                    ? `${ar.asset}, ${round1(ar.from)}–${round1(ar.to)}s`
+                    : `${ar.label ?? ar.asset}, ${round1(ar.from)}–${round1(ar.to)}s`;
+            return (
+              <span
+                key={`aud-${idx}`}
+                className="turn-send audio"
+                title={`${part}: ${detail}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if ("asset" in ar) actions.select({ kind: "asset", id: ar.asset });
+                }}
+              >
+                <span className="turn-send-part">{part}</span>
+                <span className="turn-send-name">{detail}</span>
+              </span>
+            );
+          })}
         </span>
       ) : (
         <span className="dim small">No pictures go with it: words only.</span>

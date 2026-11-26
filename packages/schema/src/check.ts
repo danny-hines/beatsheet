@@ -86,6 +86,7 @@ export function checkCut(p: Project): CheckIssue[] {
       if (!a) add(`cast.${i}.heard.${j}`, `unknown asset "${h.asset}"`);
       else if (!a.transcript) add(`cast.${i}.heard.${j}`, `"${h.asset}" hasn't been transcribed`);
     });
+    if (m.voiceSample && !ids.assets.has(m.voiceSample)) add(`cast.${i}.voiceSample`, `unknown asset "${m.voiceSample}"`);
     dupes(`cast.${i}.variants`, m.variants ?? []);
     m.variants?.forEach((v) => castIds.add(`${m.id}/${v.id}`));
   });
@@ -150,6 +151,16 @@ export function checkCut(p: Project): CheckIssue[] {
         if (!ids.assets.has(a)) add(path, `unknown asset "${a}"`);
       if (c.take && c.takes && !c.takes.includes(c.take)) add(path, `take "${c.take}" is not in takes`);
       c.cast?.forEach((id) => castIds.has(id) || add(`${path}.content.cast`, `no cast member "${id}"`));
+      c.audioRefs?.forEach((a, j) => {
+        if (a.kind === "voice") {
+          if (!castIds.has(a.cast)) add(`${path}.content.audioRefs.${j}.cast`, `no cast member "${a.cast}"`);
+          if (!ids.assets.has(a.asset)) add(`${path}.content.audioRefs.${j}.asset`, `unknown asset "${a.asset}"`);
+        } else if (a.kind === "asset") {
+          if (!ids.assets.has(a.asset)) add(`${path}.content.audioRefs.${j}.asset`, `unknown asset "${a.asset}"`);
+        } else if (a.kind === "speech") {
+          for (const l of a.lines) if (!ids.lines.has(l)) add(`${path}.content.audioRefs.${j}.lines`, `unknown line "${l}"`);
+        }
+      });
     }
   });
   p.sfx?.forEach((c, i) => {

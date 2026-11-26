@@ -19,7 +19,7 @@
  */
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
-import { cameraLine, FalError, whole, type FalAsk, type FalRequest } from "./fal.ts";
+import { audioLine, cameraLine, FalError, whole, type FalAsk, type FalRequest } from "./fal.ts";
 import type { DirectOut } from "./direct.ts";
 
 const API = process.env.BEATSHEET_OPENROUTER ?? "https://openrouter.ai/api/v1";
@@ -168,6 +168,9 @@ export function openrouterVideoInput(shape: string, model: string, ask: FalAsk):
   const refs = ask.start ? undefined : ask.refs;
   const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
   const imgRefs = refs?.length ? refs.map(imageRef) : [];
+  const audioRefs = ask.start ? undefined : ask.audioRefs;
+  const audio = audioLine(audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`));
+  const audioInputs = audioRefs?.length ? audioRefs.map((a) => ({ type: "audio_url", audio_url: { url: a.url } })) : [];
   const frames = ask.start
     ? [
         { ...imageRef(ask.start), frame_type: "first_frame" },
@@ -192,12 +195,12 @@ export function openrouterVideoInput(shape: string, model: string, ask: FalAsk):
     case "openrouter-seedance-2.5":
     case "openrouter-seedance-2.5-flash": {
       // Seedance 2.5 (480p rough / 1080p final) and 2.5 Flash (480p rough / 720p final): whole seconds, native sound,
-      // references and optional reference video for keeping a blockout's camera.
+      // references, optional reference video for keeping a blockout's camera, and optional reference audio.
       const videoRefs = ask.camera ? [{ type: "video_url", video_url: { url: ask.camera.url } }] : [];
-      const allRefs = [...imgRefs, ...videoRefs];
+      const allRefs = [...imgRefs, ...videoRefs, ...audioInputs];
       return {
         model,
-        prompt: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}`,
+        prompt: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}${audio}`,
         duration: whole(ask.seconds),
         resolution: shape === "openrouter-seedance-2.5-flash" ? (final ? "720p" : "480p") : final ? "1080p" : "480p",
         generate_audio: true,

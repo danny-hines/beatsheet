@@ -9,13 +9,14 @@
  * 2026): one id for a model whatever the request, and prices in credits of a cent each. None has made a take for real
  * yet. Runway says what each take cost, which the take records in place of the estimate here.
  *
- * Higgsfield's routes are from docs.higgsfield.ai and each model's page at dash.higgsfield.ai, with prices from
- * open.higgsfield.ai/pricing (read 21 November 2026): a model's id is the address its requests go to, and prices are
- * in dollars a second. None has made a take for real yet. Higgsfield says what a request will cost the account as it's
- * sent, which the take records in place of the estimate here. Kling 4.0 has a page in its console but none in its
- * docs, so it may not be open to every account. Its stills are GPT Image 2.5 (the version before the one here, which
- * it sells as Marketing Studio Image) and its own Soul 2; Seedream 5 Pro, Kling Image 4.0 and the rest it sells aren't
- * in the catalog.
+ * Higgsfield's routes are from docs.higgsfield.ai and each model's page at open.higgsfield.ai / dash.higgsfield.ai,
+ * with prices from open.higgsfield.ai/pricing (read 21 November 2026; MAGI-2 added 26 November 2026): a model's id is
+ * the address its requests go to, and prices are in dollars a second. None has made a take for real yet. Higgsfield
+ * says what a request will cost the account as it's sent, which the take records in place of the estimate here. Kling
+ * 4.0 and MAGI-2 have model pages in its console/API catalog but aren't in docs.higgsfield.ai/llms.txt yet, so
+ * availability may vary by account. Its stills are GPT Image 2.5 (the version before the one here, which it sells as
+ * Marketing Studio Image) and its own Soul 2; Seedream 5 Pro, Kling Image 4.0 and the rest it sells aren't in the
+ * catalog.
  *
  * OpenRouter's routes are from openrouter.ai/openapi.json, /api/v1/images/models and /api/v1/videos/models (read 26
  * November 2026): a curated subset of its catalog (overlapping models plus HeyGen Avatar 6, HeyGen Video 1, HappyHorse
@@ -342,13 +343,44 @@ export const CATALOG: CatalogModel[] = [
     ],
   },
   {
+    id: "magi-2",
+    label: "MAGI-2",
+    by: "Sand.ai",
+    note: "Tied #1 in blind votes from a board at 8¢/s for 1080p (25 fps): 4 to 30 seconds with its own sound, up to 10 reference pictures, reference audio, and keeps a blockout's camera.",
+    ops: ["video"],
+    // No tier: 1080p only at $0.08/s, cheaper than most roughs and finals both. Reference videos: 2–30s (up to 5, ≤30s combined). Reference audio: up to 5 clips, 2–30s each, ≤30s combined.
+    takes: { start: true, end: true, refs: 10, camera: { min: 2, max: 30 }, audio: { max: 5, minSeconds: 2, maxSeconds: 30, maxTotalSeconds: 30 } },
+    lengths: Array.from({ length: 27 }, (_, i) => i + 4),
+    aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    sound: true,
+    wait: 180,
+    // Sand.ai's direct API (platform.sand.ai) is $0.08/s too, but self-serve balance top-ups aren't open yet; Higgsfield
+    // serves text, image and reference endpoints at the same flat $0.08/s (1080p only, output seconds only, audio on or
+    // off; checked 26 November 2026 from open.higgsfield.ai/models/sand/magi-2/* and dash.higgsfield.ai/.../llms.txt).
+    // No take has been made for real yet; real-face handling and blockout fidelity still need smoke tests.
+    routes: [
+      {
+        via: "higgsfield",
+        shape: "magi-2",
+        endpoints: {
+          text: "sand/magi-2/text-to-video",
+          start: "sand/magi-2/image-to-video",
+          refs: "sand/magi-2/reference-to-video",
+          camera: "sand/magi-2/reference-to-video",
+        },
+        price: { perSecond: 0.08 },
+        note: "1080p only at 25 fps, flat 8¢/s including blockouts, reference audio and sound (no separate 480p rough tier).",
+      },
+    ],
+  },
+  {
     id: "wan-3",
     label: "Wan 3.0",
     by: "Alibaba",
-    note: "First in blind votes from a prompt; roughs at 480p and finals at 1080p, 2 to 30 seconds in one take, with its own sound. Animates real people some others refuse.",
+    note: "First in blind votes from a prompt; roughs at 480p and finals at 1080p, 2 to 30 seconds in one take, with its own sound and reference audio. Animates real people some others refuse.",
     ops: ["video"],
     // No tier: the same model makes both, roughs smaller (fal.ts), so the final is the rough's model made larger.
-    takes: { start: true, end: true, refs: 10 },
+    takes: { start: true, end: true, refs: 10, audio: { max: 5, minSeconds: 2, maxSeconds: 30, maxTotalSeconds: 30 } },
     lengths: Array.from({ length: 29 }, (_, i) => i + 2),
     aspects: ["16:9", "4:3", "1:1", "3:4", "9:16"],
     sound: true,
@@ -362,10 +394,17 @@ export const CATALOG: CatalogModel[] = [
         shape: "wan-3",
         endpoints: { text: "alibaba/wan-3.0/text-to-video", start: "alibaba/wan-3.0/image-to-video", refs: "alibaba/wan-3.0/reference-to-video" },
         price: { perSecond: 0.05, finalPerSecond: 0.2 },
+        takes: { audio: { max: 5, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
       },
-      // Runway's wan3: 5 credits a second at 480p and 20 at 1080p, the same as fal.
-      { via: "runway", shape: "wan3", endpoints: { text: "wan3", start: "wan3", refs: "wan3" }, price: { perSecond: 0.05, finalPerSecond: 0.2 } },
-      // Higgsfield: $0.0375 a second at 480p and $0.15 at 1080p, a quarter less than fal.
+      // Runway's wan3: 5 credits a second at 480p and 20 at 1080p, the same as fal. referenceAudio: up to 3 clips, ≤15s combined.
+      {
+        via: "runway",
+        shape: "wan3",
+        endpoints: { text: "wan3", start: "wan3", refs: "wan3" },
+        price: { perSecond: 0.05, finalPerSecond: 0.2 },
+        takes: { audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
+      },
+      // Higgsfield: $0.0375 a second at 480p and $0.15 at 1080p, a quarter less than fal. audio_urls: up to 5 clips, ≤30s combined.
       {
         via: "higgsfield",
         shape: "wan-3.0",
@@ -378,6 +417,7 @@ export const CATALOG: CatalogModel[] = [
         shape: "openrouter-wan-3",
         endpoints: { text: "alibaba/wan-3.0", start: "alibaba/wan-3.0", refs: "alibaba/wan-3.0" },
         price: { perSecond: 0.05, finalPerSecond: 0.2 },
+        takes: { audio: false },
       },
     ],
   },
@@ -385,10 +425,10 @@ export const CATALOG: CatalogModel[] = [
     id: "minimax-h3",
     label: "MiniMax H3",
     by: "MiniMax",
-    note: "Open weights: 5 to 15 seconds with its own sound, from a board, a prompt, or up to 9 reference pictures. On fal, or from a board on your own graphics card through ComfyUI, where its license leaves out the US, EU, UK and South Korea.",
+    note: "Open weights: 5 to 15 seconds with its own sound, from a board, a prompt, or up to 9 reference pictures (and reference audio on Runway). On fal, or from a board on your own graphics card through ComfyUI, where its license leaves out the US, EU, UK and South Korea.",
     ops: ["video"],
     tier: "rough",
-    takes: { start: true, end: true, refs: 9 },
+    takes: { start: true, end: true, refs: 9, audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
     lengths: { min: 5, max: 15 },
     aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
     sound: true,
@@ -401,9 +441,10 @@ export const CATALOG: CatalogModel[] = [
         shape: "minimax-h3",
         endpoints: { text: "minimax/h3/text-to-video", start: "minimax/h3/image-to-video", refs: "minimax/h3/reference-to-video" },
         price: { perSecond: 0.06 },
+        takes: { audio: false },
       },
       // Runway's hailuo3: 10 credits a second at 768p, and 2 for each picture it's given (a start or end frame, a
-      // reference), which the estimate leaves out.
+      // reference), which the estimate leaves out. Accepts referenceAudio (up to 3 clips, ≤15s combined).
       {
         via: "runway",
         shape: "hailuo3",
@@ -417,6 +458,7 @@ export const CATALOG: CatalogModel[] = [
         shape: "openrouter-hailuo-3",
         endpoints: { text: "minimax/hailuo-3", start: "minimax/hailuo-3", refs: "minimax/hailuo-3" },
         price: { perSecond: 0.13 },
+        takes: { audio: false },
         note: "Renders at 2K here; each reference picture adds 4¢, which the estimate leaves out.",
       },
       // The open weights (pruned INT8, with the NVFP4 text encoder) from a board, and an end frame if there is one:
@@ -427,7 +469,7 @@ export const CATALOG: CatalogModel[] = [
         shape: "minimax-h3",
         endpoints: { start: "minimax-h3-i2v" },
         price: { perSecond: 0 },
-        takes: { refs: 0 },
+        takes: { refs: 0, audio: false },
         wait: 900,
         commercial: { use: "no", why: "The MiniMax H3 Community License grants nothing in the US, EU, UK or South Korea, and commercial use of what it makes needs a license bought through Comfy (fal's H3 has no such limit)" },
       },
@@ -516,10 +558,11 @@ export const CATALOG: CatalogModel[] = [
     id: "seedance-2.5",
     label: "Seedance 2.5",
     by: "ByteDance",
-    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures. The dearest here on fal, where it won't draw real people; through Tein it costs less and does. It keeps the camera of a blockout it's given.",
+    note: "First in blind votes from a board, and for dialogue, bodies in motion and weight: 4 to 30 seconds with its own sound, up to 30 reference pictures and reference audio. The dearest here on fal, where it won't draw real people; through Tein it costs less and does. It keeps the camera of a blockout it's given.",
     ops: ["video"],
     // A clip to keep the camera of: 2 to 30 seconds (Tein's limits for a reference video; fal's are 1.8 to 30.2).
-    takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 } },
+    // Reference audio: up to 10 clips, 2–30s each, ≤30s combined on fal & Higgsfield; up to 3 / ≤15s on Runway & OpenRouter.
+    takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 }, audio: { max: 10, minSeconds: 2, maxSeconds: 30, maxTotalSeconds: 30 } },
     lengths: Array.from({ length: 27 }, (_, i) => i + 4),
     aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
     sound: true,
@@ -558,6 +601,7 @@ export const CATALOG: CatalogModel[] = [
         shape: "seedance-2.5",
         endpoints: { text: "seedance-2-5", start: "seedance-2-5", refs: "seedance-2-5", camera: "seedance-2-5" },
         price: { perSecond: 0.1355, finalPerSecond: 0.7659, camera: { perSecond: 0.0809, finalPerSecond: 0.4595, least: 2 / 3 } },
+        takes: { audio: false },
         realPeople: true,
         note: "Keeps the faces of real people from your own photos, which Seedance won't draw elsewhere; Tein's terms want each person's consent.",
       },
@@ -571,6 +615,7 @@ export const CATALOG: CatalogModel[] = [
         shape: "seedance2_5",
         endpoints: { text: "seedance2_5", start: "seedance2_5", refs: "seedance2_5", camera: "seedance2_5" },
         price: { perSecond: 0.2, finalPerSecond: 0.68, minimum: 0.8, camera: { perSecond: 0.15, finalPerSecond: 0.51 } },
+        takes: { audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
       },
       // Higgsfield: $0.1177 a second at 480p and $0.6518 at 1080p, the least here for a rough. With a clip (a
       // blockout, for its camera) the rate is $0.1387 and $0.7858, on the take's seconds only: "Input video duration
@@ -600,6 +645,7 @@ export const CATALOG: CatalogModel[] = [
           camera: "bytedance/seedance-2.5",
         },
         price: { perSecond: 0.1103, finalPerSecond: 0.582, camera: { perSecond: 0.066, finalPerSecond: 0.3482 } },
+        takes: { audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
       },
     ],
   },
@@ -607,10 +653,10 @@ export const CATALOG: CatalogModel[] = [
     id: "seedance-2.5-flash",
     label: "Seedance 2.5 Flash",
     by: "ByteDance",
-    note: "The faster, cheaper rough tier of Seedance 2.5: 4 to 30 seconds at 480p with its own sound, up to 30 reference pictures, and keeps a blockout's camera. Won't draw real people.",
+    note: "The faster, cheaper rough tier of Seedance 2.5: 4 to 30 seconds at 480p with its own sound, up to 30 reference pictures and reference audio, and keeps a blockout's camera. Won't draw real people.",
     ops: ["video"],
     tier: "rough",
-    takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 } },
+    takes: { start: true, end: true, refs: 30, camera: { min: 2, max: 30 }, audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
     lengths: Array.from({ length: 27 }, (_, i) => i + 4),
     aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
     sound: true,
@@ -636,10 +682,10 @@ export const CATALOG: CatalogModel[] = [
     id: "seedance-2.0-mini",
     label: "Seedance 2.0 Mini",
     by: "ByteDance",
-    note: "Ultra-cheap Seedance rough tier: 4 to 15 seconds at 480p (~3.6¢/s, ~2.2¢/s for camera blockouts) with sound and references. Won't draw real people.",
+    note: "Ultra-cheap Seedance rough tier: 4 to 15 seconds at 480p (~3.6¢/s, ~2.2¢/s for camera blockouts) with sound, reference pictures and reference audio. Won't draw real people.",
     ops: ["video"],
     tier: "rough",
-    takes: { start: true, end: true, refs: 9, camera: { min: 2, max: 15 } },
+    takes: { start: true, end: true, refs: 9, camera: { min: 2, max: 15 }, audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
     lengths: Array.from({ length: 12 }, (_, i) => i + 4),
     aspects: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
     sound: true,

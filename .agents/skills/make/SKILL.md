@@ -55,6 +55,7 @@ Waste comes from making things before they're settled, more than from what a mod
   - **Copying the movement in another clip:** SCAIL-2 or Wan 2.2 Animate on the person's own hardware through ComfyUI, or Kling Motion Control on fal without one (see Copying movement below).
   - **A camera move a prompt won't hold** (an orbit, a dolly zoom, cuts that have to land on a beat): Seedance 2.5 keeps the camera of a blockout, through Tein or fal (see Directing the camera below).
   - **Lip sync** (a board made to say the cut's voiced line, or the mouths in a take changed to): see Lip sync below.
+  - **Reference audio** (`audioRefs`, multimodal conditioning on `reference-to-video` — beat-synced music motion, voiced-line acting alongside a blockout, or matching a cast member's voice timbre): MAGI-2 (Higgsfield), Seedance 2.5 (fal, Higgsfield, Runway, OpenRouter), Wan 3.0 (Higgsfield, fal, Runway), and MiniMax H3 (Runway). See Reference audio below.
 - **On the person's own hardware** (ComfyUI, connected in Settings → Making): Wan 2.2 from a board, up to 5 seconds, at no charge (`via: "comfy"`; the same model on fal makes up to 10), and quick on a big card (a 3-second rough in under a minute on a 4090), so it's a good rough pass to rank first when it's there; Wan 2.2 5B, the small one, softer (a staff can smear), and the only one a Mac can run itself; MiniMax H3 from a board (and an end frame), 5 to 15 seconds with its own sound, on a 24 GB NVIDIA card; FLUX 3 Image Klein for stills (boards and sheets from up to 10 references, seconds each); the two that copy movement; and InfiniteTalk, which makes a board say a line. Free, private, and nothing softens what's in the shot, but slow, one at a time. `list_models` says for each whether this machine (or the connected one) can run it and why not: an NVIDIA card is needed for the fp8 models, a laptop with no graphics card can't run any of them and should connect the ComfyUI on a computer that can, and a ComfyUI missing model files says so (Settings → Making fetches them). Don't route around it: say what's needed in a `provide` hand-off.
 - Boards and sheets from different still models look different (grain, color, how faces are drawn). Make a character's first sheets with two or three still models at once (`generate` with `models`, one or two takes each), look at them side by side, keep the best as the main picture, take the others out of `images`, and make the boards with the model whose sheet won.
 - A shot longer than any model makes is refused with the reason: split it into two shots.
@@ -141,6 +142,17 @@ What it says: `speech: {}` is the lines heard while the shot plays, the ones its
 - Write the prompt as for any clip from its board, and say how they speak ("talks quietly, looking just off camera"), not the words: the words come from the sound (models.md says which models read the prompt at all).
 - One person speaking per take. Two people talking in one shot: lip-sync one, or split the shot.
 - Watch it in the cut (`review_cut`, with `shots` or `from`/`to` for a fast check of just that dialogue moment) with the voice playing — if your runtime can read video files, watch the preview MP4 `review_cut` saves directly; a mouth that's late or early by a few frames is the lining up, not the model.
+
+## Reference audio (`audioRefs`)
+
+For models that take multimodal reference audio on `reference-to-video` (MAGI-2, Seedance 2.5, Wan 3.0, and MiniMax H3 on Runway), pass `audioRefs` to `list_models`, `generate` or `hand_off`'s `make`. Unlike dedicated `speech` lip-sync, `audioRefs` combines with reference pictures (`refs`) and 3D camera blockouts (`camera`); any `start` board is automatically promoted to the first reference picture (and there is no end frame):
+
+- `"music"` (or `{ kind: "music", from, to }`): slices the cut's music track over the shot so motion, dancing, and gestures hit the beat.
+- `"speech"` (or `{ kind: "speech", lines }`): sends the cut's voiced lines over the shot for full-scene acting and lip-sync alongside a blockout or reference set in one pass.
+- `{ kind: "voice", cast }`: extracts a voice-timbre sample from the character's `voiceSample` asset (or their spoken clip in `cast.heard`, using cleaned audio when present) so prompted dialogue keeps the same voice across shots.
+- `{ kind: "asset", asset, from, to, role }`: sends any Library audio or video slice (`role`: `"voice"`, `"music"`, `"dialogue"`, or `"ambience"`).
+
+Timeline-synced references (`"music"` and `"speech"`) disable lead handles (`takeLead = 0`), turn off native audio generation on MAGI-2 (`generate_audio: false`), and strip the finished take's audio track so it never echoes over the cut's mix. Voice timbre and ambience references keep the model's generated sound intact. Short clips under the route's minimum (2 s) are automatically padded with silence. The shot remembers `audioRefs` for retakes; pass `audioRefs: null` to clear them.
 
 ## Cast and sets
 

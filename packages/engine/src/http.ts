@@ -652,6 +652,17 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const cameraShots = q.get("cameraShots")?.split(",").filter(Boolean);
     const cameraMode = q.get("cameraMode") === "sheet" ? ("sheet" as const) : q.get("cameraMode") === "video" ? ("video" as const) : undefined;
     const refs = q.get("refs")?.split(",").filter(Boolean);
+    const rawAudio = q.get("audioRefs");
+    let audioRefsAsk: { audioRefs?: MakeAsk["audioRefs"] } = {};
+    if (rawAudio === "none") audioRefsAsk = { audioRefs: null };
+    else if (rawAudio) {
+      try {
+        const parsed = JSON.parse(rawAudio);
+        if (Array.isArray(parsed)) audioRefsAsk = { audioRefs: parsed as NonNullable<MakeAsk["audioRefs"]> };
+      } catch {
+        return json(res, 400, { error: "audioRefs must be JSON" });
+      }
+    }
     const speech = says === "none" ? { speech: null } : says === "lines" ? { speech: lines?.length ? { lines } : {} } : says ? { speech: { asset: says, from: at("speechFrom"), to: at("speechTo") } } : {};
     const cameraAsk =
       keeps === "none"
@@ -677,6 +688,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(follow === "none" ? { drive: null } : follow ? { drive: { asset: follow, from: at("from"), to: at("to") } } : {}),
           ...speech,
           ...cameraAsk,
+          ...audioRefsAsk,
           ...(q.get("clip") === "take" ? { clip: "take" as const } : {}),
           prompt: q.get("prompt") ?? undefined,
           aspect: q.get("aspect") ?? undefined,

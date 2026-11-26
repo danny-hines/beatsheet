@@ -865,15 +865,18 @@ export async function cutClip(src: string, dest: string, from: number, to: numbe
 }
 
 /**
- * Sound laid on `seconds` of silence, as mono WAV: each piece a file's sound from a second of it (`from`), starting
- * `at` seconds in and running until the next thing it meets is the end.
+ * Sound laid on `seconds` of silence, as mono WAV (or 128k MP3 when `dest` ends in .mp3): each piece a file's sound
+ * from a second of it (`from`, optionally bounded to `duration`), starting `at` seconds in and running until the end.
  */
-export async function laySound(pieces: { file: string; from: number; at: number }[], seconds: number, dest: string): Promise<void> {
+export async function laySound(pieces: { file: string; from: number; at: number; duration?: number }[], seconds: number, dest: string): Promise<void> {
   mkdirSync(dirname(dest), { recursive: true });
-  const chains = pieces.map(
-    (p, i) => `[${i + 1}:a]aformat=sample_rates=44100:channel_layouts=mono,atrim=start=${p.from.toFixed(3)},asetpts=PTS-STARTPTS,adelay=${Math.round(p.at * 1000)}:all=1[s${i}]`,
-  );
-  const mix = `[0:a]${pieces.map((_, i) => `[s${i}]`).join("")}amix=inputs=${pieces.length + 1}:duration=first:normalize=0[out]`;
+  const chains = pieces.map((p, i) => {
+    const trim = p.duration !== undefined ? `atrim=start=${p.from.toFixed(3)}:duration=${p.duration.toFixed(3)}` : `atrim=start=${p.from.toFixed(3)}`;
+    return `[${i + 1}:a]aformat=sample_rates=44100:channel_layouts=mono,${trim},asetpts=PTS-STARTPTS,adelay=${Math.round(p.at * 1000)}:all=1[s${i}]`;
+  });
+  const mix = pieces.length
+    ? `[0:a]${pieces.map((_, i) => `[s${i}]`).join("")}amix=inputs=${pieces.length + 1}:duration=first:normalize=0[out]`
+    : `[0:a]anull[out]`;
   const inputs = pieces.flatMap((p) => ["-i", p.file]);
   const codec = dest.endsWith(".mp3") ? ["-c:a", "libmp3lame", "-b:a", "128k"] : ["-c:a", "pcm_s16le"];
   await exec("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-t", seconds.toFixed(3), "-i", "anullsrc=r=44100:cl=mono", ...inputs, "-filter_complex", [...chains, mix].join(";"), "-map", "[out]", ...codec, dest]);

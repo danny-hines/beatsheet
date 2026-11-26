@@ -64,7 +64,7 @@ import { presenceFromEnv, removePresence, writePresence, type Presence } from ".
 import { addAsset, addSong, importMedia } from "./ingest.ts";
 import { KIT_PROPS } from "@beatsheet/video/catalog";
 import { generateMusic } from "./generate.ts";
-import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, preferredProvider, retryJobs, spentThisTurn, startMakeAll, turnBudget, type MakeAsk } from "./make.ts";
+import { absentFrom, cancelJobs, connectedStates, describeJob, driveJobs, estimate, isOpen, listJobs, makeChoices, planTake, preferredProvider, retryJobs, spentThisTurn, startMakeAll, turnBudget, type AudioRefAsk, type MakeAsk } from "./make.ts";
 import { reviewCut } from "./review.ts";
 import { addFont } from "./fonts.ts";
 import { footagePalette, previewLooks } from "./looks.ts";
@@ -744,7 +744,48 @@ const makeArgs = {
     .nullable()
     .optional()
     .describe(
-      "For video: keep a camera move, framing and cut timing. Use \"blockout\" (or { blockout: true, mode }) to follow this shot's own 3D blockout (created with set_blockout — never create a separate cut for a blockout!). In video mode Seedance 2.5 keeps exact frame-by-frame timing and bills blockout seconds too; in sheet mode a 4×4 16-frame contact sheet goes as a reference image with no video surcharge across Wan 3.0, MiniMax H3, HappyHorse 1.1 and Seedance. An immutable deduplicated snapshot is saved on each take automatically. Before the first take from a blockout, hand off a review with shot and blockout: true (stays in this cut's conversation). A generated shot whose takes kept a camera keeps it again unless this is null",
+      "For video: keep a camera move, framing and cut timing. Use \"blockout\" (or { blockout: true, mode }) to follow this shot's own 3D blockout (created with set_blockout — never create a separate cut for a blockout!). In video mode MAGI-2 and Seedance 2.5 keep exact frame-by-frame timing; in sheet mode a 4×4 16-frame contact sheet goes as a reference image with no video surcharge across Wan 3.0, MiniMax H3, HappyHorse 1.1 and Seedance. An immutable deduplicated snapshot is saved on each take automatically. Before the first take from a blockout, hand off a review with shot and blockout: true (stays in this cut's conversation). A generated shot whose takes kept a camera keeps it again unless this is null",
+    ),
+  audioRefs: z
+    .array(
+      z.union([
+        z.literal("music").describe("The cut's music playing over this shot (beat-synced motion; output audio muted)"),
+        z.literal("speech").describe("The cut's voiced lines over this shot (scene acting/lip-sync with refs or blockouts; output audio muted)"),
+        z.object({
+          kind: z.literal("music"),
+          from: z.number().min(0).optional().describe("Seconds in the cut; default shot start"),
+          to: z.number().min(0).optional().describe("Seconds in the cut; default shot end"),
+          label: z.string().optional(),
+        }),
+        z.object({
+          kind: z.literal("speech"),
+          lines: z.array(z.string()).optional().describe("Voice line ids; default lines heard over the shot"),
+          from: z.number().min(0).optional(),
+          to: z.number().min(0).optional(),
+          label: z.string().optional(),
+        }),
+        z.object({
+          kind: z.literal("voice"),
+          cast: z.string().describe("Cast member id whose voice timbre to match (uses cast.voiceSample or their spoken clip in cast.heard)"),
+          asset: z.string().optional().describe("Override audio/video asset id for their voice sample"),
+          from: z.number().min(0).optional(),
+          to: z.number().min(0).optional(),
+          label: z.string().optional(),
+        }),
+        z.object({
+          kind: z.literal("asset"),
+          asset: z.string().describe("Audio or video asset id in the Library"),
+          from: z.number().min(0).optional().describe("Seconds into the asset; default 0"),
+          to: z.number().min(0).optional().describe("Seconds into the asset; default shot length after from"),
+          role: z.enum(["voice", "music", "dialogue", "ambience"]).optional().describe("How the model should use this audio"),
+          label: z.string().optional(),
+        }),
+      ]),
+    )
+    .nullable()
+    .optional()
+    .describe(
+      'For video: multimodal reference audio clips sent on reference-to-video (MAGI-2, Seedance 2.5, Wan 3.0, MiniMax H3 on Runway). Combines with reference pictures and 3D camera blockouts (any start board is promoted to a reference picture). Use "music" for beat-synced motion, "speech" for voiced-line acting/lip-sync, { kind: "voice", cast } for a character\'s voice timbre, or { kind: "asset", asset, role } for any clip. Timeline-synced refs ("music"/"speech") disable lead handles and mute output audio so it never echoes over the cut\'s mix. Pass null to clear carried audioRefs',
     ),
   seconds: z.number().positive().optional().describe("How long it has to play; default the shot's length"),
   aspect: z.string().optional().describe('Its shape, like "9:16"; default the cut\'s first format'),
@@ -766,6 +807,7 @@ type MakeToolArgs = {
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
   clip?: "take" | { asset: string; from?: number; to?: number };
   camera?: "blockout" | { blockout: true; mode?: "video" | "sheet" } | { cut: string; shots?: string[]; mode?: "video" | "sheet" } | { asset: string; from?: number; to?: number } | null;
+  audioRefs?: AudioRefAsk[] | null;
   seconds?: number;
   aspect?: string;
   count?: number;
@@ -822,8 +864,11 @@ server.registerTool(
       );
     }
     const { req, choices } = makeChoices(id, asks[0]!);
+    const audioSummary = req.audioRefs?.length
+      ? `, with ${req.audioRefs.length} audio ref${req.audioRefs.length === 1 ? "" : "s"} (${req.audioRefs.map((a) => (a.kind === "music" ? `music ${a.from}–${a.to}s` : a.kind === "speech" ? `lines ${a.lines.join(",")}` : a.kind === "voice" ? `@${a.cast} voice` : `${a.asset} ${a.from}–${a.to}s`)).join(", ")})`
+      : "";
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"blockout" in req.camera ? `shot ${req.camera.shot}'s blockout` : "cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"blockout" in req.camera ? `shot ${req.camera.shot}'s blockout` : "cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${audioSummary}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
     ];
     out.push(...absent);
     const states = connectedStates();
@@ -850,7 +895,7 @@ server.registerTool(
   "generate",
   {
     description:
-      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). A clip can also copy the movement in a stretch of a clip (drive) onto the people in its board: a fight or a dance acted out by anyone. And it can lip-sync (speech): the board made to say the shot's voiced lines, or with clip \"take\", the mouths in the clip the shot shows changed to say them. Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
+      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). A clip can also copy the movement in a stretch of a clip (drive) onto the people in its board, lip-sync (speech / clip \"take\"), keep a 3D blockout's camera (camera), or follow multimodal reference audio (audioRefs: music beat, voiced lines, character voice timbre, or an audio clip) on models that support it (MAGI-2, Seedance 2.5, Wan 3.0, MiniMax H3 on Runway). Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
     inputSchema: {
       ...makeArgs,
       count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),

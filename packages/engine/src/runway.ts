@@ -20,7 +20,7 @@
  */
 import { readFileSync } from "node:fs";
 import { basename, extname } from "node:path";
-import { cameraLine, FalError, whole, type FalAsk, type FalRequest } from "./fal.ts";
+import { audioLine, cameraLine, FalError, whole, type FalAsk, type FalRequest } from "./fal.ts";
 
 const API = process.env.BEATSHEET_RUNWAY ?? "https://api.dev.runwayml.com/v1";
 /** The version of the API every request names; Runway has had the one since it opened. */
@@ -61,7 +61,7 @@ async function call(key: string, path: string, init: RequestInit = {}, starts = 
   throw problem(body, res.status);
 }
 
-const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4", ".mov": "video/quicktime" };
+const TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4", ".mov": "video/quicktime", ".wav": "audio/wav", ".mp3": "audio/mpeg" };
 
 /**
  * Puts a picture or a clip in Runway's storage and gives its `runway://` address, for inputs like a start frame: Runway
@@ -135,6 +135,9 @@ export function runwayInput(shape: string, model: string, ask: FalAsk): RunwayAs
   const refs = ask.start ? undefined : ask.refs;
   const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
   const references = refs?.length ? { references: refs.map((uri) => ({ uri })) } : {};
+  const audioRefs = ask.start ? undefined : ask.audioRefs;
+  const audio = audioLine(audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`));
+  const referenceAudio = audioRefs?.length ? { referenceAudio: audioRefs.map((a) => ({ type: "audio", uri: a.url })) } : {};
   const video = (body: Record<string, unknown>): RunwayAsk =>
     ask.start
       ? { path: "image_to_video", body: { model, promptImage: [{ uri: ask.start, position: "first" }, ...(ask.end ? [{ uri: ask.end, position: "last" }] : [])], ...body } }
@@ -146,13 +149,14 @@ export function runwayInput(shape: string, model: string, ask: FalAsk): RunwayAs
   switch (shape) {
     case "seedance2_5":
       // Seedance 2.5: roughs at 480p, finals at 1080p, whole seconds, with its own sound (on unless turned off). A
-      // clip whose camera it keeps goes as a reference video, beside the reference pictures.
+      // clip whose camera it keeps goes as a reference video, beside the reference pictures and reference audio.
       return video({
-        promptText: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}`,
+        promptText: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}${audio}`,
         ratio: sized(shape, ask),
         duration: whole(ask.seconds),
         ...references,
         ...(ask.camera ? { referenceVideos: [{ type: "video", uri: ask.camera.url }] } : {}),
+        ...referenceAudio,
       });
     case "kling_4":
       // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds, always with its own sound. From a picture it keeps
@@ -166,11 +170,25 @@ export function runwayInput(shape: string, model: string, ask: FalAsk): RunwayAs
       // Runway charges less without it.
       return video({ promptText: ask.prompt, duration: whole(ask.seconds), audio: false, ...(ask.start ? {} : { ratio: sized(shape, ask) }) });
     case "wan3":
-      // Wan 3.0: roughs at 480p, finals at 1080p, whole seconds, with its own sound.
-      return video({ promptText: `${ask.prompt}${shown}`, ratio: ask.start ? (final ? "auto_1080p" : "auto_480p") : sized(shape, ask), duration: whole(ask.seconds), audio: true, ...references });
+      // Wan 3.0: roughs at 480p, finals at 1080p, whole seconds, with its own sound and optional referenceAudio.
+      return video({
+        promptText: `${ask.prompt}${shown}${audio}`,
+        ratio: ask.start ? (final ? "auto_1080p" : "auto_480p") : sized(shape, ask),
+        duration: whole(ask.seconds),
+        audio: true,
+        ...references,
+        ...referenceAudio,
+      });
     case "hailuo3":
-      // MiniMax H3: 768p (it makes 2K unless told), whole seconds, always with its own sound.
-      return video({ promptText: `${ask.prompt}${shown}`, resolution: "768P", ratio: sized(shape, ask), duration: whole(ask.seconds), ...references });
+      // MiniMax H3: 768p (it makes 2K unless told), whole seconds, always with its own sound, optional referenceAudio.
+      return video({
+        promptText: `${ask.prompt}${shown}${audio}`,
+        resolution: "768P",
+        ratio: sized(shape, ask),
+        duration: whole(ask.seconds),
+        ...references,
+        ...referenceAudio,
+      });
     case "gemini_omni_flash_1.1":
       // Gemini Omni Flash 1.1: roughs at 360p, finals at 1080p, whole seconds, wide or tall only, even from a picture.
       return video({ promptText: ask.prompt, ratio: sized(shape, ask), duration: whole(ask.seconds) });

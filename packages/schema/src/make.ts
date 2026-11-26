@@ -5,7 +5,7 @@
  */
 import { slugify } from "./formats.ts";
 import { resolveTimeline } from "./resolve.ts";
-import type { Asset, Blockout, CastMember, CastProposal, Format, Project, ProjectFile, Shot, ShotContent } from "./types.ts";
+import type { Asset, AudioRef, Blockout, CastMember, CastProposal, Format, Project, ProjectFile, Shot, ShotContent } from "./types.ts";
 
 /**
  * What can be asked for. Lip sync is video with speech (MakeRequest.speech). More join as they're wired up: extend,
@@ -20,6 +20,12 @@ export type MakeOp = (typeof MAKE_OPS)[number];
  * One that keeps the camera of another (a blockout's move, framing and cuts) is "camera".
  */
 export type RequestShape = "text" | "start" | "refs" | "drive" | "talk" | "dub" | "camera";
+
+/** Limits on reference audio clips a video model (or one of its routes) accepts on reference-to-video. */
+export type AudioTake = { max: number; minSeconds: number; maxSeconds: number; maxTotalSeconds: number };
+
+/** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references, tighter or no audio references. */
+export type RouteTakes = { end?: boolean; refs?: number; audio?: AudioTake | false };
 
 /** One place a model runs, and what it costs there. */
 export type ModelRoute = {
@@ -43,8 +49,8 @@ export type ModelRoute = {
   commercial?: Commercial;
   /** For video: the lengths it makes here, when that's less than the model makes elsewhere (a workflow on your own card). */
   lengths?: number[] | { min: number; max: number };
-  /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references. */
-  takes?: { end?: boolean; refs?: number };
+  /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references, tighter or no audio references. */
+  takes?: RouteTakes;
   /** Roughly how long one take takes here, when that isn't the model's usual. */
   wait?: number;
   /** It draws real people here, though the model won't elsewhere (Seedance 2.5 through Tein, which keeps the faces it's given). */
@@ -83,8 +89,9 @@ export type CatalogModel = {
    * it copies the movement of the people in a clip onto the people in the start picture, and needs both. `speech`: it
    * lip-syncs to a voice, making the start picture talk or, with `clip`, changing the mouths in a clip. `camera`: it
    * keeps the camera of a clip it's given (the move, the framing, where the cuts fall), and how long a clip it takes.
+   * `audio`: it takes reference audio clips alongside reference pictures (and camera blockouts) on reference-to-video.
    */
-  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean; speech?: boolean; clip?: boolean; camera?: { min: number; max: number } };
+  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean; speech?: boolean; clip?: boolean; camera?: { min: number; max: number }; audio?: AudioTake };
   /** For video: the lengths it makes, as a list or a range, in seconds. */
   lengths?: number[] | { min: number; max: number };
   /** The aspects it makes ("16:9"), or "any". When it starts from a picture, the picture's shape decides instead. */
@@ -121,6 +128,8 @@ export type MakeRequest = {
   clip?: Stretch;
   /** For video that keeps another clip's camera: the stretch of a clip, or of a cut drawn as a blockout, to follow. */
   camera?: Camera;
+  /** For video that follows reference audio (music beat, voiced lines, character voice timbre, or an audio clip). */
+  audioRefs?: AudioRef[];
   /** The real people in it, by name: characters made from the person's own photos or clips (realPeople). */
   realPeople?: string[];
   /** How long it has to play, in seconds (the shot's length, or the stretch it follows). */
@@ -189,11 +198,17 @@ export type Fit = FitOk | { ok: false; model: string; label: string; why: Why };
  */
 export const HANDLE = 0.5;
 
+/** Whether an audio reference is locked to the cut's own timeline (music or voiced lines). */
+export const isTimelineAudioRef = (a: AudioRef): boolean => a.kind === "music" || a.kind === "speech";
+/** Whether any audio reference locks the take's timing to the cut's own timeline (no lead handle; output audio muted to avoid double-play). */
+export const hasTimelineAudioRef = (refs: AudioRef[] | undefined): boolean => !!refs?.some(isTimelineAudioRef);
+
 /**
  * How much longer than the shot to make a take, in all. One that follows a clip or says a line has its spare either
- * side. One that keeps a clip's camera has none: it runs as the clip does, cut for cut.
+ * side. One that keeps a clip's camera or follows a timeline-synced audio reference has none: it runs cut for cut.
  */
-const spareOf = (req: Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "camera">) => (req.camera ? 0 : req.drive || req.speech || !req.start ? 2 * HANDLE : req.end ? 0 : HANDLE);
+const spareOf = (req: Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "camera" | "audioRefs">) =>
+  req.camera || hasTimelineAudioRef(req.audioRefs) ? 0 : req.drive || req.speech || !req.start ? 2 * HANDLE : req.end ? 0 : HANDLE;
 
 /** A stretch of a file, in seconds of the file. */
 export type Stretch = { asset: string; from: number; to: number };
@@ -346,7 +361,7 @@ export function speechWindow(speech: Speech, clip: Stretch | undefined, seconds:
 }
 
 /** How a take was asked for, as far as where a shot starts in it goes. */
-type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "camera" | "seconds"> & { shotSeconds?: number };
+type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "camera" | "audioRefs" | "seconds"> & { shotSeconds?: number };
 
 /**
  * Where a shot starts in a take made for it: one that follows a clip, or says what's heard, where the stretch asked for
@@ -356,8 +371,8 @@ type Asked = Pick<MakeRequest, "start" | "end" | "drive" | "speech" | "clip" | "
 export function takeLead(r: Asked, duration: number | undefined, durationOf: (asset: string | undefined) => number | undefined): number {
   if (r.speech) return speechWindow(r.speech, r.clip, r.seconds ?? (r.clip ?? r.speech).to - (r.clip ?? r.speech).from, durationOf(r.clip?.asset ?? ("asset" in r.speech ? r.speech.asset : undefined))).lead;
   if (r.drive) return driveWindow(r.drive, r.seconds ?? r.drive.to - r.drive.from, durationOf(r.drive.asset)).lead;
-  // One that keeps a clip's camera starts where the clip does; anything it runs over is at its end.
-  if (r.camera) return 0;
+  // One that keeps a clip's camera or syncs to the cut's music/voice starts where the stretch does; anything it runs over is at its end.
+  if (r.camera || hasTimelineAudioRef(r.audioRefs)) return 0;
   if (!duration || !r.shotSeconds) return 0;
   const spare = Math.max(0, duration - r.shotSeconds);
   return r.end ? spare : r.start ? 0 : Math.min(HANDLE, spare / 2);
@@ -391,7 +406,7 @@ const money = (usd: number) => `$${usd < 1 ? usd.toFixed(2) : usd.toFixed(2).rep
 const list = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} or ${xs.at(-1)}`);
 
 /** Which of a service's endpoints a request needs. */
-export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip" | "camera">): RequestShape =>
+export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "speech" | "clip" | "camera" | "audioRefs">): RequestShape =>
   req.speech
     ? req.clip
       ? "dub"
@@ -400,7 +415,7 @@ export const shapeOf = (req: Pick<MakeRequest, "start" | "refs" | "drive" | "spe
       ? "drive"
       : req.camera && !isCameraSheet(req.camera)
         ? "camera"
-        : req.refs?.length || isCameraSheet(req.camera)
+        : req.refs?.length || req.audioRefs?.length || isCameraSheet(req.camera)
           ? "refs"
           : req.start
             ? "start"
@@ -457,6 +472,27 @@ export function billedWithClip(seconds: number, clipSeconds: number, least = 0):
   return Math.round(Math.max(both, seconds + Math.ceil(seconds * least - 1e-6)) * 10) / 10;
 }
 
+/** Validates a list of audio references against a model or route's audio limits. */
+function checkAudioRefs(refs: AudioRef[], takes: AudioTake): Extract<Why, { kind: "fit" }> | undefined {
+  if (refs.length > takes.max) {
+    return { kind: "fit", reason: `Takes up to ${takes.max} audio reference${takes.max === 1 ? "" : "s"}; this has ${refs.length}` };
+  }
+  let total = 0;
+  for (const a of refs) {
+    const dur = Math.max(0, a.to - a.from);
+    if (dur <= 0) return { kind: "fit", reason: "Reference audio stretch has zero length" };
+    if (dur > takes.maxSeconds + 0.05) {
+      return { kind: "fit", reason: `Each audio reference can be up to ${seconds1(takes.maxSeconds)}; this has ${seconds1(dur)}`, fix: "split" };
+    }
+    // Clips shorter than minSeconds are padded with silence by the engine, so count their padded duration against the total.
+    total += Math.max(takes.minSeconds, dur);
+  }
+  if (total > takes.maxTotalSeconds + 0.05) {
+    return { kind: "fit", reason: `Audio references total up to ${seconds1(takes.maxTotalSeconds)}; these total ${seconds1(total)}`, fix: "split" };
+  }
+  return undefined;
+}
+
 /**
  * Whether `model` can make `req` with the services there are, and if so where, at what length and shape, and for
  * about how much. What the model can't do is checked before what isn't connected: connecting a service won't help a
@@ -482,6 +518,14 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (req.speech && !req.clip && !model.takes.start) return no({ kind: "fit", reason: "Changes the mouths in a clip: say which clip (the take the shot shows)" });
   if (req.speech && !req.clip && !req.start) return no({ kind: "fit", reason: "Needs a picture of who speaks: start from the shot's board" });
   if (req.clip && req.start) return no({ kind: "fit", reason: "Changes the mouths in a clip, so it doesn't start from a picture as well" });
+  const audioRefs = req.audioRefs?.length ? req.audioRefs : undefined;
+  if (audioRefs) {
+    if (req.drive || req.speech) return no({ kind: "fit", reason: "Audio references can't be combined with movement copy or lip-sync" });
+    if (req.start) return no({ kind: "fit", reason: "Audio references go with reference pictures, not a start frame: give the picture as a reference" });
+    if (!model.takes.audio) return no({ kind: "fit", reason: "Doesn't take reference audio" });
+    const issue = checkAudioRefs(audioRefs, model.takes.audio);
+    if (issue) return no(issue);
+  }
   const sheet = isCameraSheet(req.camera);
   const followed = req.camera && !sheet ? req.camera.to - req.camera.from : undefined;
   if (req.camera) {
@@ -537,13 +581,27 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
     camera: "a clip whose camera to keep",
   };
   if (!there.length) return no({ kind: "fit", reason: `Nowhere runs ${model.label} with ${given[shape]}` });
-  // A route can take less than the model does elsewhere (no end frame on your own card).
-  const takesHere = (r: ModelRoute) => (!req.end || r.takes?.end !== false) && refs <= (r.takes?.refs ?? maxRefs);
+  // A route can take less than the model does elsewhere (no end frame on your own card, tighter or no audio references).
+  const audioOn = (r: ModelRoute): AudioTake | false | undefined => (r.takes?.audio !== undefined ? r.takes.audio : model.takes.audio);
+  const takesAudioHere = (r: ModelRoute) => {
+    if (!audioRefs) return true;
+    const t = audioOn(r);
+    return !!t && !checkAudioRefs(audioRefs, t);
+  };
+  const takesHere = (r: ModelRoute) => (!req.end || r.takes?.end !== false) && refs <= (r.takes?.refs ?? maxRefs) && takesAudioHere(r);
   const offered = there.filter(takesHere);
   if (!offered.length) {
-    const elsewhere = [...new Set(model.routes.filter((r) => r.endpoints[shape] && takesHere(r)).map((r) => state(r).label))];
+    const elsewhere = [...new Set(model.routes.filter((r) => r.endpoints[shape] && !refuses(r) && takesHere(r)).map((r) => state(r).label))];
+    const places = list([...new Set(there.map((r) => state(r).label))]);
+    const alt = elsewhere.length ? `; it does on ${list(elsewhere)}` : "";
+    if (audioRefs && there.every((r) => !takesAudioHere(r))) {
+      if (there.every((r) => audioOn(r) === false)) return no({ kind: "fit", reason: `Doesn't take reference audio on ${places}${alt}` });
+      const firstLimit = there.map(audioOn).find((t): t is AudioTake => !!t);
+      const why = firstLimit ? checkAudioRefs(audioRefs, firstLimit) : undefined;
+      return no({ kind: "fit", reason: `${why?.reason ?? "Audio references exceed the limit"} on ${places}${alt}`, ...(why?.fix ? { fix: why.fix } : {}) });
+    }
     const what = req.end && there.every((r) => r.takes?.end === false) ? "an end frame" : "this many references";
-    return no({ kind: "fit", reason: `Doesn't take ${what} on ${list([...new Set(there.map((r) => state(r).label))])}${elsewhere.length ? `; it does on ${list(elsewhere)}` : ""}`, fix: what === "an end frame" ? "drop-end" : "drop-refs" });
+    return no({ kind: "fit", reason: `Doesn't take ${what} on ${places}${alt}`, fix: what === "an end frame" ? "drop-end" : "drop-refs" });
   }
   // A route can make less than the model does elsewhere (a workflow on your own card): its own length there, or why not.
   const timed = offered.map((r): { r: ModelRoute; seconds?: number } | { r: ModelRoute; why: Why } => {
@@ -877,6 +935,7 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
       c.prompt = inPrompt(c.prompt);
       if (c.clipPrompt) c.clipPrompt = inPrompt(c.clipPrompt);
       if (c.cast) c.cast = c.cast.map(map);
+      if (!variant && c.audioRefs) c.audioRefs = c.audioRefs.map((ar) => (ar.kind === "voice" && ar.cast === id ? { ...ar, cast: to } : ar));
     }
     if (!variant) for (const l of cut.voice?.lines ?? []) if (l.speaker === id) l.speaker = to;
   }
@@ -886,6 +945,9 @@ export function renameCast(file: ProjectFile, from: string, to: string): boolean
     if (p?.cast) p.cast = p.cast.map(map);
     if (p?.prompt) p.prompt = inPrompt(p.prompt);
     if (typeof p?.params?.prompt === "string") p.params.prompt = inPrompt(p.params.prompt);
+    if (!variant && Array.isArray(p?.params?.audioRefs)) {
+      p.params.audioRefs = (p.params.audioRefs as AudioRef[]).map((ar) => (ar && ar.kind === "voice" && ar.cast === id ? { ...ar, cast: to } : ar));
+    }
   }
   return true;
 }
@@ -1172,11 +1234,12 @@ export function showTake(c: Generated, take: Asset, assets: Asset[], seconds?: n
   if (take.kind !== "video") delete next.in;
   if (asked.prompt === undefined) return next;
   if (take.kind !== "video") return { ...next, prompt: asked.prompt };
-  const { start, end, drive, camera, speech: _said, in: _in, ...rest } = next;
+  const { start, end, drive, camera, speech: _said, audioRefs: _audio, in: _in, ...rest } = next;
   const lead = takeLead({ ...asked, shotSeconds: seconds ?? asked.shotSeconds }, take.duration, (id) => assets.find((a) => a.id === id)?.duration);
   const from = asked.clip ? { start, end, drive } : asked;
-  // What a take with its mouths changed was made from kept a camera, if the clip it changed did.
+  // What a take with its mouths changed was made from kept a camera (and audio refs), if the clip it changed did.
   const kept = asked.clip ? camera : asked.camera && cameraOnShot(asked.camera);
+  const keptAudio = asked.clip ? _audio : asked.audioRefs;
   return {
     ...rest,
     clipPrompt: asked.prompt,
@@ -1185,6 +1248,7 @@ export function showTake(c: Generated, take: Asset, assets: Asset[], seconds?: n
     ...(from.drive ? { drive: from.drive } : {}),
     ...(kept ? { camera: kept } : {}),
     ...(asked.speech ? { speech: speechOnShot(asked.speech) } : {}),
+    ...(keptAudio?.length ? { audioRefs: keptAudio } : {}),
     ...(lead > 0 ? { in: Math.round(lead * 1000) / 1000 } : {}),
   };
 }
