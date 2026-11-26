@@ -50,7 +50,7 @@ export function newMember(kind: Kind, from: Asset[] = []) {
     id = castIdFor("", cast.map((m) => m.id), kind);
     cast.push({ id, name: "", kind, ...(from.length ? { seen: from.map((a) => ({ asset: a.id })) } : {}) });
   });
-  actions.select({ kind: "cast", id });
+  actions.select({ kind: "cast", id }, [], { inspect: true });
 }
 
 /** Adds pictures to where a cast member is seen. */
@@ -175,7 +175,7 @@ export function CastList() {
       {cast.map((m) => {
         const pic = castPicture(p, m);
         return (
-          <button key={m.id} className={`asset-row cast-row ${selection?.kind === "cast" && selection.id === m.id ? "sel" : ""}`} onClick={() => actions.select({ kind: "cast", id: m.id })}>
+          <button key={m.id} className={`asset-row cast-row ${selection?.kind === "cast" && selection.id === m.id ? "sel" : ""}`} onClick={() => actions.select({ kind: "cast", id: m.id }, [], { inspect: true })}>
             <span className="asset-row-thumb">
               {pic ? <img src={posterUrl(projectId, pic)} loading="lazy" alt="" onError={hideBroken} /> : <span className="asset-row-note">{label(m)[0]!.toUpperCase()}</span>}
             </span>

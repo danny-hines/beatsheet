@@ -88,7 +88,7 @@ export function Library() {
       setPicked([]);
       setAnchor(a.id);
     }
-    actions.select({ kind: "asset", id: a.id });
+    actions.select({ kind: "asset", id: a.id }, [], { inspect: !e.shiftKey && !e.metaKey && !e.ctrlKey });
   };
 
   return (
@@ -308,7 +308,7 @@ function AssetRow({
   return (
     <button
       className={`asset-row ${selected ? "sel" : ""} ${picked ? "picked" : ""} ${a.rating === -1 ? "rejected" : ""}`}
-      onClick={(e) => (onPick ? onPick(e) : actions.select({ kind: "asset", id: a.id }))}
+      onClick={(e) => (onPick ? onPick(e) : actions.select({ kind: "asset", id: a.id }, [], { inspect: true }))}
       onContextMenu={
         onMenu &&
         ((e) => {

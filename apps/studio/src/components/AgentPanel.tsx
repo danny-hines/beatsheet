@@ -3,6 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode 
 import { AGENT_NAMES, toolCallWords } from "../lib";
 import { actions, useProject, useStore } from "../store";
 import { AgentChooser, AgentHead, TerminalSessions } from "./AgentMenu";
+import { AgentWorkField } from "./AgentMotion";
 import { AttachedNotes } from "./NoteEditor";
 import { answer, TurnCard, useTurn } from "./Turn";
 import { Icon } from "./Icon";
@@ -55,10 +56,50 @@ export function AgentPanel() {
 
   if (!view.sessionId && view.status !== "starting") return <NoSession error={view.error} />;
 
+  return <SessionChat />;
+}
+
+const EMPTY_ITEMS: AgentItem[] = [];
+
+function latestToolId(items: AgentItem[]) {
+  for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === "tool") return items[i]!.id;
+  return undefined;
+}
+
+/** Triggers motion pulses when new tool calls arrive and a warm gold hand-off wash when working settles. */
+function useAgentMotion(working: boolean, items: AgentItem[]) {
+  const [pulseKey, setPulseKey] = useState(0);
+  const [handoffKey, setHandoffKey] = useState(0);
+  const prevWorking = useRef(working);
+  const lastTool = useRef<string | undefined>(latestToolId(items));
+
+  useEffect(() => {
+    const id = latestToolId(items);
+    if (id && id !== lastTool.current) {
+      lastTool.current = id;
+      setPulseKey((k) => k + 1);
+    }
+  }, [items]);
+
+  useEffect(() => {
+    if (prevWorking.current && !working) setHandoffKey((k) => k + 1);
+    prevWorking.current = working;
+  }, [working]);
+
+  return { pulseKey, handoffKey };
+}
+
+function SessionChat() {
+  const view = useStore((s) => s.agent);
+  const turn = useTurn();
   const running = view.status === "running";
+  const working = running || view.status === "starting";
+  const yourTurn = !working && turn.who === "you" && !turn.elsewhere && (!!turn.ask || !!turn.changes?.length);
+  const { pulseKey, handoffKey } = useAgentMotion(working, view.items);
   return (
-    <div className={`agent-chat ${view.agent ?? ""}`}>
-      <AgentHead session />
+    <div className={`agent-chat ${view.agent ?? ""} ${working ? "working" : ""} ${yourTurn ? "your-turn" : ""}`}>
+      <AgentWorkField working={working} pulseKey={pulseKey} handoffKey={handoffKey} />
+      <AgentHead session working={working} pulseKey={pulseKey} handoffKey={handoffKey} />
       <Transcript items={view.items} running={running} starting={view.status === "starting"} heardAt={view.heardAt} agent={(view.agent && AGENT_NAMES[view.agent]) || "The agent"} />
       {view.approvals.length > 0 && (
         <div className="agent-approvals">
@@ -77,9 +118,14 @@ export function AgentPanel() {
 /** No session yet: who'll pick up (the default agent, in the head, whose menu has every agent, model and earlier session), or the full choice when there's no default. */
 function NoSession({ error, note }: { error?: string; note?: string }) {
   const preferred = useStore((s) => s.setup?.settings.agent);
+  const turn = useTurn();
+  const working = turn.who === "agent" && !turn.stalled && !turn.elsewhere;
+  const yourTurn = !working && turn.who === "you" && !turn.elsewhere && (!!turn.ask || !!turn.changes?.length);
+  const { pulseKey, handoffKey } = useAgentMotion(working, EMPTY_ITEMS);
   return (
-    <div className="agent-chat">
-      {preferred && <AgentHead session={false} />}
+    <div className={`agent-chat ${working ? "working" : ""} ${yourTurn ? "your-turn" : ""}`}>
+      <AgentWorkField working={working} pulseKey={pulseKey} handoffKey={handoffKey} />
+      {preferred && <AgentHead session={false} working={working} pulseKey={pulseKey} handoffKey={handoffKey} />}
       <div className="agent-empty">
         {error && <p className="warn small">{error}</p>}
         <p className="dim small">{preferred ? "Picks up as soon as you send something. Nothing is running yet." : "Choose an agent to work with."}</p>
@@ -270,20 +316,22 @@ function Composer({ running, disabled }: { running: boolean; disabled: boolean }
   return (
     <div className="agent-compose">
       <AttachedNotes />
-      <textarea
-        ref={ref}
-        rows={2}
-        value={text}
-        disabled={disabled}
-        placeholder={running ? "Working. Anything you send waits for it." : turn.who === "you" && turn.ask && !turn.elsewhere ? "Or reply in your own words…" : "Ask for a change…"}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            send();
-          }
-        }}
-      />
+      <div className="agent-compose-box">
+        <textarea
+          ref={ref}
+          rows={2}
+          value={text}
+          disabled={disabled}
+          placeholder={running ? "Working. Anything you send waits for it." : turn.who === "you" && turn.ask && !turn.elsewhere ? "Or reply in your own words…" : "Ask for a change…"}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+        />
+      </div>
       <div className="agent-compose-actions">
         <span className="dim small">{attached ? "" : "Enter to send · N to note what's selected"}</span>
         <span className="spacer" />
@@ -327,13 +375,25 @@ function renderMarkdown(text: string): ReactNode {
 }
 
 function inline(text: string): ReactNode {
-  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, i) =>
-    part.startsWith("`") && part.endsWith("`") && part.length > 1 ? (
-      <code key={i}>{part.slice(1, -1)}</code>
-    ) : part.startsWith("**") && part.endsWith("**") && part.length > 3 ? (
-      <strong key={i}>{part.slice(2, -2)}</strong>
-    ) : (
-      <Fragment key={i}>{part}</Fragment>
-    ),
-  );
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g).map((part, i) => {
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 1) return <code key={i}>{part.slice(1, -1)}</code>;
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 3) return <strong key={i}>{part.slice(2, -2)}</strong>;
+    const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+    if (link) {
+      const label = link[1]!.replace(/^`|`$/g, "");
+      const href = link[2]!;
+      if (/^https?:\/\//.test(href))
+        return (
+          <a key={i} href={href} target="_blank" rel="noreferrer">
+            {label}
+          </a>
+        );
+      return (
+        <span key={i} className="agent-file-chip" title={href.replace(/^file:\/\//, "")}>
+          {label}
+        </span>
+      );
+    }
+    return <Fragment key={i}>{part}</Fragment>;
+  });
 }

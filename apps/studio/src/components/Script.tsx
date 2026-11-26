@@ -168,7 +168,7 @@ export function Script() {
           {untranscribed.map((a, k) => (
             <span key={a!.id}>
               {k > 0 && ", "}
-              <button className="link small" onClick={() => actions.select({ kind: "asset", id: a!.id })}>
+              <button className="link small" onClick={() => actions.select({ kind: "asset", id: a!.id }, [], { inspect: true })}>
                 {a!.label ?? a!.id}
               </button>
             </span>

@@ -408,8 +408,12 @@ export function Timeline() {
                         key={r.id}
                         className={`shot-block kind-${shot.content.kind} fid-${shot.fidelity} ${sel ? "sel" : ""} ${lifted ? "lifted" : ""} ${landing?.id === r.id && !lifted ? "landing" : ""} ${frozen(project, shot) ? "locked" : ""}`}
                         style={{ left: x(r.start), width: Math.max(3, x(r.end) - x(r.start)), "--swatch": shotSwatch(shot, assets), "--thumb": thumb } as CSSProperties}
-                        title={`${r.id} · ${shot.label ?? ""}\n${formatTime(r.start)} → ${formatTime(r.end)}\n${shotSummary(shot, assets)}`}
+                        title={`${r.id} · ${shot.label ?? ""}\n${formatTime(r.start)} → ${formatTime(r.end)}\n${shotSummary(shot, assets)}\nDouble-click to inspect`}
                         onPointerDown={(e) => shotDown(e, r)}
+                        onDoubleClick={(e) => {
+                          e.stopPropagation();
+                          actions.select({ kind: "shot", id: r.id }, [], { inspect: true });
+                        }}
                         onContextMenu={shotNote(r.id)}
                       >
                         {media?.strip && track.kind !== "text" && (

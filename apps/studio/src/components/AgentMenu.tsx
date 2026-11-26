@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, thinkingName, timeAgo, OS } from "../lib";
 import { ServiceMark } from "./ui";
 import { actions, useStore } from "../store";
+import { AgentOrb } from "./AgentMotion";
 import { Icon } from "./Icon";
 
 /** Re-renders every `ms` so "12s ago" stays true. */
@@ -21,7 +22,7 @@ function useNow(ms: number) {
  * the menu: disconnect, the sessions running in a terminal, a new session on a chosen agent and model, or an earlier one resumed.
  * Without a session here (`session` false) it shows the default agent, the one that picks up when the person sends something.
  */
-export function AgentHead({ session }: { session: boolean }) {
+export function AgentHead({ session, working = false, pulseKey = 0, handoffKey = 0 }: { session: boolean; working?: boolean; pulseKey?: number; handoffKey?: number }) {
   const view = useStore((s) => s.agent);
   const list = useStore((s) => s.agentList);
   const preferred = useStore((s) => s.setup?.settings.agent);
@@ -46,16 +47,19 @@ export function AgentHead({ session }: { session: boolean }) {
     ? modelName(list, view.agent, view.model)
     : preferred && (modelName(list, preferred.id, preferred.model) ?? list?.find((a) => a.id === preferred.id)?.models?.find((m) => m.default)?.label);
   const thinking = session ? thinkingName(list, view.agent, view.thinking) : preferred && thinkingName(list, preferred.id, preferred.thinking);
-  const dot = !session ? "idle" : view.status === "running" || view.status === "starting" ? "pending" : view.status === "error" ? "idle" : "on";
   return (
-    <div className={`agent-head ${id ?? ""}`} ref={ref}>
+    <div className={`agent-head ${id ?? ""} ${working ? "working" : ""}`} ref={ref}>
       <button className="agent-head-button" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)} title="Change the agent or model, or resume an earlier session">
-        <span className={`dot ${dot}`} />
+        <AgentOrb working={working} pulseKey={pulseKey} handoffKey={handoffKey} />
         <strong>{id ? AGENT_NAMES[id] : "Agent"}</strong>
         {model && <span className="model-tag">{thinking ? `${model} · ${thinking}` : model}</span>}
         <Icon name="down" size={10} className="caret" />
         <span className="spacer" />
-        {session && <span className="dim small activity">{sessionActivity(view)}</span>}
+        {session ? (
+          <span className={`small activity ${working ? "live" : "dim"}`}>{sessionActivity(view)}</span>
+        ) : working ? (
+          <span className="small activity live">Working…</span>
+        ) : null}
       </button>
       {open && (
         <div className="agent-panel">

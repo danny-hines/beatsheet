@@ -187,7 +187,7 @@ export function RecorderDialog({ kind, onClose }: { kind: RecordKind; onClose: (
         return job.output;
       });
       stopStream(screen);
-      if (res) actions.select({ kind: "asset", id: res });
+      if (res) actions.select({ kind: "asset", id: res }, [], { inspect: true });
       onClose();
     } catch (err) {
       setSaving(null);

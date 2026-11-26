@@ -610,10 +610,13 @@ export const actions = {
     scheduleSave();
   },
 
-  /** Selects one thing, or a shot and `also` more with it. */
-  select(selection: Selection | undefined, also: string[] = []) {
-    // In Make what's selected opens in the middle, so the panel on the right stays as it is.
-    setState({ selection, also, side: selection && selection.kind !== "note" && state.mode === "edit" ? "inspect" : state.side });
+  /**
+   * Selects one thing, or a shot and `also` more with it. Stays on whichever right-hand tab is open (so clicking around
+   * the timeline never pulls you away from the Agent); pass `{ inspect: true }` when an action specifically opens the
+   * item in Inspect (e.g. picking a clip in Media, double-clicking a shot, or creating a new cast member).
+   */
+  select(selection: Selection | undefined, also: string[] = [], opts?: { inspect?: boolean }) {
+    setState({ selection, also, side: opts?.inspect && selection && selection.kind !== "note" && state.mode === "edit" ? "inspect" : state.side });
   },
   /** Adds a shot to the selection or takes it out (⌘-click), or selects the run from the selected one to it (⇧-click). */
   selectMore(id: string, how: "toggle" | "run") {

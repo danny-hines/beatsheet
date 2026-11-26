@@ -195,9 +195,11 @@ p { margin: 4px 0; }
 
 .side { grid-area: side; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .tabs { display: flex; border-bottom: 1px solid var(--line); }
-.tabs button { flex: 1; border: none; border-radius: 0; background: none; padding: 12px 8px 8px; color: var(--dim); border-bottom: 2px solid transparent; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tabs button { flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; border-radius: 0; background: none; padding: 12px 6px 8px; color: var(--dim); border-bottom: 2px solid transparent; white-space: nowrap; min-width: 0; overflow: hidden; }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); background: none; }
 .count { background: none; color: var(--accent); border: 1px solid var(--accent); border-radius: var(--r-1); padding: 0 4px; font-family: var(--mono); font-size: var(--t-1); font-weight: 500; letter-spacing: 0; margin-left: 4px; }
+.tabs button .count { margin-left: 0; }
+.tab-badge { display: inline-block; max-width: 48px; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border-radius: 999px; border: 1px solid var(--accent-line); background: var(--accent-bg); color: var(--accent); font-family: var(--mono); font-size: var(--t-1); font-weight: 500; text-transform: none; letter-spacing: 0; line-height: 1.35; }
 .side-body { flex: 1; min-height: 0; overflow: auto; }
 
 /* ---- Pills and chips ------------------------------------------------------------------------------------------- */
@@ -552,12 +554,20 @@ pre.job-log { background: var(--well); border: 1px solid var(--line); border-rad
 .side-body.agent { overflow: hidden; display: flex; flex-direction: column; }
 .agent-empty { padding: 16px 12px; overflow: auto; }
 .agent-empty h3 { margin: 0 0 4px; }
-.agent-chat { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.agent-head { border-bottom: 1px solid var(--line); }
-.agent-head-button { display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; padding: 0 12px; border: none; border-radius: 0; background: none; text-align: left; white-space: nowrap; }
-.agent-head-button:hover, .agent-head-button[aria-expanded="true"] { background: var(--raised); }
-.agent-head-button .caret { color: var(--dim); font-size: var(--t-1); }
-.agent-head-button .activity { overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+.agent-chat { position: relative; isolation: isolate; display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.agent-fx-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: -1; }
+.agent-head { border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--agent) 4%, var(--panel)); transition: background 0.55s ease, border-color 0.55s ease; }
+.agent-chat.working .agent-head { background: color-mix(in srgb, var(--agent) 9%, var(--panel)); border-bottom-color: var(--agent-line); }
+.agent-orb { width: 24px; height: 24px; border-radius: 6px; overflow: hidden; flex: none; background: var(--well); border: 1px solid var(--agent-line); transition: border-color 0.5s ease, box-shadow 0.5s ease; }
+.agent-orb canvas { width: 100%; height: 100%; display: block; }
+.agent-chat.working .agent-orb { border-color: var(--agent); box-shadow: 0 0 12px color-mix(in srgb, var(--agent) 35%, transparent); }
+.agent-head-button { display: flex; align-items: center; gap: 6px; width: 100%; height: 42px; padding: 0 10px; border: none; border-radius: 0; background: none; text-align: left; white-space: nowrap; }
+.agent-head-button > strong { flex: none; }
+.agent-head-button .model-tag { min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: 0; }
+.agent-head-button:hover, .agent-head-button[aria-expanded="true"] { background: color-mix(in srgb, var(--raised) 85%, transparent); }
+.agent-head-button .caret { color: var(--dim); font-size: var(--t-1); flex: none; }
+.agent-head-button .activity { overflow: hidden; text-overflow: ellipsis; flex: 0 0 auto; max-width: 42%; }
+.agent-head-button .activity.live { color: var(--agent); }
 .agent-transcript { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 12px 12px; display: flex; flex-direction: column; gap: 8px; }
 .agent-transcript > * { min-width: 0; }
 .agent-user { align-self: flex-end; max-width: 88%; overflow-wrap: anywhere; background: var(--raised); border: 1px solid var(--line-2); color: var(--text); padding: 8px; border-radius: var(--r-2) var(--r-2) 0 var(--r-2); white-space: pre-wrap; }
@@ -567,6 +577,7 @@ pre.job-log { background: var(--well); border: 1px solid var(--line); border-rad
 .agent-reply p:last-child { margin-bottom: 0; }
 .agent-reply ul, .agent-reply ol, .agent-reasoning ul, .agent-reasoning ol { margin: 0 0 4px; padding-left: 16px; }
 .agent-reply code, .agent-reasoning code { font-family: var(--mono); font-size: var(--t-2); background: var(--well); border: 1px solid var(--line); border-radius: var(--r-1); padding: 0 4px; }
+.agent-file-chip { display: inline-block; padding: 0 5px; border-radius: var(--r-1); font-family: var(--mono); font-size: var(--t-2); background: var(--agent-bg); border: 1px solid var(--agent-line); color: var(--agent); }
 .agent-reply pre { background: var(--well); border: 1px solid var(--line); border-radius: var(--r-2); padding: 8px; font-size: var(--t-2); overflow: auto; margin: 0 0 4px; }
 .agent-reasoning { color: var(--dim); font-size: var(--t-2); }
 .agent-reasoning summary { cursor: pointer; list-style: none; font-style: italic; }
@@ -597,9 +608,35 @@ pre.job-log { background: var(--well); border: 1px solid var(--line); border-rad
 .agent-approval-detail.clamped { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
 .agent-approval-more { align-self: flex-start; margin-top: -2px; }
 .agent-error { margin: 0 12px 8px; }
-.agent-compose { border-top: 1px solid var(--line); padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
-.agent-compose textarea { resize: none; background: var(--well); border: 1px solid var(--line-2); border-radius: var(--r-2); padding: 8px 8px; min-height: 52px; }
-.agent-compose textarea:focus { outline: none; border-color: var(--agent); }
+@property --agent-ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+@keyframes agent-compose-spin { to { --agent-ang: 360deg; } }
+@keyframes turn-card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.agent-chat .turn-card { animation: turn-card-in 0.36s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.agent-compose { border-top: 1px solid var(--line); padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 4px; background: color-mix(in srgb, var(--panel) 84%, transparent); transition: border-color 0.55s ease; }
+.agent-chat.working .agent-compose { border-top-color: color-mix(in srgb, var(--agent) 30%, var(--line)); }
+.agent-compose-box { position: relative; border-radius: calc(var(--r-2) + 1px); padding: 1px; background: var(--line-2); transition: background 0.55s ease, box-shadow 0.55s ease; }
+.agent-compose-box textarea { display: block; width: 100%; resize: none; background: var(--well); border: none; border-radius: var(--r-2); padding: 8px 8px; min-height: 52px; }
+.agent-compose-box textarea:focus, .agent-compose-box textarea:focus-visible { outline: none; }
+.agent-compose-box textarea:disabled { opacity: 1; color: var(--dim); cursor: default; }
+.agent-compose-box:focus-within { background: var(--agent); }
+.agent-chat.working .agent-compose-box {
+  background: conic-gradient(
+    from var(--agent-ang),
+    color-mix(in srgb, var(--agent) 14%, var(--line)) 0deg,
+    color-mix(in srgb, var(--agent) 88%, transparent) 60deg,
+    color-mix(in srgb, var(--accent) 48%, transparent) 110deg,
+    color-mix(in srgb, var(--agent) 14%, var(--line)) 190deg,
+    color-mix(in srgb, var(--agent) 14%, var(--line)) 360deg
+  );
+  animation: agent-compose-spin 3.6s linear infinite;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--agent) 18%, transparent);
+}
+.agent-chat.working .agent-compose-box:focus-within { box-shadow: 0 0 20px color-mix(in srgb, var(--agent) 32%, transparent); }
+.agent-chat.your-turn .agent-compose-box:not(:focus-within) { background: var(--accent-line); }
+@media (prefers-reduced-motion: reduce) {
+  .agent-chat.working .agent-compose-box { animation: none; background: var(--agent-line); }
+  .agent-chat .turn-card { animation: none; }
+}
 .agent-compose-actions { display: flex; align-items: center; gap: 4px; }
 
 /* ---- Setup and settings ---------------------------------------------------------------------------------------- */

@@ -112,7 +112,7 @@ export function SubjectTools({
       const j = (await res.json()) as { member?: string; voice?: string; error?: string };
       if (!j.member) throw new Error(j.error ?? "Couldn't add them to the cast");
       await actions.reload();
-      actions.select({ kind: "cast", id: j.member });
+      actions.select({ kind: "cast", id: j.member }, [], { inspect: true });
       // They were the one talking while on screen: their voice is theirs now too, here and in the other clips it's heard in.
       if (j.voice) {
         const m = getState().doc?.cast?.find((x) => x.id === j.member);

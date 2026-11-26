@@ -30,6 +30,7 @@ import { Icon } from "./Icon";
 export function SidePanel() {
   const shown = useStore((s) => s.side);
   const project = useProject();
+  const selection = useStore((s) => s.selection);
   const pending = project.notes.filter((n) => n.status === "queued" || n.status === "open").length;
   const agent = useStore((s) => s.agent);
   const here = !agent.project || agent.project === project.id;
@@ -37,6 +38,12 @@ export function SidePanel() {
   // In Make, what's selected opens in the middle, so the panel is the agent and the notes.
   const making = useStore((s) => s.mode === "make");
   const side = making && shown !== "notes" ? "agent" : shown;
+  const inspectBadge =
+    !making && side !== "inspect" && selection && selection.kind !== "note"
+      ? selection.kind === "cast"
+        ? `@${selection.id}`
+        : selection.id
+      : undefined;
   return (
     <>
       <div className="tabs">
@@ -48,8 +55,12 @@ export function SidePanel() {
         </button>
         {!making && (
           <>
-            <button className={side === "inspect" ? "on" : ""} onClick={() => actions.setSide("inspect")}>
-              Inspect
+            <button
+              className={side === "inspect" ? "on" : ""}
+              onClick={() => actions.setSide("inspect")}
+              title={inspectBadge ? `Inspect ${inspectBadge}` : "Inspect what's selected"}
+            >
+              Inspect {inspectBadge && <span className="tab-badge">{inspectBadge}</span>}
             </button>
             <button className={side === "script" ? "on" : ""} onClick={() => actions.setSide("script")} title="The cut as what's said in it: edit the words to edit the cut">
               Script
