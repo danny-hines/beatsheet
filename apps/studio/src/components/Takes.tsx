@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
-import { aspectOf, blockoutDuration, cameraOfTake, CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { aspectOf, blockoutDuration, cameraOfTake, CATALOG, castOf, commercialWords, removeShotTake, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { unknownCastMentions } from "../mentions";
 import { actions, useProject, useStore } from "../store";
@@ -156,6 +156,12 @@ export const pickTake = (shotId: string, id: string, length?: number) =>
     if (s.content.kind === "generated" && take) s.content = showTake(s.content, take, d.assets, length);
   });
 
+/** Removes a take from a shot (and prunes its generated asset when nothing else references it). Undo brings it back. */
+export const removeTake = (cutId: string | undefined, shotId: string, id: string, length?: number) => {
+  if (!cutId) return;
+  actions.editFile((d) => void removeShotTake(d, cutId, shotId, id, length));
+};
+
 /**
  * A shot's takes and the making of more. In Make the shot's own page shows the takes large, so there it's only the
  * making (`strip` false): the prompt, what kind of take, the model and the button. The page also plays the blockout
@@ -293,6 +299,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
               aspect={aspect}
               onPick={() => pick(a.id)}
               onEnlarge={() => setLarge(i)}
+              onRemove={() => removeTake(cutId, shot.id, a.id, length)}
             />
           ))}
           {going.map((j) => (
@@ -310,13 +317,18 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
           items={shown.map((a) => ({ id: a.id, video: a.kind === "video", caption: [a.id, madeWith(a) && `made with ${madeWith(a)}`].filter(Boolean).join(" · ") }))}
           at={large}
           onClose={() => setLarge(undefined)}
-          actions={(item) =>
-            c.kind === "generated" && c.take === item.id ? (
-              <span className="dim small">The one the shot shows</span>
-            ) : (
-              <button onClick={() => pick(item.id)}>Show this one</button>
-            )
-          }
+          actions={(item) => (
+            <>
+              {c.kind === "generated" && c.take === item.id ? (
+                <span className="dim small">The one the shot shows</span>
+              ) : (
+                <button onClick={() => pick(item.id)}>Show this one</button>
+              )}
+              <button className="danger" onClick={() => removeTake(cutId, shot.id, item.id, length)} title="Remove this take from the shot (Undo brings it back)">
+                Remove
+              </button>
+            </>
+          )}
         />
       )}
       <label>
@@ -1023,6 +1035,7 @@ function Take({
   aspect,
   onPick,
   onEnlarge,
+  onRemove,
 }: {
   projectId: string;
   id: string;
@@ -1033,6 +1046,7 @@ function Take({
   aspect: string;
   onPick: () => void;
   onEnlarge: () => void;
+  onRemove?: () => void;
 }) {
   const [hover, setHover] = useState(false);
   return (
@@ -1044,6 +1058,20 @@ function Take({
       <button className="enlarge" onClick={onEnlarge} title="See it large, to zoom in" aria-label="See it large">
         <EnlargeIcon />
       </button>
+      {onRemove && (
+        <button
+          type="button"
+          className="take-remove"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          title="Remove this take (Undo brings it back)"
+          aria-label="Remove this take"
+        >
+          <Icon name="close" size={12} />
+        </button>
+      )}
     </span>
   );
 }

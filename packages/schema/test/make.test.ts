@@ -30,7 +30,10 @@ import {
   parseFile,
   pictureOf,
   keepCast,
+  isAssetReferenced,
   realPeople,
+  removeGeneratedAsset,
+  removeShotTake,
   renameCast,
   mergeLook,
   Project,
@@ -1784,5 +1787,170 @@ describe("decoupled face & wardrobe sheets and model-adaptive cast packing", () 
     expect(packCastPictures(castOf("@inquisitor/scarlet enters", [inquisitor]), { max: 10, strategy: "split-single", cast: [inquisitor] })).toMatchObject([
       { asset: "inq-scarlet-sheet", role: "sheet" },
     ]);
+  });
+});
+
+describe("removing generated takes and stills", () => {
+  const mkFile = (overrides: Partial<ProjectFile> = {}): ProjectFile => {
+    const stages = Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" as const }])) as ProjectFile["cuts"][number]["stages"];
+    const base: ProjectFile = {
+      schema: SCHEMA_VERSION,
+      id: "p",
+      title: "Test",
+      sources: [],
+      brief: { goal: "test" },
+      assets: [
+        { id: "tower-take-1", kind: "image", path: "made/takes/s1.png", provenance: { source: "generated", provider: "fal", params: { model: "gpt-image", prompt: "tower still 1" } } },
+        { id: "tower-take-2", kind: "image", path: "made/takes/s2.png", provenance: { source: "generated", provider: "fal", params: { model: "gpt-image", prompt: "tower still 2" } } },
+        { id: "tower-take-3", kind: "image", path: "made/takes/s3.png", provenance: { source: "generated", provider: "fal", params: { model: "nano-banana", prompt: "tower still 3" } } },
+        {
+          id: "tower-clip-1",
+          kind: "video",
+          path: "made/takes/v1.mp4",
+          duration: 5,
+          provenance: { source: "generated", provider: "fal", refs: ["tower-take-1"], params: { model: "wan-3", quality: "rough", start: "tower-take-1", prompt: "tower drop" } },
+        },
+        { id: "photo-1", kind: "image", path: "footage/photo.jpg", provenance: { source: "import" } },
+        { id: "standalone-1", kind: "image", path: "made/takes/loose.png", provenance: { source: "generated", provider: "fal", params: { model: "gpt-image", prompt: "loose" } } },
+      ],
+      cuts: [
+        {
+          id: "main",
+          name: "Main",
+          recipe: "film",
+          spec: {},
+          formats: [{ id: "land", label: "16:9", width: 1920, height: 1080, fps: 30 }],
+          stages,
+          spine: "shots",
+          tracks: [{ id: "pic", kind: "picture", label: "Picture" }],
+          shots: [
+            {
+              id: "tower",
+              track: "pic",
+              duration: 5,
+              fidelity: "rough",
+              content: {
+                kind: "generated",
+                prompt: "tower still 1",
+                clipPrompt: "tower drop",
+                take: "tower-clip-1",
+                takes: ["tower-take-1", "tower-take-2", "tower-take-3", "tower-clip-1"],
+                start: "tower-take-1",
+              },
+            },
+          ],
+          notes: [],
+        },
+      ],
+      ...overrides,
+    };
+    return base;
+  };
+
+  it("removes an unused still from the shot and prunes its unreferenced generated asset", () => {
+    const file = mkFile();
+    expect(removeShotTake(file, "main", "tower", "tower-take-2", 5)).toBe(true);
+    const shot = file.cuts[0]!.shots[0]!;
+    expect(shot.fidelity).toBe("rough");
+    expect(shot.content).toMatchObject({ take: "tower-clip-1", takes: ["tower-take-1", "tower-take-3", "tower-clip-1"] });
+    expect(file.assets.map((a) => a.id)).not.toContain("tower-take-2");
+    expect(checkReferences(file)).toEqual([]);
+  });
+
+  it("removes a still from the shot tray while keeping its asset if a surviving clip was made from it", () => {
+    const file = mkFile();
+    expect(removeShotTake(file, "main", "tower", "tower-take-1", 5)).toBe(true);
+    const shot = file.cuts[0]!.shots[0]!;
+    expect(shot.content).toMatchObject({ take: "tower-clip-1", takes: ["tower-take-2", "tower-take-3", "tower-clip-1"] });
+    expect((shot.content as { start?: string }).start).toBeUndefined();
+    // Asset stays so tower-clip-1's "Made from" provenance thumbnail remains intact.
+    expect(file.assets.map((a) => a.id)).toContain("tower-take-1");
+    expect(isAssetReferenced(file, "tower-take-1")).toBe(true);
+    expect(checkReferences(file)).toEqual([]);
+  });
+
+  it("keeps the asset when referenced in another cut, by cast, by a note, or when it is imported footage", () => {
+    const file = mkFile({
+      cast: [{ id: "galileo", name: "Galileo", kind: "character", seen: [{ asset: "tower-take-3" }] }],
+      cuts: [
+        ...mkFile().cuts,
+        {
+          ...mkFile().cuts[0]!,
+          id: "alt",
+          name: "Alt",
+          shots: [
+            {
+              id: "tower",
+              track: "pic",
+              duration: 5,
+              fidelity: "board",
+              content: { kind: "generated", prompt: "x", take: "tower-take-2", takes: ["tower-take-2"] },
+            },
+          ],
+        },
+      ],
+    });
+    // Also add imported photo to main shot's takes.
+    const mainShot = file.cuts[0]!.shots[0]!;
+    (mainShot.content as { takes?: string[] }).takes!.push("photo-1");
+
+    expect(removeShotTake(file, "main", "tower", "tower-take-2")).toBe(true);
+    expect(file.assets.map((a) => a.id)).toContain("tower-take-2"); // used in alt cut
+    expect(removeShotTake(file, "main", "tower", "tower-take-3")).toBe(true);
+    expect(file.assets.map((a) => a.id)).toContain("tower-take-3"); // used in cast.seen
+    expect(removeShotTake(file, "main", "tower", "photo-1")).toBe(true);
+    expect(file.assets.map((a) => a.id)).toContain("photo-1"); // imported, never pruned
+    expect(checkReferences(file)).toEqual([]);
+  });
+
+  it("falls back to a remaining take, sanitizes subject links, and lowers fidelity when removing the shown take", () => {
+    const file = mkFile();
+    file.assets[0]!.subjects = [{ id: "face-1", label: "Boy", kind: "face", samples: [[0, 0.3, 0.2, 0.2, 0.2]] }];
+    const shot = file.cuts[0]!.shots[0]!;
+    shot.fidelity = "board";
+    shot.content = {
+      kind: "generated",
+      prompt: "tower still 1",
+      take: "tower-take-1",
+      takes: ["tower-take-1", "tower-take-2"],
+      effects: [{ kind: "spotlight", subject: "face-1" }],
+      reframe: { land: { x: 0.5, y: 0.5, zoom: 1, follow: "face-1" } },
+    };
+    // Remove tower-clip-1 from assets so tower-take-1 is unreferenced once removed.
+    file.assets = file.assets.filter((a) => a.id !== "tower-clip-1");
+
+    expect(removeShotTake(file, "main", "tower", "tower-take-1")).toBe(true);
+    expect(shot.content).toMatchObject({ kind: "generated", take: "tower-take-2", takes: ["tower-take-2"], prompt: "tower still 2" });
+    expect((shot.content as { effects?: unknown[] }).effects).toBeUndefined();
+    expect((shot.content as { reframe?: Record<string, { follow?: string }> }).reframe?.land?.follow).toBeUndefined();
+    expect(shot.fidelity).toBe("board");
+    expect(file.assets.map((a) => a.id)).not.toContain("tower-take-1");
+    expect(checkReferences(file)).toEqual([]);
+
+    // Removing the last remaining take clears take/takes and drops fidelity to idea.
+    expect(removeShotTake(file, "main", "tower", "tower-take-2")).toBe(true);
+    expect(shot.fidelity).toBe("idea");
+    expect((shot.content as { take?: string }).take).toBeUndefined();
+    expect((shot.content as { takes?: string[] }).takes).toBeUndefined();
+    expect(checkReferences(file)).toEqual([]);
+  });
+
+  it("drops fidelity from rough to board when removing the only video clip and falls back to its board still", () => {
+    const file = mkFile();
+    expect(removeShotTake(file, "main", "tower", "tower-clip-1", 5)).toBe(true);
+    const shot = file.cuts[0]!.shots[0]!;
+    expect(shot.fidelity).toBe("board");
+    expect(shot.content).toMatchObject({ take: "tower-take-1", takes: ["tower-take-1", "tower-take-2", "tower-take-3"] });
+    expect(file.assets.map((a) => a.id)).not.toContain("tower-clip-1");
+    expect(checkReferences(file)).toEqual([]);
+  });
+
+  it("prunes unreferenced standalone generated assets and refuses referenced or imported ones", () => {
+    const file = mkFile();
+    expect(removeGeneratedAsset(file, "photo-1")).toBe(false);
+    expect(removeGeneratedAsset(file, "tower-take-2")).toBe(false);
+    expect(removeGeneratedAsset(file, "standalone-1")).toBe(true);
+    expect(file.assets.map((a) => a.id)).not.toContain("standalone-1");
+    expect(checkReferences(file)).toEqual([]);
   });
 });

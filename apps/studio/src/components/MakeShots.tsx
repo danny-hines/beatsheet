@@ -29,7 +29,7 @@ import type { CreateLaunch } from "./CreatePage";
 import { GuideCompare, guideOfAsset } from "./GuideCompare";
 import { Icon } from "./Icon";
 import { NotesFor } from "./Side";
-import { madeWith, modelLabel, money, pickOf, pickTake } from "./Takes";
+import { madeWith, modelLabel, money, pickOf, pickTake, removeTake } from "./Takes";
 import { answer } from "./Turn";
 import { FidelityPill } from "./ui";
 import { EnlargeIcon, Viewer } from "./Viewer";
@@ -488,6 +488,7 @@ export function ShotPage({
 
   // A take that's just arrived is the one to look at, and stays pinned in the tray so freshly made stills never hide themselves.
   const last = takes.at(-1)?.id;
+  const takeKey = takes.map((t) => t.id).join("\0");
   const [seenIds, setSeenIds] = useState<string[]>(() => takes.map((t) => t.id));
   const [freshIds, setFreshIds] = useState<string[]>([]);
   useEffect(() => {
@@ -497,7 +498,7 @@ export function ShotPage({
       setLooking(added.at(-1) ?? last);
       setSeenIds(takes.map((t) => t.id));
     }
-  }, [takes.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [takeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const look = takes.find((a) => a.id === looking) ?? takes.find((a) => a.id === showing) ?? takes.at(-1);
   const lookJob = look ? jobs.find((j) => j.asset === look.id) : undefined;
@@ -628,18 +629,28 @@ export function ShotPage({
     const at = cl.provenance?.createdAt ?? "";
     return at > max ? at : max;
   }, "");
-  const pinnedStills =
-    hasClipsOrGoing && !showAllStills
-      ? stills.filter(
-          (s) =>
-            s.id === activeBoardId ||
-            s.id === look?.id ||
-            s.id === showing ||
-            freshIds.includes(s.id) ||
-            (latestClipAt !== "" && (s.provenance?.createdAt ?? "") > latestClipAt),
-        )
-      : stills;
-  const hiddenStillsCount = stills.length - pinnedStills.length;
+  const unexpandedPinned = hasClipsOrGoing
+    ? stills.filter(
+        (s) =>
+          s.id === activeBoardId ||
+          s.id === look?.id ||
+          s.id === showing ||
+          freshIds.includes(s.id) ||
+          (latestClipAt !== "" && (s.provenance?.createdAt ?? "") > latestClipAt),
+      )
+    : stills;
+  const pinnedStills = hasClipsOrGoing && !showAllStills ? unexpandedPinned : stills;
+  const collapsibleCount = stills.length - unexpandedPinned.length;
+  const hiddenStillsCount = showAllStills ? 0 : collapsibleCount;
+
+  const removeFromShot = (takeId: string) => {
+    if (look?.id === takeId) {
+      const tray = stills.some((s) => s.id === takeId) ? pinnedStills : clips;
+      const i = tray.findIndex((a) => a.id === takeId);
+      setLooking((tray[i + 1] ?? tray[i - 1])?.id);
+    }
+    removeTake(cutId, shot.id, takeId, seconds);
+  };
 
   return (
     <div className="make-page shot-page">
@@ -811,6 +822,7 @@ export function ShotPage({
                     badge={kind(a)}
                     onLook={() => setLooking(a.id)}
                     onUse={() => pickTake(shot.id, a.id, seconds)}
+                    onRemove={() => removeFromShot(a.id)}
                   />
                 ))}
                 {goingClips.map((j) => (
@@ -838,7 +850,7 @@ export function ShotPage({
                     + {hiddenStillsCount} earlier still{hiddenStillsCount === 1 ? "" : "s"}
                   </button>
                 )}
-                {hasClipsOrGoing && showAllStills && stills.length > 1 && (
+                {hasClipsOrGoing && showAllStills && collapsibleCount > 0 && (
                   <button className="link small tray-fold" onClick={() => setShowAllStills(false)}>
                     Collapse earlier stills
                   </button>
@@ -855,6 +867,7 @@ export function ShotPage({
                     badge={a.id === activeBoardId && hasClipsOrGoing ? "Board" : (madeWith(a) ?? "Still")}
                     onLook={() => setLooking(a.id)}
                     onUse={() => pickTake(shot.id, a.id, seconds)}
+                    onRemove={() => removeFromShot(a.id)}
                   />
                 ))}
                 {goingStills.map((j) => (
@@ -1000,7 +1013,14 @@ export function ShotPage({
           items={takes.map((a) => ({ id: a.id, video: a.kind === "video", caption: [kind(a), madeWith(a) && `made with ${madeWith(a)}`].filter(Boolean).join(" · ") }))}
           at={takes.indexOf(look)}
           onClose={() => setLarge(false)}
-          actions={(item) => (item.id === showing ? <span className="dim small">The one the cut shows</span> : <button onClick={() => pickTake(shot.id, item.id, seconds)}>Use this take</button>)}
+          actions={(item) => (
+            <>
+              {item.id === showing ? <span className="dim small">The one the cut shows</span> : <button onClick={() => pickTake(shot.id, item.id, seconds)}>Use this take</button>}
+              <button className="danger" onClick={() => removeFromShot(item.id)} title="Remove this take from the shot (Undo brings it back)">
+                Remove
+              </button>
+            </>
+          )}
         />
       )}
     </div>
@@ -1123,7 +1143,7 @@ export function Given({ a }: { a: Asset }) {
   );
 }
 
-/** A take in a shot's tray: click to look at it, double-click to use it. */
+/** A take in a shot's tray: click to look at it, double-click to use it, hover to x-out unused takes. */
 function TrayTake({
   a,
   projectId,
@@ -1133,6 +1153,7 @@ function TrayTake({
   badge,
   onLook,
   onUse,
+  onRemove,
 }: {
   a: Asset;
   projectId: string;
@@ -1142,39 +1163,54 @@ function TrayTake({
   badge: string;
   onLook: () => void;
   onUse: () => void;
+  onRemove?: () => void;
 }) {
   const [hover, setHover] = useState(false);
   const video = a.kind === "video";
   return (
-    <button
-      className={`tray-take ${looking ? "viewing" : ""} ${showing ? "on" : ""}`}
-      style={{ aspectRatio: a.width && a.height ? `${a.width} / ${a.height}` : "16 / 9" }}
-      onClick={onLook}
-      onDoubleClick={onUse}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      draggable
-      onDragStart={(e) => {
-        e.dataTransfer.setData(ASSET_DRAG, a.id);
-        e.dataTransfer.effectAllowed = "copy";
-      }}
-      title={showing ? "The take the cut shows" : "Look at this take (double-click to use it)"}
-    >
-      {video && hover ? <video src={proxyUrl(projectId, a.id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, a.id)} loading="lazy" alt="" onError={hideBroken} />}
-      <span className="badge">
-        {video && <Icon name="play" size={8} />} {badge}
-        {guided && (
-          <>
-            {" "}
-            <Icon name="camera" size={9} />
-          </>
-        )}
-      </span>
-      {showing && (
-        <span className="tray-in" title="The take the cut shows">
-          <Icon name="check" size={10} />
+    <span className="tray-take-wrap" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <button
+        className={`tray-take ${looking ? "viewing" : ""} ${showing ? "on" : ""}`}
+        style={{ aspectRatio: a.width && a.height ? `${a.width} / ${a.height}` : "16 / 9" }}
+        onClick={onLook}
+        onDoubleClick={onUse}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData(ASSET_DRAG, a.id);
+          e.dataTransfer.effectAllowed = "copy";
+        }}
+        title={showing ? "The take the cut shows" : "Look at this take (double-click to use it)"}
+      >
+        {video && hover ? <video src={proxyUrl(projectId, a.id)} autoPlay muted loop playsInline /> : <img src={posterUrl(projectId, a.id)} loading="lazy" alt="" onError={hideBroken} />}
+        <span className="badge">
+          {video && <Icon name="play" size={8} />} {badge}
+          {guided && (
+            <>
+              {" "}
+              <Icon name="camera" size={9} />
+            </>
+          )}
         </span>
+        {showing && (
+          <span className="tray-in" title="The take the cut shows">
+            <Icon name="check" size={10} />
+          </span>
+        )}
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          className="tray-remove"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          title={video ? "Remove this clip from the shot (Undo brings it back)" : "Remove this still from the shot (Undo brings it back)"}
+          aria-label={video ? "Remove clip" : "Remove still"}
+        >
+          <Icon name="close" size={12} />
+        </button>
       )}
-    </button>
+    </span>
   );
 }

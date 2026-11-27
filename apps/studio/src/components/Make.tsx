@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MakeJob, MakePlan } from "@beatsheet/engine";
-import { CATALOG, classifyGeneratedAssets, type Asset } from "@beatsheet/schema";
+import { CATALOG, classifyGeneratedAssets, isAssetReferenced, removeGeneratedAsset, removeShotTake, type Asset } from "@beatsheet/schema";
 import { ASSET_DRAG, hideBroken, posterUrl, proxyUrl, putInShot, timeAgo } from "../lib";
 import { actions, agentFor, setState, useProject, useStore, type State } from "../store";
 import { AssetView } from "./AssetView";
@@ -451,6 +451,7 @@ type MadeGroup = {
   title: string;
   subtitle?: string;
   shotId?: string;
+  ownerShotId?: string;
   cutId?: string;
   castId?: string;
   fidelity?: State["project"] extends never ? never : string;
@@ -555,6 +556,7 @@ function Board({ jobs, onCreate, retry }: { jobs: MakeJob[]; onCreate: (l: Creat
         title: shot?.label ?? `Shot ${g.shot}`,
         subtitle: g.cut !== cutId && cut ? `${g.shot} · ${cut.name}` : g.shot,
         shotId: g.cut === cutId ? g.shot : undefined,
+        ownerShotId: g.shot,
         cutId: g.cut,
         fidelity: shot?.fidelity,
         hero,
@@ -666,6 +668,21 @@ function Board({ jobs, onCreate, retry }: { jobs: MakeJob[]; onCreate: (l: Creat
     (b) => !q || `${b.first.shot ?? ""} ${b.first.sheet ?? ""} ${b.first.request.prompt}`.toLowerCase().includes(q),
   );
 
+  const removerFor = (a: Asset, group?: MadeGroup): (() => void) | undefined => {
+    if (!doc) return undefined;
+    if (group?.kind === "shot" && group.cutId && group.ownerShotId) {
+      const s = doc.cuts.find((c) => c.id === group.cutId)?.shots.find((x) => x.id === group.ownerShotId);
+      if (s?.content.kind === "generated" && (s.content.take === a.id || s.content.takes?.includes(a.id))) {
+        return () => actions.editFile((d) => void removeShotTake(d, group.cutId!, group.ownerShotId!, a.id));
+      }
+    }
+    if (group?.kind === "cast") return undefined;
+    if (a.provenance?.source === "generated" && !isAssetReferenced(doc, a.id)) {
+      return () => actions.editFile((d) => void removeGeneratedAsset(d, a.id));
+    }
+    return undefined;
+  };
+
   return (
     <div className="make-page">
       <header className="page-head">
@@ -757,7 +774,7 @@ function Board({ jobs, onCreate, retry }: { jobs: MakeJob[]; onCreate: (l: Creat
                   )}
                 </div>
                 <div className="batch-cards">
-                  {g.hero && <AssetCard a={g.hero} job={jobByAsset.get(g.hero.id)} onCreate={onCreate} />}
+                  {g.hero && <AssetCard a={g.hero} job={jobByAsset.get(g.hero.id)} onCreate={onCreate} onRemove={removerFor(g.hero, g)} />}
                   {g.going.map((j) => (
                     <div key={j.id} className="make-card pending" style={{ aspectRatio: ratio(j.request.aspect) }}>
                       {j.position !== undefined ? `${j.position + 1} in line` : "Making…"}
@@ -768,7 +785,7 @@ function Board({ jobs, onCreate, retry }: { jobs: MakeJob[]; onCreate: (l: Creat
                   <div className="made-group-drawer">
                     <div className="batch-cards">
                       {g.others.map((a) => (
-                        <AssetCard key={a.id} a={a} job={jobByAsset.get(a.id)} onCreate={onCreate} compact />
+                        <AssetCard key={a.id} a={a} job={jobByAsset.get(a.id)} onCreate={onCreate} onRemove={removerFor(a, g)} compact />
                       ))}
                     </div>
                   </div>
@@ -850,7 +867,7 @@ function BatchRow({ batch, onCreate, retry, nest }: { batch: Batch; onCreate: (l
 }
 
 /** A generated asset card (used in both Grouped board and completed JobCard). Shows guide badges when blockout/motion guided. */
-function AssetCard({ a, job, onCreate, compact }: { a: Asset; job?: MakeJob; onCreate: (l: CreateLaunch) => void; compact?: boolean }) {
+function AssetCard({ a, job, onCreate, onRemove, compact }: { a: Asset; job?: MakeJob; onCreate: (l: CreateLaunch) => void; onRemove?: () => void; compact?: boolean }) {
   const projectId = useStore((s) => s.projectId)!;
   const doc = useStore((s) => s.doc);
   const cutId = useStore((s) => s.cutId);
@@ -907,6 +924,20 @@ function AssetCard({ a, job, onCreate, compact }: { a: Asset; job?: MakeJob; onC
           <Icon name="camera" size={9} /> {guide.kind === "clip" ? (guide.role === "drive" ? "Motion" : guide.role === "version" ? "Version" : "Camera") : "Blockout"}
         </span>
       )}
+      {onRemove && (
+        <button
+          type="button"
+          className="make-card-remove"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+          title={video ? "Remove this clip (Undo brings it back)" : "Remove this still (Undo brings it back)"}
+          aria-label={video ? "Remove clip" : "Remove still"}
+        >
+          <Icon name="close" size={12} />
+        </button>
+      )}
       <div className="card-actions" onClick={(e) => e.stopPropagation()}>
         {!video && (
           <button
@@ -933,8 +964,22 @@ function AssetCard({ a, job, onCreate, compact }: { a: Asset; job?: MakeJob; onC
 /** A take on the Recent Batches board: delegates completed takes to AssetCard, handles pending/failed states. */
 function JobCard({ job, onCreate, retry }: { job: MakeJob; onCreate: (l: CreateLaunch) => void; retry: (j: MakeJob) => void }) {
   const p = useProject();
+  const doc = useStore((s) => s.doc);
+  const cutId = useStore((s) => s.cutId);
   const a = job.asset ? p.assets.find((x) => x.id === job.asset) : undefined;
-  if (a) return <AssetCard a={a} job={job} onCreate={onCreate} />;
+  if (a) {
+    const targetCut = job.cut ?? cutId;
+    let onRemove: (() => void) | undefined;
+    if (doc) {
+      const s = job.shot && targetCut ? doc.cuts.find((c) => c.id === targetCut)?.shots.find((x) => x.id === job.shot) : undefined;
+      if (s?.content.kind === "generated" && (s.content.take === a.id || s.content.takes?.includes(a.id))) {
+        onRemove = () => actions.editFile((d) => void removeShotTake(d, targetCut!, job.shot!, a.id));
+      } else if (!job.sheet && a.provenance?.source === "generated" && !isAssetReferenced(doc, a.id)) {
+        onRemove = () => actions.editFile((d) => void removeGeneratedAsset(d, a.id));
+      }
+    }
+    return <AssetCard a={a} job={job} onCreate={onCreate} onRemove={onRemove} />;
+  }
   const style = { aspectRatio: ratio(job.request.aspect) };
   if (isOpen(job))
     return (

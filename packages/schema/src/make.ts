@@ -1664,3 +1664,165 @@ export function followTakes(before: Pick<Project, "shots">, after: Project) {
     s.content = c.in === was.in ? shown : { ...shown, in: c.in };
   }
 }
+
+/**
+ * Whether anything in the project file still refers to `assetId` — any cut's shots, music, sfx or notes, any cast
+ * member or variant, the look or brief, or another asset's cutout, version or provenance. Used before pruning an
+ * unwanted generated take so removal never breaks another cut, cast member, or a surviving clip's "Made from" link.
+ */
+export function isAssetReferenced(file: Pick<ProjectFile, "assets" | "brief" | "cast" | "cuts" | "look">, assetId: string): boolean {
+  if (file.look?.logo === assetId || file.look?.lightSphere === assetId) return true;
+  if (file.brief.references?.some((r) => typeof r !== "string" && r.kind === "asset" && r.value === assetId)) return true;
+  for (const m of file.cast ?? []) {
+    if (m.voiceSample === assetId) return true;
+    if (m.seen?.some((s) => s.asset === assetId)) return true;
+    if (m.heard?.some((h) => h.asset === assetId)) return true;
+    for (const l of [m, ...(m.variants ?? [])]) {
+      if (lookAssets(l).includes(assetId)) return true;
+    }
+  }
+  for (const a of file.assets) {
+    if (a.id === assetId) continue;
+    if (a.cutout?.of === assetId || a.version?.of === assetId) return true;
+    if (a.provenance?.refs?.includes(assetId)) return true;
+    const params = a.provenance?.params as
+      | {
+          start?: string;
+          end?: string;
+          drive?: { asset?: string };
+          clip?: { asset?: string };
+          camera?: { asset?: string };
+          speech?: { asset?: string };
+          audioRefs?: AudioRef[];
+        }
+      | undefined;
+    if (
+      params &&
+      (params.start === assetId ||
+        params.end === assetId ||
+        params.drive?.asset === assetId ||
+        params.clip?.asset === assetId ||
+        params.camera?.asset === assetId ||
+        params.speech?.asset === assetId ||
+        params.audioRefs?.some((ar) => "asset" in ar && ar.asset === assetId))
+    ) {
+      return true;
+    }
+  }
+  for (const cut of file.cuts) {
+    if (cut.music?.cues.some((c) => c.asset === assetId)) return true;
+    if (cut.sfx?.some((c) => c.sound === assetId)) return true;
+    if (cut.notes.some((n) => n.target.kind === "asset" && n.target.asset === assetId)) return true;
+    for (const s of cut.shots) {
+      const c = s.content;
+      if (c.kind === "clip") {
+        if (c.asset === assetId || c.version === assetId) return true;
+      } else if (c.kind === "generated") {
+        if (
+          c.take === assetId ||
+          c.takes?.includes(assetId) ||
+          c.refs?.includes(assetId) ||
+          c.start === assetId ||
+          c.end === assetId ||
+          c.drive?.asset === assetId ||
+          (c.camera && "asset" in c.camera && c.camera.asset === assetId) ||
+          c.speech?.asset === assetId ||
+          c.audioRefs?.some((ar) => "asset" in ar && ar.asset === assetId)
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Removes a take from a generated shot in `cutId`, falling back to a remaining take if the removed one was currently
+ * shown, lowering fidelity only if what supported it is gone, and pruning the asset from `file.assets` if it was
+ * generated and nothing else in the project references it. Mutates `file` in place so callers can wrap it in undo.
+ */
+export function removeShotTake(file: ProjectFile, cutId: string, shotId: string, takeId: string, seconds?: number): boolean {
+  const cut = file.cuts.find((c) => c.id === cutId);
+  const shot = cut?.shots.find((s) => s.id === shotId);
+  if (!shot || shot.content.kind !== "generated") return false;
+  const c = shot.content;
+  const before = c.takes ?? (c.take ? [c.take] : []);
+  if (!before.includes(takeId) && c.take !== takeId) return false;
+
+  const idx = before.indexOf(takeId);
+  const remaining = before.filter((id) => id !== takeId);
+  const removedAsset = file.assets.find((a) => a.id === takeId);
+  const remAssets = remaining.map((id) => file.assets.find((a) => a.id === id)).filter((a): a is Asset => !!a);
+
+  const stripTakePointers = (g: Generated) => {
+    if (g.start === takeId) delete g.start;
+    if (g.end === takeId) delete g.end;
+    if (g.refs?.includes(takeId)) {
+      const refs = g.refs.filter((id) => id !== takeId);
+      if (refs.length) g.refs = refs;
+      else delete g.refs;
+    }
+  };
+
+  stripTakePointers(c);
+  if (remaining.length) c.takes = remaining;
+  else delete c.takes;
+
+  if (c.take === takeId) {
+    if (remAssets.length) {
+      const sameKind = removedAsset ? remAssets.filter((a) => a.kind === removedAsset.kind) : [];
+      let fallback: Asset;
+      if (sameKind.length) {
+        const prevKindBefore = before.slice(0, Math.max(0, idx)).filter((id) => file.assets.find((a) => a.id === id)?.kind === removedAsset!.kind).length;
+        fallback = sameKind[Math.min(prevKindBefore, sameKind.length - 1)]!;
+      } else {
+        fallback = (c.start ? remAssets.find((a) => a.id === c.start) : undefined) ?? remAssets.at(-1)!;
+      }
+      const next = showTake(c, fallback, file.assets, seconds);
+      stripTakePointers(next);
+      const subjects = new Set(fallback.subjects?.map((x) => x.id) ?? []);
+      if (next.effects) {
+        const kept = next.effects.filter((e) => subjects.has(e.subject));
+        if (kept.length) next.effects = kept;
+        else delete next.effects;
+      }
+      if (next.reframe) {
+        for (const r of Object.values(next.reframe)) {
+          if (r.follow && !subjects.has(r.follow)) delete r.follow;
+        }
+      }
+      shot.content = next;
+    } else {
+      delete c.take;
+      delete c.in;
+      delete c.effects;
+      if (c.reframe) {
+        for (const r of Object.values(c.reframe)) delete r.follow;
+      }
+    }
+  }
+
+  const hasVideo = remAssets.some((a) => a.kind === "video");
+  const hasFinal = remAssets.some((a) => a.kind === "video" && a.provenance?.params?.quality === "final");
+  if (!remAssets.length) shot.fidelity = "idea";
+  else if (!hasVideo && (shot.fidelity === "rough" || shot.fidelity === "final")) shot.fidelity = "board";
+  else if (!hasFinal && shot.fidelity === "final") shot.fidelity = "rough";
+
+  if (removedAsset?.provenance?.source === "generated" && !isAssetReferenced(file, takeId)) {
+    file.assets = file.assets.filter((a) => a.id !== takeId);
+  }
+  return true;
+}
+
+/**
+ * Removes an unreferenced generated asset from the project file (e.g. a standalone still the person doesn't want).
+ * Refuses if the asset isn't generated or is still referenced anywhere in the project.
+ */
+export function removeGeneratedAsset(file: ProjectFile, assetId: string): boolean {
+  const asset = file.assets.find((a) => a.id === assetId);
+  if (!asset || asset.provenance?.source !== "generated") return false;
+  if (isAssetReferenced(file, assetId)) return false;
+  file.assets = file.assets.filter((a) => a.id !== assetId);
+  return true;
+}

@@ -1340,6 +1340,9 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .take-wrap { position: relative; flex: none; }
 .enlarge { position: absolute; top: 3px; left: 3px; display: grid; place-items: center; width: 20px; height: 18px; padding: 0; border: none; border-radius: var(--r-2); background: var(--scrim); color: var(--on-scrim); opacity: 0; }
 .take-wrap:hover .enlarge, .clip-frame:hover .enlarge, .enlarge:focus-visible { opacity: 1; }
+.take-remove { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: none; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); opacity: 0; transition: opacity 0.1s, background 0.1s; }
+.take-wrap:hover .take-remove, .take-remove:focus-visible { opacity: 1; }
+.take-remove:hover { background: var(--warn); color: var(--bg); }
 .clip-frame .enlarge { top: 6px; left: auto; right: 6px; z-index: 2; }
 .cast-pic .take.pending { height: 72px; aspect-ratio: 16 / 9; }
 .cast-view .make-row { flex-wrap: wrap; }
@@ -1471,6 +1474,10 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .make-card.failed { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; text-align: center; color: var(--warn); border-style: dashed; cursor: default; overflow-y: auto; }
 .card-actions { position: absolute; left: 0; right: 0; bottom: 0; display: flex; gap: 4px; padding: 4px; background: linear-gradient(transparent, var(--scrim)); opacity: 0; transition: opacity 0.12s; }
 .make-card:hover .card-actions, .card-actions:focus-within { opacity: 1; }
+.make-card-remove { position: absolute; top: 4px; right: 4px; z-index: 2; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: none; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); opacity: 0; transition: opacity 0.1s, background 0.1s; }
+.make-card:hover .make-card-remove, .make-card-remove:focus-visible { opacity: 1; }
+.make-card-remove:hover { background: var(--warn); color: var(--bg); }
+.make-card:has(.make-card-remove):hover .badge.right { opacity: 0; }
 .card-actions button, .card-actions select { font-size: var(--t-2); padding: 2px 4px; max-width: 50%; }
 .make-queue { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-top: 1px solid var(--line); background: var(--panel); min-height: 38px; }
 .queue-jobs { flex: 1; min-width: 0; display: flex; gap: 12px; overflow-x: auto; white-space: nowrap; }
@@ -1615,12 +1622,16 @@ button.icon.play.on { border-color: var(--accent); color: var(--accent); }
 .stage-bar { display: flex; align-items: center; gap: 8px; min-height: 28px; }
 .in-cut { display: inline-flex; align-items: center; gap: 4px; color: var(--good); }
 .take-tray { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; }
-.tray-take { position: relative; flex: none; height: 96px; padding: 0; border: 2px solid transparent; border-radius: var(--r-2); overflow: hidden; background: var(--raised); opacity: 0.72; }
-.tray-take:hover, .tray-take.viewing { opacity: 1; }
+.tray-take-wrap { position: relative; flex: none; }
+.tray-take { position: relative; flex: none; display: block; height: 96px; padding: 0; border: 2px solid transparent; border-radius: var(--r-2); overflow: hidden; background: var(--raised); opacity: 0.72; }
+.tray-take-wrap:hover .tray-take, .tray-take:hover, .tray-take.viewing { opacity: 1; }
 .tray-take.viewing { border-color: var(--text); }
 .tray-take img, .tray-take video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .tray-take .badge { position: absolute; left: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; font-size: var(--t-1); border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); }
-.tray-in { position: absolute; right: 4px; top: 4px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--good); color: var(--bg); }
+.tray-in { position: absolute; left: 4px; top: 4px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; background: var(--good); color: var(--bg); }
+.tray-remove { position: absolute; top: 5px; right: 5px; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: none; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); opacity: 0; transition: opacity 0.1s, background 0.1s; }
+.tray-take-wrap:hover .tray-remove, .tray-remove:focus-visible { opacity: 1; }
+.tray-remove:hover { background: var(--warn); color: var(--bg); }
 .tray-take.pending { display: grid; place-items: center; padding: 0 12px; opacity: 1; border: 1px dashed var(--line-2); color: var(--dim); font-size: var(--t-1); text-align: center; animation: take-pulse 1.4s ease-in-out infinite; }
 .shot-failed-list { display: flex; flex-direction: column; gap: 6px; }
 .shot-failed { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: var(--r-2); background: color-mix(in srgb, var(--warn) 10%, transparent); }
