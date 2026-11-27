@@ -117,6 +117,8 @@ export type State = {
   codeVersion?: string;
   /** The note being written (or edited), and where on screen its editor sits. */
   noteDraft?: NoteDraft;
+  /** Unsent text in the Agent composer, keyed by `${projectId}/${cutId}`, so switching modes or tabs never loses it. */
+  agentDrafts: Record<string, string>;
 };
 
 /** A note in the making: what it's about, and for a new one when and where in the frame. */
@@ -141,10 +143,11 @@ let state: State = {
   zoom: 0,
   side: "agent",
   agents: [],
-  agent: { status: "off", items: [], approvals: [] },
+  agent: { status: "off", items: [], approvals: [], queued: [] },
   newProjectOpen: false,
   settingsLoaded: false,
   settingsOpen: false,
+  agentDrafts: {},
 };
 const listeners = new Set<() => void>();
 
@@ -235,7 +238,14 @@ async function saveNow() {
 
 /** Folds one streamed change into the agent view. A view change carries every field but the transcript. */
 function applyAgentChange(v: AgentView, c: AgentChange): AgentView {
-  if (c.type === "view") return { ...c.view, items: c.view.items ?? v.items, approvals: c.view.approvals ?? v.approvals };
+  if (c.type === "view") {
+    return {
+      ...c.view,
+      items: c.view.items ?? v.items,
+      approvals: c.view.approvals ?? v.approvals,
+      queued: c.view.queued ?? v.queued,
+    };
+  }
   if (c.type === "item") {
     const i = v.items.findIndex((x) => x.id === c.item.id);
     return { ...v, items: i < 0 ? [...v.items, c.item] : v.items.map((x, j) => (j === i ? c.item : x)) };
@@ -304,7 +314,10 @@ export const actions = {
   },
   async loadAgent() {
     const res = await fetch("/api/agent");
-    if (res.ok) setState({ agent: (await res.json()) as AgentView });
+    if (res.ok) {
+      const view = (await res.json()) as AgentView;
+      setState({ agent: { ...view, queued: view.queued ?? [] } });
+    }
   },
   /**
    * Checks which agent CLIs are installed, then what models they offer. The first answer comes at once; the models
@@ -319,8 +332,17 @@ export const actions = {
   applyAgent(change: AgentChange) {
     setState((s) => ({ agent: applyAgentChange(s.agent, change) }));
   },
+  setAgentDraft(key: string, text: string) {
+    setState((s) => {
+      if ((s.agentDrafts[key] ?? "") === text) return {};
+      const next = { ...s.agentDrafts };
+      if (text) next[key] = text;
+      else delete next[key];
+      return { agentDrafts: next };
+    });
+  },
   /** Asks the hosted agent to do something; what happens shows up through `applyAgent`. */
-  async agentCommand(command: "start" | "resume" | "send" | "interrupt" | "approval" | "stop", body: Record<string, unknown> = {}) {
+  async agentCommand(command: "start" | "resume" | "send" | "send-now" | "unqueue" | "interrupt" | "approval" | "stop", body: Record<string, unknown> = {}) {
     const res = await fetch(`/api/agent/${command}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (!res.ok) {
       const out = (await res.json().catch(() => ({}))) as { error?: string };

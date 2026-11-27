@@ -6,16 +6,21 @@ import { EventEmitter } from "node:events";
 import { openingPrompt } from "../agents.ts";
 import { readSettings } from "../settings.ts";
 import { loadFile } from "../store.ts";
-import { agentsTurn, currentTurn, yourTurn } from "../turns.ts";
+import { agentsTurn, currentTurn, restoreNotes, yourTurn } from "../turns.ts";
 import { AntigravityAdapter } from "./antigravity.ts";
 import { ClaudeAdapter } from "./claude.ts";
 import { cliVersions, findCli, installCli, openSignIn, SETUP, updateCli } from "./cli.ts";
 import { CodexAdapter } from "./codex.ts";
 import { MuseAdapter } from "./muse.ts";
-import { AGENT_LABELS, brief, message, offView, touchesKeys, type AgentAdapter, type AgentChange, type AgentCheck, type AgentId, type AgentModel, type AgentOption, type AgentSessionSummary, type AgentView } from "./session.ts";
+import { uuid7 } from "./rpc.ts";
+import { AGENT_LABELS, brief, message, offView, readStudioMessage, touchesKeys, type AgentAdapter, type AgentChange, type AgentCheck, type AgentId, type AgentModel, type AgentOption, type AgentQueued, type AgentSessionSummary, type AgentView } from "./session.ts";
 
 export * from "./session.ts";
 export { uuid7 } from "./rpc.ts";
+
+/** Attached notes carried by a queued message, so removing it before it runs puts those notes back in the composer. */
+export type QueuedNotes = { project: string; cut?: string; batch: string };
+type QueuedEntry = { id: string; raw: string; shown: AgentQueued; notes?: QueuedNotes };
 
 export const AGENT_IDS: AgentId[] = ["muse", "codex", "claude", "antigravity"];
 /** An agent CLI: whether it's here, how to get it working, and its models once it is. */
@@ -38,9 +43,17 @@ const make = (id: AgentId): AgentAdapter =>
 
 export class AgentStudio extends EventEmitter {
   private adapters = new Map<AgentId, AgentAdapter>();
-  /** Reopen the Claude Code session when it's next idle, so it starts with the current permission flags. */
+  /** Reopen the session when it's next idle, so it starts with the current permission flags or tools. */
   private relaunch = false;
   private current?: AgentAdapter;
+  /** Messages sent while a turn is running, shown in the conversation until they go next or are removed. */
+  private queue: QueuedEntry[] = [];
+  /** Queued item promoted by "Send now" while waiting for the active turn to cancel. */
+  private pendingSendNow?: string;
+  /** True after an explicit Stop (or removing a "Send now" item mid-cancel), so queued items pause instead of auto-running. */
+  private interrupted = false;
+  /** True while a native mid-turn steer RPC is in flight, deferring idle auto-dispatch until it settles. */
+  private steering = false;
   /** Each CLI's models, asked once: the answer, or the asking still under way. */
   private models = new Map<AgentId, Promise<AgentModel[]>>();
   /** Each CLI's thinking / reasoning levels, when it exposes a separate choice. */
@@ -50,32 +63,99 @@ export class AgentStudio extends EventEmitter {
   /** A version an update didn't reach (the CLI's own channel is behind npm's): not offered again. */
   private unreached = new Map<AgentId, string>();
 
+  constructor(private makeAdapter: (id: AgentId) => AgentAdapter = make) {
+    super();
+  }
+
   get view(): AgentView {
-    return this.current?.view ?? offView();
+    const base = this.current?.view ?? offView();
+    return { ...base, queued: this.queuedView() };
+  }
+
+  private queuedView(): AgentQueued[] {
+    return this.queue.map((q) => ({ ...q.shown }));
+  }
+
+  private emitView() {
+    const { items: _items, ...rest } = this.view;
+    this.emit("change", { type: "view", view: rest } satisfies AgentChange);
+  }
+
+  private clearQueue(restore: boolean) {
+    const dropped = this.queue.splice(0);
+    this.pendingSendNow = undefined;
+    this.interrupted = false;
+    if (restore) {
+      for (const q of dropped) if (q.notes) restoreNotes(q.notes.project, q.notes.batch, q.notes.cut);
+    }
   }
 
   private adapter(id: AgentId): AgentAdapter {
     let a = this.adapters.get(id);
     if (!a) {
-      const made = make(id);
+      const made = this.makeAdapter(id);
       let was = made.view.status;
       made.on("change", (c: AgentChange) => {
         if (made !== this.current) return;
-        this.emit("change", c);
-        if (c.type !== "view") return;
-        // A hosted agent that stops without handing off still gives the turn back.
-        if (was === "running" && c.view.status === "idle" && c.view.project) this.turnBack(c.view.project);
-        // A permissions change that came mid-turn: reopen the conversation with the new flags once it's done.
-        if (this.relaunch && c.view.status === "idle" && made.view.sessionId) {
-          this.relaunch = false;
-          void this.resume(id, made.view.sessionId, made.view.project, made.view.cut);
+        if (c.type !== "view") {
+          this.emit("change", c);
+          return;
         }
+        const prev = was;
         was = c.view.status;
+        this.emit("change", { type: "view", view: { ...c.view, queued: this.queuedView() } });
+        this.onStatusChange(id, made, prev, c.view.status, c.view.error);
       });
       this.adapters.set(id, made);
       a = made;
     }
     return a;
+  }
+
+  private onStatusChange(id: AgentId, made: AgentAdapter, prev: AgentView["status"], status: AgentView["status"], error?: string) {
+    if (prev !== "running" || status !== "idle") return;
+    if (this.steering) return;
+    const forced = this.pendingSendNow ? this.queue.findIndex((q) => q.id === this.pendingSendNow) : -1;
+    const shouldDispatch = forced >= 0 || (!this.interrupted && !error && this.queue.length > 0);
+    // A permissions or Chrome change that came mid-turn: reopen the conversation with the new flags once it's done.
+    if (this.relaunch && made.view.sessionId) {
+      this.relaunch = false;
+      if (!shouldDispatch && made.view.project) this.turnBack(made.view.project);
+      void this.relaunchSession(id, made.view.sessionId, made.view.project, made.view.cut, shouldDispatch, forced >= 0);
+      return;
+    }
+    if (shouldDispatch) {
+      this.dispatchNext(forced >= 0);
+      return;
+    }
+    this.interrupted = false;
+    this.pendingSendNow = undefined;
+    // A hosted agent that stops without handing off still gives the turn back.
+    if (made.view.project) this.turnBack(made.view.project);
+  }
+
+  private async relaunchSession(id: AgentId, sessionId: string, project?: string, cut?: string, dispatch = false, forced = false) {
+    await this.use(id).resume(sessionId, project, project ? this.cutOf(project, cut) : undefined);
+    if (dispatch && this.current?.id === id && this.current.view.status === "idle") this.dispatchNext(forced);
+  }
+
+  private dispatchNext(forced = false) {
+    const a = this.current;
+    if (!a || a.view.status !== "idle") return;
+    const idx = forced && this.pendingSendNow ? this.queue.findIndex((q) => q.id === this.pendingSendNow) : 0;
+    if (idx < 0 || idx >= this.queue.length) {
+      this.pendingSendNow = undefined;
+      return;
+    }
+    const [next] = this.queue.splice(idx, 1);
+    this.pendingSendNow = undefined;
+    this.interrupted = false;
+    this.emitView();
+    this.handed();
+    void a.send(next!.raw).catch((err) => {
+      if (!a.view.error) a.fail(err);
+      if (a.view.project) this.turnBack(a.view.project);
+    });
   }
 
   private turnBack(project: string) {
@@ -127,7 +207,7 @@ export class AgentStudio extends EventEmitter {
   private async reopenSession(anyAgent = false) {
     const a = this.current;
     if (!a || (a.id !== "claude" && !anyAgent) || a.view.status === "off" || !a.view.sessionId) return;
-    if (a.view.status === "idle") await this.resume(a.id, a.view.sessionId, a.view.project, a.view.cut);
+    if (a.view.status === "idle") await this.relaunchSession(a.id, a.view.sessionId, a.view.project, a.view.cut);
     else this.relaunch = true;
   }
 
@@ -311,6 +391,7 @@ export class AgentStudio extends EventEmitter {
 
   /** A new session; its first message points it at the project's cut, with `then` (an answer, say) to act on. */
   async start(id: AgentId, opts: { model?: string; thinking?: string; project?: string; cut?: string; then?: string }) {
+    this.clearQueue(true);
     const cut = opts.project ? this.cutOf(opts.project, opts.cut) : undefined;
     const a = this.use(id);
     await a.start({ ...opts, cut });
@@ -320,6 +401,7 @@ export class AgentStudio extends EventEmitter {
   }
 
   async resume(id: AgentId, sessionId: string, project?: string, cut?: string) {
+    this.clearQueue(true);
     await this.use(id).resume(sessionId, project, project ? this.cutOf(project, cut) : undefined);
   }
 
@@ -333,13 +415,106 @@ export class AgentStudio extends EventEmitter {
     return (this.view.status === "running" || this.view.status === "starting") && !this.openOn(project, cut);
   }
 
-  async send(text: string) {
+  /**
+   * Sends a message to the open session, or queues it while the agent is busy so it stays visible in the conversation
+   * and runs next once the current turn finishes. Returns true when queued.
+   */
+  async send(text: string, notes?: QueuedNotes): Promise<boolean> {
     if (!this.current) throw new Error("No agent is connected");
+    if (this.current.view.status === "running" || this.current.view.status === "starting") {
+      const id = uuid7();
+      this.queue.push({ id, raw: text, shown: { id, ...readStudioMessage(text) }, notes });
+      this.emitView();
+      return true;
+    }
+    this.interrupted = false;
     this.handed();
     await this.current.send(text);
+    return false;
+  }
+
+  /**
+   * Sends a queued message right away: immediately if idle, via native mid-turn steer when supported, or by stopping
+   * the current turn and starting this message as soon as it cancels.
+   */
+  async sendQueued(id: string) {
+    const idx = this.queue.findIndex((q) => q.id === id);
+    if (idx < 0 || !this.current) return;
+    const a = this.current;
+    // Re-read status through a helper because `a.view` can transition across `await` boundaries.
+    const statusOf = (): AgentView["status"] => a.view.status;
+    if (statusOf() === "idle") {
+      const [item] = this.queue.splice(idx, 1);
+      this.pendingSendNow = undefined;
+      this.interrupted = false;
+      this.emitView();
+      this.handed();
+      await a.send(item!.raw);
+      return;
+    }
+    if (statusOf() !== "running") return;
+    if (a.steer) {
+      const [item] = this.queue.splice(idx, 1);
+      this.emitView();
+      this.steering = true;
+      let ok = false;
+      try {
+        ok = await a.steer(item!.raw).catch(() => false);
+      } finally {
+        this.steering = false;
+      }
+      if (ok) {
+        this.interrupted = false;
+        if (this.current === a && statusOf() === "idle") this.onStatusChange(a.id, a, "running", "idle", a.view.error);
+        return;
+      }
+      if (this.current !== a) return;
+      if (statusOf() === "idle") {
+        this.interrupted = false;
+        this.handed();
+        await a.send(item!.raw);
+        return;
+      }
+      this.queue.unshift(item!);
+    } else if (idx > 0) {
+      const [item] = this.queue.splice(idx, 1);
+      this.queue.unshift(item!);
+    }
+    const target = this.queue[0]!;
+    for (const q of this.queue) q.shown.sending = q.id === target.id ? true : undefined;
+    this.pendingSendNow = target.id;
+    this.interrupted = false;
+    this.emitView();
+    await a.interrupt();
+    if (this.current === a && statusOf() === "idle" && this.pendingSendNow === target.id) {
+      this.dispatchNext(true);
+    }
+  }
+
+  /** Removes a queued message before it runs, putting any attached notes back in the composer. */
+  removeQueued(id: string) {
+    const idx = this.queue.findIndex((q) => q.id === id);
+    if (idx < 0) return;
+    const [removed] = this.queue.splice(idx, 1);
+    if (removed!.notes) restoreNotes(removed!.notes.project, removed!.notes.batch, removed!.notes.cut);
+    if (this.pendingSendNow === id) {
+      this.pendingSendNow = undefined;
+      this.interrupted = true;
+    }
+    this.emitView();
   }
 
   async interrupt() {
+    let changed = false;
+    for (const q of this.queue) {
+      if (q.shown.sending) {
+        q.shown.sending = undefined;
+        changed = true;
+      }
+    }
+    this.pendingSendNow = undefined;
+    this.interrupted = true;
+    if (changed) this.emitView();
     await this.current?.interrupt();
   }
 
@@ -348,6 +523,7 @@ export class AgentStudio extends EventEmitter {
   }
 
   stop() {
+    this.clearQueue(true);
     const a = this.current;
     this.current = undefined;
     a?.stop();

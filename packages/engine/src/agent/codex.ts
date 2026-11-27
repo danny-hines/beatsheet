@@ -71,8 +71,6 @@ export class CodexAdapter extends AgentAdapter {
   private starting?: Promise<StdioRpc>;
   private waiting = new Map<string, Waiting>();
   private turnId?: string;
-  /** Messages sent while a turn runs go in after it. */
-  private queue: string[] = [];
 
   private async host(): Promise<StdioRpc> {
     if (this.rpc && !this.rpc.closed) return this.rpc;
@@ -157,10 +155,6 @@ export class CodexAdapter extends AgentAdapter {
 
   async send(text: string) {
     if (!this.view.sessionId) throw new Error("No Codex session open");
-    if (this.view.status === "running") {
-      this.queue.push(text);
-      return;
-    }
     const rpc = await this.host();
     this.set({ status: "running", error: undefined });
     try {
@@ -172,8 +166,22 @@ export class CodexAdapter extends AgentAdapter {
     }
   }
 
+  async steer(text: string): Promise<boolean> {
+    if (!this.rpc || !this.view.sessionId || this.view.status !== "running" || !this.turnId) return false;
+    try {
+      await this.rpc.request("turn/steer", {
+        threadId: this.view.sessionId,
+        expectedTurnId: this.turnId,
+        clientUserMessageId: uuid7(),
+        input: [{ type: "text", text, text_elements: [] }],
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async interrupt() {
-    this.queue = [];
     if (this.rpc && this.view.sessionId && this.turnId) await this.rpc.request("turn/interrupt", { threadId: this.view.sessionId, turnId: this.turnId });
   }
 
@@ -190,7 +198,7 @@ export class CodexAdapter extends AgentAdapter {
     this.rpc = undefined;
     rpc?.close();
     this.waiting.clear();
-    this.queue = [];
+    this.turnId = undefined;
     this.replace({ status: "off" });
   }
 
@@ -300,10 +308,9 @@ export class CodexAdapter extends AgentAdapter {
         return this.set({ status: "running" });
       case "turn/completed": {
         const turn = p.turn as Turn;
+        if (this.turnId && turn.id && turn.id !== this.turnId) return;
         this.turnId = undefined;
         this.set({ status: "idle", error: turn.status === "failed" ? readable(turn.error?.message ?? "The turn failed") : undefined });
-        const next = this.queue.shift();
-        if (next) void this.send(next).catch((err) => this.set({ error: message(err) }));
         return;
       }
       case "error":

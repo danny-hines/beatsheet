@@ -118,31 +118,25 @@ export function App() {
   }
   // Media on the left, the cut in the middle, the agent and notes on the right. Making stills and clips takes the
   // middle over: the shots to make, the cast, what's been made, and whichever of them is open (with the right-hand
-  // panel folded away when that needs the room).
-  if (mode === "make") {
-    return (
-      <div className={`app make ${makeWide ? "wide" : ""}`}>
-        <TopBar />
-        <Library />
-        <MakeView />
-        <aside className="side">
-          <SidePanel />
-        </aside>
-        {overlays}
-      </div>
-    );
-  }
+  // panel folded away when that needs the room). Keep Library, SidePanel and overlays at stable child positions so
+  // switching between Edit and Make never unmounts the agent conversation or composer.
   return (
-    <div className="app">
+    <div className={mode === "make" ? `app make ${makeWide ? "wide" : ""}` : "app"}>
       <TopBar />
       <Library />
-      <main className="main">
-        <Notice />
-        <div className="player">
-          <PlayerOrWaiting />
-        </div>
-      </main>
-      <Timeline />
+      {mode === "make" ? (
+        <MakeView />
+      ) : (
+        <>
+          <main className="main">
+            <Notice />
+            <div className="player">
+              <PlayerOrWaiting />
+            </div>
+          </main>
+          <Timeline />
+        </>
+      )}
       <aside className="side">
         <SidePanel />
       </aside>

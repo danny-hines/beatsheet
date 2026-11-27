@@ -144,6 +144,8 @@ export class MuseAdapter extends AgentAdapter {
   /** The raw approvals behind the cards, for the requirement id `approval/decide` wants. */
   private pending = new Map<string, MspApproval>();
   private named = false;
+  /** True while `turn/start` is in flight, so a trailing `session/statusChanged("idle")` from the previous turn doesn't clobber it. */
+  private startingTurn = false;
 
   private async host(): Promise<StdioRpc> {
     if (this.rpc && !this.rpc.closed) return this.rpc;
@@ -207,6 +209,7 @@ export class MuseAdapter extends AgentAdapter {
   async start(opts: { model?: string; project?: string; cut?: string }) {
     // "default" leaves the pick to Muse Code, which says in its answer which model that was.
     const model = opts.model === "default" ? undefined : opts.model;
+    this.startingTurn = false;
     this.replace({ status: "starting", project: opts.project, cut: opts.cut, model });
     try {
       const rpc = await this.host();
@@ -219,6 +222,7 @@ export class MuseAdapter extends AgentAdapter {
   }
 
   async resume(sessionId: string, project?: string, cut?: string) {
+    this.startingTurn = false;
     this.replace({ status: "starting", project, cut });
     try {
       const rpc = await this.host();
@@ -244,9 +248,36 @@ export class MuseAdapter extends AgentAdapter {
   }
 
   async send(text: string) {
-    const rpc = await this.host();
     if (!this.view.sessionId) throw new Error("No Muse session open");
-    await rpc.request("turn/start", { commandId: uuid7(), sessionId: this.view.sessionId, input: [{ type: "text", text }], displayText: readStudioMessage(text).display, ifBusy: "queue" });
+    this.startingTurn = true;
+    this.set({ status: "running", error: undefined });
+    try {
+      const rpc = await this.host();
+      await rpc.request("turn/start", { commandId: uuid7(), sessionId: this.view.sessionId, input: [{ type: "text", text }], displayText: readStudioMessage(text).display, ifBusy: "queue" });
+    } catch (err) {
+      this.startingTurn = false;
+      this.set({ status: "idle", error: message(err) });
+      throw err;
+    }
+    this.startingTurn = false;
+  }
+
+  async steer(text: string): Promise<boolean> {
+    if (!this.view.sessionId) return false;
+    const rpc = await this.host();
+    try {
+      const r = await rpc.request<{ disposition?: string }>("turn/start", {
+        commandId: uuid7(),
+        sessionId: this.view.sessionId,
+        input: [{ type: "text", text }],
+        displayText: readStudioMessage(text).display,
+        ifBusy: "steer",
+      });
+      if (r.disposition === "started") this.set({ status: "running", error: undefined });
+      return r.disposition === "steered" || r.disposition === "started";
+    } catch {
+      return false;
+    }
   }
 
   async interrupt() {
@@ -263,6 +294,7 @@ export class MuseAdapter extends AgentAdapter {
     const rpc = this.rpc;
     this.rpc = undefined;
     rpc?.close();
+    this.startingTurn = false;
     this.pending.clear();
     this.replace({ status: "off" });
   }
@@ -336,7 +368,7 @@ export class MuseAdapter extends AgentAdapter {
         if (!this.named) void this.fetchName();
         return this.set({ status: "idle", error: p.terminal === "failed" ? String((p.error as { message?: string } | undefined)?.message ?? "The turn failed") : undefined });
       case "session/statusChanged":
-        if (p.status === "running" || p.status === "idle") this.set({ status: p.status });
+        if (p.status === "running" || (p.status === "idle" && !this.startingTurn)) this.set({ status: p.status });
         return;
       case "session/nameChanged":
         this.named = true;

@@ -33,6 +33,16 @@ export type AgentItem = {
 
 export type AgentApproval = { id: string; title: string; detail?: string; choices: { id: string; label: string; primary?: boolean }[] };
 
+/** A message the person sent while the agent was busy, waiting to go next. */
+export type AgentQueued = {
+  id: string;
+  text: string;
+  display?: string;
+  notes?: number;
+  /** True while cancelling the active turn so this message can go right away. */
+  sending?: boolean;
+};
+
 export type AgentView = {
   agent?: AgentId;
   status: "off" | "starting" | "idle" | "running" | "error";
@@ -47,6 +57,8 @@ export type AgentView = {
   cut?: string;
   items: AgentItem[];
   approvals: AgentApproval[];
+  /** Messages sent while a turn was running, waiting in order to go next. */
+  queued: AgentQueued[];
   /** When the CLI last said anything (a streamed word, a tool result), so the studio can tell working from stuck. */
   heardAt?: string;
 };
@@ -70,7 +82,7 @@ export const brief = (detail: string, most = 160) => {
   return line.length > most ? `${line.slice(0, most - 1).trimEnd()}…` : line;
 };
 
-export const offView = (): AgentView => ({ status: "off", items: [], approvals: [] });
+export const offView = (): AgentView => ({ status: "off", items: [], approvals: [], queued: [] });
 export const message = (err: unknown) => (err instanceof Error ? err.message : String(err));
 
 /**
@@ -153,8 +165,13 @@ export abstract class AgentAdapter extends EventEmitter {
   abstract sessions(): Promise<AgentSessionSummary[]>;
   abstract start(opts: { model?: string; thinking?: string; project?: string; cut?: string }): Promise<void>;
   abstract resume(sessionId: string, project?: string, cut?: string): Promise<void>;
-  /** A message from the person. Waits for the current turn if the agent is busy. */
+  /** A message from the person, sent when the agent is ready. */
   abstract send(text: string): Promise<void>;
+  /**
+   * Injects a message into the active turn without aborting in-flight work, when this CLI supports mid-turn steering.
+   * Returns true if delivered; false falls back to interrupting the current turn and sending next.
+   */
+  steer?(text: string): Promise<boolean>;
   abstract interrupt(): Promise<void>;
   abstract decide(approvalId: string, choiceId: string): Promise<void>;
   /** Lets the session go (it stays on disk to resume) and stops the CLI. */

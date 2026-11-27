@@ -324,6 +324,12 @@ export class ClaudeAdapter extends AgentAdapter {
     this.write({ type: "user", message: { role: "user", content: text }, parent_tool_use_id: null, session_id: this.view.sessionId ?? "" });
   }
 
+  async steer(text: string): Promise<boolean> {
+    if (!this.child || this.view.status !== "running") return false;
+    await this.send(text);
+    return true;
+  }
+
   async interrupt() {
     if (this.child) this.write({ type: "control_request", request_id: `beatsheet-${++this.controlSeq}`, request: { subtype: "interrupt" } });
   }

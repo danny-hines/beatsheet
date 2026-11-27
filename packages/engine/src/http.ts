@@ -326,7 +326,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     if (!open && !preferred) return json(res, 409, { error: "No agent is set up yet. Pick one in Settings." });
     // Only once it's sure to be delivered: the notes it takes, and the cast members kept, would otherwise go twice.
     if (id === "ask" && !body.text?.trim()) return json(res, 400, { error: "Ask what?" });
-    const notes = body.notes ? takeNotes(body.project, body.cut).line : undefined;
+    const taken = body.notes ? takeNotes(body.project, body.cut) : undefined;
+    const notes = taken?.line;
     // A take an option planned starts as it's picked, before the agent hears of it: what the card showed is what's sent.
     const started = id === "answer" ? startPicked(body.project, body) : [];
     const message =
@@ -335,8 +336,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         : answerMessage(body.project, currentTurn(body.project), { ...body, notes }, keepProposals(body.project, { keep: body.keep }), started);
     const unstarted = started.flatMap((s) => ("error" in s ? [`"${s.label}" wasn't started: ${s.error}`] : []));
     if (open) {
-      await agent.send(message);
-      return json(res, 200, { delivered: "session", ...(unstarted.length ? { unstarted } : {}) });
+      const queued = await agent.send(message, taken?.batch ? { project: body.project, cut: body.cut, batch: taken.batch } : undefined);
+      return json(res, 200, { delivered: queued ? "queued" : "session", ...(unstarted.length ? { unstarted } : {}) });
     }
     void agent.start(preferred!.id, { model: preferred!.model, thinking: preferred!.thinking, project: body.project, cut: body.cut, then: message });
     return json(res, 200, { delivered: "started", agent: preferred!.id, ...(unstarted.length ? { unstarted } : {}) });
@@ -560,7 +561,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       return json(res, 200, await agent.sessions(which, params.get("project") ?? undefined, params.get("cut") ?? undefined));
     }
     if (req.method === "POST") {
-      const body = JSON.parse((await readBody(req)) || "{}") as { agent?: AgentId; model?: string; thinking?: string; project?: string; cut?: string; session?: string; text?: string; approvalId?: string; choiceId?: string; then?: string };
+      const body = JSON.parse((await readBody(req)) || "{}") as { id?: string; agent?: AgentId; model?: string; thinking?: string; project?: string; cut?: string; session?: string; text?: string; approvalId?: string; choiceId?: string; then?: string };
       if (["start", "resume", "check", "install", "update", "signin"].includes(id ?? "") && !AGENT_IDS.includes(body.agent!)) return json(res, 400, { error: "Which agent?" });
       // Updating runs the CLI's own updater, followed the same way as an install.
       if (id === "update") {
@@ -600,6 +601,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       if (id === "start") void agent.start(body.agent!, { model: body.model, thinking: body.thinking, project: body.project, cut: body.cut });
       else if (id === "resume" && body.session) void agent.resume(body.agent!, body.session, body.project, body.cut);
       else if (id === "send" && body.text?.trim()) await agent.send(body.text.trim());
+      else if (id === "send-now" && body.id) await agent.sendQueued(body.id);
+      else if (id === "unqueue" && body.id) agent.removeQueued(body.id);
       else if (id === "interrupt") await agent.interrupt();
       else if (id === "approval" && body.approvalId && body.choiceId) await agent.decide(body.approvalId, body.choiceId);
       else if (id === "stop") agent.stop();

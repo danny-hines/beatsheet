@@ -131,12 +131,14 @@ export function describeChanges(before: ProjectFile, after: ProjectFile): string
   return lines;
 }
 
+let batchSeq = 0;
+
 /**
- * Sends a cut's attached notes: marks them as the agent's (one batch), and returns how many went and the line that
- * tells the agent where to find them.
+ * Sends a cut's attached notes: marks them as the agent's (one batch), and returns how many went, the batch id and the
+ * line that tells the agent where to find them.
  */
-export function takeNotes(id: string, cut?: string): { count: number; line?: string } {
-  const batch = `b${Date.now().toString(36)}`;
+export function takeNotes(id: string, cut?: string): { count: number; batch?: string; line?: string } {
+  const batch = `b${Date.now().toString(36)}${(++batchSeq).toString(36)}`;
   let count = 0;
   const { project } = updateProject(
     id,
@@ -154,8 +156,31 @@ export function takeNotes(id: string, cut?: string): { count: number; line?: str
   const c = project.cut;
   return {
     count,
+    batch,
     line: `(Attached: ${count} beatsheet note${count === 1 ? "" : "s"} on "${project.title}" (project ${id}), cut "${c.name}" (cut ${c.id}). Call get_batch for project ${id} and cut ${c.id}, handle each note in that cut, check visual changes with frame, close each one with resolve_note, then hand_off for review.)`,
   };
+}
+
+/** Puts a removed queued message's notes back as attached (queued), if the agent hasn't already answered them. */
+export function restoreNotes(id: string, batch: string, cut?: string): number {
+  let restored = 0;
+  try {
+    updateProject(
+      id,
+      (p) => {
+        for (const n of p.notes) {
+          if (n.batch !== batch || n.status !== "working") continue;
+          n.status = "queued";
+          delete n.batch;
+          restored++;
+        }
+      },
+      cut,
+    );
+  } catch {
+    // The project or cut may be gone.
+  }
+  return restored;
 }
 
 /** The person's answer to a hand-off, as the agent's next message. `notes` is the line from takeNotes. */

@@ -285,8 +285,6 @@ export class AntigravityAdapter extends AgentAdapter {
   /** The message or thinking streaming in now; the next chunk of the same kind adds to it. */
   private open?: { id: string; kind: "assistant" | "reasoning" };
   private seq = 0;
-  /** Messages sent while a turn runs go in after it. */
-  private queue: string[] = [];
 
   private async host(): Promise<StdioRpc> {
     if (this.rpc && !this.rpc.closed) return this.rpc;
@@ -443,10 +441,6 @@ export class AntigravityAdapter extends AgentAdapter {
   async send(text: string) {
     const sessionId = this.view.sessionId;
     if (!sessionId) throw new Error("No Antigravity session open");
-    if (this.view.status === "running") {
-      this.queue.push(text);
-      return;
-    }
     const rpc = await this.host();
     // The first message names the project and cut, which is how the session is found again.
     if (!readIndex().sessions[sessionId]?.prompt) updateIndex((x) => void (x.sessions[sessionId] = { ...x.sessions[sessionId], prompt: text }));
@@ -464,12 +458,9 @@ export class AntigravityAdapter extends AgentAdapter {
     if (this.view.sessionId !== sessionId || this.view.status !== "running") return;
     this.finish();
     this.set({ status: "idle", error });
-    const next = this.queue.shift();
-    if (next) void this.send(next).catch((err) => this.set({ error: message(err) }));
   }
 
   async interrupt() {
-    this.queue = [];
     if (!this.rpc || !this.view.sessionId) return;
     // Anything still waiting on the person goes back cancelled, as the protocol asks.
     for (const [id, w] of [...this.waiting]) {
@@ -493,7 +484,6 @@ export class AntigravityAdapter extends AgentAdapter {
     this.probed = undefined;
     // On Windows this ends the whole tree: the server starts a second copy of itself and its harness.
     rpc?.close();
-    this.queue = [];
     this.reset();
     this.replace({ status: "off" });
   }

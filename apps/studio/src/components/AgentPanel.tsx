@@ -1,4 +1,4 @@
-import type { AgentApproval, AgentItem } from "@beatsheet/engine";
+import type { AgentApproval, AgentId, AgentItem, AgentQueued } from "@beatsheet/engine";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AGENT_NAMES, toolCallWords } from "../lib";
 import { actions, useProject, useStore } from "../store";
@@ -60,6 +60,7 @@ export function AgentPanel() {
 }
 
 const EMPTY_ITEMS: AgentItem[] = [];
+const EMPTY_QUEUED: AgentQueued[] = [];
 
 function latestToolId(items: AgentItem[]) {
   for (let i = items.length - 1; i >= 0; i--) if (items[i]!.kind === "tool") return items[i]!.id;
@@ -100,7 +101,15 @@ function SessionChat() {
     <div className={`agent-chat ${view.agent ?? ""} ${working ? "working" : ""} ${yourTurn ? "your-turn" : ""}`}>
       <AgentWorkField working={working} pulseKey={pulseKey} handoffKey={handoffKey} />
       <AgentHead session working={working} pulseKey={pulseKey} handoffKey={handoffKey} />
-      <Transcript items={view.items} running={running} starting={view.status === "starting"} heardAt={view.heardAt} agent={(view.agent && AGENT_NAMES[view.agent]) || "The agent"} />
+      <Transcript
+        items={view.items}
+        queued={view.queued ?? EMPTY_QUEUED}
+        running={running}
+        starting={view.status === "starting"}
+        heardAt={view.heardAt}
+        agentId={view.agent}
+        agent={(view.agent && AGENT_NAMES[view.agent]) || "The agent"}
+      />
       {view.approvals.length > 0 && (
         <div className="agent-approvals">
           {view.approvals.map((a) => (
@@ -147,15 +156,35 @@ function NoSession({ error, note }: { error?: string; note?: string }) {
 /** How long a busy agent can go without a word before the panel says so (a tool that's running is excused). */
 const QUIET_MS = 3 * 60_000;
 
-function Transcript({ items, running, starting, heardAt, agent }: { items: AgentItem[]; running: boolean; starting: boolean; heardAt?: string; agent: string }) {
+function Transcript({
+  items,
+  queued,
+  running,
+  starting,
+  heardAt,
+  agentId,
+  agent,
+}: {
+  items: AgentItem[];
+  queued: AgentQueued[];
+  running: boolean;
+  starting: boolean;
+  heardAt?: string;
+  agentId?: AgentId;
+  agent: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const prevQueued = useRef(queued.length);
   const now = useNow(running);
   // When the transcript last moved: what the thinking line counts from.
   const last = items.at(-1);
   const shape = `${items.length}:${last?.status}:${last?.text?.length ?? 0}:${(last?.summary ?? []).join("").length}`;
   const moved = useRef({ shape, at: Date.now() });
   if (moved.current.shape !== shape) moved.current = { shape, at: Date.now() };
+  // Newly queued messages always scroll into view so what the person just sent never feels lost.
+  if (queued.length > prevQueued.current) pinned.current = true;
+  prevQueued.current = queued.length;
   // Follow the conversation unless the person has scrolled up to read.
   useLayoutEffect(() => {
     const el = ref.current;
@@ -186,6 +215,76 @@ function Transcript({ items, running, starting, heardAt, agent }: { items: Agent
           connection). If nothing changes, press Stop, then ask it to carry on.
         </p>
       )}
+      {queued.map((q) => (
+        <QueuedMessage key={q.id} item={q} running={running} agentId={agentId} />
+      ))}
+    </div>
+  );
+}
+
+/** A message waiting in the queue while the agent works: shown right in the conversation with Send now and Remove. */
+function QueuedMessage({ item, running, agentId }: { item: AgentQueued; running: boolean; agentId?: AgentId }) {
+  const [busy, setBusy] = useState(false);
+  const sending = !!item.sending;
+  const notesOnly = !item.text && !!item.notes;
+  const body = item.text || (notesOnly ? "" : item.display) || "";
+  const statusLabel = sending ? "Sending…" : running ? "Queued" : "Queued · paused";
+  const sendTip = !running
+    ? "Send this message now"
+    : agentId === "antigravity"
+      ? "Stop the current turn and send this now"
+      : "Send into the current turn right away";
+  const removeTip = item.notes ? "Remove from queue and put its notes back in the composer" : "Remove from queue";
+  return (
+    <div className={`agent-user agent-queued ${sending ? "sending" : ""}`}>
+      <div className="agent-queued-head">
+        <span className="agent-queued-tag">
+          {sending && <span className="spin" />}
+          {statusLabel}
+        </span>
+        <span className="spacer" />
+        <div className="agent-queued-actions">
+          <button
+            type="button"
+            className="agent-queued-send"
+            disabled={busy || sending}
+            title={sendTip}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await actions.agentCommand("send-now", { id: item.id });
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Send now
+          </button>
+          <button
+            type="button"
+            className="agent-queued-remove"
+            disabled={busy}
+            title={removeTip}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await actions.agentCommand("unqueue", { id: item.id });
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Remove
+          </button>
+        </div>
+      </div>
+      {item.display && item.text && <div className="agent-queued-display dim small">{item.display}</div>}
+      {body && <div className="agent-queued-body">{body}</div>}
+      {item.notes ? (
+        <span className="agent-user-notes">
+          {item.text ? `+ ${item.notes} note${item.notes === 1 ? "" : "s"}` : `${item.notes} attached note${item.notes === 1 ? "" : "s"}`}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -302,7 +401,11 @@ function ApprovalCard({ a }: { a: AgentApproval }) {
 }
 
 function Composer({ running, disabled }: { running: boolean; disabled: boolean }) {
-  const [text, setText] = useState("");
+  const projectId = useStore((s) => s.projectId);
+  const cutId = useStore((s) => s.cutId);
+  const draftKey = `${projectId ?? ""}/${cutId ?? ""}`;
+  const text = useStore((s) => s.agentDrafts[draftKey] ?? "");
+  const setText = (next: string) => actions.setAgentDraft(draftKey, next);
   const ref = useRef<HTMLTextAreaElement>(null);
   // No autofocus: keys like Space and N belong to the player until the person clicks in here.
   const turn = useTurn();
@@ -322,7 +425,7 @@ function Composer({ running, disabled }: { running: boolean; disabled: boolean }
           rows={2}
           value={text}
           disabled={disabled}
-          placeholder={running ? "Working. Anything you send waits for it." : turn.who === "you" && turn.ask && !turn.elsewhere ? "Or reply in your own words…" : "Ask for a change…"}
+          placeholder={running ? "Working. Anything you send queues next…" : turn.who === "you" && turn.ask && !turn.elsewhere ? "Or reply in your own words…" : "Ask for a change…"}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
@@ -337,7 +440,13 @@ function Composer({ running, disabled }: { running: boolean; disabled: boolean }
         <span className="spacer" />
         {running && <button onClick={() => void actions.agentCommand("interrupt")}>Stop</button>}
         <button className="primary" disabled={disabled || (!text.trim() && !attached)} onClick={send}>
-          {attached ? `Send with ${attached} note${attached === 1 ? "" : "s"}` : "Send"}
+          {running
+            ? attached
+              ? `Queue with ${attached} note${attached === 1 ? "" : "s"}`
+              : "Queue"
+            : attached
+              ? `Send with ${attached} note${attached === 1 ? "" : "s"}`
+              : "Send"}
         </button>
       </div>
     </div>

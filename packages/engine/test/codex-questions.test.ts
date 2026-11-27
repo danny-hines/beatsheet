@@ -31,4 +31,27 @@ describe("Codex asking the person something mid-turn", () => {
     expect(a.view.approvals).toEqual([]);
     expect(String((sent[0]!.result as { answers: Record<string, { answers: string[] }> }).answers.pw!.answers[0])).toMatch(/doesn't type secrets/);
   });
+
+  it("steers an active turn via turn/steer and returns false when steering fails", async () => {
+    const a = new CodexAdapter();
+    const calls: { method: string; params: Record<string, unknown> }[] = [];
+    let shouldFail = false;
+    const inner = a as unknown as { rpc: unknown; turnId?: string };
+    inner.rpc = {
+      request: async (method: string, params: Record<string, unknown>) => {
+        calls.push({ method, params });
+        if (shouldFail) throw new Error("not steerable");
+        return {};
+      },
+    };
+    a.view = { ...a.view, status: "running", sessionId: "thr-1" };
+    inner.turnId = "turn-42";
+
+    expect(await a.steer("focus on shot 3")).toBe(true);
+    expect(calls[0]!.method).toBe("turn/steer");
+    expect(calls[0]!.params).toMatchObject({ threadId: "thr-1", expectedTurnId: "turn-42", input: [{ type: "text", text: "focus on shot 3", text_elements: [] }] });
+
+    shouldFail = true;
+    expect(await a.steer("fallback please")).toBe(false);
+  });
 });
