@@ -526,33 +526,44 @@ export const CATALOG: CatalogModel[] = [
     id: "kling-4",
     label: "Kling 4.0",
     by: "Kuaishou",
-    note: "Follows camera moves best (the only one that orbited on request) and keeps time in long takes: 3 to 30 seconds, roughs at 720p, finals at 1080p.",
+    note: "Follows camera moves best (the only one that orbited on request), keeps time in long takes (3 to 30 seconds, 720p roughs / 1080p finals), and supports a locked start frame alongside character/scene reference pictures (up to 10 images total).",
     ops: ["video"],
-    takes: { start: true, end: true },
+    takes: { start: true, end: true, refs: 10, startWithRefs: true },
     lengths: Array.from({ length: 28 }, (_, i) => i + 3),
     aspects: ["16:9", "21:9", "1:1", "9:16"],
     // Kling says it makes its own sound; fal has no switch for it.
     sound: true,
     // A 30-second take took about 8 minutes in one test.
     wait: 180,
-    // fal.ai/models/kling/v4/image-to-video: $0.157 a second at 720p, $0.235 at 1080p.
+    // fal.ai/models/kling/v4/image-to-video & reference-to-video: $0.157/s at 720p, $0.235/s at 1080p.
     routes: [
       {
         via: "fal",
         shape: "kling-4",
-        endpoints: { text: "kling/v4/text-to-video", start: "kling/v4/image-to-video" },
+        endpoints: {
+          text: "kling/v4/text-to-video",
+          start: "kling/v4/image-to-video",
+          refs: "kling/v4/reference-to-video",
+        },
         price: { perSecond: 0.157, finalPerSecond: 0.235 },
       },
-      // Runway's kling_4: 15.7 credits a second at 720p and 23.5 at 1080p, the same as fal (a fifth off until the end
-      // of November 2026, which the take's own cost will show). It takes reference pictures and clips there too, which
-      // beatsheet doesn't send yet.
-      { via: "runway", shape: "kling_4", endpoints: { text: "kling_4", start: "kling_4" }, price: { perSecond: 0.157, finalPerSecond: 0.235 } },
-      // Higgsfield: $0.1257 a second at 720p and $0.1879 at 1080p, a fifth less than fal. It takes middle frames,
-      // references and clips there too, which beatsheet doesn't send yet.
+      // Runway's kling_4: 15.7 credits/s at 720p and 23.5 at 1080p. Accepts references (up to 10 images total including
+      // promptImage frames) on both /v1/text_to_video and /v1/image_to_video.
+      {
+        via: "runway",
+        shape: "kling_4",
+        endpoints: { text: "kling_4", start: "kling_4", refs: "kling_4" },
+        price: { perSecond: 0.157, finalPerSecond: 0.235 },
+      },
+      // Higgsfield: $0.1257/s at 720p and $0.1879/s at 1080p. Accepts image_url + end_image_url alongside image_urls.
       {
         via: "higgsfield",
         shape: "kling-v4.0",
-        endpoints: { text: "kling-video/v4.0/text-to-video", start: "kling-video/v4.0/image-to-video" },
+        endpoints: {
+          text: "kling-video/v4.0/text-to-video",
+          start: "kling-video/v4.0/image-to-video",
+          refs: "kling-video/v4.0/reference-to-video",
+        },
         price: { perSecond: 0.1257, finalPerSecond: 0.1879 },
       },
     ],

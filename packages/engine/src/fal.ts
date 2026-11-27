@@ -281,11 +281,14 @@ export function falInput(shape: string, ask: FalAsk): Record<string, unknown> {
       };
     }
     case "kling-4":
-      // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds. fal takes no seed, sound switch or negative prompt for it.
+      // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds. reference-to-video accepts start_image_url + end_image_url
+      // alongside image_urls (@Image1, @Image2…) and video_urls (@Video1), up to 10 images total (frames included).
       return {
-        prompt: ask.prompt,
+        prompt: `${withRefs(ask, (n) => `@Image${n}`)}${cameraLine(ask.camera, "@Video1")}`,
         duration: whole(ask.seconds),
         resolution: ask.quality === "final" ? "1080p" : "720p",
+        ...(ask.refs?.length ? { image_urls: ask.refs } : {}),
+        ...(ask.camera ? { video_urls: [ask.camera.url] } : {}),
         ...(ask.start ? { start_image_url: ask.start } : ask.aspect ? { aspect_ratio: ask.aspect } : {}),
         ...(ask.end ? { end_image_url: ask.end } : {}),
       };

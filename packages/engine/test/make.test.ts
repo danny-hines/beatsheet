@@ -2515,4 +2515,196 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
       plans.ready = [];
     }
   });
+
+  it("merges manual references with @cast sheets when includeCastRefs is true, and wires Kling 4.0 start frame + refs across fal, Runway and Higgsfield", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const mkImg = async (name: string, r: number, g: number, b: number) => {
+      const p = join(dir, name);
+      await sharp({ create: { width: 160, height: 90, channels: 3, background: { r, g, b } } }).jpeg().toFile(p);
+      return p;
+    };
+    const [pBoard, pEnd, pFace, pOutfit] = await Promise.all([
+      mkImg("hill-board.jpg", 90, 110, 140),
+      mkImg("hill-end.jpg", 110, 120, 150),
+      mkImg("yg-face.jpg", 200, 150, 120),
+      mkImg("yg-outfit.jpg", 60, 70, 90),
+    ]);
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push(
+        { id: "hill-board", kind: "image", path: pBoard, label: "Cart on hill", provenance: { source: "generated", cast: [] } },
+        { id: "hill-end", kind: "image", path: pEnd, label: "Cart at gate", provenance: { source: "generated", cast: [] } },
+        { id: "yg-face", kind: "image", path: pFace, provenance: { source: "generated" } },
+        { id: "yg-outfit", kind: "image", path: pOutfit, provenance: { source: "generated" } },
+      );
+      d.cast!.push({
+        id: "yg",
+        name: "Young Galileo",
+        kind: "character",
+        about: "teen with tousled brown hair",
+        wears: "dark wool doublet",
+        faceSheet: "yg-face",
+        outfitSheet: "yg-outfit",
+      });
+    });
+
+    const { falInput } = await import("../src/fal.ts");
+    const { runwayInput } = await import("../src/runway.ts");
+    const { higgsfieldInput } = await import("../src/higgsfield.ts");
+    const { teinInput } = await import("../src/tein.ts");
+
+    // 1. Direct provider payloads for Kling 4.0 start + end + refs + camera.
+    const explicitPrompt = "Young Galileo rides down the hill. Reference pictures, in order: Image 1 is Young Galileo's 360-degree face sheet; Image 2 is Young Galileo's outfit turnaround.";
+    expect(falInput("kling-4", { prompt: explicitPrompt, seconds: 5, quality: "rough", start: "u:start", end: "u:end", refs: ["u:face", "u:outfit"] })).toEqual({
+      prompt: "Young Galileo rides down the hill. Reference pictures, in order: @Image1 is Young Galileo's 360-degree face sheet; @Image2 is Young Galileo's outfit turnaround.",
+      duration: 5,
+      resolution: "720p",
+      start_image_url: "u:start",
+      end_image_url: "u:end",
+      image_urls: ["u:face", "u:outfit"],
+    });
+    const rw = runwayInput("kling_4", "kling_4", { prompt: explicitPrompt, seconds: 5, quality: "final", start: "u:start", end: "u:end", refs: ["u:face", "u:outfit"] });
+    expect(rw.path).toBe("image_to_video");
+    expect(rw.body).toMatchObject({
+      model: "kling_4",
+      promptImage: [
+        { uri: "u:start", position: "first" },
+        { uri: "u:end", position: "last" },
+      ],
+      references: [{ uri: "u:face" }, { uri: "u:outfit" }],
+      ratio: "auto_1080p",
+    });
+    expect(String(rw.body.promptText)).not.toContain("The 2 reference pictures show");
+
+    const hf = higgsfieldInput("kling-v4.0", "kling-video/v4.0/reference-to-video", { prompt: explicitPrompt, seconds: 5, quality: "rough", start: "u:start", end: "u:end", refs: ["u:face", "u:outfit"] });
+    expect(hf.body).toMatchObject({
+      image_url: "u:start",
+      end_image_url: "u:end",
+      image_urls: ["u:face", "u:outfit"],
+      resolution: "720p",
+    });
+    expect(String(hf.body.prompt)).not.toContain("The 2 reference pictures show");
+
+    // Tein doesn't append duplicate generic sentence when explicit roles are already in the prompt.
+    const tn = teinInput("seedance-2.5", "seedance-2-5", { prompt: explicitPrompt, seconds: 5, aspect: "16:9", refs: ["u:board", "u:face", "u:outfit"] });
+    expect(String(tn.prompt)).not.toContain("The 3 reference pictures show");
+
+    // 2. Video References mode with manual board + includeCastRefs: merges [board, faceSheet, outfitSheet] with opening-frame + cast role labels.
+    settings.services = { tein: { addedAt: "2026-10-29" }, runway: { addedAt: "2026-10-29" }, higgsfield: { addedAt: "2026-10-29" } };
+    try {
+      const refPlan = make.planTake(PROJECT, {
+        op: "video",
+        prompt: "Slow crane over the cart; @yg sways in the dawn wind",
+        refs: ["hill-board"],
+        includeCastRefs: true,
+        model: "seedance-2.5",
+        via: "fal",
+        seconds: 5,
+      });
+      expect(refPlan.pictures).toEqual([
+        { asset: "hill-board", as: "ref", role: "picture" },
+        { asset: "yg-face", as: "ref", role: "face-sheet" },
+        { asset: "yg-outfit", as: "ref", role: "outfit" },
+      ]);
+      expect(refPlan.told).toContain("@Image1 is the opening scene / composition reference");
+      expect(refPlan.told).toContain("@Image2 is Young Galileo's 360-degree face sheet");
+      expect(refPlan.told).toContain("@Image3 is Young Galileo's outfit turnaround");
+
+      // absentFrom recognizes auto-attached @cast sheets when includeCastRefs is true.
+      expect(
+        make.absentFrom(PROJECT, [{ op: "video", prompt: "@yg rides down the hill", refs: ["hill-board"], includeCastRefs: true, seconds: 5 }]),
+      ).toEqual([]);
+
+      // 3. Kling 4.0 From board + includeCastRefs: sends locked start (+ end) frame AND @yg's decoupled cast sheets on fal, Runway and Higgsfield!
+      const klingFal = make.planTake(PROJECT, {
+        op: "video",
+        prompt: "Slow crane over the cart; @yg sways in the dawn wind",
+        start: "hill-board",
+        end: "hill-end",
+        includeCastRefs: true,
+        model: "kling-4",
+        via: "fal",
+        seconds: 5,
+      });
+      expect(klingFal).toMatchObject({ model: "kling-4", where: "fal" });
+      expect(klingFal.pictures).toEqual([
+        { asset: "hill-board", as: "start" },
+        { asset: "hill-end", as: "end" },
+        { asset: "yg-face", as: "ref", role: "face-sheet" },
+        { asset: "yg-outfit", as: "ref", role: "outfit" },
+      ]);
+      expect(klingFal.told).toContain("@Image1 is Young Galileo's 360-degree face sheet");
+      expect(klingFal.told).toContain("@Image2 is Young Galileo's outfit turnaround");
+
+      const klingRunway = make.planTake(PROJECT, {
+        op: "video",
+        prompt: "Slow crane over the cart; @yg sways in the dawn wind",
+        start: "hill-board",
+        includeCastRefs: true,
+        model: "kling-4",
+        via: "runway",
+        seconds: 5,
+      });
+      expect(klingRunway).toMatchObject({ model: "kling-4", where: "Runway" });
+      expect(klingRunway.pictures.map((p) => [p.asset, p.as])).toEqual([
+        ["hill-board", "start"],
+        ["yg-face", "ref"],
+        ["yg-outfit", "ref"],
+      ]);
+
+      const klingHf = make.planTake(PROJECT, {
+        op: "video",
+        prompt: "Slow crane over the cart; @yg sways in the dawn wind",
+        start: "hill-board",
+        includeCastRefs: true,
+        model: "kling-4",
+        via: "higgsfield",
+        seconds: 5,
+      });
+      expect(klingHf).toMatchObject({ model: "kling-4", where: "Higgsfield" });
+      expect(klingHf.pictures.map((p) => [p.asset, p.as])).toEqual([
+        ["hill-board", "start"],
+        ["yg-face", "ref"],
+        ["yg-outfit", "ref"],
+      ]);
+
+      // 4. Stills mode: includeCastRefs merges manual ref + @cast; omitting includeCastRefs keeps manual-only backwards compatibility.
+      const stillMerged = make.planTake(PROJECT, {
+        op: "image",
+        prompt: "@yg rides the cart",
+        refs: ["hill-board"],
+        includeCastRefs: true,
+        model: "gpt-image-sunburst",
+      });
+      expect(stillMerged.pictures.map((p) => p.asset)).toEqual(["hill-board", "yg-face", "yg-outfit"]);
+
+      const stillManualOnly = make.planTake(PROJECT, {
+        op: "image",
+        prompt: "@yg rides the cart",
+        refs: ["hill-board"],
+        model: "gpt-image-sunburst",
+      });
+      expect(stillManualOnly.pictures.map((p) => p.asset)).toEqual(["hill-board"]);
+
+      // 5. End-to-end execution of Kling 4.0 start + @cast refs on fal submits both start_image_url and image_urls.
+      const started = make.startMake(PROJECT, {
+        op: "video",
+        prompt: "Slow crane over the cart; @yg sways in the dawn wind",
+        start: "hill-board",
+        includeCastRefs: true,
+        model: "kling-4",
+        via: "fal",
+        seconds: 5,
+        count: 1,
+      });
+      expect(started.fit).toMatchObject({ model: "kling-4", route: "fal", endpoint: "kling/v4/reference-to-video" });
+      await make.driveJobs(PROJECT);
+      const sentKling = seen.submits.filter((s) => s.endpoint === "kling/v4/reference-to-video").at(-1)!;
+      expect(sentKling.input.start_image_url).toBeTruthy();
+      expect(sentKling.input.image_urls).toHaveLength(2);
+      expect(String(sentKling.input.prompt)).toContain("@Image1 is Young Galileo's 360-degree face sheet");
+      expect(String(sentKling.input.prompt)).toContain("@Image2 is Young Galileo's outfit turnaround");
+    } finally {
+      settings.services = {};
+    }
+  });
 });

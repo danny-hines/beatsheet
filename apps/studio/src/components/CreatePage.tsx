@@ -56,6 +56,7 @@ function modelBadges(m: CatalogModel | undefined): string[] {
     return out;
   }
   if (m.takes.start) out.push(m.takes.end ? "Start + End" : "Start frame");
+  if (m.takes.startWithRefs) out.push("Start + Refs");
   if (m.takes.refs) out.push(`Up to ${m.takes.refs} refs`);
   if (m.takes.camera) out.push("Blockout video");
   else if (m.takes.refs) out.push("16-frame sheet");
@@ -122,6 +123,8 @@ export function CreatePage({
   const [start, setStart] = useState<string | undefined>(initBoard);
   const [end, setEnd] = useState<string | undefined>(initial.end ?? (initShot?.content.kind === "generated" ? initShot.content.end : undefined));
   const [refs, setRefs] = useState<string[]>(initial.refs ?? (initOp === "video" && initBoard && (initial.inputMode === "blockout" || initShot?.blockout) ? [initBoard] : []));
+  const [includeCastRefs, setIncludeCastRefs] = useState<boolean>(true);
+  const [boardCastRefs, setBoardCastRefs] = useState<boolean>(false);
   const [blockoutMode, setBlockoutMode] = useState<"video" | "sheet">(initial.blockoutMode ?? initShot?.blockout?.mode ?? "video");
   const [legacyCut, setLegacyCut] = useState<string>(launch.legacyCut ?? "");
   const [blockoutPreset, setBlockoutPreset] = useState(initial.blockoutPreset ?? "orbit");
@@ -179,7 +182,7 @@ export function CreatePage({
     const b = boardOfShot(p.assets, s);
     if (b) {
       setStart(b);
-      if (inputMode === "blockout" && !refs.includes(b)) setRefs([b, ...refs]);
+      if ((inputMode === "blockout" || inputMode === "refs") && !refs.includes(b)) setRefs([b, ...refs]);
     }
     if (s.blockout) setBlockoutMode(s.blockout.mode ?? "video");
     if (s.content.kind === "generated" && s.content.audioRefs?.length) setAudioRefs(s.content.audioRefs);
@@ -221,9 +224,22 @@ export function CreatePage({
             : { camera: "none" }
         : { camera: "none" };
 
+  const pickedModelId = pickOf(modelPick).model;
+  const pickedCatalogModel = pickedModelId ? CATALOG.find((m) => m.id === pickedModelId) : undefined;
   const activeStart = op === "video" && (inputMode === "board" || inputMode === "drive" || (inputMode === "speech" && !(speechDub && showingVideo))) ? start : undefined;
   const activeEnd = op === "video" && inputMode === "board" && activeStart ? end : undefined;
-  const activeRefs = op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout")) ? refs : [];
+  const boardRefs = useMemo(() => refs.filter((id) => id !== activeStart && id !== activeEnd), [refs, activeStart, activeEnd]);
+  const boardHasStartWithRefs = op === "video" && inputMode === "board" && (boardCastRefs || (!!pickedCatalogModel?.takes.startWithRefs && boardRefs.length > 0));
+  const activeRefs =
+    op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout"))
+      ? refs
+      : boardHasStartWithRefs
+        ? boardRefs
+        : [];
+  const activeIncludeCast =
+    op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout"))
+      ? includeCastRefs
+      : op === "video" && inputMode === "board" && boardCastRefs;
   const activeAudioRefs = op === "video" && (inputMode === "refs" || inputMode === "blockout") ? audioRefs : [];
   const activeDrive = op === "video" && inputMode === "drive" && drive ? { drive: drive.asset, from: drive.from, to: drive.to } : { drive: "none" };
   const activeSpeech = op === "video" && inputMode === "speech" ? { speech: "lines", ...(speechDub && showingVideo ? { clip: "take" } : {}) } : { speech: "none" };
@@ -241,6 +257,7 @@ export function CreatePage({
     start: activeStart,
     end: op === "video" ? (activeEnd ?? "none") : undefined,
     refs: activeRefs.length ? activeRefs.join(",") : undefined,
+    includeCastRefs: activeIncludeCast ? "1" : undefined,
     audioRefs: op === "video" ? (activeAudioRefs.length ? JSON.stringify(activeAudioRefs) : "none") : undefined,
     ...(op === "video" ? activeDrive : {}),
     ...(op === "video" ? activeSpeech : {}),
@@ -248,11 +265,12 @@ export function CreatePage({
   });
 
   // When a specific model is selected, automatically adapt inputMode if the chosen model only works in another paradigm.
-  const pickedModelId = pickOf(modelPick).model;
   const chosenFit = fitOf(choices, modelPick);
   const catalogModel = CATALOG.find((m) => m.id === (pickedModelId ?? chosenFit?.model));
   const activeRoute = catalogModel?.routes.find((r) => r.via === (pickOf(modelPick).via ?? chosenFit?.route));
   const allowedModes = useMemo(() => (op === "video" ? supportedModes(pickedModelId ? catalogModel : undefined) : (["refs", "text"] as MakeInputMode[])), [op, pickedModelId, catalogModel]);
+  const supportsStartWithRefs = op === "video" && inputMode === "board" && !!catalogModel?.takes.startWithRefs;
+  const showRefSlot = op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout" || supportsStartWithRefs || boardCastRefs));
 
   const selectModel = (next: string) => {
     setModelPick(next);
@@ -261,12 +279,15 @@ export function CreatePage({
       const cm = CATALOG.find((m) => m.id === mid);
       const sup = supportedModes(cm);
       if (!sup.includes(inputMode)) setInputMode(sup[0]!);
+      if (cm && !cm.takes.startWithRefs && inputMode === "board" && boardCastRefs) setBoardCastRefs(false);
       if (cm && !cm.takes.camera && (cm.takes.refs ?? 0) > 0 && inputMode === "blockout") setBlockoutMode("sheet");
     }
   };
 
   // Max references allowed by the currently selected model + route.
   const maxRefs = activeRoute?.takes?.refs ?? catalogModel?.takes.refs ?? (op === "image" ? 10 : 10);
+  const frameCount = op === "video" && inputMode === "board" && activeStart && (supportsStartWithRefs || boardCastRefs) ? 1 + (activeEnd ? 1 : 0) : 0;
+  const refCap = Math.max(0, maxRefs - frameCount);
   const routeAudio = activeRoute?.takes?.audio;
   const audioLimits = routeAudio === false ? undefined : routeAudio ?? catalogModel?.takes.audio;
   const maxAudioRefs = audioLimits?.max ?? 5;
@@ -290,14 +311,20 @@ export function CreatePage({
     return { role: a.role ? a.role[0]!.toUpperCase() + a.role.slice(1) : "Audio", text: name };
   };
 
-  // Auto-resolved cast pictures packaged for this model + route (stills, reference-to-video, and camera blockouts without manual refs).
+  // Named @cast members in the prompt that have reference pictures (used for the From board helper).
+  const namedCastPics = useMemo(() => castPictures(castOf(prompt, p.cast), { max: 4, strategy: "split-360", cast: p.cast }), [prompt, p.cast]);
+
+  // Auto-resolved cast pictures packaged for this model + route, merged right after any manual references (e.g. opening board still).
   const autoCastPics = useMemo(() => {
-    if (refs.length) return [];
-    const wantsAuto = op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout"));
-    if (!wantsAuto || maxRefs <= 0) return [];
-    const room = Math.max(1, maxRefs - (op === "video" && inputMode === "blockout" && blockoutMode === "sheet" ? 1 : 0));
-    return castPictures(castOf(prompt, p.cast), { max: room, strategy: castPackFor(catalogModel, activeRoute), cast: p.cast });
-  }, [op, inputMode, blockoutMode, refs.length, prompt, p.cast, maxRefs, catalogModel, activeRoute]);
+    if (!activeIncludeCast || refCap <= 0) return [];
+    const blockoutSheetSlots = op === "video" && inputMode === "blockout" && blockoutMode === "sheet" ? 1 : 0;
+    const room = Math.max(0, refCap - activeRefs.length - blockoutSheetSlots);
+    if (room <= 0) return [];
+    const already = new Set([...activeRefs, ...(activeStart ? [activeStart] : []), ...(activeEnd ? [activeEnd] : [])]);
+    return castPictures(castOf(prompt, p.cast), { max: room, strategy: castPackFor(catalogModel, activeRoute), cast: p.cast }).filter(
+      (x) => x.composite || !already.has(x.asset),
+    );
+  }, [activeIncludeCast, refCap, activeRefs, activeStart, activeEnd, op, inputMode, blockoutMode, prompt, p.cast, catalogModel, activeRoute]);
   const unknownCast = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
   const styleMember = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
 
@@ -339,6 +366,7 @@ export function CreatePage({
       ...(shot ? { shot: shot.id } : { aspect }),
       ...pickOf(modelPick),
       ...(activeRefs.length ? { refs: activeRefs } : {}),
+      ...(activeIncludeCast ? { includeCastRefs: true } : {}),
       ...(op === "video"
         ? {
             quality,
@@ -361,6 +389,7 @@ export function CreatePage({
         : {}),
     };
     try {
+      await actions.flushSave();
       const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ask) });
       const j = (await res.json()) as { jobs?: MakeJob[]; error?: string };
       if (!res.ok || !j.jobs) throw new Error(j.error ?? `${res.status}`);
@@ -383,12 +412,15 @@ export function CreatePage({
   const flightPics: { id: string; part: string; label: string }[] = [
     ...(activeStart ? [{ id: activeStart, part: "Starts from", label: p.assets.find((a) => a.id === activeStart)?.label ?? activeStart }] : []),
     ...(activeEnd ? [{ id: activeEnd, part: "Ends on", label: p.assets.find((a) => a.id === activeEnd)?.label ?? activeEnd }] : []),
-    ...(activeRefs.length
-      ? activeRefs.map((id) => ({ id, part: "Reference", label: p.assets.find((a) => a.id === id)?.label ?? id }))
-      : autoCastPics.map((x) => {
-          const r = roleTag(x.role);
-          return { id: x.asset, part: r ? `@${x.use.id} · ${r}` : `@${x.use.id}`, label: x.composite ? `${x.use.member.name} (composited face + outfit)` : x.use.member.name };
-        })),
+    ...activeRefs.map((id, idx) => ({
+      id,
+      part: op === "video" && inputMode === "refs" && idx === 0 ? "Opening board" : "Reference",
+      label: p.assets.find((a) => a.id === id)?.label ?? id,
+    })),
+    ...autoCastPics.map((x) => {
+      const r = roleTag(x.role);
+      return { id: x.asset, part: r ? `@${x.use.id} · ${r}` : `@${x.use.id}`, label: x.composite ? `${x.use.member.name} (composited face + outfit)` : x.use.member.name };
+    }),
   ];
 
   const dropAsset = (slot: "start" | "end" | "ref") => ({
@@ -405,7 +437,10 @@ export function CreatePage({
       e.preventDefault();
       if (slot === "start") setStart(a.id);
       else if (slot === "end") setEnd(a.id);
-      else if (!refs.includes(a.id) && refs.length < Math.max(1, maxRefs)) setRefs([...refs, a.id]);
+      else if (!refs.includes(a.id) && activeRefs.length < Math.max(1, refCap)) {
+        if (op === "video" && inputMode === "board" && !pickedCatalogModel?.takes.startWithRefs && catalogModel?.takes.startWithRefs) setModelPick(catalogModel.id);
+        setRefs([...refs, a.id]);
+      }
     },
   });
 
@@ -527,7 +562,7 @@ export function CreatePage({
                       onClick={() => {
                         setInputMode(m.id);
                         if (pickedModelId && !supported) setModelPick("");
-                        if (m.id === "blockout" && start && !refs.includes(start)) setRefs([start, ...refs]);
+                        if ((m.id === "blockout" || m.id === "refs") && start && !refs.includes(start)) setRefs([start, ...refs]);
                         if (m.id === "drive" && !drive && clips.length) setDrive({ asset: clips[0]!.id, from: 0 });
                       }}
                       title={m.hint}
@@ -780,56 +815,119 @@ export function CreatePage({
                 </div>
               )}
 
-              {/* Reference Pictures slot (Stills, Video Refs, and Blockout Camera) */}
-              {(op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout"))) && (
+              {/* Helper in From board mode when prompt mentions @cast with sheets on a model that can't mix start frame + refs */}
+              {op === "video" && inputMode === "board" && !!activeStart && !supportsStartWithRefs && !boardCastRefs && namedCastPics.length > 0 && (
+                <div className="slot-card slot-wide slot-board-hint">
+                  <div className="slot-head">
+                    <strong>Want @cast reference sheets alongside this board?</strong>
+                  </div>
+                  <p className="dim small">
+                    {catalogModel?.label ?? "Most video models"} locks the start frame without extra reference pictures. Switch to{" "}
+                    <strong>References</strong> mode to send this board as the opening scene + your @cast sheets together, or lock the start frame + @cast sheets on{" "}
+                    <strong>Kling 4.0</strong>.
+                  </p>
+                  <div className="make-row small">
+                    <button
+                      className="small"
+                      onClick={() => {
+                        setInputMode("refs");
+                        if (start && !refs.includes(start)) setRefs([start, ...refs]);
+                        setIncludeCastRefs(true);
+                        if (pickedCatalogModel && !(pickedCatalogModel.takes.refs ?? 0)) setModelPick("");
+                      }}
+                    >
+                      Use References mode (board + @cast)
+                    </button>
+                    <button
+                      className="small"
+                      onClick={() => {
+                        setModelPick("kling-4");
+                        setBoardCastRefs(true);
+                        setRefs((prev) => prev.filter((id) => id !== start && id !== end));
+                      }}
+                    >
+                      Lock start + @cast on Kling 4.0
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Reference Pictures slot (Stills, Video Refs, Blockout Camera, and Start + Refs on Kling 4.0) */}
+              {showRefSlot && (
                 <div className={`slot-card slot-wide ${overSlot === "ref" ? "over" : ""}`} {...dropAsset("ref")}>
                   <div className="slot-head">
                     <strong>
-                      Reference pictures {maxRefs > 0 ? `(${refs.length || autoCastPics.length} / ${maxRefs})` : "(not supported by this model)"}
+                      {op === "video" && inputMode === "board" ? "Reference pictures (with start frame)" : "Reference pictures"}{" "}
+                      {refCap > 0 ? `(${activeRefs.length + autoCastPics.length} / ${refCap})` : "(not supported by this model)"}
                     </strong>
-                    {refs.length > 0 && (
-                      <button className="link small" onClick={() => setRefs([])}>
-                        {op === "image" ? "Use @cast automatically" : "Clear"}
+                    <span className="spacer" />
+                    {refCap > 0 && (
+                      <label className="slot-cast-toggle small" title="Automatically attach face and outfit sheets for @mentioned cast members alongside manual references">
+                        <input
+                          type="checkbox"
+                          checked={activeIncludeCast}
+                          onChange={(e) => {
+                            if (op === "video" && inputMode === "board") setBoardCastRefs(e.target.checked);
+                            else setIncludeCastRefs(e.target.checked);
+                          }}
+                        />
+                        <span>Include @cast sheets</span>
+                      </label>
+                    )}
+                    {activeRefs.length > 0 && (
+                      <button
+                        className="link small"
+                        onClick={() => setRefs(op === "video" && inputMode === "board" ? refs.filter((x) => x === activeStart || x === activeEnd) : [])}
+                      >
+                        Clear manual
                       </button>
                     )}
                   </div>
-                  {maxRefs === 0 ? (
+                  {refCap === 0 ? (
                     <p className="dim small">{catalogModel?.label} generates from text only — switch models to pass reference pictures.</p>
                   ) : (
                     <>
                       <div className="slot-ref-strip">
-                        {refs.map((id) => (
-                          <span key={id} className="slot-ref-item">
+                        {activeRefs.map((id, idx) => (
+                          <span key={id} className="slot-ref-item" title={p.assets.find((a) => a.id === id)?.label ?? id}>
                             <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} />
+                            {op === "video" && inputMode === "refs" && idx === 0 && <span className="slot-ref-tag">Opening board</span>}
                             <button className="slot-ref-x" onClick={() => setRefs(refs.filter((x) => x !== id))} aria-label="Remove reference">
                               <Icon name="close" size={10} />
                             </button>
                           </span>
                         ))}
-                        {!refs.length &&
-                          autoCastPics.map((x, i) => {
-                            const r = roleTag(x.role);
-                            return (
-                              <span
-                                key={`${x.asset}-${x.role ?? i}-${i}`}
-                                className="slot-ref-item auto"
-                                title={x.composite ? `Auto-composited face + outfit for @${x.use.id} to fit ${maxRefs}-ref limit` : `Auto-attached from @${x.use.id}${r ? ` (${r})` : ""}`}
-                              >
-                                <img src={posterUrl(projectId, x.asset)} alt="" onError={hideBroken} />
-                                <span className="slot-ref-tag">{r ? `@${x.use.id} ${r}` : `@${x.use.id}`}</span>
-                              </span>
-                            );
-                          })}
-                        {refs.length < maxRefs && images.length > 0 && (
+                        {autoCastPics.map((x, i) => {
+                          const r = roleTag(x.role);
+                          return (
+                            <span
+                              key={`${x.asset}-${x.role ?? i}-${i}`}
+                              className="slot-ref-item auto"
+                              title={x.composite ? `Auto-composited face + outfit for @${x.use.id} to fit ${refCap}-ref limit` : `Auto-attached from @${x.use.id}${r ? ` (${r})` : ""}`}
+                            >
+                              <img src={posterUrl(projectId, x.asset)} alt="" onError={hideBroken} />
+                              <span className="slot-ref-tag">{r ? `@${x.use.id} ${r}` : `@${x.use.id}`}</span>
+                            </span>
+                          );
+                        })}
+                        {activeRefs.length < refCap && images.length > 0 && (
                           <button className="slot-ref-add" onClick={() => setPickingSlot("ref")} title="Add a reference picture (or drag from Media)">
                             <Icon name="add" size={14} />
                           </button>
                         )}
                       </div>
-                      {op === "image" && !refs.length && !autoCastPics.length && (
+                      {op === "image" && !activeRefs.length && !autoCastPics.length && (
                         <p className="dim small">Mention @cast members in the prompt below to attach their sheets automatically, or drop/pick pictures here.</p>
                       )}
-                      {op === "video" && inputMode === "blockout" && !refs.length && (
+                      {op === "video" && inputMode === "refs" && !activeRefs.length && !autoCastPics.length && (
+                        <p className="dim small">Add your opening board still here and mention @cast members below — both are sent together with explicit roles.</p>
+                      )}
+                      {op === "video" && inputMode === "board" && !activeRefs.length && !autoCastPics.length && (
+                        <p className="dim small">
+                          {catalogModel?.label ?? "Kling 4.0"} lets you lock your start frame and still pass @cast sheets or scene refs (up to {refCap} more image{refCap === 1 ? "" : "s"}).
+                        </p>
+                      )}
+                      {op === "video" && inputMode === "blockout" && !activeRefs.length && (
                         <p className="dim small">Add your shot's board or character sheets here so the model knows who and what replaces the grey stand-ins.</p>
                       )}
                     </>
@@ -1078,7 +1176,10 @@ export function CreatePage({
                       onClick={() => {
                         if (pickingSlot === "start") setStart(img.id);
                         else if (pickingSlot === "end") setEnd(img.id);
-                        else if (!refs.includes(img.id)) setRefs([...refs, img.id]);
+                        else if (!refs.includes(img.id)) {
+                          if (op === "video" && inputMode === "board" && !pickedCatalogModel?.takes.startWithRefs && catalogModel?.takes.startWithRefs) setModelPick(catalogModel.id);
+                          setRefs([...refs, img.id]);
+                        }
                         setPickingSlot(undefined);
                       }}
                       title={img.label ?? img.id}

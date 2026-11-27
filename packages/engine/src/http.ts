@@ -692,6 +692,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
           ...(sheetKind ? { sheetKind } : {}),
           ...(q.get("portrait") === "1" ? { portrait: true } : {}),
           ...(q.get("usePortrait") === "0" ? { usePortrait: false } : {}),
+          ...(q.get("includeCastRefs") === "1" ? { includeCastRefs: true } : {}),
           ...(castPack ? { castPack } : {}),
           start: q.get("start") ?? undefined,
           ...(q.get("end") === "none" ? { end: null } : q.get("end") ? { end: q.get("end")! } : {}),

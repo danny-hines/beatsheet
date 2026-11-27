@@ -166,7 +166,8 @@ export async function openrouterImage(shape: string, model: string, key: string,
 export function openrouterVideoInput(shape: string, model: string, ask: FalAsk): Record<string, unknown> {
   const final = ask.quality === "final";
   const refs = ask.start ? undefined : ask.refs;
-  const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
+  const hasExplicitRoles = /Reference pictures, in order:\s*Image \d+ is\b/.test(ask.prompt);
+  const shown = refs?.length && !hasExplicitRoles ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
   const imgRefs = refs?.length ? refs.map(imageRef) : [];
   const audioRefs = ask.start ? undefined : ask.audioRefs;
   const audio = audioLine(audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`));

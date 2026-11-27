@@ -107,7 +107,7 @@ export type CatalogModel = {
    * keeps the camera of a clip it's given (the move, the framing, where the cuts fall), and how long a clip it takes.
    * `audio`: it takes reference audio clips alongside reference pictures (and camera blockouts) on reference-to-video.
    */
-  takes: { start?: boolean; end?: boolean; refs?: number; drive?: boolean; speech?: boolean; clip?: boolean; camera?: { min: number; max: number }; audio?: AudioTake };
+  takes: { start?: boolean; end?: boolean; refs?: number; startWithRefs?: boolean; drive?: boolean; speech?: boolean; clip?: boolean; camera?: { min: number; max: number }; audio?: AudioTake };
   /** For video: the lengths it makes, as a list or a range, in seconds. */
   lengths?: number[] | { min: number; max: number };
   /** The aspects it makes ("16:9"), or "any". When it starts from a picture, the picture's shape decides instead. */
@@ -564,9 +564,26 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   if (req.end && !model.takes.end) return no({ kind: "fit", reason: "Doesn't take an end frame", fix: "drop-end" });
   const refs = (req.packedRefs?.length ?? req.refs?.length ?? 0) + (sheet ? 1 : 0);
   const maxRefs = model.takes.refs ?? 0;
-  if (refs > maxRefs) {
+  if (req.op === "video" && req.start && refs > 0 && !model.takes.startWithRefs) {
+    return no({
+      kind: "fit",
+      reason: "Can't combine a locked start frame with reference pictures — use References mode (board as Image 1) or pick Kling 4.0",
+      fix: "drop-refs",
+    });
+  }
+  const frameImages = req.op === "video" && req.start && refs > 0 && model.takes.startWithRefs ? 1 + (req.end ? 1 : 0) : 0;
+  const totalImages = refs + frameImages;
+  if (totalImages > maxRefs) {
     if (maxRefs === 0 && model.takes.start && !req.start) return no({ kind: "fit", reason: "Doesn't take references; a start frame made from them would do", fix: "via-start-frame" });
-    return no({ kind: "fit", reason: maxRefs ? `Takes up to ${maxRefs} reference${maxRefs === 1 ? "" : "s"}; this has ${refs}` : "Doesn't take references", fix: "drop-refs" });
+    return no({
+      kind: "fit",
+      reason: maxRefs
+        ? frameImages
+          ? `Takes up to ${maxRefs} images total (including start${req.end ? "/end" : ""} frame); this has ${totalImages}`
+          : `Takes up to ${maxRefs} reference${maxRefs === 1 ? "" : "s"}; this has ${refs}`
+        : "Doesn't take references",
+      fix: "drop-refs",
+    });
   }
   let seconds: number | undefined;
   if (req.op === "video") {
@@ -608,7 +625,7 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
     const t = audioOn(r);
     return !!t && !checkAudioRefs(audioRefs, t);
   };
-  const takesHere = (r: ModelRoute) => (!req.end || r.takes?.end !== false) && refs <= (r.takes?.refs ?? maxRefs) && takesAudioHere(r);
+  const takesHere = (r: ModelRoute) => (!req.end || r.takes?.end !== false) && totalImages <= (r.takes?.refs ?? maxRefs) && takesAudioHere(r);
   const offered = there.filter(takesHere);
   if (!offered.length) {
     const elsewhere = [...new Set(model.routes.filter((r) => r.endpoints[shape] && !refuses(r) && takesHere(r)).map((r) => state(r).label))];
@@ -962,7 +979,7 @@ export function castPrompt(
   uses: CastUse[],
   pictured: (CastUse | PackedCastRef)[] = [],
   allCast?: CastMember[],
-  opts?: { refPrefix?: (n: number) => string; refOffset?: number },
+  opts?: { refPrefix?: (n: number) => string; refOffset?: number; leadingRefs?: { role: "board" | "reference"; label?: string }[] },
 ): string {
   const seen = new Set<string>();
   let text = prompt.replace(MENTION, (whole, id: string, v?: string) => {
@@ -978,22 +995,29 @@ export function castPrompt(
   const styles = rest.filter((u) => u.member.kind === "style");
   if (others.length) text = `${sentence(text)} With ${others.map((u) => described(u, uses, allCast)).join(", ")}.`;
   if (styles.length) text = `${sentence(text)} In the style of ${styles.map((u) => described(u, uses, allCast)).join(" and ")}.`;
-  if (pictured.length) {
+  const leading = opts?.leadingRefs ?? [];
+  if (pictured.length || leading.length) {
     const packed = pictured.every(isPackedCastRef) ? pictured : undefined;
     const decoupled =
       !!packed &&
-      packed.some(
-        (p) =>
-          p.role === "face-sheet" ||
-          p.role === "outfit" ||
-          p.role === "composite" ||
-          (p.role === "portrait" && packed.some((q) => q.use.id === p.use.id && q.role === "outfit")),
-      );
+      (leading.length > 0 ||
+        packed.some(
+          (p) =>
+            p.role === "face-sheet" ||
+            p.role === "outfit" ||
+            p.role === "composite" ||
+            (p.role === "portrait" && packed.some((q) => q.use.id === p.use.id && q.role === "outfit")),
+        ));
     if (decoupled && packed) {
       const refName = opts?.refPrefix ?? ((n: number) => `Image ${n}`);
       const offset = opts?.refOffset ?? 0;
-      const parts = packed.map((p, i) => {
+      const leadParts = leading.map((lr, i) => {
         const tag = refName(i + 1 + offset);
+        if (lr.role === "board") return `${tag} is the opening scene / composition reference (begin from this exact framing, setting and lighting)`;
+        return `${tag} is a scene reference${lr.label ? ` (${lr.label})` : ""}`;
+      });
+      const castParts = packed.map((p, i) => {
+        const tag = refName(i + 1 + offset + leading.length);
         const name = p.use.member.name || p.use.id;
         if (p.role === "face-sheet") return `${tag} is ${name}'s 360-degree face sheet (keep exact face, hair and facial geometry from every angle)`;
         if (p.role === "portrait") return `${tag} is ${name}'s portrait (keep exact face, hair and features)`;
@@ -1009,8 +1033,9 @@ export function castPrompt(
         if (p.role === "place") return `${tag} is the setting (${name})`;
         return `${tag} shows ${name}`;
       });
+      const parts = [...leadParts, ...castParts];
       text = `${sentence(text)} Reference pictures, in order: ${parts.join("; ")}. Keep each character's face and outfit faithful to their assigned reference pictures; draw them in the style asked for.`;
-    } else {
+    } else if (pictured.length) {
       // Several pictures of one are named once: "2 pictures of the cat, noir".
       const runs: { u: CastUse; n: number }[] = [];
       for (const item of pictured) {

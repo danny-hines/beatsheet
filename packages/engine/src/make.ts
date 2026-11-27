@@ -386,6 +386,12 @@ export type MakeAsk = Partial<Omit<MakeRequest, "op" | "start" | "end" | "drive"
   usePortrait?: boolean;
   /** Optional override for how decoupled character face + outfit ingredients are packaged for the model. */
   castPack?: CastPackStrategy;
+  /**
+   * When true, keep auto-attaching @mentioned cast sheets alongside any manual `refs` (e.g. an opening board still
+   * plus character turnarounds in References mode) or alongside a locked `start` frame on models that support both
+   * (Kling 4.0).
+   */
+  includeCastRefs?: boolean;
   /** Cast and sets in it beyond the ones the prompt names. */
   cast?: string[];
   /** Asset id of the picture a clip starts from, or "board": the shot's chosen still. */
@@ -796,10 +802,13 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
       refs = made.refs;
       sent = `${sent.replace(/[.!?]?\s*$/, ".")} ${made.words}`;
     }
-  } else if (!refs && (ask.op === "image" || (ask.op === "video" && videoAutoRefs && !start && !clip && !drive && !speech))) {
+  } else if (
+    (!refs && (ask.op === "image" || (ask.op === "video" && videoAutoRefs && !start && !clip && !drive && !speech))) ||
+    (!!ask.includeCastRefs && !member && !clip && !drive && !speech && (ask.op === "image" || videoAutoRefs))
+  ) {
     // A non-character sheet with no pictures yet starts from the photos it was made from.
     const photos =
-      ask.op === "image" && member && !member.images?.length
+      !refs && ask.op === "image" && member && !member.images?.length
         ? (member.seen ?? []).map((s) => s.asset).filter((id) => project.assets.find((a) => a.id === id)?.kind === "image")
         : [];
     if (photos.length) {
@@ -816,16 +825,28 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
         sent += " The last reference picture shows the style to draw it in, not who or what it is.";
       }
     } else {
-      // Package cast references for the model's strategy and ref cap (separate face + outfit, single face + outfit, or procedural composite).
-      const pictured = packCastPictures(uses, { max: pictures, strategy, cast: project.cast });
+      // Package cast references for the model's strategy and ref cap, preserving any manual leading refs (such as an opening board still).
+      const lead = refs ? [...new Set(refs)] : [];
+      const already = new Set([...lead, ...(start ? [start] : []), ...(ask.end && typeof ask.end === "string" ? [ask.end] : [])]);
+      const castRoom = Math.max(0, pictures - lead.length);
+      const pictured = packCastPictures(uses, { max: castRoom, strategy, cast: project.cast }).filter((p) => p.composite || !already.has(p.asset));
       if (pictured.length) {
-        packedRefs = pictured.map((p): PackedRef =>
+        const leadPacked: PackedRef[] = lead.map((asset) => ({ kind: "asset", asset, role: "picture", label: project.assets.find((a) => a.id === asset)?.label }));
+        const castPacked: PackedRef[] = pictured.map((p): PackedRef =>
           p.composite
             ? { kind: "composite", face: p.composite.face, outfit: p.composite.outfit, mode: p.composite.mode, role: "composite", label: `${p.use.member.name} (face + outfit)` }
             : { kind: "asset", asset: p.asset, role: p.role, label: p.use.member.name },
         );
+        packedRefs = [...leadPacked, ...castPacked];
         refs = packedRefAssets(packedRefs);
-        sent = castPrompt(prompt, uses, pictured, project.cast, { refOffset: isCameraSheet(camera) ? 1 : 0 });
+        const leadingRefs = lead.map((id, idx) => ({
+          role: ask.op === "video" && !start && !camera && idx === 0 ? ("board" as const) : ("reference" as const),
+          label: project.assets.find((a) => a.id === id)?.label,
+        }));
+        sent = castPrompt(prompt, uses, pictured, project.cast, {
+          refOffset: isCameraSheet(camera) ? 1 : 0,
+          ...(leadingRefs.length ? { leadingRefs } : {}),
+        });
         // Given a sheet of views, a model can copy its layout and give back a grid of the scene (Muse Image did).
         if (ask.op === "image" && !member) sent += " The picture is one single frame of the scene, not a sheet, a grid or panels.";
       }
@@ -1147,7 +1168,11 @@ function audioRefsFor(
 export function absentFrom(projectId: string, asks: MakeAsk[]): { shot?: string; who: string[] }[] {
   return asks.flatMap((ask) => {
     try {
-      const who = requestFor(projectId, ask).absent;
+      const req =
+        ask.op === "video" && ask.includeCastRefs
+          ? requestFor(projectId, ask, { pictures: ask.start ? (ask.end ? 8 : 9) : Math.max(ask.refs?.length ?? 0, 8), videoAutoRefs: true })
+          : requestFor(projectId, ask);
+      const who = req.absent;
       return who?.length ? [{ shot: ask.shot, who }] : [];
     } catch {
       return [];
@@ -1166,8 +1191,14 @@ function fewestStillRouteRefs(): number {
 
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
 export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest; choices: Choices } {
-  const req = requestFor(projectId, ask);
-  const probe = ask.op === "image" && !ask.refs?.length ? requestFor(projectId, ask, fewestStillRouteRefs()) : req;
+  const req =
+    ask.op === "video" && ask.includeCastRefs
+      ? requestFor(projectId, ask, { pictures: ask.start ? (ask.end ? 8 : 9) : Math.max(ask.refs?.length ?? 0, 8), videoAutoRefs: true })
+      : requestFor(projectId, ask);
+  const probe =
+    ask.op === "image" && (!ask.refs?.length || ask.includeCastRefs)
+      ? requestFor(projectId, ask, Math.max(ask.refs?.length ?? 0, fewestStillRouteRefs()))
+      : req;
   const states = connectedStates();
   return { req, choices: chooseModels(CATALOG, probe, states, [], preferredProvider(req.op, states)) };
 }
@@ -1241,11 +1272,14 @@ function plan(projectId: string, ask: MakeAsk): Plan {
   if (ask.model) {
     const model = CATALOG.find((m) => m.id === ask.model);
     if (!model) throw new Error(`No model "${ask.model}"; list_models names them`);
-    const probe = full.op === "image" && !ask.refs?.length ? requestFor(projectId, ask, fewestStillRouteRefs()) : full;
+    const probe =
+      full.op === "image" && (!ask.refs?.length || ask.includeCastRefs)
+        ? requestFor(projectId, ask, Math.max(ask.refs?.length ?? 0, fewestStillRouteRefs()))
+        : full;
     let f = fitModel(model, probe, states, preferred);
     // If a route has a tighter ref cap than the initial pack (e.g. Antigravity's 3-ref cap with 2 decoupled characters),
     // re-pack into procedural composites for that model/route before rejecting.
-    if (!f.ok && f.why.kind === "fit" && full.op === "image" && !ask.refs?.length && (full.packedRefs?.length ?? full.refs?.length ?? 0) > 1) {
+    if (!f.ok && f.why.kind === "fit" && full.op === "image" && (!ask.refs?.length || ask.includeCastRefs) && (full.packedRefs?.length ?? full.refs?.length ?? 0) > 1) {
       const matchRoute = ask.via ? model.routes.find((r) => r.via === ask.via) : model.routes.find((r) => states[r.via]?.state === "ready");
       const cap = matchRoute?.takes?.refs ?? model.takes.refs ?? 0;
       if (cap > 0) {
@@ -1258,9 +1292,9 @@ function plan(projectId: string, ask: MakeAsk): Plan {
     fit = f;
   } else {
     fit = choices.auto;
-    if (!fit && full.op === "image" && !ask.refs?.length && (full.packedRefs?.length ?? 0) > 1) {
+    if (!fit && full.op === "image" && (!ask.refs?.length || ask.includeCastRefs) && (full.packedRefs?.length ?? 0) > 1) {
       // Check if a tight-cap ready route (e.g. 3-ref plan) can run once decoupled characters are composited.
-      const compressed = requestFor(projectId, ask, { pictures: 3 });
+      const compressed = requestFor(projectId, ask, { pictures: Math.max(ask.refs?.length ?? 0, 3) });
       const retryChoices = chooseModels(CATALOG, compressed, states, [], preferred);
       if (retryChoices.auto) [full, fit] = [compressed, retryChoices.auto];
     }
@@ -1275,7 +1309,7 @@ function plan(projectId: string, ask: MakeAsk): Plan {
   const pickedRoute = model.routes.find((r) => r.via === fit!.route && r.endpoints[shapeOf(full)] === fit!.endpoint);
   const routeCap = pickedRoute?.takes?.refs ?? model.takes.refs ?? 0;
   const strategy = ask.castPack ?? castPackFor(model, pickedRoute);
-  if (full.op === "image" && !ask.refs?.length && routeCap > 0) {
+  if (full.op === "image" && (!ask.refs?.length || ask.includeCastRefs) && routeCap > 0) {
     const tailored = requestFor(projectId, ask, { pictures: routeCap, strategy });
     const f = fitModel(model, { ...tailored, via: fit!.route }, states, preferred);
     if (f.ok && (tailored.sent !== full.sent || JSON.stringify(tailored.packedRefs ?? tailored.refs) !== JSON.stringify(full.packedRefs ?? full.refs))) {
@@ -1283,19 +1317,17 @@ function plan(projectId: string, ask: MakeAsk): Plan {
     }
   } else if (
     full.op === "video" &&
-    !ask.refs?.length &&
-    !full.start &&
     !full.clip &&
     !full.drive &&
     !full.speech &&
-    !full.refs?.length &&
     routeCap > 0 &&
     (!!pickedRoute?.endpoints.refs || !!pickedRoute?.endpoints.camera) &&
-    (!!full.camera || !!full.audioRefs?.length || !!ask.model)
+    (ask.includeCastRefs || (!ask.refs?.length && !full.start && !full.refs?.length && (!!full.camera || !!full.audioRefs?.length || !!ask.model)))
   ) {
-    // Reference-to-video & camera blockouts without a start frame automatically receive packed cast refs (face + outfit).
-    const room = Math.max(0, routeCap - (isCameraSheet(full.camera) ? 1 : 0));
-    if (room > 0) {
+    // Reference-to-video, camera blockouts, and start+refs (Kling 4.0) receive packed cast refs tailored to routeCap.
+    const frameImages = full.start && model.takes.startWithRefs ? 1 + (full.end ? 1 : 0) : 0;
+    const room = Math.max(0, routeCap - frameImages - (isCameraSheet(full.camera) ? 1 : 0));
+    if (room > 0 && (!full.start || model.takes.startWithRefs)) {
       const withCast = requestFor(projectId, ask, { pictures: room, strategy, videoAutoRefs: true });
       if (withCast.packedRefs?.length) {
         const f = fitModel(model, { ...withCast, via: fit!.route }, states, preferred);
@@ -1444,8 +1476,8 @@ export function planTake(projectId: string, ask: MakeAsk): PlannedTake {
   try {
     if (fit.route === "tein") built = teinInput(shape, fit.endpoint, stand);
     else if (fit.route === "fal") built = falInput(shape, stand);
-    else if (fit.route === "runway") built = runwayInput(shape, fit.endpoint, { ...stand, refs: r.op === "video" && r.start ? undefined : stand.refs }).body;
-    else if (fit.route === "higgsfield") built = higgsfieldInput(shape, fit.endpoint, { ...stand, refs: r.start ? undefined : stand.refs }).body;
+    else if (fit.route === "runway") built = runwayInput(shape, fit.endpoint, { ...stand, refs: r.op === "video" && r.start && shape !== "kling_4" ? undefined : stand.refs }).body;
+    else if (fit.route === "higgsfield") built = higgsfieldInput(shape, fit.endpoint, { ...stand, refs: r.start && shape !== "kling-v4.0" ? undefined : stand.refs }).body;
     else if (fit.route === "openrouter")
       built =
         r.op === "image"
@@ -1883,8 +1915,8 @@ async function stepRunway(projectId: string, job: MakeJob, key: string) {
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const shape = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
-    // A clip's references don't go with a start frame there (runwayInput), so they aren't sent up either.
-    const baseRefs = job.op === "video" && r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => runwayUpload(key, file));
+    // A clip's references only go with a start frame on models whose Runway route supports both (Kling 4.0).
+    const baseRefs = job.op === "video" && r.start && job.shape !== "kling_4" ? undefined : await prepareJobRefs(project, dir, r, (file) => runwayUpload(key, file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => runwayUpload(key, f), baseRefs);
     const aud = await audioRefArgs(project, dir, job, (f) => runwayUpload(key, f), ".wav");
     const input = runwayInput(job.shape, job.endpoint, {
@@ -1936,8 +1968,8 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
-    // A clip's references don't go with a start frame there (higgsfieldInput), so they aren't sent up either.
-    const baseRefs = r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => higgsfieldUpload(key, file));
+    // A clip's references only go with a start frame on models whose Higgsfield route supports both (Kling 4.0).
+    const baseRefs = r.start && job.shape !== "kling-v4.0" ? undefined : await prepareJobRefs(project, dir, r, (file) => higgsfieldUpload(key, file));
     const cam = await cameraArgs(projectId, project, dir, job, (f) => higgsfieldUpload(key, f), baseRefs);
     const aud = await audioRefArgs(project, dir, job, (f) => higgsfieldUpload(key, f), ".wav");
     const input = higgsfieldInput(job.shape, job.endpoint, {

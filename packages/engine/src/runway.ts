@@ -132,8 +132,10 @@ export type RunwayAsk = { path: "text_to_video" | "image_to_video" | "text_to_im
  */
 export function runwayInput(shape: string, model: string, ask: FalAsk): RunwayAsk {
   const final = ask.quality === "final";
-  const refs = ask.start ? undefined : ask.refs;
-  const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
+  const allowStartRefs = shape === "kling_4";
+  const refs = ask.start && !allowStartRefs ? undefined : ask.refs;
+  const hasExplicitRoles = /Reference pictures, in order:\s*Image \d+ is\b/.test(ask.prompt);
+  const shown = refs?.length && !hasExplicitRoles ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
   const references = refs?.length ? { references: refs.map((uri) => ({ uri })) } : {};
   const audioRefs = ask.start ? undefined : ask.audioRefs;
   const audio = audioLine(audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`));
@@ -159,9 +161,15 @@ export function runwayInput(shape: string, model: string, ask: FalAsk): RunwayAs
         ...referenceAudio,
       });
     case "kling_4":
-      // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds, always with its own sound. From a picture it keeps
-      // the picture's shape, and only the size is said.
-      return video({ promptText: ask.prompt, ratio: ask.start ? (final ? "auto_1080p" : "auto_720p") : sized(shape, ask), duration: whole(ask.seconds) });
+      // Kling 4.0: roughs at 720p, finals at 1080p, whole seconds, always with its own sound. Accepts references (up to
+      // 10 images total including start/end frames) and referenceVideos on both text_to_video and image_to_video.
+      return video({
+        promptText: `${ask.prompt}${shown}${cameraLine(ask.camera, "The reference video")}`,
+        ratio: ask.start ? (final ? "auto_1080p" : "auto_720p") : sized(shape, ask),
+        duration: whole(ask.seconds),
+        ...references,
+        ...(ask.camera ? { referenceVideos: [{ type: "video", uri: ask.camera.url }] } : {}),
+      });
     case "kling2.5_turbo_pro":
       // Kling 2.5 Turbo Pro: 5 or 10 seconds. From a picture it keeps the picture's shape and takes no size.
       return video({ promptText: ask.prompt, duration: whole(ask.seconds), ...(ask.start ? {} : { ratio: sized(shape, ask) }) });

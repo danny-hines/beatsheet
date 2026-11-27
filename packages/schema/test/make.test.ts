@@ -381,8 +381,52 @@ describe("roughs and finals", () => {
     const c = chooseModels(CATALOG, { op: "video", prompt: "@cat leaves", refs: ["cat"], seconds: 3.2, quality: "final" }, services);
     expect(c.auto).toMatchObject({ model: "wan-3", endpoint: "alibaba/wan-3.0/reference-to-video", usd: 1 });
     // A rough model that takes them is still there, after the finals.
-    expect(c.ready.map((f) => f.model)).toEqual(["wan-3", "seedance-2.5", "minimax-h3"]);
+    expect(c.ready.map((f) => f.model)).toEqual(["wan-3", "kling-4", "seedance-2.5", "minimax-h3"]);
     expect(c.unfit.find((f) => f.model === "kling-3")).toMatchObject({ why: { reason: "Doesn't take references; a start frame made from them would do" } });
+  });
+
+  it("allows combining a locked start frame (+ optional end frame) with reference pictures on Kling 4.0 and enforces the 10-image total cap", () => {
+    const kling = CATALOG.find((m) => m.id === "kling-4")!;
+    const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
+    const all = {
+      fal,
+      runway: { label: "Runway", state: "ready" as const },
+      higgsfield: { label: "Higgsfield", state: "ready" as const },
+    };
+
+    // Start + 2 refs fits on fal, Runway, and Higgsfield via their reference-to-video / kling_4 endpoints.
+    expect(fitModel(kling, { op: "video", prompt: "x", start: "board", refs: ["face", "outfit"], seconds: 5, via: "fal" }, all)).toMatchObject({
+      ok: true,
+      route: "fal",
+      endpoint: "kling/v4/reference-to-video",
+    });
+    expect(fitModel(kling, { op: "video", prompt: "x", start: "board", end: "tail", refs: ["face", "outfit"], seconds: 5, via: "runway" }, all)).toMatchObject({
+      ok: true,
+      route: "runway",
+      endpoint: "kling_4",
+    });
+    expect(fitModel(kling, { op: "video", prompt: "x", start: "board", refs: ["face", "outfit"], seconds: 5, via: "higgsfield" }, all)).toMatchObject({
+      ok: true,
+      route: "higgsfield",
+      endpoint: "kling-video/v4.0/reference-to-video",
+    });
+
+    // Total image limit counts start (+ end) frames against Kling 4.0's 10-image cap.
+    expect(fitModel(kling, { op: "video", prompt: "x", start: "board", refs: Array.from({ length: 9 }, (_, i) => `r${i}`), seconds: 5 }, { fal })).toMatchObject({ ok: true });
+    expect(fitModel(kling, { op: "video", prompt: "x", start: "board", refs: Array.from({ length: 10 }, (_, i) => `r${i}`), seconds: 5 }, { fal })).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: "Takes up to 10 images total (including start frame); this has 11", fix: "drop-refs" },
+    });
+    expect(fitModel(kling, { op: "video", prompt: "x", start: "board", end: "tail", refs: Array.from({ length: 9 }, (_, i) => `r${i}`), seconds: 5 }, { fal })).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: "Takes up to 10 images total (including start/end frame); this has 11", fix: "drop-refs" },
+    });
+
+    // Models without startWithRefs reject mixing a locked start frame with refs cleanly.
+    expect(fitModel(seedance, { op: "video", prompt: "x", start: "board", refs: ["face"], seconds: 5 }, { fal })).toMatchObject({
+      ok: false,
+      why: { kind: "fit", reason: expect.stringContaining("Kling 4.0"), fix: "drop-refs" },
+    });
   });
 });
 
@@ -1602,6 +1646,14 @@ describe("decoupled face & wardrobe sheets and model-adaptive cast packing", () 
     const shifted = castPrompt("@galileo/battle faces @bobby", two, roomy, cast, { refOffset: 1 });
     expect(shifted).toContain("Image 2 is Galileo's 360-degree face sheet");
     expect(shifted).toContain("Image 5 is Bobby's outfit turnaround");
+
+    // Leading manual references (e.g. an opening board still in References mode) take Image 1, followed by @cast sheets.
+    const withBoard = castPrompt("@galileo walks down the hill", castOf("@galileo walks down the hill", cast), packCastPictures(castOf("@galileo walks down the hill", cast), { max: 9, strategy: "split-360", cast }), cast, {
+      leadingRefs: [{ role: "board", label: "Hill board" }],
+    });
+    expect(withBoard).toContain("Image 1 is the opening scene / composition reference (begin from this exact framing, setting and lighting)");
+    expect(withBoard).toContain("Image 2 is Galileo's 360-degree face sheet");
+    expect(withBoard).toContain("Image 3 is Galileo's outfit turnaround");
   });
 
   it("validates shared wardrobe links, remaps them on renameCast, preserves decoupled fields in mergeLook, and classifies tags", () => {

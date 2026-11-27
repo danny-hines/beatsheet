@@ -1787,6 +1787,9 @@ button.model-row.on { background: var(--accent-bg); color: var(--text); box-shad
 .slot-card.over { border-color: var(--accent); background: var(--accent-bg); }
 .slot-card.slot-wide { grid-column: 1 / -1; }
 .slot-head { display: flex; align-items: center; gap: 8px; font-size: var(--t-3); }
+.slot-cast-toggle { display: inline-flex; align-items: center; gap: 5px; color: var(--dim); cursor: pointer; user-select: none; }
+.slot-cast-toggle input { margin: 0; }
+.slot-board-hint p { margin: 0; line-height: 1.45; }
 .slot-picked { display: flex; align-items: center; gap: 10px; }
 .slot-picked img { width: 88px; height: 56px; object-fit: cover; border-radius: var(--r-1); border: 1px solid var(--line-2); flex: none; }
 .slot-picked-meta { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }

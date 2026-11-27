@@ -179,7 +179,8 @@ export function higgsfieldInput(shape: string, model: string, ask: FalAsk): Higg
   const fromReferences = model.endsWith("/reference-to-video");
   // The board a take starts from shows who's in it: where a request takes only references, it goes as the one picture.
   const pictures = fromReferences ? (ask.refs?.length ? ask.refs : ask.start ? [ask.start] : []) : [];
-  const shown = pictures.length ? ` ${pictures.length === 1 ? "The reference picture shows" : `The ${pictures.length} reference pictures show`} who and what is in it.` : "";
+  const hasExplicitRoles = /Reference pictures, in order:\s*Image \d+ is\b/.test(ask.prompt);
+  const shown = pictures.length && !hasExplicitRoles ? ` ${pictures.length === 1 ? "The reference picture shows" : `The ${pictures.length} reference pictures show`} who and what is in it.` : "";
   const audio = fromReferences ? audioLine(ask.audioRefs, (n, total) => (total === 1 ? "The reference audio" : `Audio ${n}`)) : "";
   const audioUrls = fromReferences && ask.audioRefs?.length ? { audio_urls: ask.audioRefs.map((a) => a.url) } : {};
   const shaped = ask.aspect ? { aspect_ratio: ask.aspect } : {};
@@ -223,14 +224,28 @@ export function higgsfieldInput(shape: string, model: string, ask: FalAsk): Higg
           ...audioUrls,
         };
       }
-      case "kling-v4.0":
-        // Kling 4.0: roughs at 720p, finals at 1080p (it makes 4K too), 3 to 30 seconds.
+      case "kling-v4.0": {
+        // Kling 4.0: roughs at 720p, finals at 1080p (it makes 4K too), 3 to 30 seconds. reference-to-video accepts
+        // image_url + end_image_url alongside image_urls (up to 10 images total) and video_urls.
+        const base = { duration: whole(ask.seconds), resolution: final ? "1080p" : "720p" };
+        if (fromReferences) {
+          const refPics = ask.refs ?? [];
+          const refShown = refPics.length && !hasExplicitRoles ? ` ${refPics.length === 1 ? "The reference picture shows" : `The ${refPics.length} reference pictures show`} who and what is in it.` : "";
+          return {
+            prompt: `${ask.prompt}${refShown}${cameraLine(ask.camera, "The reference video")}`,
+            ...base,
+            ...(ask.start ? { image_url: ask.start } : shaped),
+            ...(ask.end ? { end_image_url: ask.end } : {}),
+            ...(refPics.length ? { image_urls: refPics } : {}),
+            ...(ask.camera ? { video_urls: [ask.camera.url] } : {}),
+          };
+        }
         return {
           prompt: ask.prompt,
           ...(fromPicture ? { image_url: ask.start, ...(ask.end ? { end_image_url: ask.end } : {}) } : shaped),
-          duration: whole(ask.seconds),
-          resolution: final ? "1080p" : "720p",
+          ...base,
         };
+      }
       case "kling-v3.0":
         // Kling 3 Pro, at 1080p, 3 to 15 seconds. Its own sound is off: a cut's sound comes from its music, voice and effects.
         return {

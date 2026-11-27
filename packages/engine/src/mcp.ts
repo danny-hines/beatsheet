@@ -708,7 +708,14 @@ const makeArgs = {
   quality: z.enum(["rough", "final"]).optional().describe("For video: rough (default; fast and cheap, to judge the cut) or final (the best model, once the cut holds)"),
   start: z.string().optional().describe('The picture a video starts from: an asset id, or "board" for each shot\'s chosen still'),
   end: z.string().nullable().optional().describe("Asset id of a picture a video ends on. A generated shot whose clips ended on a frame ends on it again unless this is null"),
-  refs: z.array(z.string()).optional().describe("Asset ids of reference pictures, instead of the cast's own"),
+  refs: z
+    .array(z.string())
+    .optional()
+    .describe("Asset ids of reference pictures. By default replaces auto-attached cast pictures; pass includeCastRefs: true to keep these first (e.g. an opening board still) and append @mentioned cast sheets after them. On Kling 4.0, refs can also be combined with start (+ optional end) up to 10 images total"),
+  includeCastRefs: z
+    .boolean()
+    .optional()
+    .describe("Also auto-attach @mentioned cast face/outfit sheets alongside manual refs (e.g. opening board still in References mode on Seedance 2.5 / Wan 3.0 / MAGI-2 / MiniMax H3 / Kling 4.0) or alongside a locked start frame on Kling 4.0"),
   drive: z
     .object({
       asset: z.string().describe("The clip whose movement to copy: someone acting the shot out, or the original footage"),
@@ -825,6 +832,7 @@ type MakeToolArgs = {
   start?: string;
   end?: string | null;
   refs?: string[];
+  includeCastRefs?: boolean;
   drive?: { asset: string; from?: number; to?: number } | null;
   speech?: { lines?: string[]; asset?: string; from?: number; to?: number } | null;
   clip?: "take" | { asset: string; from?: number; to?: number };

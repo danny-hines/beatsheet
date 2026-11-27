@@ -80,7 +80,8 @@ export function teinInput(shape: string, model: string, ask: FalAsk): Record<str
       // references go only when there's no start frame. From a picture the clip keeps the picture's shape, and Tein
       // takes no other ratio then. Faces are kept (pass_faces) and Creative mode is off, both by leaving them unsaid.
       const refs = ask.start ? undefined : ask.refs;
-      const shown = refs?.length ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
+      const hasExplicitRoles = /Reference pictures, in order:\s*Image \d+ is\b/.test(ask.prompt);
+      const shown = refs?.length && !hasExplicitRoles ? ` ${refs.length === 1 ? "The reference picture shows" : `The ${refs.length} reference pictures show`} who and what is in it.` : "";
       const followed = cameraLine(ask.camera, "The reference video");
       return {
         model,
