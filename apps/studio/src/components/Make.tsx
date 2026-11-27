@@ -9,7 +9,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { MakeJob, MakePlan } from "@beatsheet/engine";
 import { CATALOG, classifyGeneratedAssets, type Asset } from "@beatsheet/schema";
 import { ASSET_DRAG, hideBroken, posterUrl, proxyUrl, putInShot, timeAgo } from "../lib";
-import { actions, setState, useProject, useStore, type State } from "../store";
+import { actions, agentFor, setState, useProject, useStore, type State } from "../store";
 import { AssetView } from "./AssetView";
 import { AssetMenu } from "./Cast";
 import { CreatePage, type CreateLaunch } from "./CreatePage";
@@ -152,8 +152,8 @@ function MakeNav({ jobs, creating, onTab, onCreate }: { jobs: MakeJob[]; creatin
   const cutId = useStore((s) => s.cutId);
   const page = useStore((s) => s.makePage);
   const wide = useStore((s) => s.makeWide);
-  const agent = useStore((s) => s.agent);
-  const asks = !agent.project || agent.project === p.id ? agent.approvals.length : 0;
+  const agent = useStore((s) => agentFor(s));
+  const asks = agent.approvals.length;
 
   // Meaningful Made count: distinct shot/cast groups + non-intermediate standalone outputs (not raw 841 retries).
   const madeCount = useMemo(() => {

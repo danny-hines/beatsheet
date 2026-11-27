@@ -2,7 +2,7 @@ import { cutView, FORMAT_PRESETS, formatPreset, resolveTimeline, type Cut, type 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AGENT_NAMES, keys } from "../lib";
-import { actions, useStore } from "../store";
+import { actions, agentFor, useStore } from "../store";
 import { answer } from "./Turn";
 import { Icon } from "./Icon";
 
@@ -138,7 +138,7 @@ const span = (s: number) => (s < 60 ? `${s}s` : s % 60 ? clock(s) : `${s / 60} m
 function NewCutDialog({ from: initial, onClose }: { from: string; onClose: () => void }) {
   const doc = useStore((s) => s.doc)!;
   const projectId = useStore((s) => s.projectId);
-  const agent = useStore((s) => s.agent);
+  const agent = useStore((s) => agentFor(s));
   const preferred = useStore((s) => s.setup?.settings.agent?.id);
   // The session on this project if there is one, else the agent new sessions start with.
   const who = agent.project === projectId && agent.status !== "off" && agent.status !== "error" ? agent.agent : preferred;
@@ -163,9 +163,9 @@ function NewCutDialog({ from: initial, onClose }: { from: string; onClose: () =>
   const sameShape = formats.length === shapes.length && formats.every((f) => shapes.includes(f));
   const same = sameShape && seconds === (current.spec.targetLength ?? 30);
   const songs = doc.assets.filter((a) => a.kind === "music");
-  // The new cut gets a conversation of its own, which would cut off one that's working.
+  // The new cut gets a conversation of its own, which would cut off one working on another cut of this project.
   const busy = agent.status === "running" || agent.status === "starting";
-  const busyOn = busy ? (agent.project === projectId ? `"${doc.cuts.find((c) => c.id === agent.cut)?.name ?? "another cut"}"` : "another project") : undefined;
+  const busyOn = busy ? `"${doc.cuts.find((c) => c.id === agent.cut)?.name ?? "another cut"}"` : undefined;
   const rework = agentDoes && !!who && !busy;
   // A different shape or length names itself ("16:9 · 2 min"); otherwise the first words of what to aim for, or a take.
   const fallback = unique(

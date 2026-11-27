@@ -2,7 +2,7 @@ import type { Asset, HandOff, PlannedTake, ProjectFile } from "@beatsheet/schema
 import { aspectOf } from "@beatsheet/schema";
 import { useState, type ReactNode } from "react";
 import { AGENT_NAMES, hideBroken, imageUrl, pickFootage, pickPath, posterUrl, projectFileUrl, proxyUrl, runJob, sessionActivity } from "../lib";
-import { actions, getState, setState, useStore } from "../store";
+import { actions, agentFor, getState, setState, useStore } from "../store";
 import { BlockoutPlayer } from "./Blockout";
 import { EnlargeIcon, Viewer, type ViewerItem } from "./Viewer";
 
@@ -12,7 +12,7 @@ import { EnlargeIcon, Viewer, type ViewerItem } from "./Viewer";
  */
 export function useTurn() {
   const doc = useStore((s) => s.doc);
-  const agent = useStore((s) => s.agent);
+  const agent = useStore((s) => agentFor(s));
   const projectId = useStore((s) => s.projectId);
   const cutId = useStore((s) => s.cutId);
   const preferred = useStore((s) => s.setup?.settings.agent);

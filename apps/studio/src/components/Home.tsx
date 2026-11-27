@@ -3,7 +3,7 @@ import type { HandOff } from "@beatsheet/schema";
 import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, desktop, hideBroken, posterUrl, timeAgo, OS, keys, WINDOWS } from "../lib";
 import { RECIPE_CATEGORIES, RECIPES, recipePreviewUrl, type RecipeCategoryId, type RecipeTemplate } from "../recipes";
-import { actions, useStore, type ProjectSummary } from "../store";
+import { actions, agentFor, useStore, type ProjectSummary } from "../store";
 import { Mark, PopMenu } from "./ui";
 import { Icon } from "./Icon";
 
@@ -342,18 +342,24 @@ function RecipeArtwork({ kind }: { kind: string }) {
 
 /** A project: a few of its pictures, what's in it, whose turn it is, and when it last changed. */
 function ProjectCard({ p, now, onMenu }: { p: ProjectSummary; now: number; onMenu?: (x: number, y: number) => void }) {
-  const agent = useStore((s) => s.agent);
+  const agent = useStore((s) => agentFor(s, p.id));
   const posters = p.posters ?? [];
-  const working = agent.project === p.id && (agent.status === "running" || agent.status === "starting");
+  const waiting = agent.approvals.length > 0;
+  const working = agent.status === "running" || agent.status === "starting";
+  const errored = agent.status === "error";
   const count = (n: number | undefined, one: string) => (n ? `${n} ${one}${n === 1 ? "" : "s"}` : "");
   const facts = [count(p.videos, "video"), count(p.photos, "photo"), p.cuts > 1 ? `${p.cuts} cuts` : ""].filter(Boolean).join(" · ");
-  const turn = working
-    ? { tone: "agent", text: `${AGENT_NAMES[agent.agent ?? "other"]} is working` }
-    : p.turn?.who === "agent"
-      ? { tone: "agent", text: "Agent's turn" }
-      : p.turn?.ask
-        ? { tone: "you", text: `Your turn: ${askWords(p.turn.ask)}` }
-        : undefined;
+  const turn = waiting
+    ? { tone: "warn", text: `${AGENT_NAMES[agent.agent ?? "other"]} needs your OK`, pending: true }
+    : working
+      ? { tone: "agent", text: `${AGENT_NAMES[agent.agent ?? "other"]} is working`, pending: true }
+      : errored
+        ? { tone: "warn", text: `${AGENT_NAMES[agent.agent ?? "other"]} stopped`, pending: false }
+        : p.turn?.who === "agent"
+          ? { tone: "agent", text: "Agent's turn", pending: false }
+          : p.turn?.ask
+            ? { tone: "you", text: `Your turn: ${askWords(p.turn.ask)}`, pending: false }
+            : undefined;
   return (
     <div
       className="project-card-wrap"
@@ -365,7 +371,14 @@ function ProjectCard({ p, now, onMenu }: { p: ProjectSummary; now: number; onMen
         })
       }
     >
-      <button className="project-card" onClick={() => void actions.open(p.id)} title={`Open ${p.title}`}>
+      <button
+        className="project-card"
+        onClick={() => {
+          if (waiting) actions.setSide("agent");
+          void actions.open(p.id);
+        }}
+        title={`Open ${p.title}`}
+      >
         <div className={`project-posters n${Math.min(posters.length, 3)}`}>
           {posters.slice(0, 3).map((x) => (
             <div key={x.asset} className="project-poster" style={x.color ? { background: x.color } : undefined}>
@@ -383,7 +396,7 @@ function ProjectCard({ p, now, onMenu }: { p: ProjectSummary; now: number; onMen
           <span className="project-card-foot">
             {turn && (
               <span className={`project-turn ${turn.tone}`}>
-                <span className={`dot ${working ? "pending" : "on"}`} />
+                <span className={`dot ${turn.pending ? "pending" : "on"}`} />
                 {turn.text}
               </span>
             )}
@@ -435,7 +448,7 @@ const revealProject = (id: string) => fetch("/api/reveal", { method: "POST", hea
 
 /** Says what moving a project to the Trash takes (its own folder) and what it leaves (the footage), then does it. */
 function TrashDialog({ p, onClose }: { p: ProjectSummary; onClose: () => void }) {
-  const agent = useStore((s) => s.agent);
+  const agent = useStore((s) => agentFor(s, p.id));
   const [plan, setPlan] = useState<TrashPlan>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);

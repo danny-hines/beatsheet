@@ -1,7 +1,7 @@
 import { lineState, lineVoice, type Line, type Project } from "@beatsheet/schema";
 import { useState } from "react";
 import { AGENT_NAMES, runJob } from "../lib";
-import { actions, getState, useStore } from "../store";
+import { actions, agentFor, getState, useStore } from "../store";
 import { answer } from "./Turn";
 import { PlayButton, useVoices, voiceLabel, VoicePicker } from "./Voices";
 
@@ -47,7 +47,7 @@ function useVoicing() {
 /** In Inspect with nothing selected: who reads this cut's narration, and whether every line is voiced. */
 export function NarrationOverview({ p }: { p: Project }) {
   const info = useVoices();
-  const agent = useStore((s) => s.agent);
+  const agent = useStore((s) => agentFor(s));
   const voice = useCutVoice(p);
   const v = info?.voices.find((x) => x.id === voice);
   const { busy, error, run } = useVoicing();

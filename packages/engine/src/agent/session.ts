@@ -63,11 +63,11 @@ export type AgentView = {
   heardAt?: string;
 };
 
-/** Changes the studio applies: the view without its transcript (or with it, when replaced), one item, or a streamed append. */
+/** Changes the studio applies: the view without its transcript (or with it, when replaced), one item, or a streamed append. `project` routes each change to its project's session. */
 export type AgentChange =
-  | { type: "view"; view: Omit<AgentView, "items"> & { items?: AgentItem[] } }
-  | { type: "item"; item: AgentItem }
-  | { type: "delta"; itemId: string; field: string; delta: string };
+  | { type: "view"; project?: string; view: Omit<AgentView, "items"> & { items?: AgentItem[] } }
+  | { type: "item"; project?: string; item: AgentItem }
+  | { type: "delta"; project?: string; itemId: string; field: string; delta: string };
 
 /** An earlier session the studio started, for "resume". */
 export type AgentSessionSummary = { id: string; updatedAt: string; name?: string; model?: string; title?: string; project?: string; cutName?: string; cut?: string };
@@ -150,7 +150,7 @@ export function touchesKeys(input: unknown, windows = process.platform === "win3
  */
 const WINDOWS_KEYS = /beatsheet-credentials|\bCred(Read|Enumerate)|PasswordVault|Get-StoredCredential|\bvaultcmd\b|\bcmdkey\b[^\n]*\/list|Microsoft[\\/]+(Credentials|Vault)|\.config[\\/]+muse[\\/]+auth\.json|\.codex[\\/]+auth\.json|\.claude[\\/]+\.credentials|\.gemini[\\/]+oauth_creds\.json|\bacp_token\.json/i;
 
-/** One hosted agent CLI. The manager keeps at most one running. */
+/** One hosted agent CLI session. AgentStudio keeps up to one live adapter per project. */
 export abstract class AgentAdapter extends EventEmitter {
   abstract readonly id: AgentId;
   view: AgentView = offView();

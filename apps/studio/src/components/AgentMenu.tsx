@@ -2,7 +2,7 @@ import type { AgentId, AgentSessionSummary, Presence } from "@beatsheet/engine";
 import { useEffect, useRef, useState } from "react";
 import { AGENT_NAMES, AGENT_ORDER, agentActivity, modelName, sessionActivity, thinkingName, timeAgo, OS } from "../lib";
 import { ServiceMark } from "./ui";
-import { actions, useStore } from "../store";
+import { actions, agentFor, useStore } from "../store";
 import { AgentOrb } from "./AgentMotion";
 import { Icon } from "./Icon";
 
@@ -23,7 +23,7 @@ function useNow(ms: number) {
  * Without a session here (`session` false) it shows the default agent, the one that picks up when the person sends something.
  */
 export function AgentHead({ session, working = false, pulseKey = 0, handoffKey = 0 }: { session: boolean; working?: boolean; pulseKey?: number; handoffKey?: number }) {
-  const view = useStore((s) => s.agent);
+  const view = useStore((s) => agentFor(s));
   const list = useStore((s) => s.agentList);
   const preferred = useStore((s) => s.setup?.settings.agent);
   const [open, setOpen] = useState(false);
@@ -87,7 +87,7 @@ export function AgentHead({ session, working = false, pulseKey = 0, handoffKey =
 
 /** Sessions running in a terminal also load beatsheet's tools: the ones on this project, apart from the one hosted here. */
 export function TerminalSessions() {
-  const view = useStore((s) => s.agent);
+  const view = useStore((s) => agentFor(s));
   const list = useStore((s) => s.agentList);
   const presence = useStore((s) => s.agents);
   const projectId = useStore((s) => s.projectId);
@@ -117,7 +117,8 @@ const remembered = (): AgentId | undefined => {
 export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
   const projectId = useStore((s) => s.projectId);
   const cutId = useStore((s) => s.cutId);
-  const view = useStore((s) => s.agent);
+  const view = useStore((s) => agentFor(s));
+  const allSessions = useStore((s) => s.agentSessions);
   const list = useStore((s) => s.agentList);
   const presence = useStore((s) => s.agents);
   const preferred = useStore((s) => s.setup?.settings.agent);
@@ -179,8 +180,8 @@ export function AgentChooser({ onChosen }: { onChosen?: () => void }) {
         <p className="dim small looking">Looking for agents on {OS.here}…</p>
       </div>
     );
-  // Not the one open here, and not one already running in a terminal.
-  const busy = new Set([view.sessionId, ...presence.map((a) => a.museSession)]);
+  // Not open on any project here, and not already running in a terminal.
+  const busy = new Set([...Object.values(allSessions).map((v) => v.sessionId), ...presence.map((a) => a.museSession)]);
   const resumable = sessions?.filter((s) => !busy.has(s.id));
   return (
     <div className={`agent-chooser ${agent?.id ?? ""}`}>

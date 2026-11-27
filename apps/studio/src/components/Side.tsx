@@ -13,7 +13,7 @@ import {
 } from "@beatsheet/schema";
 import { useMemo, useState } from "react";
 import { assetMap, FIDELITY_LABEL, KIND_LABEL, noteMatches, noteTime, runJob, selectionForTarget, shotSummary, targetFromSelection, WINDOWS, pathParts } from "../lib";
-import { actions, getState, setState, useProject, useStore, useTimeline } from "../store";
+import { actions, agentFor, getState, setState, useProject, useStore, useTimeline } from "../store";
 import { AgentPanel } from "./AgentPanel";
 import { AssetView } from "./AssetView";
 import { LookPanel, SceneProps } from "./Designed";
@@ -32,9 +32,8 @@ export function SidePanel() {
   const project = useProject();
   const selection = useStore((s) => s.selection);
   const pending = project.notes.filter((n) => n.status === "queued" || n.status === "open").length;
-  const agent = useStore((s) => s.agent);
-  const here = !agent.project || agent.project === project.id;
-  const asks = here ? agent.approvals.length : 0;
+  const agent = useStore((s) => agentFor(s));
+  const asks = agent.approvals.length;
   // In Make, what's selected opens in the middle, so the panel is the agent and the notes.
   const making = useStore((s) => s.mode === "make");
   const side = making && shown !== "notes" ? "agent" : shown;

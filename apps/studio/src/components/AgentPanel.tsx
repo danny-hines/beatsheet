@@ -1,40 +1,21 @@
 import type { AgentApproval, AgentId, AgentItem, AgentQueued } from "@beatsheet/engine";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { AGENT_NAMES, toolCallWords } from "../lib";
-import { actions, useProject, useStore } from "../store";
+import { actions, agentFor, useProject, useStore } from "../store";
 import { AgentChooser, AgentHead, TerminalSessions } from "./AgentMenu";
 import { AgentWorkField } from "./AgentMotion";
 import { AttachedNotes } from "./NoteEditor";
 import { answer, TurnCard, useTurn } from "./Turn";
 import { Icon } from "./Icon";
 
-/** The Agent tab: the session the studio hosts, live. Its messages, what it's doing, what it needs approved, and a box to talk to it. */
+/** The Agent tab: this project's hosted session, live. Its messages, what it's doing, what it needs approved, and a box to talk to it. */
 export function AgentPanel() {
-  const view = useStore((s) => s.agent);
+  const view = useStore((s) => agentFor(s));
   const projectId = useStore((s) => s.projectId);
-  const projects = useStore((s) => s.list);
   const cutId = useStore((s) => s.cutId);
   const cuts = useStore((s) => s.doc?.cuts);
 
-  // Each session belongs to its project. One running on another project stays there; starting one here replaces it.
-  if (view.project && view.project !== projectId && view.status !== "off") {
-    const title = projects.find((p) => p.id === view.project)?.title ?? view.project;
-    return (
-      <div className="agent-empty">
-        <h3>Agent</h3>
-        <p className="dim">
-          {view.agent ? AGENT_NAMES[view.agent] : "The agent"} is working on <strong>{title}</strong>.{" "}
-          <button className="link" onClick={() => (location.hash = view.project!)}>
-            Go to {title}
-          </button>
-        </p>
-        <p className="dim small">Starting a session here ends that one; it stays in {title}'s history to resume.</p>
-        <AgentChooser />
-      </div>
-    );
-  }
-
-  // Each cut has its own conversation too. One busy on another cut stays there; one that's done gives way to this cut's.
+  // Within a project, each cut has its own conversation. One busy on another cut stays there; one that's done gives way to this cut's.
   if (view.project === projectId && view.cut && view.cut !== cutId && view.status !== "off") {
     const other = cuts?.find((c) => c.id === view.cut);
     const name = view.agent ? AGENT_NAMES[view.agent] : "The agent";
@@ -91,7 +72,7 @@ function useAgentMotion(working: boolean, items: AgentItem[]) {
 }
 
 function SessionChat() {
-  const view = useStore((s) => s.agent);
+  const view = useStore((s) => agentFor(s));
   const turn = useTurn();
   const running = view.status === "running";
   const working = running || view.status === "starting";

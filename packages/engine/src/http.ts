@@ -318,8 +318,8 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
     const agent = agentStudio();
     const open = agent.openOn(body.project, body.cut);
     if (!open && agent.busyElsewhere(body.project, body.cut)) {
-      const v = agent.view;
-      const where = v.project === body.project ? `the cut "${v.cut ? (loadFile(body.project).doc.cuts.find((c) => c.id === v.cut)?.name ?? v.cut) : "another cut"}"` : "another project";
+      const v = agent.viewFor(body.project);
+      const where = `the cut "${v.cut ? (loadFile(body.project).doc.cuts.find((c) => c.id === v.cut)?.name ?? v.cut) : "another cut"}"`;
       return json(res, 423, { error: `${AGENT_LABELS[v.agent ?? "claude"]} is still working on ${where}. Wait for it to hand back, or stop it, then send this again.` });
     }
     const preferred = readSettings().agent;
@@ -336,7 +336,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
         : answerMessage(body.project, currentTurn(body.project), { ...body, notes }, keepProposals(body.project, { keep: body.keep }), started);
     const unstarted = started.flatMap((s) => ("error" in s ? [`"${s.label}" wasn't started: ${s.error}`] : []));
     if (open) {
-      const queued = await agent.send(message, taken?.batch ? { project: body.project, cut: body.cut, batch: taken.batch } : undefined);
+      const queued = await agent.send(message, taken?.batch ? { project: body.project, cut: body.cut, batch: taken.batch } : undefined, body.project);
       return json(res, 200, { delivered: queued ? "queued" : "session", ...(unstarted.length ? { unstarted } : {}) });
     }
     void agent.start(preferred!.id, { model: preferred!.model, thinking: preferred!.thinking, project: body.project, cut: body.cut, then: message });
@@ -552,7 +552,10 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
   }
   if (section === "agent") {
     const agent = agentStudio();
-    if (!id && req.method === "GET") return json(res, 200, agent.view);
+    if (!id && req.method === "GET") {
+      const project = new URL(req.url ?? "", "http://local").searchParams.get("project");
+      return json(res, 200, project !== null ? agent.viewFor(project) : agent.views());
+    }
     if (id === "list" && req.method === "GET") return json(res, 200, await agent.agents(new URL(req.url ?? "", "http://local").searchParams.has("quick")));
     if (id === "sessions" && req.method === "GET") {
       const params = new URL(req.url ?? "", "http://local").searchParams;
@@ -600,12 +603,12 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       // Starting takes a while (the CLI boots, then the first message); the page follows along through change events.
       if (id === "start") void agent.start(body.agent!, { model: body.model, thinking: body.thinking, project: body.project, cut: body.cut });
       else if (id === "resume" && body.session) void agent.resume(body.agent!, body.session, body.project, body.cut);
-      else if (id === "send" && body.text?.trim()) await agent.send(body.text.trim());
-      else if (id === "send-now" && body.id) await agent.sendQueued(body.id);
-      else if (id === "unqueue" && body.id) agent.removeQueued(body.id);
-      else if (id === "interrupt") await agent.interrupt();
-      else if (id === "approval" && body.approvalId && body.choiceId) await agent.decide(body.approvalId, body.choiceId);
-      else if (id === "stop") agent.stop();
+      else if (id === "send" && body.text?.trim()) await agent.send(body.text.trim(), undefined, body.project);
+      else if (id === "send-now" && body.id) await agent.sendQueued(body.id, body.project);
+      else if (id === "unqueue" && body.id) agent.removeQueued(body.id, body.project);
+      else if (id === "interrupt") await agent.interrupt(body.project);
+      else if (id === "approval" && body.approvalId && body.choiceId) await agent.decide(body.approvalId, body.choiceId, body.project);
+      else if (id === "stop") agent.stop(body.project);
       else return json(res, 400, { error: "Bad agent request" });
       return json(res, 200, { ok: true });
     }
@@ -630,7 +633,7 @@ async function api(req: IncomingMessage, res: ServerResponse, parts: string[]) {
       const busy = [...jobs.values()].find((j) => j.project === id && j.status === "running");
       if (busy) return json(res, 409, { error: `It's still ${JOB_WORDS[busy.kind]}. Try again when that's done.` });
       const agent = agentStudio();
-      if (agent.view.project === id) agent.stop();
+      agent.stop(id);
       await trashProject(id);
       return json(res, 200, { ok: true });
     }

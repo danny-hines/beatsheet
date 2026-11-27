@@ -98,8 +98,8 @@ export type State = {
   side: "inspect" | "notes" | "agent" | "script";
   /** Agent sessions that have beatsheet's tools loaded right now, hosted here or running in a terminal. */
   agents: Presence[];
-  /** The agent session the studio hosts: its transcript, approvals and whether it's working. */
-  agent: AgentView;
+  /** Hosted agent sessions, keyed by project id (or "" when projectless): each project has its own transcript, approvals and queue. */
+  agentSessions: Record<string, AgentView>;
   /** The agent CLIs: which are installed and the models each offers. Loaded when first needed. */
   agentList?: AgentInfo[];
   newProjectOpen: boolean;
@@ -124,6 +124,11 @@ export type State = {
 /** A note in the making: what it's about, and for a new one when and where in the frame. */
 export type NoteDraft = { id?: string; target: NoteTarget; at?: number; region?: Note["region"]; text: string; x: number; y: number };
 
+export const EMPTY_AGENT: AgentView = { status: "off", items: [], approvals: [], queued: [] };
+
+/** The hosted session for `projectId` (defaulting to the open project), always returning a stable reference when none is open. */
+export const agentFor = (s: State, projectId = s.projectId): AgentView => s.agentSessions[projectId ?? ""] ?? EMPTY_AGENT;
+
 let state: State = {
   list: [],
   listed: false,
@@ -143,7 +148,7 @@ let state: State = {
   zoom: 0,
   side: "agent",
   agents: [],
-  agent: { status: "off", items: [], approvals: [], queued: [] },
+  agentSessions: {},
   newProjectOpen: false,
   settingsLoaded: false,
   settingsOpen: false,
@@ -273,14 +278,21 @@ const rememberedCut = (id: string) => {
   }
 };
 /**
- * Each cut has its own conversation: on opening one, its last conversation comes back (after a restart, say), unless
- * the agent is busy elsewhere or it's already open.
+ * Each cut has its own conversation: on opening a project/cut, its last conversation comes back (after a restart, say),
+ * unless this project's agent is busy on another cut or it's already open. Other projects' running sessions are unaffected.
  */
 function pickUpCut(project: string, cut: string) {
-  const a = state.agent;
+  const a = agentFor(state, project);
   const busy = a.status === "running" || a.status === "starting";
   if (busy || (a.project === project && a.cut === cut && a.status !== "off" && a.status !== "error")) return;
   void fetch("/api/agent/pickup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ project, cut }) }).catch(() => {});
+}
+
+let listRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+/** Refreshes the project list shortly, so background projects' turns stay live without hammering the server mid-turn. */
+function scheduleListRefresh() {
+  clearTimeout(listRefreshTimer);
+  listRefreshTimer = setTimeout(() => void actions.loadList(), 350);
 }
 
 const showCut = (projectId: string, cutId: string) => {
@@ -315,8 +327,13 @@ export const actions = {
   async loadAgent() {
     const res = await fetch("/api/agent");
     if (res.ok) {
-      const view = (await res.json()) as AgentView;
-      setState({ agent: { ...view, queued: view.queued ?? [] } });
+      const raw = (await res.json()) as Record<string, AgentView>;
+      const agentSessions: Record<string, AgentView> = {};
+      for (const [k, view] of Object.entries(raw)) {
+        if (!view || typeof view !== "object") continue;
+        agentSessions[k] = { ...view, queued: view.queued ?? [] };
+      }
+      setState({ agentSessions });
     }
   },
   /**
@@ -330,7 +347,18 @@ export const actions = {
     }
   },
   applyAgent(change: AgentChange) {
-    setState((s) => ({ agent: applyAgentChange(s.agent, change) }));
+    const key = change.project ?? (change.type === "view" ? change.view.project : undefined) ?? "";
+    let backgroundSettled = false;
+    setState((s) => {
+      const prev = s.agentSessions[key] ?? EMPTY_AGENT;
+      const next = applyAgentChange(prev, change);
+      if (key && key !== s.projectId && prev.status === "running" && next.status !== "running") backgroundSettled = true;
+      const sessions = { ...s.agentSessions };
+      if (next.status === "off" && !next.items.length && !next.approvals.length && !next.queued.length) delete sessions[key];
+      else sessions[key] = next;
+      return { agentSessions: sessions };
+    });
+    if (backgroundSettled) scheduleListRefresh();
   },
   setAgentDraft(key: string, text: string) {
     setState((s) => {
@@ -341,9 +369,10 @@ export const actions = {
       return { agentDrafts: next };
     });
   },
-  /** Asks the hosted agent to do something; what happens shows up through `applyAgent`. */
+  /** Asks a project's hosted agent to do something; defaults to the open project when `body.project` is omitted. */
   async agentCommand(command: "start" | "resume" | "send" | "send-now" | "unqueue" | "interrupt" | "approval" | "stop", body: Record<string, unknown> = {}) {
-    const res = await fetch(`/api/agent/${command}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const payload = state.projectId && body.project === undefined ? { project: state.projectId, ...body } : body;
+    const res = await fetch(`/api/agent/${command}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     if (!res.ok) {
       const out = (await res.json().catch(() => ({}))) as { error?: string };
       setState({ notice: `Agent: ${out.error ?? "that didn't go through"}` });
@@ -374,6 +403,10 @@ export const actions = {
   },
 
   async open(id: string, cut?: string, mode: State["mode"] = "edit") {
+    if (state.projectId && state.projectId !== id) {
+      await actions.flushSave();
+      player?.pause();
+    }
     clearTimeout(saveTimer);
     const res = await fetch(`/api/projects/${id}`);
     // Gone since it was linked (deleted, or renamed on disk): stay on the list.
@@ -615,10 +648,14 @@ export const actions = {
   externalChange(id: string, version: string) {
     // On the project list, the cards show turns and footage, so any project changing refreshes them.
     if (!state.projectId) return void actions.loadList();
-    if (id !== state.projectId || version === state.version) return;
+    if (id !== state.projectId) {
+      scheduleListRefresh();
+      return;
+    }
+    if (version === state.version) return;
     if (state.save === "dirty" || state.save === "saving") return; // our pending save will hit the conflict and reload
-    // The agent working in the studio is expected to change things; say so only if its tab isn't already showing that.
-    const working = state.agent.status === "running";
+    // The agent working on this project is expected to change things; say so only if its tab isn't already showing that.
+    const working = agentFor(state, id).status === "running";
     if (quiet) return void actions.reload();
     void actions.reload(working ? (state.side === "agent" ? undefined : "The agent changed the project.") : "Updated from disk: the project was changed outside the studio.");
   },

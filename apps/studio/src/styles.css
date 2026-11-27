@@ -128,7 +128,30 @@ p { margin: 4px 0; }
 .topbar { grid-area: top; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .home-back { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; padding: 0 !important; }
 .home-back svg { width: 15px; height: 15px; }
-.project-name { font-family: var(--f-label); font-weight: 600; font-size: var(--t-4); letter-spacing: 0.02em; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-menu { min-width: 0; }
+.project-button { display: inline-flex; align-items: center; gap: 6px; max-width: 300px; white-space: nowrap; border-color: transparent; padding: 3px 6px; }
+.project-button:hover:not(:disabled) { border-color: var(--line-2); background: var(--raised); }
+.project-button .caret { color: var(--dim); flex: none; }
+.project-name { font-family: var(--f-label); font-weight: 600; font-size: var(--t-4); letter-spacing: 0.02em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-activity { display: inline-flex; align-items: center; gap: 4px; flex: none; font-family: var(--mono); font-size: var(--t-1); padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); background: var(--raised); }
+.project-activity .dot { width: 5px; height: 5px; }
+.project-activity.agent { background: var(--agent-bg); border-color: var(--agent-line); color: var(--agent); }
+.project-activity.agent .dot { background: var(--agent); }
+.project-activity.you { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent); }
+.project-activity.you .dot { background: var(--accent); }
+.project-activity.warn { background: color-mix(in srgb, var(--warn) 14%, var(--panel)); border-color: var(--warn-line); color: var(--warn); }
+.project-activity.warn .dot { background: var(--warn); }
+.project-panel-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.project-panel-foot { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.project-panel-foot .cut-new { margin-top: 0; }
+.project-row-status { display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.project-row-status .dot { width: 6px; height: 6px; flex: none; }
+.project-row-status.agent { color: var(--agent); }
+.project-row-status.agent .dot { background: var(--agent); }
+.project-row-status.you { color: var(--accent); }
+.project-row-status.you .dot { background: var(--accent); }
+.project-row-status.warn { color: var(--warn); }
+.project-row-status.warn .dot { background: var(--warn); }
 .segmented { display: flex; }
 .segmented button { border-radius: 0; margin-left: -1px; }
 /* Neighbours share one rule between them; the chosen one's goes on top, so it's outlined on every side. */
@@ -1172,6 +1195,8 @@ html.desktop .home-page { padding-top: 8px; }
 .project-turn.you .dot.on { background: var(--accent); }
 .project-turn.agent { background: var(--agent-bg); border-color: var(--agent-line); color: var(--agent); }
 .project-turn.agent .dot { background: var(--agent); }
+.project-turn.warn { background: color-mix(in srgb, var(--warn) 14%, var(--panel)); border-color: var(--warn-line); color: var(--warn); }
+.project-turn.warn .dot { background: var(--warn); }
 .project-turn .dot { width: 6px; height: 6px; }
 .home-drop { position: absolute; inset: 12px; border: 2px dashed var(--accent); border-radius: var(--r-3); background: color-mix(in srgb, var(--bg) 90%, transparent); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; pointer-events: none; font-size: var(--t-4); z-index: 30; }
 .home-drop .home-icon { color: var(--accent); }
