@@ -27,7 +27,7 @@ import { actions, useProject, useStore, useTimeline } from "../store";
 import { blockoutCuts, BlockoutPlayer } from "./Blockout";
 import { Icon } from "./Icon";
 import { shotPrompt, shotsToMake } from "./MakeShots";
-import { cost, fitOf, ModelPicker, pickOf, useChoices, WhyNot } from "./Takes";
+import { comparePrice, cost, fitOf, ModelPicker, MultiModelPicker, pickOf, useChoices, WhyNot } from "./Takes";
 import { answer } from "./Turn";
 
 export type CreateLaunch = {
@@ -115,7 +115,9 @@ export function CreatePage({
   const [shotId, setShotId] = useState(initial.shot ?? "");
   const [op, setOp] = useState<MakeOp>(initOp);
   const [quality, setQuality] = useState<Quality>(initial.quality ?? "rough");
-  const [modelPick, setModelPick] = useState(initial.model ? (initial.via ? `${initial.model}@${initial.via}` : initial.model) : "");
+  const initPick = initial.model ? (initial.via ? `${initial.model}@${initial.via}` : initial.model) : "";
+  const [modelPick, setModelPick] = useState(initOp === "video" ? initPick : "");
+  const [stillPicks, setStillPicks] = useState<string[] | undefined>(initOp === "image" && initPick ? [initPick] : undefined);
   const [inputMode, setInputMode] = useState<MakeInputMode>(
     initial.inputMode ?? (initOp === "image" ? "refs" : initShot?.blockout || initial.useBlockout ? "blockout" : initBoard ? "board" : "board"),
   );
@@ -161,7 +163,9 @@ export function CreatePage({
     setActiveStep(idx);
     setOp(d.op);
     setQuality(d.quality);
-    setModelPick(d.model ? (d.via ? `${d.model}@${d.via}` : d.model) : "");
+    const stepPick = d.model ? (d.via ? `${d.model}@${d.via}` : d.model) : "";
+    if (d.op === "image") setStillPicks(stepPick ? [stepPick] : undefined);
+    else setModelPick(stepPick);
     setInputMode(d.inputMode);
     setPrompt(d.prompt);
     if (d.start) setStart(d.start);
@@ -265,9 +269,17 @@ export function CreatePage({
   });
 
   // When a specific model is selected, automatically adapt inputMode if the chosen model only works in another paradigm.
-  const chosenFit = fitOf(choices, modelPick);
-  const catalogModel = CATALOG.find((m) => m.id === (pickedModelId ?? chosenFit?.model));
-  const activeRoute = catalogModel?.routes.find((r) => r.via === (pickOf(modelPick).via ?? chosenFit?.route));
+  const activeStillPicks = useMemo(
+    () => (op === "image" ? (stillPicks ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => !!fitOf(choices, x)) : []),
+    [op, stillPicks, choices],
+  );
+  const stillFits = useMemo(() => activeStillPicks.map((x) => fitOf(choices, x)!), [activeStillPicks, choices]);
+  const comparingStills = op === "image" && stillFits.length > 1;
+  const stillPrice = comparePrice(stillFits);
+  const chosenFit = op === "image" ? stillFits[0] : fitOf(choices, modelPick);
+  const primaryPick = op === "image" ? (activeStillPicks[0] ?? "") : modelPick;
+  const catalogModel = CATALOG.find((m) => m.id === (pickOf(primaryPick).model ?? chosenFit?.model));
+  const activeRoute = catalogModel?.routes.find((r) => r.via === (pickOf(primaryPick).via ?? chosenFit?.route));
   const allowedModes = useMemo(() => (op === "video" ? supportedModes(pickedModelId ? catalogModel : undefined) : (["refs", "text"] as MakeInputMode[])), [op, pickedModelId, catalogModel]);
   const supportsStartWithRefs = op === "video" && inputMode === "board" && !!catalogModel?.takes.startWithRefs;
   const showRefSlot = op === "image" || (op === "video" && (inputMode === "refs" || inputMode === "blockout" || supportsStartWithRefs || boardCastRefs));
@@ -284,8 +296,17 @@ export function CreatePage({
     }
   };
 
-  // Max references allowed by the currently selected model + route.
-  const maxRefs = activeRoute?.takes?.refs ?? catalogModel?.takes.refs ?? (op === "image" ? 10 : 10);
+  // Max references allowed by the currently selected model + route (or the highest cap among compared still models).
+  const maxRefs = comparingStills
+    ? Math.max(
+        ...stillFits.map((f, i) => {
+          const raw = activeStillPicks[i]!;
+          const cm = CATALOG.find((m) => m.id === f.model);
+          const r = cm?.routes.find((x) => x.via === (pickOf(raw).via ?? f.route));
+          return r?.takes?.refs ?? cm?.takes.refs ?? 10;
+        }),
+      )
+    : (activeRoute?.takes?.refs ?? catalogModel?.takes.refs ?? 10);
   const frameCount = op === "video" && inputMode === "board" && activeStart && (supportsStartWithRefs || boardCastRefs) ? 1 + (activeEnd ? 1 : 0) : 0;
   const refCap = Math.max(0, maxRefs - frameCount);
   const routeAudio = activeRoute?.takes?.audio;
@@ -358,17 +379,17 @@ export function CreatePage({
   const make = async () => {
     setError("");
     setSending(true);
-    const ask: MakeAsk = {
+    const baseAsk: MakeAsk = {
       op,
       cut: cutId,
       prompt: prompt.trim(),
       count,
       ...(shot ? { shot: shot.id } : { aspect }),
-      ...pickOf(modelPick),
       ...(activeRefs.length ? { refs: activeRefs } : {}),
       ...(activeIncludeCast ? { includeCastRefs: true } : {}),
       ...(op === "video"
         ? {
+            ...pickOf(modelPick),
             quality,
             ...(activeStart ? { start: activeStart } : {}),
             end: activeEnd ?? null,
@@ -388,9 +409,15 @@ export function CreatePage({
           }
         : {}),
     };
+    const payload =
+      op === "image" && stillPicks?.length
+        ? activeStillPicks.length > 1
+          ? { asks: activeStillPicks.map((raw) => ({ ...baseAsk, ...pickOf(raw) })) }
+          : { ...baseAsk, ...pickOf(activeStillPicks[0]!) }
+        : baseAsk;
     try {
       await actions.flushSave();
-      const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(ask) });
+      const res = await fetch(`/api/projects/${projectId}/make`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
       const j = (await res.json()) as { jobs?: MakeJob[]; error?: string };
       if (!res.ok || !j.jobs) throw new Error(j.error ?? `${res.status}`);
       onStarted(j.jobs, shot?.id);
@@ -406,7 +433,9 @@ export function CreatePage({
   const missingBlockout = op === "video" && inputMode === "blockout" && !hasShotBlockout && !legacyCut;
   const missingStart = op === "video" && (inputMode === "board" || inputMode === "drive") && !activeStart;
   const missingDrive = op === "video" && inputMode === "drive" && !drive;
-  const canSubmit = !!chosenFit && !!prompt.trim() && !sending && !missingBlockout && !missingDrive;
+  const totalCount = comparingStills ? count * stillFits.length : count;
+  const totalCostLabel = comparingStills ? stillPrice : chosenFit?.usd !== undefined ? cost(chosenFit) : "";
+  const canSubmit = (op === "image" ? stillFits.length > 0 : !!chosenFit) && !!prompt.trim() && !sending && !missingBlockout && !missingDrive;
 
   const roleTag = (role?: string) => (role === "face-sheet" ? "360° face" : role === "portrait" ? "face" : role === "outfit" ? "outfit" : role === "composite" ? "face+outfit" : "");
   const flightPics: { id: string; part: string; label: string }[] = [
@@ -464,7 +493,6 @@ export function CreatePage({
             className={op === "image" ? "on" : ""}
             onClick={() => {
               setOp("image");
-              setModelPick("");
               setCount(2);
             }}
           >
@@ -474,7 +502,6 @@ export function CreatePage({
             className={op === "video" ? "on" : ""}
             onClick={() => {
               setOp("video");
-              setModelPick("");
               setCount(1);
               if (inputMode === "text" && start) setInputMode("board");
             }}
@@ -517,17 +544,28 @@ export function CreatePage({
           {/* 1. Model & Route */}
           <div className="create-section">
             <div className="create-section-head">
-              <h4>Model</h4>
+              <h4>{comparingStills ? "Models" : "Model"}</h4>
               <div className="create-badges">
-                {modelBadges(catalogModel).map((b) => (
-                  <span key={b} className="pill small">
-                    {b}
-                  </span>
-                ))}
+                {comparingStills ? (
+                  <>
+                    <span className="pill small">Comparing {stillFits.length} models</span>
+                    {maxRefs > 0 && <span className="pill small">Up to {maxRefs} refs</span>}
+                  </>
+                ) : (
+                  modelBadges(catalogModel).map((b) => (
+                    <span key={b} className="pill small">
+                      {b}
+                    </span>
+                  ))
+                )}
               </div>
             </div>
             <div className="make-row">
-              <ModelPicker choices={choices} model={modelPick} setModel={selectModel} />
+              {op === "image" ? (
+                <MultiModelPicker choices={choices} picks={stillPicks} onChange={setStillPicks} price={stillPrice} />
+              ) : (
+                <ModelPicker choices={choices} model={modelPick} setModel={selectModel} />
+              )}
               {op === "video" && !shot && (
                 <label className="small seconds" title="Clip length in seconds">
                   <input type="number" min={2} max={30} step={1} value={seconds} onChange={(e) => setSeconds(Math.max(2, Math.min(30, Number(e.target.value) || 5)))} />s
@@ -543,7 +581,37 @@ export function CreatePage({
                 </select>
               )}
             </div>
-            {catalogModel?.note && <p className="dim small">{catalogModel.note}</p>}
+            {comparingStills && (
+              <div className="cast-compare-chips small">
+                {stillFits.map((f, i) => {
+                  const raw = activeStillPicks[i]!;
+                  return (
+                    <span key={raw} className="chip" title={`${f.label} on ${f.where} · ${cost(f)}`}>
+                      {f.label}
+                      {pickOf(raw).via && <span className="dim"> ({f.where})</span>}
+                      <button
+                        className="link"
+                        aria-label={`Remove ${f.label}`}
+                        onClick={() => {
+                          const next = activeStillPicks.filter((x) => x !== raw);
+                          setStillPicks(next.length ? next : undefined);
+                        }}
+                      >
+                        <Icon name="close" size={10} />
+                      </button>
+                    </span>
+                  );
+                })}
+                <button className="link small" onClick={() => setStillPicks(undefined)}>
+                  Reset to Auto
+                </button>
+              </div>
+            )}
+            {comparingStills ? (
+              <p className="dim small">Each model runs in parallel and receives @cast references tailored to its format and ref limit automatically.</p>
+            ) : (
+              catalogModel?.note && <p className="dim small">{catalogModel.note}</p>
+            )}
           </div>
 
           {/* 2. Video Directing Mode (adapts to model capabilities) */}
@@ -577,7 +645,7 @@ export function CreatePage({
 
           {/* 3. Dynamic Ingredient Slots */}
           <div className="create-section">
-            <h4>Ingredients for {catalogModel?.label ?? (op === "image" ? "stills" : "this clip")}</h4>
+            <h4>Ingredients for {comparingStills ? `${stillFits.length} still models` : (catalogModel?.label ?? (op === "image" ? "stills" : "this clip"))}</h4>
             <div className="create-slots">
               {/* Start Frame slot (board / drive / talking-still speech) */}
               {op === "video" && (inputMode === "board" || inputMode === "drive" || (inputMode === "speech" && !(speechDub && showingVideo))) && (
@@ -1055,17 +1123,31 @@ export function CreatePage({
         {/* Right Column: Flight Check */}
         <aside className="create-flight">
           <h4>Flight check</h4>
-          <p className="dim small">
-            {chosenFit ? (
-              <>
-                <strong>{chosenFit.label}</strong> on {chosenFit.where}
-                {chosenFit.seconds ? ` · ${chosenFit.seconds}s` : ""}
-                {chosenFit.aspect ? ` · ${chosenFit.aspect}` : ""}
-              </>
-            ) : (
-              "Pick a ready model and ingredients to estimate."
-            )}
-          </p>
+          {comparingStills ? (
+            <div className="flight-models small">
+              {stillFits.map((f, i) => (
+                <div key={`${f.model}-${f.route}-${i}`} className="flight-model-row">
+                  <span>
+                    <strong>{f.label}</strong> <span className="dim">on {f.where}</span>
+                  </span>
+                  <span className="dim">{cost(f)}</span>
+                </div>
+              ))}
+              {chosenFit?.aspect && <span className="dim">Aspect: {chosenFit.aspect}</span>}
+            </div>
+          ) : (
+            <p className="dim small">
+              {chosenFit ? (
+                <>
+                  <strong>{chosenFit.label}</strong> on {chosenFit.where}
+                  {chosenFit.seconds ? ` · ${chosenFit.seconds}s` : ""}
+                  {chosenFit.aspect ? ` · ${chosenFit.aspect}` : ""}
+                </>
+              ) : (
+                "Pick a ready model and ingredients to estimate."
+              )}
+            </p>
+          )}
 
           {(flightPics.length > 0 || (op === "video" && inputMode === "blockout" && (hasShotBlockout || legacyCut)) || activeAudioRefs.length > 0) && (
             <div className="flight-sends">
@@ -1108,7 +1190,7 @@ export function CreatePage({
 
           <div className="flight-foot">
             <div className="make-row">
-              <span className="dim small">Takes</span>
+              <span className="dim small">{comparingStills ? "Takes each" : "Takes"}</span>
               <span className="stepper">
                 <button disabled={count <= 1} onClick={() => setCount(count - 1)} aria-label="One fewer">
                   <Icon name="minus" size={10} />
@@ -1119,11 +1201,15 @@ export function CreatePage({
                 </button>
               </span>
               <span className="spacer" />
-              {chosenFit?.usd !== undefined && <strong className="small">{cost(chosenFit)}</strong>}
+              {totalCostLabel && <strong className="small">{totalCostLabel}</strong>}
             </div>
             <button className="primary create-go" disabled={!canSubmit} onClick={() => void make()} title="Start generating (⌘ Enter)">
-              {sending ? "Starting…" : `Make ${count} ${what}`}
-              {chosenFit?.usd !== undefined && !sending ? ` · ${cost(chosenFit)}` : ""}
+              {sending
+                ? "Starting…"
+                : comparingStills
+                  ? `Make ${totalCount} stills (${count} × ${stillFits.length} models)`
+                  : `Make ${count} ${what}`}
+              {totalCostLabel && !sending ? ` · ${totalCostLabel}` : ""}
             </button>
           </div>
         </aside>

@@ -852,7 +852,7 @@ export function ShotPage({
                     projectId={projectId}
                     looking={a.id === look?.id}
                     showing={a.id === showing}
-                    badge={a.id === activeBoardId && hasClipsOrGoing ? "Board" : "Still"}
+                    badge={a.id === activeBoardId && hasClipsOrGoing ? "Board" : (madeWith(a) ?? "Still")}
                     onLook={() => setLooking(a.id)}
                     onUse={() => pickTake(shot.id, a.id, seconds)}
                   />

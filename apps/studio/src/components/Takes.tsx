@@ -4,7 +4,7 @@
  * against this shot and the services set up, and the ones that can't make it say why rather than being hidden. The
  * button says what a batch will cost.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
 import { aspectOf, blockoutDuration, cameraOfTake, CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
@@ -750,6 +750,218 @@ export function ModelPicker({ choices, model, setModel }: { choices?: Choices; m
           {!!choices?.unfit.length && (
             <>
               <h5>Can't make this</h5>
+              {choices.unfit.map(off)}
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Combined price summary across one or more ready model fits (used by multi-model comparison bars). */
+export const comparePrice = (fits: FitOk[]): string =>
+  fits.length > 1 && fits.some((f) => f.usd) ? money(fits.reduce((sum, f) => sum + (f.usd ?? 0), 0)) : fits[0] ? cost(fits[0]) : "";
+
+/**
+ * Multi-model & route picker for generating stills side by side: click any model to use it alone, pick a route pill
+ * when a model runs on multiple providers, or tick checkboxes on 2+ models to generate and compare in parallel.
+ */
+export function MultiModelPicker({
+  choices,
+  picks,
+  onChange,
+  price,
+  className = "",
+}: {
+  choices: Choices | undefined;
+  picks: string[] | undefined;
+  onChange: (next: string[] | undefined) => void;
+  price: string;
+  className?: string;
+}) {
+  const [at, setAt] = useState<CSSProperties>();
+  const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const close = () => setAt(undefined);
+
+  useEffect(() => {
+    if (!at) return;
+    const out = (e: Event) => !panel.current?.contains(e.target as Node) && !button.current?.contains(e.target as Node) && close();
+    const key = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("pointerdown", out, true);
+    window.addEventListener("keydown", key);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("pointerdown", out, true);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("resize", close);
+    };
+  }, [at]);
+
+  const open = () => {
+    const r = button.current!.getBoundingClientRect();
+    const width = Math.min(440, window.innerWidth - 16);
+    const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+    setAt(r.bottom + 360 > window.innerHeight && r.top > window.innerHeight - r.bottom ? { left, bottom: window.innerHeight - r.top + 4, width } : { left, top: r.bottom + 4, width });
+  };
+
+  const ready = choices?.ready ?? [];
+  const activePicks = (picks ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => !!fitOf(choices, x));
+  const multiWhere = new Set(ready.flatMap((x) => [x.route, ...(x.also ?? []).map((o) => o.route)])).size > 1;
+  const pickForModel = (modelId: string) => activePicks.find((x) => pickOf(x).model === modelId);
+  const isPicked = (modelId: string) => !!pickForModel(modelId);
+
+  const selectOnly = (value: string) => {
+    onChange(value ? [value] : undefined);
+    close();
+  };
+
+  const toggleModel = (modelId: string, on: boolean) => {
+    const cur = picks ?? (choices?.auto ? [choices.auto.model] : []);
+    const next = on ? [...cur.filter((x) => pickOf(x).model !== modelId), modelId] : cur.filter((x) => pickOf(x).model !== modelId);
+    if (!next.length) return;
+    onChange(next);
+  };
+
+  const setRoute = (modelId: string, route: string) => {
+    const val = `${modelId}@${route}`;
+    const cur = picks ?? (choices?.auto ? [choices.auto.model] : []);
+    if (cur.some((x) => pickOf(x).model === modelId)) {
+      onChange(cur.map((x) => (pickOf(x).model === modelId ? val : x)));
+    } else {
+      onChange([val]);
+      close();
+    }
+  };
+
+  const singleFit = activePicks.length === 1 ? fitOf(choices, activePicks[0]!) : undefined;
+  const singleSel = activePicks.length === 1 ? pickOf(activePicks[0]!) : undefined;
+  const buttonLabel = !picks?.length
+    ? choices?.auto
+      ? `Auto · ${choices.auto.label}`
+      : "Auto"
+    : activePicks.length === 1
+      ? (singleFit?.label ?? modelLabel(singleSel?.model ?? activePicks[0]!))
+      : `Compare ${activePicks.length} models`;
+  const buttonCost =
+    activePicks.length > 1
+      ? price
+      : singleFit
+        ? [(multiWhere || !!singleSel?.via || !!singleFit.also?.length) && singleFit.where, cost(singleFit)].filter(Boolean).join(" · ")
+        : "";
+
+  const settings = (pane: string, text: string) => (
+    <button className="link small" onClick={() => (close(), actions.setSettingsOpen(true, pane))}>
+      {text}
+    </button>
+  );
+  const onComfy = (f: Fit) => !f.ok && ((f.why.kind === "connect" && f.why.services.includes("comfy")) || (f.why.kind === "install" && f.why.service === "comfy"));
+  const setup = choices?.setup ?? [];
+  const off = (f: Fit) =>
+    f.ok ? null : (
+      <div key={f.model} className="model-row off">
+        <span className="model-row-name">{f.label}</span>
+        <span className="model-row-note">{f.why.reason}</span>
+      </div>
+    );
+
+  return (
+    <>
+      <button
+        ref={button}
+        className={`model-pick ${className} ${at ? "open" : ""}`.trim()}
+        onClick={() => (at ? close() : open())}
+        aria-haspopup="menu"
+        aria-expanded={!!at}
+        title="Choose one image model or tick multiple to compare side by side"
+      >
+        <span className="model-pick-name">{buttonLabel}</span>
+        {buttonCost && <span className="model-pick-cost">{buttonCost}</span>}
+        <Icon name="down" size={10} />
+      </button>
+      {at && (
+        <div ref={panel} className="model-menu cast-model-menu" role="menu" style={at}>
+          <button role="menuitemradio" aria-checked={!picks?.length} className={`model-row ${!picks?.length ? "on" : ""}`} onClick={() => selectOnly("")}>
+            <span className="model-row-name">Auto</span>
+            <span className="model-row-cost">{choices?.auto ? cost(choices.auto) : ""}</span>
+            <span className="model-row-note">{choices?.auto ? `Best ready for this: ${choices.auto.label} on ${choices.auto.where}` : "Nothing can make this now"}</span>
+          </button>
+          {ready.length > 0 && (
+            <h5>
+              Ready <span className="spacer" />
+              {ready.length >= 2 && activePicks.length < 2 ? (
+                <button
+                  type="button"
+                  className="link small"
+                  onClick={() => onChange(ready.slice(0, Math.min(3, ready.length)).map((f) => f.model))}
+                  title="Tick the top ready models to compare side by side"
+                >
+                  Compare top {Math.min(3, ready.length)}
+                </button>
+              ) : (
+                <span className="dim small" style={{ textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
+                  Tick multiple to compare
+                </span>
+              )}
+            </h5>
+          )}
+          {ready.map((f) => {
+            const raw = pickForModel(f.model);
+            const selected = !!raw && !!picks?.length;
+            const places = placesOf(f);
+            const chosenVia = raw ? pickOf(raw).via : undefined;
+            const active = (chosenVia ? places.find((x) => x.route === chosenVia) : undefined) ?? f;
+            const showWhere = multiWhere || places.length > 1;
+            return (
+              <div key={f.model} className="model-item">
+                <div className={`cast-model-row ${selected ? "on" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={isPicked(f.model)}
+                    onChange={(e) => toggleModel(f.model, e.target.checked)}
+                    aria-label={`Include ${f.label} in comparison`}
+                    title="Tick to compare alongside other models"
+                  />
+                  <button className="model-row" onClick={() => selectOnly(raw ?? f.model)} title={`Use only ${f.label}`}>
+                    <span className="model-row-name">
+                      {active.label}
+                      {showWhere && <span className="dim"> · {active.where}</span>}
+                    </span>
+                    <span className="model-row-cost">{cost(active)}</span>
+                    {(active.note || active.commercial) && <span className="model-row-note">{[active.commercial && commercialWords(active.commercial), active.note].filter(Boolean).join(". ")}</span>}
+                  </button>
+                </div>
+                {places.length > 1 && (
+                  <div className="model-routes cast-model-routes" role="group" aria-label={`Where to run ${f.label}`}>
+                    {places.map((x) => {
+                      const on = isPicked(f.model) && active.route === x.route;
+                      const tip = [x.commercial && commercialWords(x.commercial), x.note].filter(Boolean).join(". ") || undefined;
+                      return (
+                        <button key={x.route} type="button" className={`chip model-route ${on ? "on" : ""}`} onClick={() => setRoute(f.model, x.route)} title={tip}>
+                          {x.where}
+                          {x.usd !== undefined ? ` · ${cost(x)}` : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {setup.length > 0 && (
+            <>
+              <h5>
+                Needs a key, a connection or an install <span className="spacer" />
+                {setup.some((f) => !onComfy(f)) && settings("services", "Media services")}
+                {setup.some(onComfy) && settings("make", "ComfyUI")}
+              </h5>
+              {setup.map(off)}
+            </>
+          )}
+          {!!choices?.unfit.length && (
+            <>
+              <h5>Can&apos;t make this</h5>
               {choices.unfit.map(off)}
             </>
           )}

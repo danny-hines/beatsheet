@@ -1808,6 +1808,8 @@ button.model-row.on { background: var(--accent-bg); color: var(--text); box-shad
 .create-prompt:focus { border-color: var(--dim); }
 .create-flight { position: sticky; top: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel); }
 .create-flight h4, .create-flight p { margin: 0; line-height: 1.45; }
+.flight-models { display: flex; flex-direction: column; gap: 4px; }
+.flight-model-row { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .flight-sends { display: flex; flex-direction: column; gap: 6px; }
 .flight-pics { display: flex; flex-wrap: wrap; gap: 6px; }
 .flight-pic { position: relative; width: 64px; height: 48px; border: 1px solid var(--line-2); border-radius: var(--r-1); overflow: hidden; background: var(--well); }
