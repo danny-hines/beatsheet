@@ -1742,5 +1742,47 @@ describe("decoupled face & wardrobe sheets and model-adaptive cast packing", () 
     expect(packCastPictures(castOf("@spark/armored lands", [dragon]), { max: 10, strategy: "split-single", cast: [dragon] })).toMatchObject([
       { asset: "spark-armored-sheet", role: "sheet" },
     ]);
+    // On split-single, a non-human with both hero portrait and turnaround prefers the single hero still.
+    expect(packCastPictures(castOf("@spark flies", [dragon]), { max: 10, strategy: "split-single", cast: [dragon] })).toMatchObject([
+      { asset: "spark-hero", role: "portrait" },
+    ]);
+  });
+
+  it("handles permanently masked / generic figures without face sheets, excludes them from realPeople, and emits group-safe masked roles", () => {
+    const photoAsset: Asset = {
+      id: "costume-ref",
+      kind: "image",
+      path: "costume.jpg",
+      subjects: [{ id: "f1", label: "Actor", kind: "face", samples: [[0, 0.4, 0.2, 0.1, 0.1]] }],
+    };
+    const inquisitor: CastMember = {
+      id: "inquisitor",
+      name: "Inquisitor",
+      kind: "character",
+      masked: true,
+      about: "heavy black Renaissance hooded robe, matte featureless white mask, worn leather belt and dark gloves",
+      seen: [{ asset: "costume-ref", subject: "f1" }],
+      portrait: "inq-hero",
+      sheet: "inq-sheet",
+      variants: [{ id: "scarlet", about: "scarlet sash across the robe", sheet: "inq-scarlet-sheet" }],
+    };
+    const uses = castOf("Three @inquisitor figures step out of the shadows", [inquisitor]);
+    // Never triggers realPeople even when given a reference photo containing a detected face.
+    expect(realPeople(uses, [photoAsset])).toEqual([]);
+    // Split-360 models get the full-body turnaround sheet; split-single models prefer the single hero still.
+    const packed360 = packCastPictures(uses, { max: 10, strategy: "split-360", cast: [inquisitor] });
+    expect(packed360).toMatchObject([{ asset: "inq-sheet", role: "sheet" }]);
+    expect(castPrompt("Three @inquisitor figures step out", uses, packed360, [inquisitor])).toContain(
+      "Image 1 is Inquisitor's full-body masked design sheet (match this exact mask, hood, costume, colors and silhouette for any Inquisitor appearing in the scene — no unmasked face)",
+    );
+    const packedSingle = packCastPictures(uses, { max: 10, strategy: "split-single", cast: [inquisitor] });
+    expect(packedSingle).toMatchObject([{ asset: "inq-hero", role: "portrait" }]);
+    expect(castPrompt("Three @inquisitor figures step out", uses, packedSingle, [inquisitor])).toContain(
+      "Image 1 is Inquisitor's full-figure masked hero study (match this exact mask, hood, costume, colors and silhouette for any Inquisitor appearing in the scene — no unmasked face)",
+    );
+    // Variant without its own hero still falls back to its variant turnaround sheet on split-single.
+    expect(packCastPictures(castOf("@inquisitor/scarlet enters", [inquisitor]), { max: 10, strategy: "split-single", cast: [inquisitor] })).toMatchObject([
+      { asset: "inq-scarlet-sheet", role: "sheet" },
+    ]);
   });
 });

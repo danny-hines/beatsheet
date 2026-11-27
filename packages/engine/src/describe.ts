@@ -39,6 +39,7 @@ const WHAT: Record<CastMember["kind"], string> = {
 };
 
 const NON_HUMAN_WHAT = "species, type or creature design, size, silhouette, colors, markings, coat or materials, and anything distinctive";
+const MASKED_WHAT = "mask or helmet shape and material, hood or headwear, robe or armor silhouette, fabric colors and textures, gloves, belt, footwear, and anything distinctive (never describe an unmasked human face)";
 
 const SYSTEM =
   "You write terse, objective visual descriptions of reference photos for image generation prompts. " +
@@ -67,7 +68,7 @@ export function pickDescribePictures(project: Project, member: CastMember): Asse
   const rawIds =
     member.kind === "wardrobe"
       ? [member.outfitSheet, ...(member.wardrobe ?? []), ...(member.images ?? []), ...seenAssets]
-      : member.kind === "character" && member.nonHuman
+      : member.kind === "character" && (member.nonHuman || member.masked)
         ? [...(member.faces ?? []), ...seenAssets, member.sheet, member.portrait, ...(member.images ?? [])]
         : member.kind === "character"
           ? [...(member.faces ?? []), ...seenAssets, member.faceSheet, member.portrait, member.sheet, ...(member.images ?? [])]
@@ -188,7 +189,12 @@ export async function describeCast(projectId: string, castId: string): Promise<s
   const pictures = pickDescribePictures(project, member);
   if (!pictures.length) throw new Error(`${member.name || "It"} has no pictures to describe yet: make a sheet, or add a photo of it`);
 
-  const what = member.kind === "character" && member.nonHuman ? NON_HUMAN_WHAT : WHAT[member.kind];
+  const what =
+    member.kind === "character" && member.masked
+      ? MASKED_WHAT
+      : member.kind === "character" && member.nonHuman
+        ? NON_HUMAN_WHAT
+        : WHAT[member.kind];
   const prompt =
     `These pictures show one ${member.kind}${member.name ? ` called ${member.name}` : ""}. Describe what it looks like in 10 to 25 words, ` +
     `as specifics an image model can draw: ${what}. Comma-separated phrases, no names, no story, nothing about the background of the pictures.`;

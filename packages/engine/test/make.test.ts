@@ -2478,6 +2478,66 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
     expect(heistReq.sent).toContain("wearing a tiny black eye mask");
   });
 
+  it("generates full-body masked hero stills and turnaround sheets without real-person blocks, using single hero still on split-single models", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const refPath = join(dir, "inq-ref.png");
+    const heroPath = join(dir, "inq-hero.png");
+    const sheetPath = join(dir, "inq-sheet.png");
+    await Promise.all([
+      sharp({ create: { width: 120, height: 120, channels: 3, background: { r: 30, g: 30, b: 35 } } }).png().toFile(refPath),
+      sharp({ create: { width: 120, height: 120, channels: 3, background: { r: 40, g: 40, b: 45 } } }).png().toFile(heroPath),
+      sharp({ create: { width: 160, height: 90, channels: 3, background: { r: 50, g: 50, b: 55 } } }).png().toFile(sheetPath),
+    ]);
+
+    store.updateFile(PROJECT, (d) => {
+      d.assets.push(
+        {
+          id: "inq-ref",
+          kind: "image",
+          path: refPath,
+          provenance: { source: "import" },
+          subjects: [{ id: "face-1", label: "Actor", kind: "face", samples: [[0, 0.4, 0.2, 0.1, 0.1]] }],
+        },
+        { id: "inq-hero", kind: "image", path: heroPath, provenance: { source: "generated" } },
+        { id: "inq-sheet", kind: "image", path: sheetPath, provenance: { source: "generated" } },
+      );
+      d.cast!.push({
+        id: "inquisitor",
+        name: "Inquisitor",
+        kind: "character",
+        masked: true,
+        about: "heavy black Renaissance hooded robe, matte featureless white mask, worn leather belt and dark gloves",
+        seen: [{ asset: "inq-ref", subject: "face-1" }],
+        portrait: "inq-hero",
+        sheet: "inq-sheet",
+      });
+    });
+
+    // Rejects face-sheet and outfit-sheet cleanly.
+    expect(() => make.requestFor(PROJECT, { op: "image", sheet: "inquisitor", sheetKind: "face-sheet" })).toThrow(/masked character/);
+    expect(() => make.requestFor(PROJECT, { op: "image", sheet: "inquisitor", sheetKind: "outfit-sheet" })).toThrow(/masked character/);
+
+    // Hero still and turnaround sheet prompts explicitly require concealed face (no unmasked face) and never set realPeople.
+    const heroReq = make.requestFor(PROJECT, { op: "image", sheet: "inquisitor", sheetKind: "portrait" });
+    expect(heroReq.aspect).toBe("1:1");
+    expect(heroReq.realPeople).toBeUndefined();
+    expect(heroReq.sent).toContain("no unmasked human face");
+
+    const turnReq = make.requestFor(PROJECT, { op: "image", sheet: "inquisitor", sheetKind: "sheet" });
+    expect(turnReq.aspect).toBe("16:9");
+    expect(turnReq.realPeople).toBeUndefined();
+    expect(turnReq.sent).toContain("face completely concealed (no unmasked human face)");
+
+    // Scene generation: split-single (Nano Banana) gets the single 1:1 hero study; split-360 (GPT Image) gets the full turnaround.
+    const nanoScene = make.planTake(PROJECT, { op: "image", prompt: "Three @inquisitor guards enter the hall", model: "nano-banana" });
+    expect(nanoScene.pictures).toEqual([{ asset: "inq-hero", as: "ref", role: "portrait" }]);
+    expect(nanoScene.told).toContain("for any Inquisitor appearing in the scene — no unmasked face");
+
+    const gptScene = make.planTake(PROJECT, { op: "image", prompt: "Three @inquisitor guards enter the hall", model: "gpt-image-sunburst" });
+    expect(gptScene.pictures).toEqual([{ asset: "inq-sheet", as: "ref", role: "sheet" }]);
+    expect(gptScene.told).toContain("full-body masked design sheet");
+  });
+
   it("keeps route-capped plans like Antigravity (3 refs) offered when a character has 4+ reference photos, while giving wider routes all photos", async () => {
     const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
     const paths = await Promise.all(

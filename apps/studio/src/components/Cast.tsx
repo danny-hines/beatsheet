@@ -29,8 +29,9 @@ export const KINDS: [Kind, string][] = [
 ];
 export const WORD: Record<Kind, string> = { character: "character", wardrobe: "wardrobe", place: "set", prop: "prop", style: "style" };
 
-const NEW_CAST_OPTIONS: { id: string; kind: Kind; nonHuman?: boolean; thumb: string; title: string; subtitle: string }[] = [
+const NEW_CAST_OPTIONS: { id: string; kind: Kind; nonHuman?: boolean; masked?: boolean; thumb: string; title: string; subtitle: string }[] = [
   { id: "human", kind: "character", thumb: "human", title: "Person", subtitle: "Face turnaround + swappable outfits" },
+  { id: "masked", kind: "character", masked: true, thumb: "masked", title: "Masked / Generic figure", subtitle: "Hooded figures, guards, troopers — full-body sheet, no face" },
   { id: "nonhuman", kind: "character", nonHuman: true, thumb: "nonhuman", title: "Creature / Non-human", subtitle: "Pets, robots, dragons — full-body sheet" },
   { id: "wardrobe", kind: "wardrobe", thumb: "wardrobe", title: "Wardrobe", subtitle: "Reusable costume or uniform across cast" },
   { id: "place", kind: "place", thumb: "place", title: "Set", subtitle: "Recurring location or environment" },
@@ -54,20 +55,22 @@ const castIdFor = (name: string, taken: string[], fallback: string) => {
   return id;
 };
 /** The id a member gets before it has a name; naming it gives it one from the name. */
-const UNNAMED = /^(character|creature|wardrobe|place|prop|style)(-\d+)?$/;
+const UNNAMED = /^(character|creature|figure|wardrobe|place|prop|style)(-\d+)?$/;
 
 /** Makes a cast member (from pictures, when there are some) and opens it in Make → Cast & sets so creation always has full room. */
-export function newMember(kind: Kind, from: Asset[] = [], opts?: { nonHuman?: boolean }) {
+export function newMember(kind: Kind, from: Asset[] = [], opts?: { nonHuman?: boolean; masked?: boolean }) {
   let id = "";
   const nonHuman = kind === "character" && !!opts?.nonHuman;
+  const masked = kind === "character" && !nonHuman && !!opts?.masked;
   actions.edit((d) => {
     const cast = (d.cast ??= []);
-    id = castIdFor("", cast.map((m) => m.id), nonHuman ? "creature" : kind);
+    id = castIdFor("", cast.map((m) => m.id), masked ? "figure" : nonHuman ? "creature" : kind);
     cast.push({
       id,
       name: "",
       kind,
       ...(nonHuman ? { nonHuman: true } : {}),
+      ...(masked ? { masked: true } : {}),
       ...(from.length
         ? kind === "wardrobe"
           ? { wardrobe: from.map((a) => a.id), seen: from.map((a) => ({ asset: a.id })) }
@@ -81,7 +84,7 @@ export function newMember(kind: Kind, from: Asset[] = [], opts?: { nonHuman?: bo
 /** Enlarged visual picker for adding a new cast member, wardrobe, set, prop, or style. */
 export function NewCastMenu({ x, y, onClose }: { x: number; y: number; onClose: () => void }) {
   return (
-    <PopMenu x={x} y={y} onClose={onClose} className="cast-new-menu" width={344} estHeight={430}>
+    <PopMenu x={x} y={y} onClose={onClose} className="cast-new-menu" width={360} estHeight={490}>
       <div className="cast-new-head">Add to cast &amp; sets</div>
       {NEW_CAST_OPTIONS.map((opt) => (
         <button
@@ -90,7 +93,7 @@ export function NewCastMenu({ x, y, onClose }: { x: number; y: number; onClose: 
           className="cast-new-item"
           onClick={() => {
             onClose();
-            newMember(opt.kind, [], opt.nonHuman ? { nonHuman: true } : undefined);
+            newMember(opt.kind, [], opt.nonHuman ? { nonHuman: true } : opt.masked ? { masked: true } : undefined);
           }}
         >
           <span className="cast-new-thumb">
@@ -213,7 +216,7 @@ export function CastList() {
               <span className={`asset-row-label ${m.name ? "" : "dim"}`}>{label(m)}</span>
               <span className="asset-row-meta small">
                 <span className="mono">@{m.id}</span>
-                <span className="tag">{m.kind === "character" && m.nonHuman ? "creature" : WORD[m.kind]}</span>
+                <span className="tag">{m.kind === "character" && m.masked ? "masked" : m.kind === "character" && m.nonHuman ? "creature" : WORD[m.kind]}</span>
                 {![m, ...(m.variants ?? [])].some((l) => lookGiven(l).length || l.outfit) && <span className="dim">no pictures</span>}
               </span>
             </span>
@@ -244,6 +247,9 @@ export function AssetMenu({ as, x, y, onClose }: { as: Asset[]; x: number; y: nu
         <>
           <button role="menuitem" onClick={pick(() => newMember("character", photos))}>
             Make a person from {these}
+          </button>
+          <button role="menuitem" onClick={pick(() => newMember("character", photos, { masked: true }))}>
+            Make a masked / generic figure from {these}
           </button>
           <button role="menuitem" onClick={pick(() => newMember("character", photos, { nonHuman: true }))}>
             Make a creature / pet from {these}
@@ -462,12 +468,44 @@ function CastPanel({ id }: { id: string }) {
         <IdField value={m.id} onRename={reId} />
         <span className="spacer" />
         {m.kind === "character" && (
-          <div className="segmented small" role="group" aria-label="Character type" title="Humans split face & wardrobe; non-humans (pets, robots, dragons) use a full-body turnaround sheet">
-            <button className={!m.nonHuman ? "on" : ""} onClick={() => edit((x) => void delete x.nonHuman)}>
-              Human
+          <div
+            className="segmented small"
+            role="group"
+            aria-label="Character type"
+            title="Person: decoupled face + wardrobe. Masked: full-body turnaround with no face sheet (ideal for hooded/masked figures & groups). Creature: full-body turnaround for pets, robots & creatures."
+          >
+            <button
+              className={!m.nonHuman && !m.masked ? "on" : ""}
+              onClick={() =>
+                edit((x) => {
+                  delete x.nonHuman;
+                  delete x.masked;
+                })
+              }
+            >
+              Person
             </button>
-            <button className={m.nonHuman ? "on" : ""} onClick={() => edit((x) => void (x.nonHuman = true))}>
-              Non-human
+            <button
+              className={m.masked ? "on" : ""}
+              onClick={() =>
+                edit((x) => {
+                  x.masked = true;
+                  delete x.nonHuman;
+                })
+              }
+            >
+              Masked
+            </button>
+            <button
+              className={m.nonHuman ? "on" : ""}
+              onClick={() =>
+                edit((x) => {
+                  x.nonHuman = true;
+                  delete x.masked;
+                })
+              }
+            >
+              Creature
             </button>
           </div>
         )}
@@ -479,7 +517,12 @@ function CastPanel({ id }: { id: string }) {
           ))}
         </select>
       </div>
-      <TextField value={m.name} placeholder={`Name this ${m.kind === "character" && m.nonHuman ? "creature / non-human" : WORD[m.kind]}`} autoFocus={!m.name} onCommit={rename} />
+      <TextField
+        value={m.name}
+        placeholder={`Name this ${m.kind === "character" && m.masked ? "masked / generic figure" : m.kind === "character" && m.nonHuman ? "creature / non-human" : WORD[m.kind]}`}
+        autoFocus={!m.name}
+        onCommit={rename}
+      />
 
       {m.kind !== "style" && (
         <div className="looks" role="tablist" aria-label="Looks">
@@ -552,7 +595,7 @@ function CastPanel({ id }: { id: string }) {
             </span>
           )}
         </div>
-        {m.kind === "character" && m.nonHuman ? (
+        {m.kind === "character" && (m.nonHuman || m.masked) ? (
           <NonHumanSteps
             key={look}
             projectId={projectId}

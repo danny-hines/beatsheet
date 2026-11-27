@@ -1537,11 +1537,18 @@ export function NonHumanSteps({
       (x) => void (to === "faces" && !x.seen?.some((s) => s.asset === a) && (x.seen = [...(x.seen ?? []), { asset: a }])),
     );
 
+  const isMasked = !!m.masked;
   const by = (a: string) => madeWith(asset(a)) ?? (isOwnPhoto(asset(a)) ? "Photo" : undefined);
   const open = (row: NonNullable<typeof viewing>["row"], items: string[], a: string) => setViewing({ row, items, at: Math.max(0, items.indexOf(a)) });
   const canGenerate = !!(m.about || variant?.about || refs.length || look.portrait || settled);
   const gets = look.sheet
-    ? "the chosen full-body turnaround sheet"
+    ? isMasked
+      ? look.portrait
+        ? "the chosen full-body turnaround sheet (or hero still on grid-sensitive models) — no face sheet, safe for groups and all models"
+        : "the chosen full-body turnaround sheet — no face sheet, safe for groups and all models"
+      : look.portrait
+        ? "the chosen full-body turnaround sheet (or hero still on grid-sensitive models)"
+        : "the chosen full-body turnaround sheet"
     : look.portrait
       ? "the chosen hero still, until a turnaround sheet is chosen"
       : variant && (m.sheet || m.portrait)
@@ -1600,7 +1607,7 @@ export function NonHumanSteps({
         {gets}
       </div>
 
-      <Step n={1} done={!!(refs.length || m.about || variant?.about)} title="Reference & identity" note="· photos & description">
+      <Step n={1} done={!!(refs.length || m.about || variant?.about)} title={isMasked ? "Reference & design" : "Reference & identity"} note={isMasked ? "· costume/mask refs & description" : "· photos & description"}>
         <div {...dropOn("faces")}>
           {refChoices.map((a) => (
             <Picture
@@ -1623,15 +1630,33 @@ export function NonHumanSteps({
             onPickAsset={(aid) => put(aid, undefined, "faces")}
           />
         </div>
-        {!refChoices.length && <span className="dim small cast-none">Add reference photos (or drag image files here), or describe them below to generate from scratch.</span>}
+        {!refChoices.length && (
+          <span className="dim small cast-none">
+            {isMasked
+              ? "Add mask/costume reference photos (won't trigger real-person filters), or describe the figure below to generate from scratch."
+              : "Add reference photos (or drag image files here), or describe them below to generate from scratch."}
+          </span>
+        )}
         <label>
           <span>
-            Who or what they are <span className="dim">· species, markings, silhouette, materials</span>
+            {isMasked ? (
+              <>
+                Mask, hood, costume &amp; silhouette <span className="dim">· works for one or multiple figures in a shot</span>
+              </>
+            ) : (
+              <>
+                Who or what they are <span className="dim">· species, markings, silhouette, materials</span>
+              </>
+            )}
           </span>
           <TextField
             multiline
             value={m.about ?? ""}
-            placeholder="Orange tabby cat, white chest and paws, green eyes, notch in left ear — or friendly brushed-brass helper robot with glowing amber eyes"
+            placeholder={
+              isMasked
+                ? "Heavy black Renaissance hooded inquisitor robe with silver clasp, matte featureless white mask, worn leather belt and dark gloves"
+                : "Orange tabby cat, white chest and paws, green eyes, notch in left ear — or friendly brushed-brass helper robot with glowing amber eyes"
+            }
             onCommit={(v) => edit((x) => void (v.trim() ? (x.about = v.trim()) : delete x.about))}
           />
         </label>
@@ -1642,7 +1667,7 @@ export function NonHumanSteps({
             <TextField
               multiline
               value={variant.about}
-              placeholder="Wearing a tiny black eye mask; battle-scarred armor; soaked from the rain"
+              placeholder={isMasked ? "Scarlet sash and brass lantern; rain-soaked cloak; cracked mask" : "Wearing a tiny black eye mask; battle-scarred armor; soaked from the rain"}
               onCommit={(t) => edit((x) => void (x.variants!.find((v) => v.id === variant.id)!.about = t))}
             />
           </label>
@@ -1654,7 +1679,9 @@ export function NonHumanSteps({
           "portrait",
           "hero still",
           "hero stills",
-          "Optional — generate to lock design & markings before making the full turnaround, or skip straight to Step 3.",
+          isMasked
+            ? "Optional — generate a 1:1 full-figure study to lock mask & silhouette first (also sent to grid-sensitive models like Nano Banana 2.1), or skip straight to Step 3."
+            : "Optional — generate to lock design & markings before making the full turnaround, or skip straight to Step 3.",
           variant && !look.portrait ? m.portrait : undefined,
         )}
         <div className="make-row">

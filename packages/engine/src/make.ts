@@ -484,7 +484,19 @@ function sheetPrompt(
       ? `A reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, nothing else in the picture and no text or labels, in the style of @${style}.`
       : `A photographic reference sheet of @${id}: front, three-quarter and side views and a full-length view, side by side on a plain light gray background, soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
 
-  if (member.kind === "character" && member.nonHuman) {
+  if (member.kind === "character" && (member.nonHuman || member.masked)) {
+    if (member.masked) {
+      if (kind === "portrait") {
+        return style
+          ? `A clean full-figure hero study of @${id} from a three-quarter front angle on a seamless neutral mid-gray studio background, showing the complete masked and hooded figure, costume, garments, proportions, colors and textures clearly with the face fully concealed behind the mask or headwear (no unmasked human face), nothing else in the picture and no text or labels, in the style of @${style}.`
+          : `A photographic full-figure hero study of @${id} from a three-quarter front angle on a seamless neutral mid-gray studio background, showing the complete masked and hooded figure, costume, garments, proportions, colors and textures clearly with the face fully concealed behind the mask or headwear (no unmasked human face), soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+      }
+      const views =
+        "arranged cleanly side by side on a seamless neutral mid-gray studio background: front view, three-quarter view, side profile, and back view, keeping identical masked headwear, costume, garments, proportions, silhouette, colors and textures across every view with the face completely concealed (no unmasked human face)";
+      return style
+        ? `A multi-angle full-body character turnaround sheet of @${id}, ${views}. Nothing else in the picture and no text or labels, in the style of @${style}.`
+        : `A photographic multi-angle full-body character turnaround sheet of @${id}, ${views}. Soft even studio light, realistic and photographed rather than drawn, nothing else in the picture and no text or labels.`;
+    }
     if (kind === "portrait") {
       return style
         ? `A clean full-figure hero study of @${id} from a three-quarter front angle on a seamless neutral mid-gray studio background, showing full proportions, markings, colors and details clearly, nothing else in the picture and no text or labels, in the style of @${style}.`
@@ -576,7 +588,7 @@ function lookRefs(
   const stylePic = styled ? project.cast?.find((m) => m.id === styled)?.images?.[0] : undefined;
   const who = member.name || member.id;
 
-  if (member.kind === "character" && member.nonHuman) {
+  if (member.kind === "character" && (member.nonHuman || member.masked)) {
     const portrait = kind === "portrait";
     const settled = variant ? [member.sheet, member.portrait, ...(member.images ?? [])].find(asset) : undefined;
     const anchor = portrait ? (variant ? settled : undefined) : [look.portrait, settled].find(asset);
@@ -738,8 +750,10 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   if (member && sheetKind === "outfit-sheet" && member.kind !== "character" && member.kind !== "wardrobe") {
     throw new Error(`An outfit sheet is of a character or wardrobe; @${castId} is a ${member.kind}`);
   }
-  if (member?.kind === "character" && member.nonHuman && (sheetKind === "face-sheet" || sheetKind === "outfit-sheet")) {
-    throw new Error(`@${castId} is a non-human character and uses a full-body turnaround sheet ("sheet") or hero still ("portrait"), not ${sheetKind}`);
+  if (member?.kind === "character" && (member.nonHuman || member.masked) && (sheetKind === "face-sheet" || sheetKind === "outfit-sheet")) {
+    throw new Error(
+      `@${castId} is a ${member.masked ? "masked" : "non-human"} character and uses a full-body turnaround sheet ("sheet") or hero still ("portrait"), not ${sheetKind}`,
+    );
   }
   const variant = member && variantId ? member.variants?.find((v) => v.id === variantId) : undefined;
   const needs = shot ? shotNeeds(project, shot.id, ask.op) : undefined;
@@ -781,7 +795,8 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   // (`variant.about`, which lives in Step 3 Wardrobe) from the @mention expansion so wardrobe items like fake beards or
   // doublets never leak onto the bare face turnaround — keeping only `variant.faceAbout`.
   const memberHeadwear = member ? (variant?.headwear ?? member.headwear) : undefined;
-  const bareFaceSheet = !!member && !member.nonHuman && (sheetKind === "face-sheet" || (sheetKind === "portrait" && (memberHeadwear === "none" || memberHeadwear === "ghost"))) && memberHeadwear !== "face";
+  const bareFaceSheet =
+    !!member && !member.nonHuman && !member.masked && (sheetKind === "face-sheet" || (sheetKind === "portrait" && (memberHeadwear === "none" || memberHeadwear === "ghost"))) && memberHeadwear !== "face";
   const promptUses = bareFaceSheet
     ? uses.map((u) =>
         u.member.id === member!.id
@@ -873,7 +888,7 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
   }
   const sheetAspect =
     sheetKind === "portrait"
-      ? member?.nonHuman
+      ? member?.nonHuman || member?.masked
         ? "1:1"
         : "4:5"
       : sheetKind === "face-sheet"

@@ -22,7 +22,7 @@ function needs(m: CastMember): string | undefined {
   const pictured = looks.some((l) => l.sheet || l.faceSheet || l.outfitSheet || l.portrait || l.images?.length);
   if (!pictured) return m.seen?.length ? "Photos, no portrait or sheet yet" : m.about ? "Described, no pictures yet" : "Nothing yet";
   if (m.kind === "character") {
-    if (m.nonHuman) return looks.some((l) => l.sheet) ? undefined : "No turnaround sheet yet";
+    if (m.nonHuman || m.masked) return looks.some((l) => l.sheet) ? undefined : "No turnaround sheet yet";
     const hasLegacy = looks.some((l) => l.sheet);
     const hasFace = looks.some((l) => l.faceSheet || l.portrait);
     const hasOutfit = looks.some((l) => l.outfitSheet || l.outfit);

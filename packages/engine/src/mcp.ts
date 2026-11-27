@@ -2231,7 +2231,7 @@ function overview(id: string, cut?: string, format?: string): string {
         ...(l.wardrobe?.length ? [`wardrobe refs ${l.wardrobe.join(", ")}`] : []),
         ...(l.images?.length ? [`pictures ${l.images.join(", ")}`] : []),
       ].join("; ");
-    const nonHumanSteps = (l: CastLook) =>
+    const fullBodySteps = (l: CastLook) =>
       [
         l.portrait ? `hero still ${l.portrait}` : "no hero still chosen",
         ...(l.portraits?.length ? [`other hero stills ${l.portraits.join(", ")}`] : []),
@@ -2242,10 +2242,11 @@ function overview(id: string, cut?: string, format?: string): string {
       ].join("; ");
     const pics = (l: CastLook) => `${l.images?.length ? `pictures ${l.images.join(", ")}` : "no pictures yet"}${list("kept", l.kept)}`;
     for (const m of p.cast) {
-      const look = (l: CastLook) => (m.kind === "character" ? (m.nonHuman ? nonHumanSteps(l) : steps(l)) : m.kind === "wardrobe" ? wardrobeSteps(l) : pics(l));
-      const kindTag = m.kind === "character" && m.nonHuman ? "character, non-human" : m.kind;
+      const fullBody = m.kind === "character" && (!!m.nonHuman || !!m.masked);
+      const look = (l: CastLook) => (m.kind === "character" ? (fullBody ? fullBodySteps(l) : steps(l)) : m.kind === "wardrobe" ? wardrobeSteps(l) : pics(l));
+      const kindTag = m.kind === "character" && m.masked ? "character, masked" : m.kind === "character" && m.nonHuman ? "character, non-human" : m.kind;
       lines.push(
-        `- @${m.id} "${m.name}" (${kindTag})${m.about ? `: ${m.about}` : " (no description yet)"}${m.wears && !m.nonHuman ? ` · wears: ${m.wears}` : ""} · ${look(m)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${look(v)})`).join(", ")}` : ""}`,
+        `- @${m.id} "${m.name}" (${kindTag})${m.about ? `: ${m.about}` : " (no description yet)"}${m.wears && !fullBody ? ` · wears: ${m.wears}` : ""} · ${look(m)}${m.style ? ` · in its own style @${m.style}` : ""}${m.variants?.length ? ` · looks ${m.variants.map((v) => `@${m.id}/${v.id} (${v.about}; ${look(v)})`).join(", ")}` : ""}`,
       );
     }
   }

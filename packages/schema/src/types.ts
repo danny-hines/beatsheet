@@ -1052,6 +1052,10 @@ export const CastMember = z.object({
     .boolean()
     .optional()
     .describe("For a character: true for pets, animals, robots, dragons or creatures that use a full-body turnaround sheet without a human face/wardrobe split"),
+  masked: z
+    .boolean()
+    .optional()
+    .describe("For a character: true for permanently masked, hooded, helmeted or generic troop figures whose face is never shown — uses a full-body turnaround sheet without a bare face sheet and never triggers real-person filters"),
   about: z
     .string()
     .optional()

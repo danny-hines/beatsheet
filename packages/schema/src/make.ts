@@ -796,7 +796,7 @@ export function realPeople(uses: CastUse[], assets: Project["assets"]): string[]
     if (seen.subject) return person(found?.find((x) => x.id === seen.subject)?.kind) || !found?.some((x) => x.id === seen.subject);
     return !found || found.some((x) => person(x.kind));
   };
-  const real = (m: CastMember) => m.kind === "character" && !!m.seen?.some(looksLikeOne);
+  const real = (m: CastMember) => m.kind === "character" && !m.nonHuman && !m.masked && !!m.seen?.some(looksLikeOne);
   return [...new Set(uses.filter((u) => real(u.member)).map((u) => u.member.name))];
 }
 
@@ -878,6 +878,9 @@ export type CharacterIngredients = {
   variantOutfit: boolean;
 };
 
+/** True for characters that use a single full-body turnaround sheet (pets/creatures or permanently masked figures) instead of a human face/wardrobe split. */
+export const isFullBodyCharacter = (m: Pick<CastMember, "kind" | "nonHuman" | "masked">): boolean => m.kind === "character" && (!!m.nonHuman || !!m.masked);
+
 /**
  * Resolves a character's (or look's) face and outfit ingredients without mixing a variant's overridden face with the
  * plain look's bare face. A variant that only changes clothes inherits the character's settled face; one that links
@@ -886,7 +889,7 @@ export type CharacterIngredients = {
 export function characterIngredients(use: Pick<CastUse, "member" | "variant">, cast?: CastMember[]): CharacterIngredients {
   const m = use.member;
   const v = use.variant;
-  if (m.nonHuman) {
+  if (m.nonHuman || m.masked) {
     const variantOwn = !!(v?.sheet || v?.portrait || v?.images?.length);
     const legacySheet = v ? (v.sheet ?? (!variantOwn ? m.sheet : undefined)) : m.sheet;
     const portrait = v ? (v.portrait ?? (!variantOwn ? m.portrait : undefined)) : m.portrait;
@@ -1006,6 +1009,7 @@ export function castPrompt(
             p.role === "face-sheet" ||
             p.role === "outfit" ||
             p.role === "composite" ||
+            p.use.member.masked ||
             (p.role === "portrait" && packed.some((q) => q.use.id === p.use.id && q.role === "outfit")),
         ));
     if (decoupled && packed) {
@@ -1020,7 +1024,15 @@ export function castPrompt(
         const tag = refName(i + 1 + offset + leading.length);
         const name = p.use.member.name || p.use.id;
         if (p.role === "face-sheet") return `${tag} is ${name}'s 360-degree face sheet (keep exact face, hair and facial geometry from every angle)`;
-        if (p.role === "portrait") return `${tag} is ${name}'s portrait (keep exact face, hair and features)`;
+        if (p.role === "portrait") {
+          if (p.use.member.masked) {
+            return `${tag} is ${name}'s full-figure masked hero study (match this exact mask, hood, costume, colors and silhouette for any ${name} appearing in the scene — no unmasked face)`;
+          }
+          if (p.use.member.nonHuman) {
+            return `${tag} is ${name}'s full-figure hero study (keep exact proportions, markings, colors and details)`;
+          }
+          return `${tag} is ${name}'s portrait (keep exact face, hair and features)`;
+        }
         if (p.role === "outfit") {
           const ghost = p.headwear === "ghost" ? ", including its headwear" : "";
           return p.use.member.kind === "wardrobe"
@@ -1028,7 +1040,12 @@ export function castPrompt(
             : `${tag} is ${name}'s outfit turnaround (dress them in these exact garments, colors and fit${ghost}, taking no face from it)`;
         }
         if (p.role === "composite") return `${tag} is ${name}'s character sheet (left: face; right: front and back outfit)`;
-        if (p.role === "sheet") return `${tag} is ${name}'s character sheet`;
+        if (p.role === "sheet") {
+          if (p.use.member.masked) {
+            return `${tag} is ${name}'s full-body masked design sheet (match this exact mask, hood, costume, colors and silhouette for any ${name} appearing in the scene — no unmasked face)`;
+          }
+          return `${tag} is ${name}'s character sheet`;
+        }
         if (p.role === "style") return `${tag} is the visual style (${name}) to draw it in, not who or what is in it`;
         if (p.role === "place") return `${tag} is the setting (${name})`;
         return `${tag} shows ${name}`;
@@ -1191,6 +1208,8 @@ export function packCastPictures(
             },
           ],
         });
+      } else if ((use.member.nonHuman || use.member.masked) && strategy === "split-single" && ing.portrait) {
+        entries.push({ use, items: [{ use, asset: ing.portrait, role: "portrait" }] });
       } else if (ing.legacySheet) {
         entries.push({ use, items: [{ use, asset: ing.legacySheet, role: "sheet" }] });
       } else if (ing.portrait) {
