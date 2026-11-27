@@ -3,7 +3,7 @@
  * mode (stills + cast refs, start/end board video, 3D blockout camera + refs, motion-copy drive clip, or lip-sync),
  * paired with a live Flight Check showing everything that will be sent and what it costs.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AudioRefAsk, MakeAsk, MakeDraft, MakeInputMode, MakeJob, MakePlan } from "@beatsheet/engine";
 import {
   aspectOf,
@@ -25,10 +25,12 @@ import {
   type Shot,
 } from "@beatsheet/schema";
 import { ASSET_DRAG, hideBroken, posterUrl, round2 } from "../lib";
+import { insertMentionAt, unknownCastMentions } from "../mentions";
 import { actions, useProject, useStore, useTimeline } from "../store";
 import { blockoutCuts, BlockoutPlayer } from "./Blockout";
 import { Icon } from "./Icon";
 import { shotPrompt, shotsToMake } from "./MakeShots";
+import { MentionField } from "./MentionField";
 import { comparePrice, cost, fitOf, ModelPicker, MultiModelPicker, pickOf, useChoices, WhyNot } from "./Takes";
 import { answer } from "./Turn";
 
@@ -156,6 +158,7 @@ export function CreatePage({
   const [error, setError] = useState("");
   const [pickingSlot, setPickingSlot] = useState<"start" | "end" | "ref" | "audio" | undefined>();
   const [overSlot, setOverSlot] = useState<string>();
+  const promptRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
   const shot = shotId ? p.shots.find((s) => s.id === shotId) : undefined;
   const resolved = shot ? tl.shots.find((r) => r.id === shot.id) : undefined;
@@ -355,8 +358,21 @@ export function CreatePage({
       (x) => x.composite || !already.has(x.asset),
     );
   }, [activeIncludeCast, refCap, activeRefs, activeStart, activeEnd, op, inputMode, blockoutMode, prompt, p.cast, catalogModel, activeRoute]);
-  const unknownCast = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
+  const unknownCast = useMemo(() => unknownCastMentions(prompt, p.cast), [prompt, p.cast]);
   const styleMember = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
+
+  const insertChip = (id: string) => {
+    const el = promptRef.current;
+    const pos = el && document.activeElement === el ? (el.selectionStart ?? prompt.length) : prompt.length;
+    const res = insertMentionAt(prompt, pos, id);
+    setPrompt(res.text);
+    requestAnimationFrame(() => {
+      const target = promptRef.current;
+      if (!target) return;
+      target.focus();
+      target.setSelectionRange(res.caret, res.caret);
+    });
+  };
 
   // Quickly attach a kit:Previs preset blockout directly onto the target shot (never creating a separate cut).
   const attachPresetBlockout = (presetId: string) => {
@@ -1094,14 +1110,16 @@ export function CreatePage({
           {/* 4. Prompt */}
           <div className="create-section">
             <h4>Prompt</h4>
-            <textarea
+            <MentionField
+              multiline
+              inputRef={promptRef}
               className="make-prompt create-prompt"
               rows={4}
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={setPrompt}
               placeholder={
                 op === "image"
-                  ? "Describe one frame as a camera sees it. Name cast with @: @cat on the rainy fire escape, low angle, dawn light"
+                  ? "Describe one frame as a camera sees it. Type @ to pick cast and looks: @cat on the rainy fire escape, low angle, dawn light"
                   : inputMode === "blockout"
                     ? "Name each striped stand-in by color and describe the real set: The red capsule is @cat in a yellow raincoat on a wet stone alley…"
                     : "Describe what moves and how the camera moves. The board already sets who and where."
@@ -1112,14 +1130,20 @@ export function CreatePage({
               <div className="cast-chips">
                 {p.cast
                   ?.filter((m) => m.kind !== "style")
-                  .map((m) => (
+                  .flatMap((m) => [
+                    { id: m.id, title: m.about ?? m.name, variant: false },
+                    ...(m.variants ?? []).map((v) => ({ id: `${m.id}/${v.id}`, title: v.about || `${m.name || m.id} (${v.id})`, variant: true })),
+                  ])
+                  .map((chip) => (
                     <button
-                      key={m.id}
-                      className={`chip ${namedCast.some((u) => u.member.id === m.id) ? "on" : ""}`}
-                      onClick={() => setPrompt((prev) => `${prev}${prev && !/\s$/.test(prev) ? " " : ""}@${m.id} `)}
-                      title={m.about ?? m.name}
+                      key={chip.id}
+                      type="button"
+                      className={`chip ${chip.variant ? "variant" : ""} ${namedCast.some((u) => u.id === chip.id) ? "on" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => insertChip(chip.id)}
+                      title={chip.title}
                     >
-                      @{m.id}
+                      @{chip.id}
                     </button>
                   ))}
                 {styleMember && <span className="dim small">Style: {styleMember.name}</span>}

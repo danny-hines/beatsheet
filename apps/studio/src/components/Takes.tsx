@@ -8,9 +8,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
 import { aspectOf, blockoutDuration, cameraOfTake, CATALOG, castOf, commercialWords, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
+import { unknownCastMentions } from "../mentions";
 import { actions, useProject, useStore } from "../store";
 import { blockoutCuts, BlockoutPlayer, useBlockout, type BlockoutPick } from "./Blockout";
-import { TextField } from "./ui";
+import { MentionTextField } from "./MentionField";
 import { EnlargeIcon, Viewer } from "./Viewer";
 import { Icon } from "./Icon";
 
@@ -254,7 +255,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
     if (picked && choices && !fitOf(choices, picked)) setModel(undefined);
   }, [choices, picked]);
   const style = p.look?.style ? p.cast?.find((m) => m.id === p.look!.style && m.kind === "style") : undefined;
-  const unknown = [...prompt.matchAll(/@([a-z0-9][a-z0-9-]*)/g)].map((m) => m[1]!).filter((id) => !p.cast?.some((m) => m.id === id));
+  const unknown = unknownCastMentions(prompt, p.cast);
 
   const pick = (id: string) => pickTake(shot.id, id, length);
   const editPrompt = (v: string) =>
@@ -320,7 +321,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
       )}
       <label>
         Prompt
-        <TextField multiline value={prompt} placeholder={op === "video" ? "What moves, and how the camera does." : "What's in the shot, and how the camera sees it. Name the cast with @: @cat"} onCommit={editPrompt} />
+        <MentionTextField multiline value={prompt} placeholder={op === "video" ? "What moves, and how the camera does." : "What's in the shot, and how the camera sees it. Type @ to pick cast and looks"} onCommit={editPrompt} />
       </label>
       {stillsWords && <p className="dim small">These are the still's words. Say what moves and how the camera does: a clip that repeats its picture barely moves.</p>}
       {(named.length > 0 || unknown.length > 0 || style) && (
