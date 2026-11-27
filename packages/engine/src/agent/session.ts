@@ -192,7 +192,19 @@ export abstract class AgentAdapter extends EventEmitter {
     }
   }
 
+  /** Resets the quiet timer right away (when a new turn starts or an approval is answered). */
+  markHeard() {
+    this.lastHeard = Date.now();
+    this.told = this.lastHeard;
+    this.set({ heardAt: new Date(this.lastHeard).toISOString() });
+  }
+
   protected set(patch: Partial<AgentView>) {
+    if (patch.status === "running" && this.view.status !== "running" && !patch.heardAt) {
+      this.lastHeard = Date.now();
+      this.told = this.lastHeard;
+      patch = { ...patch, heardAt: new Date(this.lastHeard).toISOString() };
+    }
     this.view = { ...this.view, ...patch, agent: this.id };
     const { items: _items, ...rest } = this.view;
     this.emit("change", { type: "view", view: rest } satisfies AgentChange);
@@ -200,6 +212,11 @@ export abstract class AgentAdapter extends EventEmitter {
 
   /** Swaps in a whole new view, transcript included. */
   protected replace(view: Partial<AgentView>) {
+    if (view.status === "running" && !view.heardAt) {
+      this.lastHeard = Date.now();
+      this.told = this.lastHeard;
+      view = { ...view, heardAt: new Date(this.lastHeard).toISOString() };
+    }
     this.view = { ...offView(), ...view, agent: this.id };
     this.emit("change", { type: "view", view: this.view } satisfies AgentChange);
   }

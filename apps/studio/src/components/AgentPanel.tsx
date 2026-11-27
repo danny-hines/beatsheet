@@ -106,6 +106,7 @@ function SessionChat() {
         queued={view.queued ?? EMPTY_QUEUED}
         running={running}
         starting={view.status === "starting"}
+        waiting={view.approvals.length > 0}
         heardAt={view.heardAt}
         agentId={view.agent}
         agent={(view.agent && AGENT_NAMES[view.agent]) || "The agent"}
@@ -161,6 +162,7 @@ function Transcript({
   queued,
   running,
   starting,
+  waiting,
   heardAt,
   agentId,
   agent,
@@ -169,6 +171,7 @@ function Transcript({
   queued: AgentQueued[];
   running: boolean;
   starting: boolean;
+  waiting: boolean;
   heardAt?: string;
   agentId?: AgentId;
   agent: string;
@@ -195,9 +198,9 @@ function Transcript({
     pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   };
   const blankThought = last?.kind === "reasoning" && !last.text && !(last.summary ?? []).some(Boolean);
-  const quiet = running && (!last || last.status !== "running" || last.kind === "user" || blankThought);
+  const quiet = running && !waiting && (!last || last.status !== "running" || last.kind === "user" || blankThought);
   const toolRunning = items.some((x) => x.kind === "tool" && x.status === "running");
-  const silent = running && !toolRunning && heardAt ? now - new Date(heardAt).getTime() : 0;
+  const silent = running && !toolRunning && !waiting && heardAt ? now - new Date(heardAt).getTime() : 0;
   return (
     <div className="agent-transcript" ref={ref} onScroll={onScroll}>
       {starting && !items.length && <p className="dim small agent-wait">Starting…</p>}

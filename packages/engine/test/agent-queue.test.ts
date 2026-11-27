@@ -295,4 +295,26 @@ describe("queued messages in AgentStudio", () => {
     expect(after.status).toBe("queued");
     expect(after.batch).toBeUndefined();
   });
+
+  it("refreshes heardAt when a new turn starts after idle time and when answering an approval", async () => {
+    const { studio, adapter } = makeStudio("antigravity");
+    await studio.start("antigravity", {});
+    adapter.finishTurn();
+
+    // Simulate the session sitting idle for 22 minutes before the user sends the next message.
+    const stale = new Date(Date.now() - 22 * 60_000).toISOString();
+    adapter.view = { ...adapter.view, heardAt: stale };
+
+    const before = Date.now();
+    await studio.send("next message after a long break");
+    expect(studio.view.status).toBe("running");
+    expect(studio.view.heardAt).toBeTruthy();
+    expect(Date.parse(studio.view.heardAt!)).toBeGreaterThanOrEqual(before);
+
+    // Answering an approval after sitting idle also resets the quiet clock.
+    adapter.view = { ...adapter.view, heardAt: stale };
+    const beforeApprove = Date.now();
+    await studio.decide("a1", "accept");
+    expect(Date.parse(studio.view.heardAt!)).toBeGreaterThanOrEqual(beforeApprove);
+  });
 });

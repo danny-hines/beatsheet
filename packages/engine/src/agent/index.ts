@@ -519,7 +519,9 @@ export class AgentStudio extends EventEmitter {
   }
 
   async decide(approvalId: string, choiceId: string) {
-    await this.current?.decide(approvalId, choiceId);
+    if (!this.current) return;
+    this.current.markHeard();
+    await this.current.decide(approvalId, choiceId);
   }
 
   stop() {
