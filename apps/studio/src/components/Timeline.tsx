@@ -3,6 +3,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type Mo
 import { deleteSelected, putSource, splitHere } from "../editing";
 import { ASSET_DRAG, assetMap, dropAsset, noteTime, posterUrl, RANGE_DRAG, selectionForTarget, shotAsset, shotsTarget, shotSummary, shotSwatch, keys, WINDOWS } from "../lib";
 import { actions, getState, setState, useProject, useStore, useTimeline, type Selection } from "../store";
+import { zoomAnchor, zoomScrollLeft, type ZoomAnchor } from "../zoom";
 import { Strip, Wave } from "./TrackMedia";
 import { Mixer } from "./Mixer";
 import { Icon, type IconName } from "./Icon";
@@ -45,25 +46,25 @@ export function Timeline() {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const z = zoom || Math.max(4, (viewW - PAD) / duration);
+  const fitZ = Math.max(4, (viewW - PAD) / duration);
+  const z = zoom || fitZ;
   const width = duration * z + PAD;
-  // Zooming keeps the moment at the middle of the view where it is: note it before the scale changes,
-  // then scroll back to it once the new width is laid out (before the browser clamps the old offset).
-  const centreOn = useRef<number | null>(null);
+  // Zooming keeps the playhead at the same spot in the view when it's visible, otherwise the middle of the view:
+  // note it before the scale changes, then scroll back once the new width is laid out (before the browser clamps it).
+  const zoomPin = useRef<ZoomAnchor | null>(null);
   const zoomTo = (next: number) => {
     const sc = scroller.current;
-    if (sc) centreOn.current = (sc.scrollLeft + sc.clientWidth / 2) / z;
-    const before = getState().zoom;
+    zoomPin.current = sc ? zoomAnchor(sc.scrollLeft, sc.clientWidth, z, getState().playhead) : null;
     if (next) actions.setZoom(next);
     else setState({ zoom: 0 });
-    // Already at the limit: nothing re-renders, so don't leave the centre waiting for a later change.
-    if (getState().zoom === before) centreOn.current = null;
+    // Already at the limit (or Fit matches the current scale): z won't change, so don't leave a pin for later.
+    if ((getState().zoom || fitZ) === z) zoomPin.current = null;
   };
   useLayoutEffect(() => {
     const sc = scroller.current;
-    const t = centreOn.current;
-    centreOn.current = null;
-    if (sc && t !== null) sc.scrollLeft = Math.max(0, t * z - sc.clientWidth / 2);
+    const pin = zoomPin.current;
+    zoomPin.current = null;
+    if (sc && pin) sc.scrollLeft = zoomScrollLeft(pin, z, sc.clientWidth);
   }, [z]);
   const x = (t: number) => t * z;
   const assets = useMemo(() => assetMap(project), [project]);
