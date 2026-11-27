@@ -568,7 +568,7 @@ export function ShotPage({
         inputMode: defaultInputMode,
         prompt: shotPrompt(shot, defaultOp),
         ...(defaultOp === "video" && boardForVideo && defaultInputMode === "board" ? { start: boardForVideo.id } : {}),
-        ...(defaultOp === "video" && boardForVideo && defaultInputMode === "blockout" ? { refs: [boardForVideo.id] } : {}),
+        ...(defaultOp === "video" && boardForVideo && (defaultInputMode === "blockout" || defaultInputMode === "refs") ? { refs: [boardForVideo.id] } : {}),
         ...(hasBlockout && defaultInputMode === "blockout" ? { useBlockout: true, blockoutMode: shot.blockout?.mode ?? "video" } : {}),
         ...(seconds ? { seconds } : {}),
         count: defaultOp === "image" ? 2 : 1,

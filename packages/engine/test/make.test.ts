@@ -2665,9 +2665,69 @@ describe("decoupled face & wardrobe sheets, procedural compositing, and model-ad
         { asset: "yg-face", as: "ref", role: "face-sheet" },
         { asset: "yg-outfit", as: "ref", role: "outfit" },
       ]);
-      expect(refPlan.told).toContain("@Image1 is the opening scene / composition reference");
+      expect(refPlan.told).toContain("@Image1 is the scene and visual reference for the shot");
       expect(refPlan.told).toContain("@Image2 is Young Galileo's 360-degree face sheet");
       expect(refPlan.told).toContain("@Image3 is Young Galileo's outfit turnaround");
+
+      // 2b. refs: ["board"] resolves each shot's chosen board still (not cast sheets!) and pairs it with @cast turnarounds.
+      store.updateProject(PROJECT, (p) => {
+        const s = p.shots.find((x) => x.id === "s2")!;
+        s.content = { kind: "generated", prompt: "@yg rides down the hill", take: "hill-board", takes: ["hill-board"] };
+      });
+      const boardRefPlan = make.planTake(PROJECT, {
+        op: "video",
+        shot: "s2",
+        prompt: "Wide tracking shot: @yg pedals fast down the hillside as leaves whip past",
+        refs: ["board"],
+        includeCastRefs: true,
+        model: "seedance-2.5",
+        via: "fal",
+        seconds: 5,
+      });
+      expect(boardRefPlan.pictures).toEqual([
+        { asset: "hill-board", as: "ref", role: "picture" },
+        { asset: "yg-face", as: "ref", role: "face-sheet" },
+        { asset: "yg-outfit", as: "ref", role: "outfit" },
+      ]);
+      expect(boardRefPlan.told).toContain("@Image1 is the scene and visual reference for the shot");
+      // Direct prompt + @cast sheets with no board still: routes to References mode and passes absentFrom.
+      const castOnlyPlan = make.planTake(PROJECT, {
+        op: "video",
+        shot: "s2",
+        prompt: "Low angle tracking shot of @yg sprinting across the cobblestone square at dusk",
+        includeCastRefs: true,
+        model: "seedance-2.5",
+        via: "fal",
+        seconds: 5,
+      });
+      expect(castOnlyPlan.pictures).toEqual([
+        { asset: "yg-face", as: "ref", role: "face-sheet" },
+        { asset: "yg-outfit", as: "ref", role: "outfit" },
+      ]);
+      expect(make.absentFrom(PROJECT, [{ op: "video", shot: "s2", prompt: "@yg sprints across the square", includeCastRefs: true }])).toEqual([]);
+      // When a shot's current video take only has cast sheets in refs (no board still), boardOf never mistakes a faceSheet for the board.
+      store.updateProject(PROJECT, (p) => {
+        const s = p.shots.find((x) => x.id === "s2")!;
+        s.content = { kind: "generated", prompt: "@yg sprints", take: "yg-clip", takes: ["hill-board", "yg-clip"], refs: ["yg-face", "yg-outfit"] };
+        p.assets.push({ id: "yg-clip", kind: "video", path: pBoard, duration: 5, provenance: { source: "generated" } });
+      });
+      expect(make.planTake(PROJECT, { op: "video", shot: "s2", prompt: "@yg sprints", refs: ["board"], includeCastRefs: true, model: "seedance-2.5", via: "fal" }).pictures[0]).toEqual({
+        asset: "hill-board",
+        as: "ref",
+        role: "picture",
+      });
+      // And when a shot has NO board take at all (only cast sheets in refs), refs: ["board"] honestly errors instead of using yg-face as a board.
+      store.updateProject(PROJECT, (p) => {
+        const s = p.shots.find((x) => x.id === "s2")!;
+        s.content = { kind: "generated", prompt: "@yg sprints", take: "yg-clip", takes: ["yg-clip"], refs: ["yg-face", "yg-outfit"] };
+      });
+      expect(() => make.planTake(PROJECT, { op: "video", shot: "s2", prompt: "@yg sprints", refs: ["board"], includeCastRefs: true, model: "seedance-2.5", via: "fal" })).toThrow("has no board yet");
+      // Camera blockout without manual refs/start auto-attaches @cast sheets and passes absentFrom cleanly.
+      store.updateProject(PROJECT, (p) => {
+        const s = p.shots.find((x) => x.id === "s2")!;
+        s.blockout = { beats: [{ id: "orbit", duration: 5, component: "kit:Previs", props: { move: "orbit" } }] };
+      });
+      expect(make.absentFrom(PROJECT, [{ op: "video", shot: "s2", prompt: "@yg stands in the square", camera: "blockout" }])).toEqual([]);
 
       // absentFrom recognizes auto-attached @cast sheets when includeCastRefs is true.
       expect(

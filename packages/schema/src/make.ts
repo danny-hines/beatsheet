@@ -1017,7 +1017,7 @@ export function castPrompt(
       const offset = opts?.refOffset ?? 0;
       const leadParts = leading.map((lr, i) => {
         const tag = refName(i + 1 + offset);
-        if (lr.role === "board") return `${tag} is the opening scene / composition reference (begin from this exact framing, setting and lighting)`;
+        if (lr.role === "board") return `${tag} is the scene and visual reference for the shot (match its setting, lighting, composition and atmosphere, not as a locked first frame)`;
         return `${tag} is a scene reference${lr.label ? ` (${lr.label})` : ""}`;
       });
       const castParts = packed.map((p, i) => {

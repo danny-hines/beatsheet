@@ -104,7 +104,11 @@ Designed scenes: a shot doesn't have to be footage. Coded shots draw anything: k
 
 Pages behind a login (a Google Photos album, a dashboard, a private doc): the person's Chrome is signed in, so use it when you can reach it: the claude-in-chrome tools (Claude Code), your own browser tool's chrome backend (Codex), or the chrome-devtools tools (attached to their running Chrome; if they can't connect, ask the person to turn on remote debugging once at chrome://inspect/#remote-debugging and allow the connection Chrome asks about). The person is asked before you act on each site. To bring media in from there, download it in Chrome (it lands in ~/Downloads; Google Photos zips a multi-photo download) and pass the files or zip to import_media, which skips what the project already has: compare with list_assets first rather than downloading everything. Without those tools, your own browsers aren't signed in to anything: hand_off with kind "provide" and need "chrome", saying what you'll do there; the card gives the person a button that lets you use their Chrome (or they can download the files and tell you where they are). Never read a browser's saved logins or cookies.
 
-Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's fal key): give it a placeholder or generated shot (or several, with shots) and it makes takes for them, with each shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle each shot cheaply as a board, then rough clips from each shot's chosen board (op "video", start "board"), then finals with the best model once the cut holds (quality "final"). Cast and sets (/cast: characters, places, props, styles) keep made shots consistent: name them in prompts with @id (@cat, @cat/heist for a variant) and they're described to the model, and stills are given their pictures. Make a cast member's pictures with generate's sheet (from the photos it's seen in, or from its description), and ask for photos only the person has with a provide hand-off (need "cast"). list_models says which models could make something, about what each costs, and why the others can't; with shots, what a whole pass would cost. generate returns at once and the takes land as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off whose option carries the request as make (the card shows the person every picture and word it sends and what it costs, and picking it starts it). The film recipe skill is the whole process for a video made from nothing. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
+Making media: generate_music makes a song (with the person's ElevenLabs key) and sets it as a cut's music. generate makes pictures and video (with the person's connected services or ComfyUI): give it a placeholder or generated shot (or several, with shots) and it makes takes for them, with each shot's length, the cut's shape and the shot's description filling in whatever you don't say. Make stills first (op "image") to settle framing, look and cast cheaply as boards, then choose per shot how to direct its video rather than defaulting every shot to a locked start frame:
+- References + @cast sheets (op "video", refs: ["board"], includeCastRefs: true — or includeCastRefs: true alone with a detailed shot prompt and no board): best default for most action, character and likeness-sensitive shots. Stills usually capture the middle of the action (making a locked start frame open awkwardly), and start-frame-only clips get no character sheets so faces drift easily. References mode passes the board as a visual/scene reference alongside every @mentioned character's face and outfit sheets without locking frame 1 (works on MAGI-2, Wan 3.0, Seedance 2.5, Kling 4.0, MiniMax H3, HappyHorse 1.1).
+- 3D camera blockout + references (set_blockout, inline review, then camera: "blockout", includeCastRefs: true, optionally refs: ["board"]): when specific camera choreography, spatial staging or beat-synced cuts matter.
+- Locked start frame (start: "board" or start: <still>, + optional end): best when frame 1 (or frame 1 -> end pose) truly needs to be pixel-locked — continuing seamlessly from the previous clip's last frame (still_from_clip), calm/establishing/product/lettered shots with gentle motion, exact A->B transitions, motion copy (drive), or lip sync (speech). When you need both a locked start frame and character sheets, Kling 4.0 supports start (+ end) together with includeCastRefs: true.
+Finals (quality "final") carry forward the directing mode that worked for each shot's rough. For shot-to-shot continuity on AI-generated cuts: promote recurring 2+ shot props to /cast, anchor each scene with its master board first and chain adjacent boards (refs: [anchorBoard], includeCastRefs: true), carry finished clip frames across same-scene cuts via still_from_clip in refs, and inspect review_cut's Continuity pass (side-by-side OUT → IN cut pairs) to catch and fix prop, background, wardrobe, or lighting drift surgically. Cast and sets (/cast: characters, places, props, styles) keep made shots consistent: name them in prompts with @id (@cat, @cat/heist for a variant) and they're described to the model, and stills (plus reference-to-video / blockout / includeCastRefs video takes) are given their pictures. Make a cast member's pictures with generate's sheet (from the photos it's seen in, or from its description), and ask for photos only the person has with a provide hand-off (need "cast"). list_models says which models could make something, about what each costs, and why the others can't; with shots, what a whole pass would cost. generate returns at once and the takes land as they finish; jobs says where they are, and can wait for them. It spends the person's money: a few dollars a turn without asking (the person sets how much); for more, ask first in a choose hand-off whose option carries the request as make (the card shows the person every picture and word it sends and what it costs, and picking it starts it). The film and make recipe skills cover the full workflow and per-model prompting. Services are used only through beatsheet's tools, which hold the keys: never read API keys (the Keychain, settings) or call a service's API yourself. If beatsheet has no tool for what's needed, say so in hand_off rather than working around it.
 
 Narration: narrate writes a cut's voiceover lines and reads them aloud (ElevenLabs, Kokoro or ${IS_WINDOWS ? "Windows'" : "the Mac's"} own voices, whichever the person has; list_voices shows them), timing every word. The lines play in order from the start of the cut, and shots can start on a word ({"kind":"word","line":"hook","word":"face"}) or a line. Use the cut's voice, or the person's default, unless they asked for another.
 
@@ -511,7 +515,7 @@ server.registerTool(
   "review_cut",
   {
     description:
-      "Look over the whole cut (or just a stretch with from/to or shots) before handing it back: saves a low-res preview MP4 (with sound) under .cache/review/ for agents that can watch video, returns a contact sheet and notes on what a viewer would notice (pictures sitting still, silence, uncropped footage, missing captions or sound, length). Then the design pass: designed shots larger (entering, midway, settled). Pass from/to or shots for a quick targeted polish check without re-rendering the whole cut.",
+      "Look over the whole cut (or just a stretch with from/to or shots) before handing it back: saves a low-res preview MP4 (with sound) under .cache/review/ for agents that can watch video, returns a contact sheet and notes on what a viewer would notice (pictures sitting still, silence, uncropped footage, missing captions or sound, length). Then the design pass (designed shots larger: entering, midway, settled) and—for cuts with adjacent AI-generated shots—a Continuity pass showing every cut's OUT → IN boundary frames side by side with same-location lighting/color-cast jump warnings. Pass from/to or shots for a quick targeted polish check without re-rendering the whole cut.",
     inputSchema: {
       project: projectArg,
       cut: cutArg,
@@ -550,9 +554,32 @@ server.registerTool(
         ].join("\n"),
       });
     }
+    if (r.continuity) {
+      const contRel = r.continuityFile ? inWorkspace(r.continuityFile) : undefined;
+      content.push({ type: "image", data: r.continuity.toString("base64"), mimeType: "image/jpeg" });
+      content.push({
+        type: "text",
+        text: [
+          `Continuity pass: adjacent AI-generated shot boundaries, OUT (left) → IN (right)${contRel ? ` (saved at ${contRel})` : ""}:`,
+          ...(r.continuityRows ?? []).map((row, i) => `${i + 1}. ${row}`),
+          ...r.continuityNotes.map((n) => `- ${n}`),
+          CONTINUITY_CRITIQUE,
+        ].join("\n"),
+      });
+    }
     return { content };
   },
 );
+
+/** How to audit shot-to-shot continuity on AI-generated cuts before handing off. */
+const CONTINUITY_CRITIQUE = `Audit each OUT → IN cut pair above like a script supervisor (only flag breaks between shots meant to be in the same scene/moment; ignore intentional location or time jumps):
+- Props & objects: did a key object change color, shape, open/closed/damaged state, or switch hands across the cut?
+- Background & set: did wall/sky colors, key landmarks, doors/windows, or weather/time-of-day shift unexpectedly?
+- Wardrobe & hair: did jackets, hats, dirt/blood/wetness, or character likeness drift?
+- Lighting & palette: did color temperature, key-light direction, or exposure jump between same-location shots?
+- Screen direction & eyelines (180° rule): do movement direction and gaze line up across shot/reverse-shot?
+- Action handoff: does body position/momentum connect cleanly from OUT to IN?
+If you spot a real break, fix or suggest the cheapest surgical repair first: targeted board edit (refs: [badBoard, anchorBoard], includeCastRefs: true) if still on boards; relight_clip (with extract_light_sphere from the neighbor) for lighting-only jumps; swap_character for face/wardrobe-only drift; trimming onto a clean handle ($0) for brief head/tail drift; or fixing the board and re-rolling just the drifting shot with refs: [fixedBoard, prevClipFrame] + includeCastRefs: true (proposing paid re-rolls via hand_off choose with make rather than silently burning credits).`;
 
 /** How to judge the designed shots: what a design lead looks for before a client sees them. */
 const DESIGN_CRITIQUE = `Critique these as a design lead would before a client sees them, row by row:
@@ -674,7 +701,10 @@ const makeArgs = {
     .string()
     .optional()
     .describe("A placeholder or generated shot to make it for: the shot's length, the cut's shape and the shot's description fill in what isn't given, and the takes land on the shot"),
-  shots: z.array(z.string()).optional().describe("Several shots at once, the same request for each: a pass of boards, or clips from each one's board (start: \"board\")"),
+  shots: z
+    .array(z.string())
+    .optional()
+    .describe('Several shots at once, the same request for each: a pass of boards, reference-driven clips (refs: ["board"], includeCastRefs: true), or start-locked clips (start: "board")'),
   sheet: z
     .string()
     .optional()
@@ -703,19 +733,33 @@ const makeArgs = {
     .describe(
       'Override how decoupled face+outfit cast references are packaged for the model: "split-360" (360° faceSheet + outfitSheet as separate role-bound refs), "split-single" (single portrait + outfitSheet for grid-sensitive image models), or "combined" (procedural 16:9 composite per character). Default adapts automatically to the chosen model and its ref limit.',
     ),
-  prompt: z.string().optional().describe("What to make; default the shot's description. Name cast and sets with @id (@cat, @cat/heist): they're described to the model, and stills are given their pictures. For video, say what moves and how the camera does"),
+  prompt: z
+    .string()
+    .optional()
+    .describe(
+      "What to make; default the shot's description. Name cast and sets with @id (@cat, @cat/heist): they're described to the model, and stills plus reference/blockout/includeCastRefs clips receive their sheets. For video with a locked start frame, focus on what moves and how the camera moves; in References or blockout mode (no locked start frame), describe the whole shot in detail from start to finish (framing, setting, lighting, action arc, camera move, sound)",
+    ),
   cast: z.array(z.string()).optional().describe("Cast and sets in it that the prompt doesn't name"),
   quality: z.enum(["rough", "final"]).optional().describe("For video: rough (default; fast and cheap, to judge the cut) or final (the best model, once the cut holds)"),
-  start: z.string().optional().describe('The picture a video starts from: an asset id, or "board" for each shot\'s chosen still'),
-  end: z.string().nullable().optional().describe("Asset id of a picture a video ends on. A generated shot whose clips ended on a frame ends on it again unless this is null"),
+  start: z
+    .string()
+    .optional()
+    .describe(
+      'Asset id of the picture a video pixel-locks as frame 1, or "board" for each shot\'s chosen still. Best for continuing a previous clip (still_from_clip), calm/establishing/lettered shots, exact A->B transitions (with end), drive, or speech. For mid-action boards or character-likeness shots, prefer refs: ["board"] + includeCastRefs: true (or includeCastRefs: true with a detailed prompt) so frame 1 isn\'t stuck mid-action and cast sheets go along — or combine start + includeCastRefs: true on Kling 4.0',
+    ),
+  end: z.string().nullable().optional().describe("Asset id of a picture a video ends on (requires start). A generated shot whose clips ended on a frame ends on it again unless this is null"),
   refs: z
     .array(z.string())
     .optional()
-    .describe("Asset ids of reference pictures. By default replaces auto-attached cast pictures; pass includeCastRefs: true to keep these first (e.g. an opening board still) and append @mentioned cast sheets after them. On Kling 4.0, refs can also be combined with start (+ optional end) up to 10 images total"),
+    .describe(
+      'Asset ids of reference pictures — or "board" to resolve each shot\'s chosen still (works with shots batches too). By default replaces auto-attached cast pictures; pass includeCastRefs: true to keep these as visual/scene references (without locking frame 1) and append @mentioned cast face/outfit sheets after them. On Kling 4.0, refs can also be combined with start (+ optional end) up to 10 images total',
+    ),
   includeCastRefs: z
     .boolean()
     .optional()
-    .describe("Also auto-attach @mentioned cast face/outfit sheets alongside manual refs (e.g. opening board still in References mode on Seedance 2.5 / Wan 3.0 / MAGI-2 / MiniMax H3 / Kling 4.0) or alongside a locked start frame on Kling 4.0"),
+    .describe(
+      'Auto-attach @mentioned cast face/outfit sheets for character likeness: pair with refs: ["board"] (board as scene/visual ref + cast sheets, no locked frame 1), use alone with a detailed video prompt (cast sheets + prompt, no board still), pair with camera: "blockout", or pair with locked start (+ end) on Kling 4.0',
+    ),
   drive: z
     .object({
       asset: z.string().describe("The clip whose movement to copy: someone acting the shot out, or the original footage"),
@@ -853,7 +897,7 @@ const asksFor = ({ shots, models, ...ask }: MakeToolArgs): MakeAsk[] => {
 /** Clips that would have a model make someone up, a line each. */
 const absentLines = (held: { shot?: string; who: string[] }[]) =>
   [...new Map(held.map((h) => [h.shot, h])).values()].map((h) => `- ${h.shot ? `Shot ${h.shot}` : "This clip"}: ${h.who.join(", ")} ${h.who.length === 1 ? "isn't" : "aren't"} in its frames, going by what they were made with.`);
-const ABSENT_WHY = "Clips get no cast pictures, only their frames, so a model would make them up: a stranger, often a small one.";
+const ABSENT_WHY = "Clips without cast reference sheets only see their start/end frames, so a model would invent anyone not shown in them: a stranger, often a small one.";
 const usd = (x?: number) => (x === undefined ? "" : `about $${x.toFixed(2)}`);
 const minutes =(s?: number) => (s === undefined ? "" : s < 90 ? `about ${Math.round(s / 10) * 10 || 10} seconds` : `about ${Math.round(s / 60)} minutes`);
 /** What it costs where it runs: nothing extra on a plan, nothing at all on the person's own graphics card. */
@@ -897,8 +941,18 @@ server.registerTool(
     const audioSummary = req.audioRefs?.length
       ? `, with ${req.audioRefs.length} audio ref${req.audioRefs.length === 1 ? "" : "s"} (${req.audioRefs.map((a) => (a.kind === "music" ? `music ${a.from}–${a.to}s` : a.kind === "speech" ? `lines ${a.lines.join(",")}` : a.kind === "voice" ? `@${a.cast} voice` : `${a.asset} ${a.from}–${a.to}s`)).join(", ")})`
       : "";
+    const refCount = req.packedRefs?.length ?? req.refs?.length ?? 0;
+    const how = req.clip
+      ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s`
+      : req.start
+        ? refCount
+          ? `from a start frame + ${refCount} reference picture${refCount === 1 ? "" : "s"}`
+          : "from a start frame"
+        : refCount
+          ? `from ${refCount} reference picture${refCount === 1 ? "" : "s"} (${req.aspect})`
+          : req.aspect;
     const out = [
-      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${req.clip ? `changing the mouths in ${req.clip.asset} from ${req.clip.from}s to ${req.clip.to}s` : req.start ? "from a start frame" : req.aspect}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"blockout" in req.camera ? `shot ${req.camera.shot}'s blockout` : "cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${audioSummary}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
+      `For ${req.op === "image" ? "a still" : `a ${req.quality ?? "rough"} clip`}${req.seconds ? ` to fill ${req.seconds}s` : ""}, ${how}${req.drive ? `, following ${req.drive.asset} from ${req.drive.from}s to ${req.drive.to}s` : ""}${req.camera ? `, keeping the camera of ${"blockout" in req.camera ? `shot ${req.camera.shot}'s blockout` : "cut" in req.camera ? `the blockout in cut ${req.camera.cut}` : req.camera.asset} from ${req.camera.from}s to ${req.camera.to}s` : ""}${req.speech ? `, saying ${"lines" in req.speech ? `line${req.speech.lines.length === 1 ? "" : "s"} ${req.speech.lines.join(", ")}` : `${req.speech.asset} from ${req.speech.from}s to ${req.speech.to}s`}` : ""}${audioSummary}${req.count && req.count > 1 ? `, ${req.count} takes` : ""}${req.cast.length ? `, with @${req.cast.join(", @")}` : ""}: ${choices.auto ? `Auto would use ${choices.auto.label} on ${choices.auto.where}.` : "nothing can make this now."}`,
     ];
     out.push(...absent);
     const states = connectedStates();
@@ -925,7 +979,7 @@ server.registerTool(
   "generate",
   {
     description:
-      "Make pictures or video with the person's services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. The usual way: boards for every shot first (op image, cents each), then rough clips from each shot's chosen board (op video, start \"board\"), then finals with the best model once the cut holds (quality \"final\"). A clip can also copy the movement in a stretch of a clip (drive) onto the people in its board, lip-sync (speech / clip \"take\"), keep a 3D blockout's camera (camera), or follow multimodal reference audio (audioRefs: music beat, voiced lines, character voice timbre, or an audio clip) on models that support it (MAGI-2, Seedance 2.5, Wan 3.0, MiniMax H3 on Runway). Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person's money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.",
+      'Make pictures or video with the person\'s services: takes for a shot (or several shots at once), or a reference sheet for a cast member. A placeholder shot becomes a generated shot as its first take lands; the first take is the one it shows, then the first clip over a still, then the first final over a rough. Usually: make boards first (op image, cents each) to settle look and staging, then judge per video shot between (1) References mode (refs: ["board"], includeCastRefs: true — or includeCastRefs: true alone with a detailed start-to-finish prompt) for most action, character and likeness-sensitive shots so mid-action stills aren\'t locked as frame 1 and character sheets travel with the clip; (2) 3D camera blockout + references (camera: "blockout", includeCastRefs: true, optionally refs: ["board"]) when exact camera moves or staging matter; or (3) locked start (+ optional end) for continuations from still_from_clip, calm/establishing/lettered shots, exact A->B transitions, motion copy (drive), or lip sync (speech) — and Kling 4.0 can combine start (+ end) with includeCastRefs: true. Also supports multimodal reference audio (audioRefs: music beat, voiced lines, character voice timbre, or an audio clip) on MAGI-2, Seedance 2.5, Wan 3.0, and MiniMax H3 on Runway. Makes 2 takes unless you say otherwise. Returns at once; stills land in seconds and clips in a few minutes, and jobs says where they are. Spends the person\'s money: refused past what a turn may spend without asking, and a pass over many shots starts all or nothing.',
     inputSchema: {
       ...makeArgs,
       count: z.number().int().min(1).max(4).optional().describe("How many takes (default 2; 1 is usual for a sheet or a final)"),
@@ -942,7 +996,12 @@ server.registerTool(
     const asks = asksFor({ ...args, count: args.count ?? 2 });
     const held = anyway ? [] : absentLines(absentFrom(id, asks));
     if (held.length)
-      return text(["Not started, so nothing's spent:", ...held, ABSENT_WHY, "Give the clip a frame with them in it (an end frame drawn from their portrait). If you've looked and they're there, or they aren't meant to be seen, ask again with anyway: true."].join("\n"));
+      return text([
+        "Not started, so nothing's spent:",
+        ...held,
+        ABSENT_WHY,
+        'Switch to References mode with includeCastRefs: true (e.g. refs: ["board"], includeCastRefs: true, or includeCastRefs: true alone with a detailed prompt), lock start + includeCastRefs: true on Kling 4.0, or give the clip a frame with them in it (such as an end frame drawn from their portrait). If you\'ve looked and they\'re there, or they aren\'t meant to be seen, ask again with anyway: true.',
+      ].join("\n"));
     const spendable = turnBudget() - spentThisTurn(id);
     const { plans, usd: total } = startMakeAll(id, asks, { spendable });
     const what = (p: (typeof plans)[number]) => {

@@ -21,10 +21,10 @@ description: Make stills and clips in beatsheet with generate, and keep them con
 With Auto's picks, a still costs about 4¢, a rough five-second clip about 20¢, a final about 80¢ (`list_models` prices the rest). So:
 
 1. **Boards:** stills for every shot (`op: "image"`, 2 takes each). Settle the story, the cast's look, the framing and the light here.
-2. **Roughs:** clips from each shot's chosen board (`op: "video"`, `start: "board"`, 1–2 takes). Judge the motion and the cut.
-3. **Finals:** once the cut holds, the shots that stay made again with the best model (`quality: "final"`, `start: "board"`, 1 take).
+2. **Roughs:** clips (`op: "video"`, 1–2 takes) — **choose the directing mode per shot** rather than blindly passing `start: "board"` on everything (see [Choosing how to direct a clip](#choosing-how-to-direct-a-clip) below). Most action, character, and likeness-sensitive shots do better in **References mode** (`refs: ["board"]`, `includeCastRefs: true` — or `includeCastRefs: true` alone with a detailed shot prompt) or with a **3D camera blockout** (`camera: "blockout"`, `includeCastRefs: true`) than with a locked start frame. Judge the motion and the cut.
+3. **Finals:** once the cut holds, the shots that stay made again with the best model (`quality: "final"`, 1 take), carrying forward the directing mode that worked for each shot's rough.
 
-A clip that starts from a board keeps everything the board settled, so never skip to video without one.
+Boards still settle the visual language cheaply before spending video tokens — they just don't have to be locked as frame 1 for every clip.
 
 Waste comes from making things before they're settled, more than from what a model costs. On a 13-minute remake, all 305 boards made before the portraits were picked went unused, and so did 35 of 77 clips. So:
 
@@ -49,7 +49,7 @@ Waste comes from making things before they're settled, more than from what a mod
   - Older and ranked below these: MiniMax H3 itself (5–15s, about 30¢), Kling 3 Pro, Kling 2.5 Turbo, Wan 2.2.
   - A model with no tier (Wan 3.0, Kling 4.0, Seedance 2.5, Gemini Omni Flash) makes roughs and finals both: `quality` picks the size and the price.
   - **Sound:** all of these but Kling 3 Pro, Kling 2.5 Turbo and Wan 2.2 make their own, so write what's heard into the prompt ("Sound: …") and leave the score to the cut.
-  - **References with no board** (`refs`): MiniMax H3 (9 pictures), Wan 3.0 (10), Seedance 2.5 (30).
+  - **References mode (`refs` + `includeCastRefs: true`, without a locked start frame):** MAGI-2 (10 pictures), Wan 3.0 (10), Seedance 2.5 / Flash (30), Seedance 2.0 Mini (9), Kling 4.0 (10), MiniMax H3 (9), HappyHorse 1.1 (9). Kling 4.0 also uniquely supports a **locked `start` (+ optional `end`) together with `refs` / `includeCastRefs: true`** (up to 10 images total). H3 Max Turbo, H3 Max, HeyGen Video 1, Gemini Omni Flash, Grok Imagine and Wan 2.2 take start frames only (no reference sheets).
   - **Real people:** Gemini Omni Flash won't draw them, and neither will Seedance 2.5 on fal, so a shot with a character made from the person's own photos doesn't offer them, and `list_models` says why. Seedance 2.5 through Tein does draw them (a Tein key; without one `list_models` says to connect it). Tein closes accounts over a real person's face used without their consent, so the rule below about who has agreed matters twice there.
   - **Commercial use:** `list_models` says when what a model makes somewhere isn't free to use commercially under its license ("not for commercial use", "limited", "unclear", with why): MiniMax H3 and FLUX 3 Image Klein on the person's own card, LongCat Avatar on fal. Making for fun or to learn, use them as any other. When the brief says the video is commercial (a client, an ad, a channel that earns), pick models without the label, and say so when that costs more.
   - **Copying the movement in another clip:** SCAIL-2 or Wan 2.2 Animate on the person's own hardware through ComfyUI, or Kling Motion Control on fal without one (see Copying movement below).
@@ -72,21 +72,45 @@ One moment, described as a camera would see it:
 
 Specific nouns beat adjectives. Say what's in the frame, not what it means in the story. No words or signs to read in the picture unless the shot is about them. Write the shot's description so it also works for the clip: the moment, then what moves ("…; it trots off down the path, camera holding low").
 
-**A board a clip will start from is that clip's first frame.** Draw the moment before the action, not its peak: the fist still back, both hands holding the book, the sheet still over the clock. A board of the peak gives a clip that starts halfway through. When the shot's payoff is one particular frame (a pose that has to match the original, a reveal), make that frame first, let the person pick it, then make the start frame and run the clip between them (`start` and `end`). A board that stays a still can be the peak.
+**Board framing depends on how its clip will use it.**
+- If the shot will run in **References mode** (`refs: ["board"], includeCastRefs: true`), the board can freely capture the shot's hero moment, lighting, staging and mood — even the middle of the action — because it goes as a visual/scene reference rather than a locked frame 1.
+- If the shot will use a **locked start frame** (`start: "board"`), draw the moment *before* the action, not its peak: the fist still back, both hands holding the book, the sheet still over the clock. A board of the peak locked as frame 1 gives a clip that starts halfway through. When a locked shot's payoff is one particular frame (a pose that has to match the original, a reveal), make that frame first, let the person pick it, then make the pre-action start frame and run the clip between them (`start` and `end`).
+
+## Choosing how to direct a clip
+
+Don't default every video shot to `start: "board"`. Before generating clips, judge each shot on **whether frame 1 genuinely needs to be pixel-locked** and **how much character likeness or multi-beat motion is at stake**:
+
+1. **References mode: board still + `@cast` sheets (`refs: ["board"], includeCastRefs: true`) — best default for most character, action, and multi-beat shots.**
+   - **Why:** Most storyboard stills capture the *middle* or hero beat of the action — locking them as frame 1 produces stiff, awkward scenes that begin mid-motion. Worse, start-frame-only clips get *no* character sheets, so faces and costumes drift as soon as a character turns, moves across the frame, or enters.
+   - Passing `refs: ["board"]` with `includeCastRefs: true` sends the shot's chosen board as Image 1 (labeled as the scene/visual reference for setting, lighting, composition and atmosphere — *not* a locked first frame) followed by every `@mentioned` character's 360° face sheet and outfit turnaround. `"board"` works in `shots: [...]` batches too.
+   - **No board still needed (or board would over-constrain staging):** Pass `includeCastRefs: true` with **no `start` and no `refs`**, and describe the shot in rich start-to-finish detail (opening framing, setting, light, action arc, camera move, sound) so the model gets clean character/place/style sheets without being anchored to one still's pose.
+   - Works on: MAGI-2, Wan 3.0, Seedance 2.5 (and Flash / 2.0 Mini), Kling 4.0, MiniMax H3, HappyHorse 1.1.
+
+2. **3D Camera Blockout + references (`camera: "blockout"`, `includeCastRefs: true`, optionally `refs: ["board"]`) — when camera choreography, spatial staging, or beat-synced cuts matter.**
+   - Use when prose alone won't hold the camera path (an orbit, push-in to a close-up, dolly-zoom, crane, whip pan, or exact cut timing). Always pass `includeCastRefs: true` alongside any board/scene still in `refs` so the model receives both the shot's visual look and the characters' face/outfit sheets.
+
+3. **Locked Start Frame (`start: "board"` or `start: <still>`, + optional `end`) — when pixel-locking frame 1 (or frame 1 → end frame) actually serves the shot.**
+   - **Seamless continuation** from the previous clip's last frame (`still_from_clip` → `start: <still>`), so the cut lands on the exact same frame.
+   - **Calm, settled compositions** with subtle motion: establishing shots, environmental mood, slow push-in/pull-back on a still subject, or a lettered sign / product label on the board that must stay sharp.
+   - **Deliberate A→B frame transitions:** when you explicitly want the shot to open on one exact frame (`start`, drawn pre-action) and land on an exact payoff pose (`end`).
+   - **Required by mode or model:** motion copy (`drive`), dedicated lip sync (`speech`), or when running on a start-frame-only model (H3 Max Turbo, H3 Max, HeyGen Video 1, Gemini Omni Flash, Grok Imagine, Wan 2.2 on ComfyUI).
+   - **Need BOTH a locked start frame AND character likeness?** Use **Kling 4.0** with `start: "board"` (+ optional `end`) AND `includeCastRefs: true` (up to 10 images total across fal, Runway and Higgsfield).
 
 ## Writing a prompt for a clip
 
-The board already says what's in the frame, so say what changes:
+How you write `clipPrompt` / `prompt` depends on whether frame 1 is locked:
 
-- one main action, sized to the length (a five-second clip is one gesture, one move across the frame);
-- the camera: static, slow push in, pan with them, handheld follow;
-- the pace: "slowly", "in one quick dash".
+- **In References mode or Blockout mode (no locked `start`):** the model is composing the whole clip from scratch guided by the reference pictures, so **describe the entire shot in detail from start to finish** — opening framing, setting, lighting, each character by `@id`, how the action begins, unfolds and lands, camera move, pace, and sound. A terse "she turns and runs" prompt works poorly without a locked start frame; give the model a complete director's brief (and with a blockout, map each striped stand-in color to its `@cast` character and describe the real set).
+- **From a locked `start` frame:** frame 1 already says what's in the picture, so focus on what changes (MiniMax H3 is the exception; see [models.md](models.md)):
+  - one main action, sized to the length (a five-second clip is one gesture, one move across the frame);
+  - the camera: static, slow push in, pan with them, handheld follow;
+  - the pace: "slowly", "in one quick dash".
 
-Don't cut to another scene or bring in new people mid-clip; that's another shot.
+Don't cut to another scene or bring in new people mid-clip unless their sheets are in `refs`; even then, a clean cut is usually another shot.
 
-**Everyone in a clip has to be in a picture it's given.** Clips get no cast pictures, only their start and end frames, so anyone in neither is invented: a stranger, often a small one. Before you send it, check which frame has each face. When someone has to arrive during the clip, put them in an end frame drawn from their portrait. A clip only holds a face as far as its frames show it, so keep head turns small and faces large.
+**Keeping every character on-model.** Start-frame-only clips get no cast pictures — only their start (and optional end) frames — so anyone absent from those frames is invented as a stranger, and faces visible only small or in profile easily drift. When a shot has important character acting, head turns, or someone entering mid-shot, **prefer References mode (`refs: ["board"], includeCastRefs: true` or `includeCastRefs: true` alone) or Kling 4.0 (`start` + `includeCastRefs: true`)** so the model actually sees their 360° face sheet and outfit turnaround. Only rely on a start-frame-only clip when every visible character is already clear and large in the start (or end) frame and moves modestly.
 
-`generate` holds a clip when a character it's about (by @id, or by name in the prompt or the shot's intent) isn't in its frames, going by what they were made with, and nothing's spent. Look at the frames, then give it one with them in it, or ask again with `anyway: true` when they're there or aren't meant to be seen.
+`generate` holds a clip when a character it's about (by @id, or by name in the prompt or the shot's intent) isn't covered by its frames or reference sheets, and nothing's spent. Fix it by adding `includeCastRefs: true` (in References mode or on Kling 4.0), giving it a frame with them in it, or asking again with `anyway: true` when they're already there or aren't meant to be seen.
 
 Each model has its own way with a prompt (what to describe from the board, how it takes sound and dialogue, how to name reference pictures): read its section in [models.md](models.md) before writing for it. Which model suits which kind of shot, and why, is in `docs/MODELS.md`.
 
@@ -115,7 +139,7 @@ A prompt says "orbit" and the model decides how far, how fast and from where. Wh
 - **Show the person the blockout before the first take from it.** Call `frame` with `shot` and `blockout: true` to inspect it yourself first, then `hand_off` with `kind: "review"`, `shot: "<id>"`, and `blockout: true`: the playable 3D blockout renders right inside the conversation card in the current cut — no switching cuts. Once they've agreed to a move (or asked for tweaks like "slower orbit"), update it with `set_blockout` and generate takes from it.
 - `generate` with op `video` and `camera: "blockout"` (or `{ blockout: true, mode }`): renders `shot.blockout` in the cut's aspect ratio (2 to 30 seconds), saves its deduplicated snapshot, and makes the take exactly as long. `camera: { asset, from, to }` keeps the camera of a clip in the project instead (an earlier take, real footage), and copies how the people in it move as well. (Legacy `camera: { cut, shots }` still works for older projects.)
 - **The prompt rebuilds everything the blockout leaves grey.** Name each stand-in by its colour and say who or what it really is ("the red-and-black capsule is @mara, in a yellow raincoat"), and describe the real place in words: without them the model draws grey boxes. beatsheet adds the sentence that says the video is a blockout and that no stand-in appears.
-- **Who's in it comes from pictures.** `start: "board"` (or any picture) goes as a reference picture, not as a first frame, and `refs` go too. There's no end frame.
+- **Who's in it comes from pictures.** Pass `includeCastRefs: true` (alone, or with `refs: ["board"]` / `start: "board"`) so every `@mentioned` character's face and outfit sheets go alongside the blockout and any scene still; any `start` picture is automatically promoted to a reference picture, and there's no end frame. (Note: passing manual `refs` or `start: "board"` *without* `includeCastRefs: true` sends only those stills without auto-attaching cast sheets.)
 - **Cuts land on the frame** when the reference is a video; that's what it's for. Check the rough beside the blockout (`frame` on the take and `frame` with `shot` + `blockout: true` at the same moments): the framing at the start and end of each move, and each cut.
 - **It costs the blockout's seconds as well as the take's**, at a lower rate than a plain take. Through Tein a 7-second rough following 7 seconds of blockout is about $1.13 (a plain 7-second rough is about $1.08), its final about $6.40; through fal about $1.85 and $9.75. Auto takes Tein when both are connected. `list_models` with the same `camera` says what a request would cost.
 - **Someone from the person's own photos** in the shot means Tein: fal's Seedance won't draw real people with a blockout either.
@@ -173,7 +197,7 @@ What keeps the cat the same cat from shot to shot.
   - Places, props and styles keep `images` (given in order, up to three) and `kept`: places get a wide view or two, styles one still that shows the look.
 - **Style:** a style entry in `/cast` (kind `style`, with `about`: "hand-drawn 2D animation, clean ink lines, flat colors") made the project's with `/look/style`. Sheets and boards are drawn in it without saying so in each prompt; without one, they're photographs. A cast member drawn unlike the rest (a cartoon cat in a photographed street) gets its own `style`. Set the style before making sheets: boards follow their sheets, so a sheet in the wrong style makes the cast look pasted into the world.
 - **Looks** (`variants`) for another outfit, state or time of day: `{ id: "heist", about: "wearing a tiny black eye mask" }`, named `@cat/heist`. Each look inherits the plain look's `portrait`/`faceSheet` automatically when it only changes clothing or damage — generate only a variant `outfitSheet` (or link a different shared `outfit`), never re-rolling the face unless `headwear: "face"` (a strapped fake beard, tight wimple, facial wounds) needs its own variant `portrait`/`faceSheet`. Make a look only for someone seen more than one way in the film; a character only ever seen in costume is described in costume in the plain one (Cast's Merge into Plain folds a look in, and every shot that names it follows).
-- **In every prompt it's in,** by @id. The model reads the name and description (including any linked shared wardrobe's `about`), and stills — plus reference-to-video / camera-blockout video takes with no start board — receive role-labeled cast pictures packaged for that model's strategy and ref budget (`Image 1 is @cat's 360° face turnaround...; Image 2 is @cat's outfit...`, translated to `@Image1`/`@Image2` on Seedance 2.5 fal). Clips with a `start` board get no extra cast pictures because the board already carries the cast.
+- **In every prompt it's in,** by @id. The model reads the name and description (including any linked shared wardrobe's `about`), and stills — plus video takes in References mode (`includeCastRefs: true`, with or without `refs: ["board"]`), camera-blockout video takes, and Kling 4.0 takes with `start` + `includeCastRefs: true` — receive role-labeled cast pictures packaged for that model's strategy and ref budget (`Image 1 is the scene and visual reference...; Image 2 is @cat's 360-degree face sheet...; Image 3 is @cat's outfit turnaround...`, translated to `@Image1`/`@Image2`/`@Image3` on fal Seedance 2.5 and Kling 4.0). Plain start-frame-only clips (without `includeCastRefs: true`) receive no cast pictures.
 - **Close shots leave the place's @ out.** A place's picture is a wide view, and the model copies its framing: a "close-up at the fish market" with @market comes back as a wide shot of the market with the cat small in it. Say where in a few words instead ("at a fish market stall, on crushed ice").
 - **A pose reference costs likeness.** A frame from old footage given first pulls the face away from the portrait. Put the chosen portrait first, say the pose in words, and turn the face three-quarters to the camera, large enough to read. To match a pose exactly (a cut back to the original), give the frame and a copy with its parts labeled, and check the labels with the person: old footage misleads (a blurred bat read as a tree trunk).
 - **Real people** only when they've agreed: the person, and family they've sent photos of for this. Someone who has died: their family decides. Some models won't take pictures of real people; `list_models` says so.
@@ -185,10 +209,44 @@ What keeps the cat the same cat from shot to shot.
 - A board that's wrong (off-model cast, the wrong framing, a continuity slip like the wrong time of day) gets a sharper prompt and another try. After two tries that miss the same way, change the approach (split the shot, simplify the action) or ask the person.
 - **A board that's nearly right gets edited, not drawn again.** Redrawing rolls everything, and the part that was right goes with it. `generate` with the take first in `refs`, who's in it in `cast` (so the picture records them), and a prompt that starts "Edit this picture" and says what changes and what stays exactly as it is. To fix a face, keep the scene and change only the face, with the chosen portrait as the second ref. For the next shot in the same place, start from its neighbor's frame (edit it, or crop it first) so the set stays the same set: a railing drawn twice comes out as two railings. Go back to the first picture each time rather than chaining edits ([models.md](models.md)).
 - Roughs: 1–2 takes. Before you hand one off, `frame` its start, middle and end: each face against the portrait, who's in frame and how big, hands, props that bend or open, and that it starts where the action should. Then watch it in the cut (`review_cut`), not alone.
-- A clip that misses gets a better board or prompt, not the same request again: it's far more often those than luck. After two that miss the same way, change the frame, the model or the shot.
-- A clip opens on its start frame, with half a second spare at its end. One with an end frame has no spare and ends on it, and so do its retakes (`end: null` for none). Set `/shots/id=…/content/take` and the shot follows that take: its model, its frames, its prompt.
-- A shot keeps two prompts: `prompt`, what's in the frame, and `clipPrompt`, what moves. `generate` with no `prompt` uses the one for what it's making, and a clip has the still's words until it has its own.
-- Finals: 1 take, from the board the rough came from.
+- A clip that misses gets a better directing mode, board or prompt, not the same request again: it's far more often those than luck. If a locked start-frame clip opens awkwardly mid-action or loses a character's face, switch it to References mode (`refs: ["board"], includeCastRefs: true`, or `includeCastRefs: true` alone with a detailed prompt) or Kling 4.0 (`start` + `includeCastRefs: true`) rather than rolling again from the same start frame. After two that miss the same way, change the mode, the model or the shot.
+- A clip with a locked `start` frame opens on it with half a second spare at its end; one with an `end` frame too has no spare and ends on it (and so do its retakes; `end: null` for none). A clip in References mode (no locked `start`) gets half a second of handle either side so it can be trimmed cleanly. Set `/shots/id=…/content/take` and the shot follows that take: its model, its frames/references, its prompt.
+- A shot keeps two prompts: `prompt`, what's in the frame, and `clipPrompt`, what moves (or, in References / blockout mode, the full start-to-finish shot description). `generate` with no `prompt` uses the one for what it's making, and a clip has the still's words until it has its own.
+- Finals: 1 take, carrying forward the directing mode (References + `@cast`, blockout + refs, or locked start/end) that worked for the rough.
+
+## Shot-to-shot continuity (AI-generated cuts)
+
+AI models forget anything they can't see — an object changes color, a mug switches hands, a brick wall turns into white plaster, or lighting shifts from warm tungsten to cold blue right across a cut. Build continuity in before generating, audit it systematically after boards and roughs, and fix breaks surgically.
+
+### Prevent drift before generating
+
+- **Catalog recurring props & lock scene invariants:** any prop, vehicle, or set element that appears in 2+ shots either gets its own `/cast` entry (`kind: "prop"` or `"place"` with a clean sheet) or gets pinned in a per-scene **Continuity** block in `BEATS.md` (exact object colors/materials, which hand holds what, wall/background surfaces, key-light direction, weather/time of day). Repeat those exact concrete nouns in every shot prompt of that scene — especially in **close-ups** where `@place` is intentionally omitted so framing stays tight.
+- **Anchor board first per scene, then chain:** don't fire off all boards of one location in a blind parallel batch. Settle the scene's master/establishing board first, then pass that anchor (or the immediately preceding shot's board) as a visual reference when boarding adjacent shots in the same scene (`op: "image"`, `refs: [anchorBoard]`, `includeCastRefs: true`, stating *"keep the exact room, wall color, props and lighting from Image 1; new camera angle: …"*), or edit/crop directly from the neighbor frame when angles are close.
+- **Carry actual rendered clip frames across adjacent cuts:** once shot A's rough clip is chosen, if shot B cuts immediately after it in the same scene:
+  - for a continuous move or cut-on-action, extract shot A's outgoing frame (`still_from_clip`) and pass it as `start` (or on Kling 4.0 `start` + `includeCastRefs: true`);
+  - for a cut to a new angle (reverse shot, medium → close-up), extract a clean frame from shot A's finished clip (`still_from_clip`) and pass it alongside shot B's board (`refs: ["board", prevClipFrame]`, `includeCastRefs: true`) so shot B matches what shot A's video model *actually rendered* (prop colors, background details, lighting).
+- **Lock shared scene lighting:** extract a lighting reference from the hero board (`extract_light_sphere`, saved to `/look/lightSphere`) when a scene has a distinctive lighting setup so drifting clips can be matched later.
+
+### Detect breaks after boards and roughs
+
+- **After Boards:** inspect each scene's boards together in shot order (`look_at_assets`) before spending video tokens. Catching a wrong prop color or extra doorway here costs cents.
+- **After Roughs & Finals:** `review_cut` automatically generates a side-by-side **`OUT → IN` Cut-Pairs Contact Sheet** whenever a cut has adjacent AI-generated shots (and flags sharp lighting/color jumps between same-place shots). Audit every cut pair row by row across six axes:
+  1. **Props & objects:** color, shape, open/closed or damaged state, which hand holds it.
+  2. **Background & set:** wall/sky color, landmarks, doors/windows, weather and time of day.
+  3. **Wardrobe & hair:** jacket/hat on or off, dirt/blood/wetness state, character likeness.
+  4. **Lighting & color cast:** warmth, key-light direction, exposure jumps across the cut.
+  5. **Screen direction & eyelines (180° rule):** movement direction and gaze across shot/reverse-shot.
+  6. **Action state across the cut:** pose/position handoff from outgoing to incoming frame.
+
+### Fix surgically (cheapest first)
+
+Don't silently burn budget re-rolling whole scenes. Diagnose the specific mismatch and choose (or propose in `hand_off` `choose` with `make` when spend is involved) the lightest fix that preserves what already works:
+
+- **Board-stage drift** (wrong prop color, background swap, extra doorway): targeted still edit (`op: "image"`, `refs: [badBoard, anchorBoard]`, `includeCastRefs: true`, *"Edit Image 1: change only [the mug / background wall] to match Image 2; keep pose, expression and framing identical"*).
+- **Lighting / color-cast jump only on a good clip:** `relight_clip` using `/look/lightSphere` or a sphere extracted from the neighboring clip's frame (`extract_light_sphere`) — preserves the approved motion.
+- **Face or costume drift only on a good clip:** `swap_character` (`fast` for face drift, `advanced` for costume/body drift) instead of discarding a strong take.
+- **Brief drift only at the head or tail:** trim or slip the shot's `in` / duration onto its clean handle ($0).
+- **Prop or background break baked into a clip:** fix that shot's board first, then re-roll just that shot in References mode passing `[fixedBoard, prevClipFrame]` + `includeCastRefs: true` so the new clip locks onto both the corrected board and its neighbor's rendered frame.
 
 ## Money
 

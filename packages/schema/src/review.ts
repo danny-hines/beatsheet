@@ -5,9 +5,13 @@
  * Pure TypeScript — shared between engine, MCP tools, studio and tests.
  */
 
+import { castOf } from "./make.ts";
+import type { Project } from "./types.ts";
+import type { Timeline } from "./resolve.ts";
+
 export type ReviewStatus = "PASS" | "WARN" | "FAIL";
 
-export type ReviewCategory = "layout" | "motion" | "audio" | "timing" | "design" | "media";
+export type ReviewCategory = "layout" | "motion" | "audio" | "timing" | "design" | "media" | "continuity";
 
 export type ReviewCheck = {
   id: string;
@@ -227,4 +231,133 @@ export function formatReviewReport(checks: ReviewCheck[]): string {
     lines.push(`- [${c.status}] (${c.id}) ${c.summary}${c.detail ? ` — ${c.detail}` : ""}`);
   }
   return lines.join("\n");
+}
+
+/** One adjacent cut boundary between two AI-generated shots on a picture track. */
+export type ContinuityPair = {
+  /** Outgoing shot id. */
+  from: string;
+  /** Incoming shot id. */
+  to: string;
+  /** Timeline second where the cut occurs. */
+  cutAt: number;
+  /** Sample timestamp just before the cut inside `from`. */
+  outAt: number;
+  /** Sample timestamp just after the cut inside `to`. */
+  inAt: number;
+  /** Shared `@place` cast ids present in both shots (indicates same physical location). */
+  sharedPlaces: string[];
+  /** Shared character/prop/wardrobe cast ids present in both shots. */
+  sharedCast: string[];
+};
+
+/** Average brightness and RGB channel means (0..255) of a rendered frame. */
+export type FrameTone = { luma: number; r: number; g: number; b: number };
+
+const r3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/**
+ * Finds adjacent AI-generated shot pairs on picture tracks (skipping footage-only cuts, empty placeholders with no
+ * take yet, and gaps > 0.5s) along with their shared `@place` and `@cast` entries so `review_cut` can render a
+ * side-by-side `OUT -> IN` continuity contact sheet and audit same-location lighting/color jumps.
+ */
+export function adjacentGeneratedPairs(
+  project: Pick<Project, "tracks" | "shots" | "cast">,
+  tl: Timeline,
+  range?: { from: number; to: number },
+): ContinuityPair[] {
+  const pictureTracks = new Set(project.tracks.filter((t) => t.kind === "picture").map((t) => t.id));
+  const shotsById = new Map(project.shots.map((s) => [s.id, s]));
+  const byTrack = new Map<string, Timeline["shots"]>();
+  for (const r of tl.shots) {
+    if (!pictureTracks.has(r.track) || !Number.isFinite(r.start) || !Number.isFinite(r.end) || r.end <= r.start) continue;
+    if (range && (r.end <= range.from + 1e-6 || r.start >= range.to - 1e-6)) continue;
+    const list = byTrack.get(r.track) ?? [];
+    list.push(r);
+    byTrack.set(r.track, list);
+  }
+
+  const castIdsOf = (shotId: string) => {
+    const s = shotsById.get(shotId);
+    if (!s || s.content.kind !== "generated") return { places: new Set<string>(), other: new Set<string>() };
+    const text = [s.content.prompt, s.content.clipPrompt].filter(Boolean).join(" ");
+    const uses = castOf(text, project.cast, s.content.cast ?? []);
+    const places = new Set<string>();
+    const other = new Set<string>();
+    for (const u of uses) {
+      if (u.member.kind === "place") places.add(u.member.id);
+      else if (u.member.kind !== "style") other.add(u.member.id);
+    }
+    return { places, other };
+  };
+
+  const pairs: ContinuityPair[] = [];
+  for (const list of byTrack.values()) {
+    list.sort((a, b) => a.start - b.start);
+    for (let i = 0; i < list.length - 1; i++) {
+      const a = list[i]!;
+      const b = list[i + 1]!;
+      if (b.start - a.end > 0.5) continue;
+      const sa = shotsById.get(a.id);
+      const sb = shotsById.get(b.id);
+      if (sa?.content.kind !== "generated" || sb?.content.kind !== "generated") continue;
+      if (!sa.content.take || !sb.content.take) continue;
+      const durA = a.end - a.start;
+      const durB = b.end - b.start;
+      const insetA = Math.min(0.15, durA * 0.2);
+      const insetB = Math.min(0.15, durB * 0.2);
+      const outAt = r3(Math.max(a.start, a.end - Math.max(0.02, insetA)));
+      const inAt = r3(Math.min(b.end, b.start + Math.max(0.02, insetB)));
+      // When reviewing a sub-range, only include cuts whose boundary sits inside the rendered range.
+      if (range && (outAt < range.from - 1e-6 || inAt > range.to + 1e-6)) continue;
+      const ca = castIdsOf(a.id);
+      const cb = castIdsOf(b.id);
+      const sharedPlaces = [...ca.places].filter((id) => cb.places.has(id));
+      const sharedCast = [...ca.other].filter((id) => cb.other.has(id));
+      pairs.push({ from: a.id, to: b.id, cutAt: r3(b.start), outAt, inAt, sharedPlaces, sharedCast });
+    }
+  }
+  return pairs.sort((x, y) => x.cutAt - y.cutAt);
+}
+
+/**
+ * Flags sharp brightness or color-temperature/tint jumps across a cut between two generated shots that share the same
+ * `@place` location. Leaves intentional location changes alone so scene transitions don't produce false positives.
+ */
+export function checkContinuityToneJump(pair: ContinuityPair, outTone: FrameTone, inTone: FrameTone): ReviewCheck | undefined {
+  if (!pair.sharedPlaces.length) return undefined;
+  const reasons: string[] = [];
+  const lumaDiff = Math.abs(outTone.luma - inTone.luma);
+  if (lumaDiff >= 48) {
+    const dir = inTone.luma > outTone.luma ? "brighter" : "darker";
+    reasons.push(`exposure jumps ${Math.round(lumaDiff)} luma (${dir})`);
+  }
+  const sumOut = outTone.r + outTone.g + outTone.b;
+  const sumIn = inTone.r + inTone.g + inTone.b;
+  // Skip chromaticity comparison on very dark frames where channel ratios are noisy.
+  if (sumOut >= 45 && sumIn >= 45) {
+    const warmOut = (outTone.r - outTone.b) / sumOut;
+    const warmIn = (inTone.r - inTone.b) / sumIn;
+    const warmDiff = warmIn - warmOut;
+    if (Math.abs(warmDiff) >= 0.14) {
+      reasons.push(`color temperature shifts ${warmDiff > 0 ? "warmer" : "cooler"}`);
+    }
+    const tintOut = (outTone.g - (outTone.r + outTone.b) / 2) / sumOut;
+    const tintIn = (inTone.g - (inTone.r + inTone.b) / 2) / sumIn;
+    const tintDiff = tintIn - tintOut;
+    if (Math.abs(tintDiff) >= 0.12) {
+      reasons.push(`color tint shifts toward ${tintDiff > 0 ? "green" : "magenta"}`);
+    }
+  }
+  if (!reasons.length) return undefined;
+  const places = pair.sharedPlaces.map((id) => `@${id}`).join(", ");
+  return {
+    id: "continuity-lighting",
+    category: "continuity",
+    status: "WARN",
+    shot: pair.to,
+    at: pair.cutAt,
+    summary: `Lighting/color jump across ${pair.from} → ${pair.to} (both in ${places})`,
+    detail: `${reasons.join("; ")} — inspect cut pair and consider relight_clip or matching board lighting`,
+  };
 }

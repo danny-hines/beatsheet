@@ -12,11 +12,13 @@ import {
   castOf,
   castPackFor,
   castPictures,
+  lookAssets,
   PREVIS_BY_ID,
   PREVIS_MOVES,
   resolveTimeline,
   type Asset,
   type AudioRefRole,
+  type CastMember,
   type CatalogModel,
   type MakeOp,
   type Quality,
@@ -80,14 +82,19 @@ function supportedModes(m: CatalogModel | undefined): MakeInputMode[] {
   return modes.length ? modes : ["text"];
 }
 
-/** Best board still on a shot, if it has one. */
-function boardOfShot(assets: Asset[], shot: Shot | undefined): string | undefined {
+/** Best board still on a shot (never mistaking a cast face/outfit sheet in refs for the shot's board). */
+function boardOfShot(assets: Asset[], cast: CastMember[] | undefined, shot: Shot | undefined): string | undefined {
   if (!shot || shot.content.kind !== "generated") return undefined;
   const c = shot.content;
   const isImg = (id: string | undefined) => !!id && assets.find((a) => a.id === id)?.kind === "image";
   if (isImg(c.take)) return c.take;
   if (isImg(c.start)) return c.start;
-  return c.refs?.find(isImg) ?? [...(c.takes ?? [])].reverse().find(isImg);
+  const castPics = new Set((cast ?? []).flatMap((m) => [...lookAssets(m), ...(m.variants ?? []).flatMap(lookAssets)]));
+  return (
+    c.refs?.find((id) => isImg(id) && c.takes?.includes(id)) ??
+    [...(c.takes ?? [])].reverse().find(isImg) ??
+    c.refs?.find((id) => isImg(id) && !castPics.has(id))
+  );
 }
 
 export function CreatePage({
@@ -109,7 +116,7 @@ export function CreatePage({
 
   const initial = launch.draft ?? launch.plan?.draft ?? {};
   const initShot = initial.shot ? p.shots.find((s) => s.id === initial.shot) : undefined;
-  const initBoard = initial.start ?? boardOfShot(p.assets, initShot);
+  const initBoard = initial.start ?? boardOfShot(p.assets, p.cast, initShot);
   const initOp: MakeOp = initial.op ?? (initShot && (initBoard || initShot.blockout) ? "video" : "image");
 
   const [shotId, setShotId] = useState(initial.shot ?? "");
@@ -124,7 +131,9 @@ export function CreatePage({
   const [prompt, setPrompt] = useState(initial.prompt ?? (initShot ? shotPrompt(initShot, initOp) : ""));
   const [start, setStart] = useState<string | undefined>(initBoard);
   const [end, setEnd] = useState<string | undefined>(initial.end ?? (initShot?.content.kind === "generated" ? initShot.content.end : undefined));
-  const [refs, setRefs] = useState<string[]>(initial.refs ?? (initOp === "video" && initBoard && (initial.inputMode === "blockout" || initShot?.blockout) ? [initBoard] : []));
+  const [refs, setRefs] = useState<string[]>(
+    initial.refs ?? (initOp === "video" && initBoard && (initial.inputMode === "blockout" || initial.inputMode === "refs" || initShot?.blockout) ? [initBoard] : []),
+  );
   const [includeCastRefs, setIncludeCastRefs] = useState<boolean>(true);
   const [boardCastRefs, setBoardCastRefs] = useState<boolean>(false);
   const [blockoutMode, setBlockoutMode] = useState<"video" | "sheet">(initial.blockoutMode ?? initShot?.blockout?.mode ?? "video");
@@ -183,7 +192,7 @@ export function CreatePage({
     setShotId(nextId);
     const s = nextId ? p.shots.find((x) => x.id === nextId) : undefined;
     if (!s) return;
-    const b = boardOfShot(p.assets, s);
+    const b = boardOfShot(p.assets, p.cast, s);
     if (b) {
       setStart(b);
       if ((inputMode === "blockout" || inputMode === "refs") && !refs.includes(b)) setRefs([b, ...refs]);
@@ -891,7 +900,7 @@ export function CreatePage({
                   </div>
                   <p className="dim small">
                     {catalogModel?.label ?? "Most video models"} locks the start frame without extra reference pictures. Switch to{" "}
-                    <strong>References</strong> mode to send this board as the opening scene + your @cast sheets together, or lock the start frame + @cast sheets on{" "}
+                    <strong>References</strong> mode to send this board as a scene reference + your @cast sheets together (without locking frame 1), or lock the start frame + @cast sheets on{" "}
                     <strong>Kling 4.0</strong>.
                   </p>
                   <div className="make-row small">
@@ -959,7 +968,7 @@ export function CreatePage({
                         {activeRefs.map((id, idx) => (
                           <span key={id} className="slot-ref-item" title={p.assets.find((a) => a.id === id)?.label ?? id}>
                             <img src={posterUrl(projectId, id)} alt="" onError={hideBroken} />
-                            {op === "video" && inputMode === "refs" && idx === 0 && <span className="slot-ref-tag">Opening board</span>}
+                            {op === "video" && inputMode === "refs" && idx === 0 && <span className="slot-ref-tag">Scene ref</span>}
                             <button className="slot-ref-x" onClick={() => setRefs(refs.filter((x) => x !== id))} aria-label="Remove reference">
                               <Icon name="close" size={10} />
                             </button>
@@ -988,7 +997,7 @@ export function CreatePage({
                         <p className="dim small">Mention @cast members in the prompt below to attach their sheets automatically, or drop/pick pictures here.</p>
                       )}
                       {op === "video" && inputMode === "refs" && !activeRefs.length && !autoCastPics.length && (
-                        <p className="dim small">Add your opening board still here and mention @cast members below — both are sent together with explicit roles.</p>
+                        <p className="dim small">Add a board or scene still here and mention @cast members below — both are sent as visual references with explicit roles (without locking frame 1).</p>
                       )}
                       {op === "video" && inputMode === "board" && !activeRefs.length && !autoCastPics.length && (
                         <p className="dim small">

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { cutView, parseFile, resolveTimeline, SCHEMA_V1, STAGE_IDS, type Project, type Shot } from "@beatsheet/schema";
-import { analyzeReviewVideo, designChecks, isStillBlank, projectChecks, reviewPaths, reviewRange } from "../src/review.ts";
+import { adjacentGeneratedPairs, cutView, parseFile, resolveTimeline, SCHEMA_V1, STAGE_IDS, type Project, type Shot } from "@beatsheet/schema";
+import { analyzeReviewVideo, buildContinuitySheet, designChecks, isStillBlank, projectChecks, reviewPaths, reviewRange } from "../src/review.ts";
 import { trimLineSilence } from "../src/narrate.ts";
 
 const project = (shots: Shot[], look?: Project["look"]): Project => {
@@ -62,6 +62,7 @@ describe("where review_cut keeps its preview video and sheets", () => {
     expect(p.video).toBe("/ws/projects/demo/.cache/review/teaser-vertical.mp4");
     expect(p.sheet).toBe("/ws/projects/demo/.cache/review/teaser-vertical-sheet.jpg");
     expect(p.designs).toBe("/ws/projects/demo/.cache/review/teaser-vertical-designs.jpg");
+    expect(p.continuity).toBe("/ws/projects/demo/.cache/review/teaser-vertical-continuity.jpg");
     expect(reviewPaths("/ws/projects/demo", "../bad cut", "9:16").video).toBe("/ws/projects/demo/.cache/review/-bad-cut-9-16.mp4");
     expect(reviewPaths("/ws/projects/demo", "main", "wide", { from: 60, to: 74.8 }).video).toBe("/ws/projects/demo/.cache/review/main-wide-60s-74_8s.mp4");
   });
@@ -203,6 +204,73 @@ describe("programmatic video, still and voiceover verification", () => {
       expect(r.duration).toBeGreaterThan(0.6);
       expect(r.words[0]!.s).toBeLessThan(0.15);
       expect(r.words[1]!.e).toBeLessThanOrEqual(r.duration);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("renders a labeled side-by-side OUT -> IN continuity sheet and flags same-place lighting/color jumps while ignoring scene changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "beatsheet-review-cont-"));
+    try {
+      const vid = join(dir, "cut.mp4");
+      // 3 adjacent 2s generated shots: warm kitchen (0-2s) -> cold blue kitchen (2-4s, jump!) -> bright exterior alley (4-6s, different place -> no jump warn).
+      execFileSync("ffmpeg", [
+        "-y",
+        "-v",
+        "error",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0xc88246:s=320x180:r=15:d=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0x2850aa:s=320x180:r=15:d=2",
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=0xe6e6dc:s=320x180:r=15:d=2",
+        "-filter_complex",
+        "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]",
+        "-map",
+        "[v]",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        vid,
+      ]);
+      const p: Project = {
+        ...project([
+          { id: "s1", track: "pic", fidelity: "rough", start: { kind: "time", t: 0 }, duration: 2, content: { kind: "generated", prompt: "@cat in @kitchen", take: "t1" } },
+          { id: "s2", track: "pic", fidelity: "rough", start: { kind: "time", t: 2 }, duration: 2, content: { kind: "generated", prompt: "@cat leaps in @kitchen", take: "t2" } },
+          { id: "s3", track: "pic", fidelity: "rough", start: { kind: "time", t: 4 }, duration: 2, content: { kind: "generated", prompt: "@cat runs in @alley", take: "t3" } },
+        ]),
+        cast: [
+          { id: "cat", name: "Cat", kind: "character" },
+          { id: "kitchen", name: "Kitchen", kind: "place" },
+          { id: "alley", name: "Alley", kind: "place" },
+        ],
+      };
+      const tl = resolveTimeline(p);
+      const pairs = adjacentGeneratedPairs(p, tl);
+      expect(pairs).toHaveLength(2);
+      expect(pairs[0]).toMatchObject({ from: "s1", to: "s2", sharedPlaces: ["kitchen"], sharedCast: ["cat"] });
+      expect(pairs[1]).toMatchObject({ from: "s2", to: "s3", sharedPlaces: [], sharedCast: ["cat"] });
+
+      const built = await buildContinuitySheet(vid, pairs, { from: 0, vertical: false, dir });
+      const meta = await sharp(built.sheet).metadata();
+      expect(meta.width).toBeGreaterThan(700);
+      expect(meta.height).toBeGreaterThan(400);
+      expect(built.rows).toHaveLength(2);
+      expect(built.rows[0]).toContain("s1 → s2");
+      expect(built.rows[0]).toContain("same place: @kitchen");
+      expect(built.rows[0]).toContain("[lighting/color WARN]");
+      expect(built.rows[1]).toContain("s2 → s3");
+      expect(built.rows[1]).not.toContain("[lighting/color WARN]");
+      // Only the same-place jump fires a lighting warning; the kitchen -> alley transition does not.
+      expect(built.checks).toHaveLength(1);
+      expect(built.checks[0]).toMatchObject({ id: "continuity-lighting", category: "continuity", status: "WARN", shot: "s2" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

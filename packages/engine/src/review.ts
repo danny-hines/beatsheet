@@ -12,13 +12,17 @@ import { copyFileSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import {
+  adjacentGeneratedPairs,
   auditLayoutBoxes,
+  checkContinuityToneJump,
   formatReviewReport,
   formatTime,
   resolveTimeline,
   summarizeReviewChecks,
+  type ContinuityPair,
+  type FrameTone,
   type LayoutBox,
   type Project,
   type ReviewCheck,
@@ -62,6 +66,7 @@ export function reviewPaths(projectDir: string, cutId: string, formatId: string,
     video: join(base, `${stem}.mp4`),
     sheet: join(base, `${stem}-sheet.jpg`),
     designs: join(base, `${stem}-designs.jpg`),
+    continuity: join(base, `${stem}-continuity.jpg`),
   };
 }
 
@@ -97,6 +102,11 @@ export type Review = {
   designRows?: string[];
   /** What the project says about its design, for the design pass. */
   designNotes: string[];
+  /** Side-by-side OUT → IN cut-boundary contact sheet for adjacent AI-generated shots. */
+  continuity?: Buffer;
+  continuityFile?: string;
+  continuityRows?: string[];
+  continuityNotes: string[];
   /** True when zero checks failed (warnings are allowed). */
   passed: boolean;
   /** Structured PASS / WARN / FAIL checks across layout, motion, audio, timing and design. */
@@ -211,6 +221,118 @@ export async function isStillBlank(file: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+const MAX_CONTINUITY_PAIRS = 16;
+const escapeXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+async function frameTone(file: string): Promise<FrameTone> {
+  const stats = await sharp(file).stats();
+  const r = stats.channels[0]?.mean ?? 0;
+  const g = stats.channels[1]?.mean ?? r;
+  const b = stats.channels[2]?.mean ?? r;
+  return { r, g, b, luma: 0.2126 * r + 0.7152 * g + 0.0722 * b };
+}
+
+/**
+ * Extracts outgoing (`OUT`) and incoming (`IN`) boundary frames for adjacent AI-generated shot pairs from an already-
+ * rendered review MP4, composites them side-by-side with clear cut labels into a continuity contact sheet, and flags
+ * sharp exposure or color-cast jumps across cuts sharing the same `@place`.
+ */
+export async function buildContinuitySheet(
+  video: string,
+  pairs: ContinuityPair[],
+  opts: { from: number; vertical: boolean; dir: string },
+): Promise<{ sheet: Buffer; file: string; rows: string[]; notes: string[]; checks: ReviewCheck[] }> {
+  const shown = pairs.slice(0, MAX_CONTINUITY_PAIRS);
+  const pairCols = shown.length > 6 ? 2 : 1;
+  const pairRows = Math.ceil(shown.length / pairCols);
+  const tileW = opts.vertical ? (pairCols === 2 ? 162 : 216) : pairCols === 2 ? 304 : 384;
+  const tileH = opts.vertical ? (pairCols === 2 ? 288 : 384) : pairCols === 2 ? 171 : 216;
+  const innerGap = 4;
+  const pairGap = 14;
+  const headerH = 26;
+  const cellW = tileW * 2 + innerGap;
+  const cellH = headerH + tileH;
+  const canvasW = pairGap + pairCols * (cellW + pairGap);
+  const canvasH = pairGap + pairRows * (cellH + pairGap);
+  const scalePad = `scale=${tileW}:${tileH}:force_original_aspect_ratio=decrease,pad=${tileW}:${tileH}:(ow-iw)/2:(oh-ih)/2:color=#111111`;
+
+  const framesDir = join(opts.dir, "continuity");
+  mkdirSync(framesDir, { recursive: true });
+  const composites: OverlayOptions[] = [];
+  const rows: string[] = [];
+  const notes: string[] = [];
+  const checks: ReviewCheck[] = [];
+  let samePlaceChecked = 0;
+  let lightingWarns = 0;
+
+  for (const [idx, pair] of shown.entries()) {
+    const outFile = join(framesDir, `p${idx}-out.jpg`);
+    const inFile = join(framesDir, `p${idx}-in.jpg`);
+    const outSeek = Math.max(0, pair.outAt - opts.from).toFixed(3);
+    const inSeek = Math.max(0, pair.inAt - opts.from).toFixed(3);
+    await Promise.all([
+      run("ffmpeg", ["-v", "error", "-y", "-ss", outSeek, "-i", video, "-frames:v", "1", "-vf", scalePad, "-q:v", "3", outFile]),
+      run("ffmpeg", ["-v", "error", "-y", "-ss", inSeek, "-i", video, "-frames:v", "1", "-vf", scalePad, "-q:v", "3", inFile]),
+    ]);
+    const [outTone, inTone] = await Promise.all([frameTone(outFile), frameTone(inFile)]);
+    if (pair.sharedPlaces.length) samePlaceChecked++;
+    const jump = checkContinuityToneJump(pair, outTone, inTone);
+    if (jump) {
+      lightingWarns++;
+      checks.push(jump);
+      notes.push(`${jump.summary}${jump.detail ? `: ${jump.detail}` : ""}`);
+    }
+
+    const col = idx % pairCols;
+    const row = Math.floor(idx / pairCols);
+    const left = pairGap + col * (cellW + pairGap);
+    const top = pairGap + row * (cellH + pairGap);
+    const rawTitle = `#${idx + 1}  ${pair.from} OUT → ${pair.to} IN  ·  ${formatTime(pair.cutAt)}`;
+    const maxChars = Math.max(22, Math.floor((cellW - 20) / 7));
+    const label = rawTitle.length > maxChars ? `${rawTitle.slice(0, maxChars - 1)}…` : rawTitle;
+    const accent = jump ? "#f59e0b" : "#3f3f46";
+    const headerSvg = Buffer.from(
+      `<svg width="${cellW}" height="${headerH}" xmlns="http://www.w3.org/2000/svg">` +
+        `<rect width="${cellW}" height="${headerH}" fill="#27272a"/>` +
+        `<rect width="4" height="${headerH}" fill="${accent}"/>` +
+        `<text x="10" y="17" fill="#f4f4f5" font-family="sans-serif" font-size="12" font-weight="600">${escapeXml(label)}</text>` +
+        `</svg>`,
+    );
+    composites.push(
+      { input: headerSvg, left, top },
+      { input: outFile, left, top: top + headerH },
+      { input: inFile, left: left + tileW + innerGap, top: top + headerH },
+    );
+
+    const ctxParts: string[] = [];
+    if (pair.sharedPlaces.length) ctxParts.push(`same place: ${pair.sharedPlaces.map((id) => `@${id}`).join(", ")}`);
+    if (pair.sharedCast.length) ctxParts.push(`shared: ${pair.sharedCast.map((id) => `@${id}`).join(", ")}`);
+    rows.push(`${pair.from} → ${pair.to} at ${formatTime(pair.cutAt)}${ctxParts.length ? ` (${ctxParts.join("; ")})` : ""}${jump ? " [lighting/color WARN]" : ""}`);
+  }
+
+  if (samePlaceChecked > 0 && lightingWarns === 0) {
+    checks.push({
+      id: "continuity-lighting",
+      category: "continuity",
+      status: "PASS",
+      summary: `No sharp lighting/color jumps across ${samePlaceChecked} same-place generated cut${samePlaceChecked === 1 ? "" : "s"}`,
+    });
+  }
+  if (pairs.length > MAX_CONTINUITY_PAIRS) {
+    notes.push(`Showing the first ${MAX_CONTINUITY_PAIRS} of ${pairs.length} generated cut pairs — pass shots or from/to to audit the rest scene by scene.`);
+  }
+
+  const outPath = join(opts.dir, "continuity.jpg");
+  const sheet = await sharp({
+    create: { width: canvasW, height: canvasH, channels: 3, background: { r: 24, g: 24, b: 27 } },
+  })
+    .composite(composites)
+    .jpeg({ quality: 88 })
+    .toFile(outPath)
+    .then(() => readFileSync(outPath));
+  return { sheet, file: outPath, rows, notes, checks };
 }
 
 export async function reviewCut(projectId: string, opts: { cut?: string; format?: string; from?: number; to?: number; shots?: string[] } = {}): Promise<Review> {
@@ -336,6 +458,24 @@ export async function reviewCut(projectId: string, opts: { cut?: string; format?
     const designNotes = designChecks(project);
     for (const dn of designNotes) allChecks.push({ id: "design-polish", category: "design", status: "WARN", summary: dn.split(":")[0] ?? dn, detail: dn });
 
+    // Continuity pass for cuts with adjacent AI-generated shots: side-by-side OUT → IN cut-pairs sheet + same-place lighting jump check.
+    const genPairs = adjacentGeneratedPairs(project, tl, ranged ? { from, to } : undefined);
+    let continuity: Buffer | undefined;
+    let continuityFile: string | undefined;
+    let continuityRows: string[] | undefined;
+    const continuityNotes: string[] = [];
+    if (genPairs.length) {
+      const built = await buildContinuitySheet(video, genPairs, { from, vertical, dir });
+      continuity = built.sheet;
+      keepFile(built.file, kept.continuity);
+      continuityFile = kept.continuity;
+      continuityRows = built.rows;
+      continuityNotes.push(...built.notes);
+      allChecks.push(...built.checks);
+    } else {
+      rmSync(kept.continuity, { force: true });
+    }
+
     const { passed } = summarizeReviewChecks(allChecks);
     const report = formatReviewReport(allChecks);
     keepFile(video, kept.video);
@@ -355,6 +495,10 @@ export async function reviewCut(projectId: string, opts: { cut?: string; format?
       designsFile,
       designRows,
       designNotes,
+      continuity,
+      continuityFile,
+      continuityRows,
+      continuityNotes,
       passed,
       checks: allChecks,
       report,

@@ -713,14 +713,22 @@ function lookRefs(
   return { refs: [...f, ...w, ...(withStyle ? [stylePic!] : [])], words: words.join(" ") };
 }
 
-/** The still a shot's clips start from: the take showing when it's a still, else the one its clip was made from (start, image ref, or latest still take). */
+/**
+ * The still a shot uses as its board: the take showing when it's a still, else the start frame its clip was made from,
+ * else a shot-owned board still in refs/takes, else a non-cast scene still in refs (never a cast face/outfit sheet).
+ */
 function boardOf(project: Project, shot: Shot | undefined): string | undefined {
   const c = shot?.content;
   if (c?.kind !== "generated") return undefined;
   const isImg = (id: string | undefined) => !!id && project.assets.find((a) => a.id === id)?.kind === "image";
   if (isImg(c.take)) return c.take;
   if (isImg(c.start)) return c.start;
-  return c.refs?.find(isImg) ?? [...(c.takes ?? [])].reverse().find(isImg);
+  const castPics = new Set((project.cast ?? []).flatMap((m) => [...lookAssets(m), ...(m.variants ?? []).flatMap(lookAssets)]));
+  return (
+    c.refs?.find((id) => isImg(id) && c.takes?.includes(id)) ??
+    [...(c.takes ?? [])].reverse().find(isImg) ??
+    c.refs?.find((id) => isImg(id) && !castPics.has(id))
+  );
 }
 
 /** Options controlling how `requestFor` packs cast references for a target model. */
@@ -786,7 +794,13 @@ export function requestFor(projectId: string, ask: MakeAsk, pack: number | Reque
       ? audioRefsFor(projectId, project, shot, keptAudio, needs?.seconds, uses.filter((u) => u.member.kind === "character").map((u) => u.member.id))
       : undefined;
 
-  let refs = ask.refs?.length ? ask.refs : undefined;
+  const rawRefs = ask.refs?.map((id) => {
+    if (id !== "board" || (!ask.shot && project.assets.some((a) => a.id === "board"))) return id;
+    const b = boardOf(project, shot);
+    if (!b) throw new Error(`Shot "${ask.shot}" has no board yet: make stills for it first`);
+    return b;
+  });
+  let refs = rawRefs?.length ? [...new Set(rawRefs)] : undefined;
   let packedRefs: PackedRef[] | undefined;
   // One that keeps a clip's camera or uses reference audio runs on reference-to-video, so a start frame goes first among its refs.
   if ((camera || audioRefs?.length) && start) refs = [...new Set([start, ...(refs ?? [])])];
@@ -1179,14 +1193,21 @@ function audioRefsFor(
   return out;
 }
 
+/** Whether a video request should auto-attach @mentioned cast sheets when checking missing characters or model fit. */
+const autoVideoCastRefs = (ask: MakeAsk) =>
+  ask.op === "video" &&
+  !ask.clip &&
+  !ask.drive &&
+  !ask.speech &&
+  (!!ask.includeCastRefs || (!ask.refs?.length && !ask.start && (!!ask.camera || !!ask.audioRefs?.length)));
+
 /** The clips among some requests that would have a model make someone up, and who. One that can't be made says so when it's started. */
 export function absentFrom(projectId: string, asks: MakeAsk[]): { shot?: string; who: string[] }[] {
   return asks.flatMap((ask) => {
     try {
-      const req =
-        ask.op === "video" && ask.includeCastRefs
-          ? requestFor(projectId, ask, { pictures: ask.start ? (ask.end ? 8 : 9) : Math.max(ask.refs?.length ?? 0, 8), videoAutoRefs: true })
-          : requestFor(projectId, ask);
+      const req = autoVideoCastRefs(ask)
+        ? requestFor(projectId, ask, { pictures: ask.start ? (ask.end ? 8 : 9) : Math.max(ask.refs?.length ?? 0, 8), videoAutoRefs: true })
+        : requestFor(projectId, ask);
       const who = req.absent;
       return who?.length ? [{ shot: ask.shot, who }] : [];
     } catch {
@@ -1206,10 +1227,9 @@ function fewestStillRouteRefs(): number {
 
 /** The models for a request, sorted for a picker, with Auto first among the ready ones. */
 export function makeChoices(projectId: string, ask: MakeAsk): { req: FullRequest; choices: Choices } {
-  const req =
-    ask.op === "video" && ask.includeCastRefs
-      ? requestFor(projectId, ask, { pictures: ask.start ? (ask.end ? 8 : 9) : Math.max(ask.refs?.length ?? 0, 8), videoAutoRefs: true })
-      : requestFor(projectId, ask);
+  const req = autoVideoCastRefs(ask)
+    ? requestFor(projectId, ask, { pictures: ask.start ? (ask.end ? 8 : 9) : Math.max(ask.refs?.length ?? 0, 8), videoAutoRefs: true })
+    : requestFor(projectId, ask);
   const probe =
     ask.op === "image" && (!ask.refs?.length || ask.includeCastRefs)
       ? requestFor(projectId, ask, Math.max(ask.refs?.length ?? 0, fewestStillRouteRefs()))

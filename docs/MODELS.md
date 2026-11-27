@@ -11,7 +11,7 @@ What beatsheet offers today is the catalog. This page is the field around it and
    - Where the person is: MiniMax H3's open weights aren't licensed in the US, EU, UK or South Korea (see Licenses).
    - Mature content: hosted models soften implied violence and refuse gore; blood stays on the person's own card (Wan 2.2, LTX-2.5). For stills, GPT Image refuses fights and blood with people from real photos.
    - Length: past 15 seconds in one take, only MAGI-2, Seedance 2.5, Wan 3.0 and Kling 4.0 (all to 30 s).
-   - From a board or from words: the rankings differ (Wan 3.0 is first from text, ninth from a still; FLUX 3 Max fifth and twelfth). beatsheet mostly animates boards, so the image-to-video board counts most.
+   - Directing mode (References vs. locked start frame vs. text): rankings differ (Wan 3.0 is first from text, ninth from a locked still; Seedance 2.5 and MAGI-2 tie #1 on I2V and also excel at multi-reference R2V). For most character and action shots, **References mode** (`refs: ["board"], includeCastRefs: true` — or `includeCastRefs: true` with a detailed prompt and no locked start frame) outperforms start-frame-only I2V because mid-action stills aren't frozen as frame 1 and decoupled `@cast` face/outfit sheets anchor likeness throughout motion (supported on MAGI-2, Wan 3.0, Seedance 2.5 / Flash / 2.0 Mini, Kling 4.0, MiniMax H3, HappyHorse 1.1). Reserve locked `start` frames for seamless clip continuations (`still_from_clip`), calm/establishing/lettered shots, exact A→B transitions (`start` + `end`), `drive`, or `speech` — and use Kling 4.0 when a shot needs *both* a locked `start` (+ `end`) and `includeCastRefs: true`.
 2. **Rank by the kind of shot** (the table below).
 3. **Rough and final from one family**, so the take the person picked survives: Seedance 2.5's draft completes into its 1080p final; Wan 3.0 at 480p then 1080p with the same seed; H3 Max Turbo then H3 Max. A rough from another family only blocks the shot out.
 4. **Text and sound aren't the model's job.** Words that must read go in as a coded overlay (`kit:Title`, a scene); a sign in the world goes on the board and is animated gently. A clip's own sound is a temp track: the cut's song, voice and sfx are the real soundtrack, so ask clips for "diegetic sound only, no score".
@@ -54,8 +54,8 @@ Rough is a cheap take to judge motion and the cut; final is the shot that stays.
 | text | a coded overlay, $0 | the overlay; else H3 from a lettered board | Omni Flash 1.1 | medium |
 | camera (orbit, crane, whip pan) | H3 Max Turbo | Seedance 2.5 with a clip of the move | Kling 4.0 (the only one that orbited on request) | medium |
 | long (over 10 s) | Wan 3.0 480p, $1.50 per 30 s | Kling 4.0, $7.05 per 30 s | Wan 3.0 1080p, $6.00 per 30 s | low |
-| consistency (one character across shots) | H3 Max Turbo with references | H3 Max with references | Seedance 2.5 (made-up) or Wan 3.0 (real) | low-medium |
-| likeness (a real person) | Wan 2.2 on the card, $0 | Wan 3.0 1080p | Copy the person's own performance | low |
+| consistency (one character across shots) | Wan 3.0 480p or MiniMax H3 with `refs` + `includeCastRefs` | Seedance 2.5 or MAGI-2 with `refs` + `includeCastRefs` | Kling 4.0 (`refs` or locked `start` + `includeCastRefs`), Wan 3.0 1080p (real people) | medium |
+| likeness (a real person) | Wan 3.0 480p (`refs` + `includeCastRefs`) or Wan 2.2 on the card ($0) | Seedance 2.5 on Tein (`refs` + `includeCastRefs`) or Wan 3.0 1080p | Kling 4.0 (`start` + `includeCastRefs`), or copy the person's own performance | low-medium |
 | closeup (acting) | Seedance 2.5 draft | Seedance 2.5 | Wan 3.0 (real faces) | low-medium |
 | physics (water, cloth, things breaking) | Wan 3.0 480p | Seedance 2.5 (2.0 for destruction) | Wan 3.0 1080p | medium |
 | sound | Omni Flash 1.1 360p, $0.15 | Seedance 2.0 or 2.5 from a still | Omni Flash 1.1 from text | medium |
@@ -166,7 +166,7 @@ A model added later that runs somewhere under a restricting license gets its lab
 
 The per-model recipes are in [models.md](../.agents/skills/make/models.md). What holds everywhere:
 
-- From a board, say what moves, not what the board shows (restating it gives near-static clips or a drifting face). MiniMax H3 is the exception: anchor the prompt on the board, then move forward in time.
+- Match prompting to directing mode: from a locked `start` frame, say what moves rather than restating frame 1 (MiniMax H3 is the exception: anchor on the board, then move forward in time); in References mode (`refs` + `includeCastRefs: true`) or with a blockout, describe the whole shot in detail from start to finish (framing, setting, lighting, full action progression, camera move, sound) since no frame is pixel-locked.
 - One camera move per shot, with a pace word; say "locked-off camera" when it shouldn't move. Orbits of 90–180° in a short clip, not 360°.
 - About one beat per two seconds, and at most 2.5 spoken words a second.
 - Quotation marks only around dialogue (quoted emphasis gets spoken); each line with a speaker and a tone.

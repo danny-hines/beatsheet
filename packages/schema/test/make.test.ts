@@ -1647,11 +1647,11 @@ describe("decoupled face & wardrobe sheets and model-adaptive cast packing", () 
     expect(shifted).toContain("Image 2 is Galileo's 360-degree face sheet");
     expect(shifted).toContain("Image 5 is Bobby's outfit turnaround");
 
-    // Leading manual references (e.g. an opening board still in References mode) take Image 1, followed by @cast sheets.
+    // Leading manual references (e.g. a board still as a visual/scene ref in References mode) take Image 1, followed by @cast sheets.
     const withBoard = castPrompt("@galileo walks down the hill", castOf("@galileo walks down the hill", cast), packCastPictures(castOf("@galileo walks down the hill", cast), { max: 9, strategy: "split-360", cast }), cast, {
       leadingRefs: [{ role: "board", label: "Hill board" }],
     });
-    expect(withBoard).toContain("Image 1 is the opening scene / composition reference (begin from this exact framing, setting and lighting)");
+    expect(withBoard).toContain("Image 1 is the scene and visual reference for the shot (match its setting, lighting, composition and atmosphere, not as a locked first frame)");
     expect(withBoard).toContain("Image 2 is Galileo's 360-degree face sheet");
     expect(withBoard).toContain("Image 3 is Galileo's outfit turnaround");
   });

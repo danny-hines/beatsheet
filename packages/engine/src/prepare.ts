@@ -9,12 +9,15 @@ import {
   CATALOG,
   castOf,
   chooseModels,
+  lookAssets,
   PREVIS_BY_ID,
   PREVIS_MOVES,
   realPeople,
   resolveTimeline,
   type MakeOp,
   type Quality,
+  type Project,
+  type Shot,
 } from "@beatsheet/schema";
 import { quickAsk } from "./agent/fast.ts";
 import { connectedStates, preferredProvider, type AudioRefAsk } from "./make.ts";
@@ -73,12 +76,12 @@ Rules:
 - Choose inputMode matching the model's capabilities:
   - For op "image": "refs" if cast/refs are used, else "text".
   - For op "video":
-    - "blockout" if using a 3D camera blockout (magi-2 / seedance-2.5 for video mode, or wan-3 / minimax-h3 / happyhorse-1.1 for sheet mode).
+    - "blockout" if using a 3D camera blockout (magi-2 / seedance-2.5 for video mode, or wan-3 / minimax-h3 / happyhorse-1.1 for sheet mode) — great when exact camera choreography, staging or beat timing matters.
     - "drive" if copying movement from an existing footage clip (scail-2 / wan-2.2-animate / kling-motion-control).
     - "speech" if lip-syncing dialogue lines (minimax-h3-lipsync / kling-avatar / sync-3 / etc.).
-    - "board" if starting from a still board (default for most video shots).
-    - "refs" if animating from reference pictures (or multimodal reference audio: music beat, voiced lines, character voice timbre, or an audio clip — supported on magi-2, seedance-2.5, wan-3, and minimax-h3 on Runway) without a locked start frame.
-    - "text" only if generating video from words alone.
+    - "refs" (PREFERRED default for most character, action, multi-beat, and likeness-sensitive shots when a reference-capable model like magi-2, wan-3, seedance-2.5, seedance-2.5-flash, seedance-2.0-mini, kling-4, minimax-h3, or happyhorse-1.1 is READY): passes any board still as a visual/scene reference alongside @cast character sheets without locking frame 1 — avoiding awkward mid-action openings and holding character likeness across motion. Also required for multimodal reference audio (music beat, voiced lines, voice timbre). Write a detailed start-to-finish shot prompt (framing, setting, lighting, action progression, camera move, sound).
+    - "board" (locked start frame + optional end frame) when pixel-locking frame 1 is genuinely helpful: seamless continuation from a previous clip's last frame, calm/establishing/product/lettered shots with gentle motion, exact A->B frame transitions, or when only start-frame-only models are READY (or kling-4 when combining locked start frame + @cast refs).
+    - "text" only if generating video from words alone with no cast sheets or references.
 - Keep @cast mentions (like @cat) in prompts when referencing cast members.
 - Reply ONLY with a single valid JSON object (no markdown fences, no commentary) matching:
 {
@@ -114,6 +117,21 @@ export function parseJsonObject(raw: string): Record<string, unknown> | undefine
   }
 }
 
+/** Best board still on a shot (never mistaking a cast character's face/outfit sheet in refs for the shot's board). */
+function boardStillOf(project: Project, shot: Shot | undefined): string | undefined {
+  const c = shot?.content.kind === "generated" ? shot.content : undefined;
+  if (!c) return undefined;
+  const isImg = (id: string | undefined) => !!id && project.assets.find((a) => a.id === id)?.kind === "image";
+  if (isImg(c.take)) return c.take;
+  if (isImg(c.start)) return c.start;
+  const castPics = new Set((project.cast ?? []).flatMap((m) => [...lookAssets(m), ...(m.variants ?? []).flatMap(lookAssets)]));
+  return (
+    c.refs?.find((id) => isImg(id) && c.takes?.includes(id)) ??
+    [...(c.takes ?? [])].reverse().find(isImg) ??
+    c.refs?.find((id) => isImg(id) && !castPics.has(id))
+  );
+}
+
 /** Deterministic fallback plan when no fast agent CLI is available or an LLM call fails. */
 export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?: string; intent: string }): MakePlan {
   const { project } = loadProject(projectId, opts.cut);
@@ -123,21 +141,29 @@ export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?
   const tl = resolveTimeline(project, format.id);
   const span = shot ? tl.shots.find((s) => s.id === shot.id) : undefined;
   const shotSeconds = span && Number.isFinite(span.end - span.start) ? Math.max(2, Math.min(15, Math.round(span.end - span.start))) : undefined;
-  const c = shot?.content.kind === "generated" ? shot.content : undefined;
-  const isImg = (id: string | undefined) => !!id && project.assets.find((a) => a.id === id)?.kind === "image";
-  const board = c ? (isImg(c.take) ? c.take : isImg(c.start) ? c.start : c.refs?.find(isImg) ?? [...(c.takes ?? [])].reverse().find(isImg)) : undefined;
+  const board = boardStillOf(project, shot);
 
   const text = opts.intent.trim();
   const lower = text.toLowerCase();
   const states = connectedStates();
+  const uses = castOf(text, project.cast);
+  const people = realPeople(uses, project.assets);
+  const hasCharacter = uses.some((u) => u.member.kind === "character");
   const imgChoices = chooseModels(CATALOG, { op: "image", prompt: text, aspect }, states, [], preferredProvider("image", states));
-  const vidChoices = chooseModels(CATALOG, { op: "video", prompt: text, quality: "rough", seconds: shotSeconds ?? 5, aspect }, states, [], preferredProvider("video", states));
+  const vidChoices = chooseModels(
+    CATALOG,
+    { op: "video", prompt: text, quality: "rough", seconds: shotSeconds ?? 5, aspect, ...(people.length ? { realPeople: people } : {}) },
+    states,
+    [],
+    preferredProvider("video", states),
+  );
 
   const wantsStill = /\b(still|board|photo|picture|portrait|frame|image|illustration)\b/i.test(lower) && !/\b(clip|video|animate|orbit|pan|dolly|crane|zoom|talking|lip[- ]?sync|motion)\b/i.test(lower);
   const wantsSpeech = /\b(lip[- ]?sync|speak|say(?:ing)?|talk(?:ing)?|dialogue|line)\b/i.test(lower);
   const wantsDrive = /\b(copy movement|motion copy|fight|dance|stunt|act(?:ed|ing) out|phone clip)\b/i.test(lower);
   const preset = PREVIS_MOVES.find((m) => lower.includes(m.id.replace(/-/g, " ")) || lower.includes(m.label.toLowerCase().split(" (")[0]!));
   const wantsBlockout = !!shot?.blockout || !!preset || /\b(blockout|camera move|orbit|dolly|crane|whip pan|bullet[- ]?time|steadicam|snorricam)\b/i.test(lower);
+  const wantsLockedStart = /\b(start frame|first frame|end frame|continue from|last frame|establishing|static|locked[- ]?off|timelapse|sign|lettering|logo)\b/i.test(lower);
   const secMatch = /\b(\d{1,2})\s*(?:s|sec|seconds?)\b/i.exec(text);
   const seconds = secMatch ? Math.max(2, Math.min(30, Number(secMatch[1]))) : (shotSeconds ?? 5);
 
@@ -147,7 +173,7 @@ export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?
     quality: "rough",
     model: imgModel?.model,
     via: imgModel?.route,
-    inputMode: castOf(text, project.cast).length ? "refs" : "text",
+    inputMode: uses.length ? "refs" : "text",
     prompt: text,
     aspect,
     count: 2,
@@ -161,9 +187,15 @@ export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?
     };
   }
 
-  const videoInputMode: MakeInputMode = wantsSpeech ? "speech" : wantsDrive ? "drive" : wantsBlockout ? "blockout" : board ? "board" : "board";
-  const uses = castOf(text, project.cast);
-  const people = realPeople(uses, project.assets);
+  const refReq = chooseModels(
+    CATALOG,
+    { op: "video", prompt: text, quality: "rough", seconds, aspect, refs: ["ref"], ...(people.length ? { realPeople: people } : {}) },
+    states,
+    [],
+    preferredProvider("video", states),
+  ).auto;
+  const preferRefs = !wantsLockedStart && !!refReq && (hasCharacter || !!board);
+  const videoInputMode: MakeInputMode = wantsSpeech ? "speech" : wantsDrive ? "drive" : wantsBlockout ? "blockout" : preferRefs ? "refs" : "board";
   const camReq =
     videoInputMode === "blockout"
       ? chooseModels(
@@ -182,7 +214,7 @@ export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?
           preferredProvider("video", states),
         ).auto
       : undefined;
-  const vidModel = camReq ?? vidChoices.auto;
+  const vidModel = videoInputMode === "blockout" ? (camReq ?? refReq ?? vidChoices.auto) : videoInputMode === "refs" ? (refReq ?? vidChoices.auto) : vidChoices.auto;
   const videoDraft: MakeDraft = {
     op: "video",
     quality: "rough",
@@ -190,8 +222,8 @@ export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?
     via: vidModel?.route,
     inputMode: videoInputMode,
     prompt: text,
-    ...(board && videoInputMode !== "blockout" ? { start: board } : {}),
-    ...(board && videoInputMode === "blockout" ? { refs: [board] } : {}),
+    ...(board && (videoInputMode === "board" || videoInputMode === "drive" || videoInputMode === "speech") ? { start: board } : {}),
+    ...(board && (videoInputMode === "blockout" || videoInputMode === "refs") ? { refs: [board] } : {}),
     ...(videoInputMode === "blockout" ? { useBlockout: true, blockoutMode: camReq ? "video" : "sheet", blockoutPreset: preset?.id ?? "orbit" } : {}),
     ...(videoInputMode === "speech" ? { speech: true } : {}),
     seconds,
@@ -204,23 +236,29 @@ export function heuristicMakePlan(projectId: string, opts: { cut?: string; shot?
     const imgCost = imgModel?.usd !== undefined ? (imgModel.usd === 0 ? "free on plan" : `~$${(imgModel.usd * 2).toFixed(2)}`) : undefined;
     const vidCost = vidModel?.usd !== undefined ? (vidModel.usd === 0 ? "free" : `~$${vidModel.usd.toFixed(2)}`) : undefined;
     const steps: MakePlanStep[] = [
-      { label: "1. Settle board still", detail: "Generate a cheap still first to nail framing, lighting and cast likeness.", costHint: imgCost, draft: stillDraft },
+      { label: "1. Settle board still", detail: "Generate a cheap still first to nail framing, lighting and cast look.", costHint: imgCost, draft: stillDraft },
       {
-        label: videoInputMode === "blockout" ? `2. Blockout (${preset?.label ?? "camera move"}) + animate` : "2. Animate clip",
-        detail: `Animate from your chosen board${vidModel ? ` with ${vidModel.label}` : ""}.`,
+        label: videoInputMode === "blockout" ? `2. Blockout (${preset?.label ?? "camera move"}) + animate` : videoInputMode === "refs" ? "2. Animate with references + @cast" : "2. Animate clip",
+        detail:
+          videoInputMode === "refs"
+            ? `Pass your chosen still as a visual reference alongside @cast sheets${vidModel ? ` on ${vidModel.label}` : ""} (without locking frame 1).`
+            : `Animate from your chosen board${vidModel ? ` with ${vidModel.label}` : ""}.`,
         costHint: vidCost,
         draft: videoDraft,
       },
     ];
     return {
-      rationale: `Settling a cheap board still before spending video tokens avoids wasted clips${videoInputMode === "blockout" ? " — then pair it with a 3D blockout to lock the camera move" : ""}.`,
+      rationale: `Settling a cheap board still before spending video tokens avoids wasted clips${videoInputMode === "blockout" ? " — then pair it with a 3D blockout to lock the camera move" : videoInputMode === "refs" ? " — then pass it in References mode alongside @cast sheets to hold likeness without locking a mid-action frame 1" : ""}.`,
       draft: stillDraft,
       steps,
     };
   }
 
   return {
-    rationale: `Using your shot's settled board${videoInputMode === "blockout" ? " with a camera blockout" : ""}${vidModel ? ` on ${vidModel.label}` : ""}.`,
+    rationale:
+      videoInputMode === "refs"
+        ? `Passing your shot's board as a visual reference alongside @cast sheets${vidModel ? ` on ${vidModel.label}` : ""} so likeness holds without locking frame 1.`
+        : `Using your shot's settled board${videoInputMode === "blockout" ? " with a camera blockout" : ""}${vidModel ? ` on ${vidModel.label}` : ""}.`,
     draft: videoDraft,
   };
 }
@@ -256,8 +294,7 @@ export async function prepareMake(projectId: string, opts: { cut?: string; shot?
     realPerson: m.kind === "character" && !!(m.seen?.length),
   }));
   const c = shot?.content.kind === "generated" ? shot.content : undefined;
-  const isImg = (id: string | undefined) => !!id && project.assets.find((a) => a.id === id)?.kind === "image";
-  const board = c ? (isImg(c.take) ? c.take : isImg(c.start) ? c.start : c.refs?.find(isImg) ?? [...(c.takes ?? [])].reverse().find(isImg)) : undefined;
+  const board = boardStillOf(project, shot);
   const context = {
     intent: opts.intent,
     aspect,
@@ -292,6 +329,11 @@ export async function prepareMake(projectId: string, opts: { cut?: string; shot?
       const blockoutPreset = typeof raw.blockoutPreset === "string" && PREVIS_BY_ID.has(raw.blockoutPreset) ? raw.blockoutPreset : base.blockoutPreset;
       const seconds = typeof raw.seconds === "number" && Number.isFinite(raw.seconds) ? Math.max(2, Math.min(30, Math.round(raw.seconds))) : base.seconds;
       const count = typeof raw.count === "number" && Number.isFinite(raw.count) ? Math.max(1, Math.min(4, Math.round(raw.count))) : base.count;
+      const rawRefs = Array.isArray(raw.refs)
+        ? raw.refs.filter((x): x is string => typeof x === "string" && project.assets.some((a) => a.id === x && a.kind === "image"))
+        : undefined;
+      const modeUsesStart = inputMode === "board" || inputMode === "drive" || inputMode === "speech";
+      const modeUsesRefs = inputMode === "blockout" || inputMode === "refs";
       return {
         op,
         quality,
@@ -299,8 +341,8 @@ export async function prepareMake(projectId: string, opts: { cut?: string; shot?
         ...(validRoute ? { via: validRoute } : {}),
         inputMode,
         prompt: typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : opts.intent.trim(),
-        ...(op === "video" && board && inputMode !== "blockout" ? { start: board } : {}),
-        ...(op === "video" && board && inputMode === "blockout" ? { refs: [board] } : {}),
+        ...(op === "video" && board && modeUsesStart ? { start: board } : {}),
+        ...(op === "video" && modeUsesRefs ? (rawRefs ? (rawRefs.length ? { refs: rawRefs } : {}) : board ? { refs: [board] } : {}) : {}),
         ...(inputMode === "blockout" ? { useBlockout: true, blockoutMode: raw.blockoutMode === "sheet" ? "sheet" : "video", ...(blockoutPreset ? { blockoutPreset } : {}) } : {}),
         ...(inputMode === "speech" ? { speech: true } : {}),
         ...(op === "video" && seconds ? { seconds } : {}),

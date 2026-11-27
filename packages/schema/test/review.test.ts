@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { auditLayoutBoxes, formatReviewReport, summarizeReviewChecks, tightenLineGaps, tightenLineTiming, type LayoutBox } from "../src/index.ts";
+import {
+  adjacentGeneratedPairs,
+  auditLayoutBoxes,
+  checkContinuityToneJump,
+  formatReviewReport,
+  resolveTimeline,
+  SCHEMA_VERSION,
+  STAGE_IDS,
+  summarizeReviewChecks,
+  tightenLineGaps,
+  tightenLineTiming,
+  type LayoutBox,
+  type Project,
+} from "../src/index.ts";
 
 describe("programmatic layout auditing (auditLayoutBoxes)", () => {
   const vertical = { width: 1080, height: 1920, shot: "s02", at: 4.5, captions: true as const };
@@ -69,5 +82,65 @@ describe("voiceover pacing tightening helpers", () => {
       { id: "b", gapAfter: 0.15 },
       { id: "c", gapAfter: 0.08 },
     ]);
+  });
+});
+
+describe("AI-generated shot-to-shot continuity helpers", () => {
+  const proj = (shots: Project["shots"]): Project => ({
+    id: "film",
+    title: "Film",
+    sources: [],
+    brief: { goal: "story" },
+    assets: [],
+    cast: [
+      { id: "cat", name: "Cat", kind: "character" },
+      { id: "mug", name: "Blue Mug", kind: "prop" },
+      { id: "kitchen", name: "Kitchen", kind: "place" },
+      { id: "alley", name: "Alley", kind: "place" },
+      { id: "noir", name: "Noir", kind: "style" },
+    ],
+    cut: { id: "main", name: "Main" },
+    recipe: "film",
+    spec: {},
+    formats: [{ id: "wide", label: "16:9", width: 1920, height: 1080, fps: 30 }],
+    stages: Object.fromEntries(STAGE_IDS.map((s) => [s, { status: "todo" }])) as Project["stages"],
+    spine: "shots",
+    tracks: [{ id: "pic", kind: "picture", label: "Picture" }],
+    shots,
+    notes: [],
+  });
+
+  it("pairs only adjacent generated shots with takes, skipping footage clips, empty placeholders and large gaps", () => {
+    const p = proj([
+      { id: "s1", track: "pic", fidelity: "rough", start: { kind: "time", t: 0 }, duration: 3, content: { kind: "generated", prompt: "@cat holds @mug in @kitchen", take: "a1" } },
+      { id: "s2", track: "pic", fidelity: "rough", start: { kind: "time", t: 3 }, duration: 4, content: { kind: "generated", prompt: "Close-up of @cat sipping @mug in @kitchen", take: "a2" } },
+      { id: "s3", track: "pic", fidelity: "rough", start: { kind: "time", t: 7 }, duration: 3, content: { kind: "clip", asset: "real-clip" } },
+      { id: "s4", track: "pic", fidelity: "rough", start: { kind: "time", t: 10 }, duration: 3, content: { kind: "generated", prompt: "@cat in @alley", take: "a4" } },
+      { id: "s5", track: "pic", fidelity: "rough", start: { kind: "time", t: 13 }, duration: 2, content: { kind: "generated", prompt: "@cat runs in @alley" } }, // no take yet
+      { id: "s6", track: "pic", fidelity: "rough", start: { kind: "time", t: 18 }, duration: 3, content: { kind: "generated", prompt: "@cat stops in @alley", take: "a6" } },
+    ]);
+    const tl = resolveTimeline(p);
+    expect(adjacentGeneratedPairs(p, tl)).toEqual([
+      { from: "s1", to: "s2", cutAt: 3, outAt: 2.85, inAt: 3.15, sharedPlaces: ["kitchen"], sharedCast: ["cat", "mug"] },
+    ]);
+    expect(adjacentGeneratedPairs(p, tl, { from: 4, to: 10 })).toEqual([]);
+  });
+
+  it("flags sharp exposure and color-cast shifts on same-place cuts while ignoring matching frames or different locations", () => {
+    const samePlace = { from: "s1", to: "s2", cutAt: 3, outAt: 2.85, inAt: 3.15, sharedPlaces: ["kitchen"], sharedCast: ["cat"] };
+    const diffPlace = { ...samePlace, sharedPlaces: [] };
+    // Matching tones -> clean
+    expect(checkContinuityToneJump(samePlace, { luma: 120, r: 135, g: 120, b: 100 }, { luma: 128, r: 142, g: 126, b: 106 })).toBeUndefined();
+    // Large exposure drop -> WARN
+    const exp = checkContinuityToneJump(samePlace, { luma: 180, r: 180, g: 180, b: 180 }, { luma: 95, r: 95, g: 95, b: 95 });
+    expect(exp).toMatchObject({ id: "continuity-lighting", category: "continuity", status: "WARN", shot: "s2" });
+    expect(exp?.detail).toContain("exposure jumps");
+    // Warm-to-cool shift at similar luma -> WARN
+    const temp = checkContinuityToneJump(samePlace, { luma: 125, r: 180, g: 120, b: 70 }, { luma: 125, r: 75, g: 125, b: 185 });
+    expect(temp?.detail).toContain("color temperature shifts cooler");
+    // Different location -> ignored even on big shift
+    expect(checkContinuityToneJump(diffPlace, { luma: 180, r: 180, g: 120, b: 70 }, { luma: 60, r: 40, g: 60, b: 110 })).toBeUndefined();
+    // Unused constant check kept clean
+    expect(SCHEMA_VERSION).toBeTruthy();
   });
 });
