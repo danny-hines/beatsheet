@@ -2,3 +2,4 @@ export { assetUrl, BeatsheetVideo, fileUrl, LOOKS, metadataFor, placement, under
 export { phrasesOf, poseAt } from "./BeatsheetVideo.tsx";
 export { KIT_PROPS } from "./kit/catalog.ts";
 export { NEUTRAL } from "./kit/scene.tsx";
+export { getCachedPrevisPoster, renderPrevisPoster, renderPrevisPosters, startPrevisHoverLoop } from "./previsPreview.ts";

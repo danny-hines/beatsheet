@@ -31,6 +31,7 @@ import { blockoutCuts, BlockoutPlayer } from "./Blockout";
 import { Icon } from "./Icon";
 import { shotPrompt, shotsToMake } from "./MakeShots";
 import { MentionField } from "./MentionField";
+import { AskBlockoutDialog, formatBlockoutAgentPrompt, PrevisPresetPicker } from "./PrevisPicker";
 import { comparePrice, cost, fitOf, ModelPicker, MultiModelPicker, pickOf, useChoices, WhyNot } from "./Takes";
 import { answer } from "./Turn";
 
@@ -140,7 +141,8 @@ export function CreatePage({
   const [boardCastRefs, setBoardCastRefs] = useState<boolean>(false);
   const [blockoutMode, setBlockoutMode] = useState<"video" | "sheet">(initial.blockoutMode ?? initShot?.blockout?.mode ?? "video");
   const [legacyCut, setLegacyCut] = useState<string>(launch.legacyCut ?? "");
-  const [blockoutPreset, setBlockoutPreset] = useState(initial.blockoutPreset ?? "orbit");
+  const [suggestedPreset, setSuggestedPreset] = useState<string | undefined>(initial.blockoutPreset);
+  const [askBlockoutOpen, setAskBlockoutOpen] = useState(false);
   const [tweakText, setTweakText] = useState("");
   const [drive, setDrive] = useState<{ asset: string; from: number; to?: number } | undefined>(
     initial.drive ?? (initShot?.content.kind === "generated" ? initShot.content.drive : undefined),
@@ -184,7 +186,7 @@ export function CreatePage({
     if (d.refs) setRefs(d.refs);
     if (d.audioRefs) setAudioRefs(d.audioRefs);
     if (d.blockoutMode) setBlockoutMode(d.blockoutMode);
-    if (d.blockoutPreset) setBlockoutPreset(d.blockoutPreset);
+    if (d.blockoutPreset) setSuggestedPreset(d.blockoutPreset);
     if (d.seconds) setSeconds(d.seconds);
     setCount(d.count);
     setError("");
@@ -390,16 +392,35 @@ export function CreatePage({
     });
   };
 
-  const askAgentBlockout = () => {
-    const target = shot ? `shot ${shot.id}` : "this idea";
+  const askAgentBlockoutTweak = () => {
     const extra = tweakText.trim();
+    if (!extra) return;
+    const target = shot ? `shot ${shot.id}` : "this idea";
     setTweakText("");
     void answer({
-      text: extra
-        ? `On ${target}'s 3D camera blockout: ${extra}. Update it with set_blockout (never create a separate cut) and hand off a blockout review.`
-        : `Design a 3D camera blockout for ${target} matching "${prompt.trim() || shot?.intent || shot?.label || "this shot"}" using set_blockout (never create a separate cut), and hand off a blockout review so I can approve the move before generating video.`,
+      text: `On ${target}'s 3D camera blockout: ${extra}. Update it with set_blockout (never create a separate cut) and hand off a blockout review.`,
     });
   };
+
+  const sendBlockoutBrief = (brief: string, presetId?: string) => {
+    const target = shot ? `shot ${shot.id}` : "this shot";
+    void answer({
+      text: formatBlockoutAgentPrompt({
+        target,
+        brief,
+        presetId,
+        hasExisting: hasShotBlockout,
+        durationSeconds: shotSeconds ?? seconds,
+      }),
+    });
+  };
+
+  const currentPrevisMove =
+    shot?.blockout?.beats.length === 1 && shot.blockout.beats[0]?.component === "kit:Previs"
+      ? (shot.blockout.beats[0]?.props?.move as string | undefined)
+      : undefined;
+  const suggestedMove = suggestedPreset ? PREVIS_BY_ID.get(suggestedPreset) : undefined;
+  const defaultBlockoutBrief = prompt.trim() || (shot ? shotPrompt(shot, "video") : "") || shot?.intent || shot?.label || "";
 
   const make = async () => {
     setError("");
@@ -780,14 +801,28 @@ export function CreatePage({
                         Shot {shot.id}'s blockout ({blockoutDuration(shot.blockout!)}s) · an immutable snapshot will be saved with this take so you can always compare side by side.
                       </p>
                       <div className="make-row">
+                        <PrevisPresetPicker
+                          value={currentPrevisMove}
+                          suggested={suggestedPreset}
+                          placeholder="Custom blockout · Swap preset…"
+                          onSelect={attachPresetBlockout}
+                          onAskCustom={() => setAskBlockoutOpen(true)}
+                          compact
+                          ariaLabel="Swap camera preset"
+                        />
+                        <button type="button" className="small" onClick={() => setAskBlockoutOpen(true)}>
+                          Edit brief…
+                        </button>
+                      </div>
+                      <div className="make-row">
                         <input
                           className="slot-tweak-input"
                           value={tweakText}
                           onChange={(e) => setTweakText(e.target.value)}
-                          placeholder='Ask agent to adjust (e.g. "slower camera move")…'
-                          onKeyDown={(e) => e.key === "Enter" && tweakText.trim() && askAgentBlockout()}
+                          placeholder='Quick tweak (e.g. "slower camera move")…'
+                          onKeyDown={(e) => e.key === "Enter" && tweakText.trim() && askAgentBlockoutTweak()}
                         />
-                        <button className="small" disabled={!tweakText.trim()} onClick={askAgentBlockout}>
+                        <button className="small" disabled={!tweakText.trim()} onClick={askAgentBlockoutTweak}>
                           Ask agent
                         </button>
                       </div>
@@ -796,20 +831,22 @@ export function CreatePage({
                     <div className="slot-empty">
                       {shot ? (
                         <>
-                          <p className="dim small">Attach a 3D camera preset to shot {shot.id}, or have the agent build a custom blockout in this cut's conversation.</p>
-                          <div className="make-row">
-                            <select value={blockoutPreset} onChange={(e) => setBlockoutPreset(e.target.value)} aria-label="Camera preset">
-                              {PREVIS_MOVES.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.label} — {m.summary.slice(0, 44)}
-                                </option>
-                              ))}
-                            </select>
-                            <button className="primary small" onClick={() => attachPresetBlockout(blockoutPreset)}>
-                              Use preset
-                            </button>
-                            <button className="small" onClick={askAgentBlockout}>
-                              Ask agent to block it out
+                          <p className="dim small">Pick a 3D camera preset for shot {shot.id}, or write a custom brief for the agent to block it out.</p>
+                          <div className="make-row previs-action-row">
+                            <PrevisPresetPicker
+                              suggested={suggestedPreset}
+                              placeholder="Choose camera preset…"
+                              onSelect={attachPresetBlockout}
+                              onAskCustom={() => setAskBlockoutOpen(true)}
+                              ariaLabel="Camera preset"
+                            />
+                            {suggestedMove && (
+                              <button type="button" className="primary small" onClick={() => attachPresetBlockout(suggestedMove.id)}>
+                                Use suggested: {suggestedMove.label}
+                              </button>
+                            )}
+                            <button type="button" className="small" onClick={() => setAskBlockoutOpen(true)}>
+                              Ask agent to block it out…
                             </button>
                           </div>
                         </>
@@ -1311,6 +1348,16 @@ export function CreatePage({
           </div>
         </div>
       )}
+      <AskBlockoutDialog
+        open={askBlockoutOpen}
+        title={shot ? (hasShotBlockout ? `Update blockout for shot ${shot.id}` : `Block out shot ${shot.id}`) : "Ask agent for a blockout"}
+        durationSeconds={shotSeconds ?? seconds}
+        initialBrief={hasShotBlockout ? (shot?.blockout?.note || defaultBlockoutBrief) : defaultBlockoutBrief}
+        initialPreset={currentPrevisMove ?? suggestedPreset}
+        hasExistingBlockout={hasShotBlockout}
+        onClose={() => setAskBlockoutOpen(false)}
+        onSend={sendBlockoutBrief}
+      />
     </div>
   );
 }

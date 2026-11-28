@@ -1915,3 +1915,54 @@ button.model-row.on { background: var(--accent-bg); color: var(--text); box-shad
 .mention-detail { font-size: var(--t-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.35; }
 .mention-foot { padding: 4px 10px; border-top: 1px solid var(--line); font-size: var(--t-1); background: var(--well); }
 .cast-chips .chip.variant { border-style: dashed; }
+
+/* Visual 1:1 camera-move preset picker (live 3D hover animation) & editable blockout brief dialog */
+.previs-action-row { flex-wrap: wrap; }
+.previs-trigger { display: inline-flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; padding: 4px 10px 4px 4px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; }
+.previs-trigger:hover { border-color: var(--accent); background: var(--raised); }
+.previs-trigger.compact { flex: 1 1 auto; width: 100%; padding: 3px 8px 3px 3px; }
+.previs-thumb { flex: none; display: grid; place-items: center; border-radius: var(--r-1); overflow: hidden; background: #7c8088; color: #f2f2f5; border: 1px solid rgba(255, 255, 255, 0.08); }
+.previs-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.previs-trigger-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.previs-trigger-name { font-size: var(--t-2); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.previs-trigger-sub { font-size: var(--t-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.previs-trigger-caret { flex: none; color: var(--dim); }
+
+.previs-modal-back { z-index: 60; }
+.previs-modal { width: min(940px, 94vw); max-height: 88vh; display: flex; flex-direction: column; gap: 12px; }
+.previs-modal-head { margin-bottom: 0; flex-wrap: wrap; }
+.previs-search { flex: 1 1 220px; min-width: 160px; max-width: 320px; margin-left: auto; }
+.previs-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.previs-hint { white-space: nowrap; }
+.previs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(172px, 1fr)); gap: 10px; overflow-y: auto; padding: 2px 4px 4px 2px; min-height: 180px; }
+.previs-card { display: flex; flex-direction: column; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--well); color: var(--text); text-align: left; overflow: hidden; cursor: pointer; transition: border-color 120ms ease, transform 120ms ease, background 120ms ease; }
+.previs-card:hover, .previs-card:focus-visible { border-color: var(--accent); background: var(--raised); outline: none; }
+.previs-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.previs-stage { position: relative; width: 100%; aspect-ratio: 1 / 1; background: #7c8088; overflow: hidden; }
+.previs-poster, .previs-live { position: absolute; inset: 0; width: 100%; height: 100%; display: block; object-fit: cover; }
+.previs-live { transition: opacity 90ms ease; }
+.previs-poster-wait { position: absolute; inset: 0; background: linear-gradient(135deg, #747880 0%, #898d96 50%, #747880 100%); }
+.previs-badge { position: absolute; left: 6px; top: 6px; z-index: 2; display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: var(--r-1); font-size: var(--t-1); font-weight: 600; background: var(--scrim); color: var(--on-scrim); }
+.previs-badge.on { background: var(--accent); color: var(--on-accent, #111); }
+.previs-badge.suggested { background: color-mix(in srgb, var(--agent) 85%, #111); color: #fff; }
+.previs-lens { position: absolute; right: 6px; top: 6px; z-index: 2; padding: 1px 5px; border-radius: var(--r-1); background: var(--scrim); color: var(--on-scrim); font-size: var(--t-1); }
+.previs-play { position: absolute; right: 6px; bottom: 8px; z-index: 2; width: 20px; height: 20px; border-radius: 99px; display: grid; place-items: center; background: rgba(15, 16, 20, 0.62); color: #fff; opacity: 0.72; transition: opacity 120ms ease, background 120ms ease; }
+.previs-play.live { opacity: 1; background: var(--accent); color: var(--on-accent, #111); }
+.previs-track { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; height: 3px; background: rgba(0, 0, 0, 0.35); pointer-events: none; }
+.previs-bar { display: block; width: 100%; height: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
+.previs-meta { display: flex; flex-direction: column; gap: 4px; padding: 8px 9px 9px; flex: 1; }
+.previs-meta-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.previs-label { font-size: var(--t-2); line-height: 1.25; }
+.previs-tag { flex: none; font-size: var(--t-1); color: var(--dim); white-space: nowrap; }
+.previs-summary { margin: 0; font-size: var(--t-1); line-height: 1.38; color: var(--dim); }
+.previs-empty { grid-column: 1 / -1; padding: 36px 16px; text-align: center; }
+.previs-modal-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+.blockout-brief-modal { width: min(560px, 94vw); gap: 12px; }
+.blockout-brief-modal .modal-head { margin-bottom: 0; }
+.blockout-brief-lead { margin: 0; line-height: 1.45; }
+.blockout-brief-field { display: flex; flex-direction: column; gap: 6px; }
+.blockout-brief-textarea { width: 100%; min-height: 112px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: var(--r-2); background: var(--well); color: var(--text); resize: vertical; line-height: 1.45; font-family: inherit; }
+.blockout-brief-textarea:focus { border-color: var(--accent); outline: none; }
+.blockout-brief-preset { display: flex; flex-direction: column; gap: 6px; }
+.blockout-brief-actions { align-items: center; }

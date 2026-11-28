@@ -49,6 +49,10 @@ export type PrevisPreset = {
   defaultSet: PrevisSet;
   defaultLens: number;
   defaultSubjects: PrevisSubject[];
+  /** Normalized progress (0..1) for the resting thumbnail frame; defaults to 0.42. */
+  thumbAt?: number;
+  /** True for continuous moves (360° spins, handheld) that loop smoothly without a start/end hold. */
+  seamlessLoop?: boolean;
 };
 
 const SOLO: PrevisSubject[] = [{ color: "#e5484d", height: 1.75, x: 0, z: 0, facing: 0, kind: "person" }];
@@ -67,41 +71,47 @@ const CLASH: PrevisSubject[] = [
 /** Curated 3D camera-move presets inspired by standard cinematography blocking. */
 export const PREVIS_MOVES: PrevisPreset[] = [
   // People
-  { id: "push-in", label: "Push in", family: "people", summary: "Steady dolly forward from medium to close-up.", defaultSet: "room", defaultLens: 42, defaultSubjects: SOLO },
-  { id: "pull-out", label: "Pull out (reveal)", family: "people", summary: "Pulls back from close framing to reveal the space.", defaultSet: "street", defaultLens: 35, defaultSubjects: SOLO },
-  { id: "orbit", label: "Orbit", family: "people", summary: "Smooth 120° arc around the subject at eye height.", defaultSet: "studio", defaultLens: 40, defaultSubjects: SOLO },
-  { id: "low-arc", label: "Low hero arc", family: "people", summary: "Low-angle sweeping arc looking slightly up at the subject.", defaultSet: "alley", defaultLens: 28, defaultSubjects: SOLO },
-  { id: "crane-up", label: "Crane up", family: "people", summary: "Rises from eye level to a high wide angle looking down.", defaultSet: "street", defaultLens: 32, defaultSubjects: SOLO },
-  { id: "crane-down", label: "Crane down (arrival)", family: "people", summary: "Descends from overhead into an intimate eye-level frame.", defaultSet: "clearing", defaultLens: 35, defaultSubjects: SOLO },
-  { id: "dolly-zoom", label: "Dolly zoom (vertigo)", family: "people", summary: "Pulls back while zooming in so the subject stays the same size as the background warps.", defaultSet: "corridor", defaultLens: 35, defaultSubjects: SOLO },
-  { id: "whip-pan", label: "Whip pan", family: "people", summary: "Fast horizontal whip from one subject to another with a quick settle.", defaultSet: "room", defaultLens: 45, defaultSubjects: PAIR },
-  { id: "steadicam-follow", label: "Steadicam follow", family: "people", summary: "Glides behind a walking subject down the set.", defaultSet: "street", defaultLens: 32, defaultSubjects: WALK_SOLO },
-  { id: "steadicam-lead", label: "Steadicam lead", family: "people", summary: "Backs up ahead of a subject moving toward camera.", defaultSet: "corridor", defaultLens: 35, defaultSubjects: SPRINT_SOLO },
-  { id: "over-the-shoulder", label: "Over the shoulder", family: "people", summary: "Slow push past one shoulder onto the listener in a two-person scene.", defaultSet: "room", defaultLens: 55, defaultSubjects: PAIR },
-  { id: "handheld", label: "Handheld", family: "people", summary: "Subtle documentary breathing and organic micro-sway on a medium shot.", defaultSet: "alley", defaultLens: 40, defaultSubjects: SOLO },
-  { id: "truck-right", label: "Truck right (parallax)", family: "people", summary: "Lateral tracking slide showing foreground-to-background parallax.", defaultSet: "street", defaultLens: 38, defaultSubjects: SOLO },
+  { id: "push-in", label: "Push in", family: "people", summary: "Steady dolly forward from medium to close-up.", defaultSet: "room", defaultLens: 42, defaultSubjects: SOLO, thumbAt: 0.42 },
+  { id: "pull-out", label: "Pull out (reveal)", family: "people", summary: "Pulls back from close framing to reveal the space.", defaultSet: "street", defaultLens: 35, defaultSubjects: SOLO, thumbAt: 0.68 },
+  { id: "orbit", label: "Orbit", family: "people", summary: "Smooth 120° arc around the subject at eye height.", defaultSet: "studio", defaultLens: 40, defaultSubjects: SOLO, thumbAt: 0.35 },
+  { id: "low-arc", label: "Low hero arc", family: "people", summary: "Low-angle sweeping arc looking slightly up at the subject.", defaultSet: "alley", defaultLens: 28, defaultSubjects: SOLO, thumbAt: 0.35 },
+  { id: "crane-up", label: "Crane up", family: "people", summary: "Rises from eye level to a high wide angle looking down.", defaultSet: "street", defaultLens: 32, defaultSubjects: SOLO, thumbAt: 0.65 },
+  { id: "crane-down", label: "Crane down (arrival)", family: "people", summary: "Descends from overhead into an intimate eye-level frame.", defaultSet: "clearing", defaultLens: 35, defaultSubjects: SOLO, thumbAt: 0.35 },
+  { id: "dolly-zoom", label: "Dolly zoom (vertigo)", family: "people", summary: "Pulls back while zooming in so the subject stays the same size as the background warps.", defaultSet: "corridor", defaultLens: 35, defaultSubjects: SOLO, thumbAt: 0.4 },
+  { id: "whip-pan", label: "Whip pan", family: "people", summary: "Fast horizontal whip from one subject to another with a quick settle.", defaultSet: "room", defaultLens: 45, defaultSubjects: PAIR, thumbAt: 0.45 },
+  { id: "steadicam-follow", label: "Steadicam follow", family: "people", summary: "Glides behind a walking subject down the set.", defaultSet: "street", defaultLens: 32, defaultSubjects: WALK_SOLO, thumbAt: 0.45 },
+  { id: "steadicam-lead", label: "Steadicam lead", family: "people", summary: "Backs up ahead of a subject moving toward camera.", defaultSet: "corridor", defaultLens: 35, defaultSubjects: SPRINT_SOLO, thumbAt: 0.45 },
+  { id: "over-the-shoulder", label: "Over the shoulder", family: "people", summary: "Slow push past one shoulder onto the listener in a two-person scene.", defaultSet: "room", defaultLens: 55, defaultSubjects: PAIR, thumbAt: 0.5 },
+  { id: "handheld", label: "Handheld", family: "people", summary: "Subtle documentary breathing and organic micro-sway on a medium shot.", defaultSet: "alley", defaultLens: 40, defaultSubjects: SOLO, thumbAt: 0.4, seamlessLoop: true },
+  { id: "truck-right", label: "Truck right (parallax)", family: "people", summary: "Lateral tracking slide showing foreground-to-background parallax.", defaultSet: "street", defaultLens: 38, defaultSubjects: SOLO, thumbAt: 0.35 },
 
   // Action & aerial
-  { id: "bullet-time", label: "Bullet-time orbit", family: "action", summary: "Fast 220° orbit with a dramatic mid-shot slow-motion ramp.", defaultSet: "alley", defaultLens: 35, defaultSubjects: CLASH },
-  { id: "snorricam", label: "Snorricam", family: "action", summary: "Locked tightly to the moving subject's face while the world slides past behind them.", defaultSet: "corridor", defaultLens: 24, defaultSubjects: SPRINT_SOLO },
-  { id: "crash-zoom", label: "Crash zoom", family: "action", summary: "Aggressive punch-in from wide to tight close-up with an emphatic snap.", defaultSet: "room", defaultLens: 35, defaultSubjects: SOLO },
-  { id: "chase-drone", label: "Chase drone", family: "action", summary: "Banked swooping pursuit behind and above a moving target.", defaultSet: "street", defaultLens: 24, defaultSubjects: WALK_SOLO },
-  { id: "aerial-spiral", label: "Aerial spiral", family: "action", summary: "High rising corkscrew looking straight down over the scene.", defaultSet: "clearing", defaultLens: 26, defaultSubjects: SOLO },
-  { id: "aerial-pullback", label: "Aerial pullback", family: "action", summary: "Sweeping crane-and-drone pullback revealing the entire location.", defaultSet: "clearing", defaultLens: 26, defaultSubjects: SOLO },
+  { id: "bullet-time", label: "Bullet-time orbit", family: "action", summary: "Fast 220° orbit with a dramatic mid-shot slow-motion ramp.", defaultSet: "alley", defaultLens: 35, defaultSubjects: CLASH, thumbAt: 0.38 },
+  { id: "snorricam", label: "Snorricam", family: "action", summary: "Locked tightly to the moving subject's face while the world slides past behind them.", defaultSet: "corridor", defaultLens: 24, defaultSubjects: SPRINT_SOLO, thumbAt: 0.45 },
+  { id: "crash-zoom", label: "Crash zoom", family: "action", summary: "Aggressive punch-in from wide to tight close-up with an emphatic snap.", defaultSet: "room", defaultLens: 35, defaultSubjects: SOLO, thumbAt: 0.52 },
+  { id: "chase-drone", label: "Chase drone", family: "action", summary: "Banked swooping pursuit behind and above a moving target.", defaultSet: "street", defaultLens: 24, defaultSubjects: WALK_SOLO, thumbAt: 0.4 },
+  { id: "aerial-spiral", label: "Aerial spiral", family: "action", summary: "High rising corkscrew looking straight down over the scene.", defaultSet: "clearing", defaultLens: 26, defaultSubjects: SOLO, thumbAt: 0.58 },
+  { id: "aerial-pullback", label: "Aerial pullback", family: "action", summary: "Sweeping crane-and-drone pullback revealing the entire location.", defaultSet: "clearing", defaultLens: 26, defaultSubjects: SOLO, thumbAt: 0.65 },
 
   // Objects & product
-  { id: "product-spin", label: "Product spin", family: "objects", summary: "Clean 360° tabletop hero sweep around an object.", defaultSet: "studio", defaultLens: 55, defaultSubjects: PROP_HERO },
-  { id: "hero-orbit", label: "Hero object orbit", family: "objects", summary: "Rising 140° studio reveal on a product or prop.", defaultSet: "studio", defaultLens: 50, defaultSubjects: PROP_HERO },
-  { id: "top-down", label: "Top-down (god's eye)", family: "objects", summary: "Overhead perpendicular look-down with slow rotation and rise.", defaultSet: "studio", defaultLens: 40, defaultSubjects: PROP_HERO },
-  { id: "macro-slider", label: "Macro slider", family: "objects", summary: "Tight low lateral glide across a product silhouette.", defaultSet: "studio", defaultLens: 85, defaultSubjects: PROP_HERO },
-  { id: "wipe-reveal", label: "Wipe reveal", family: "objects", summary: "Slides out from behind a foreground wall/pillar to reveal the subject.", defaultSet: "corridor", defaultLens: 40, defaultSubjects: SOLO },
+  { id: "product-spin", label: "Product spin", family: "objects", summary: "Clean 360° tabletop hero sweep around an object.", defaultSet: "studio", defaultLens: 55, defaultSubjects: PROP_HERO, thumbAt: 0.12, seamlessLoop: true },
+  { id: "hero-orbit", label: "Hero object orbit", family: "objects", summary: "Rising 140° studio reveal on a product or prop.", defaultSet: "studio", defaultLens: 50, defaultSubjects: PROP_HERO, thumbAt: 0.58 },
+  { id: "top-down", label: "Top-down (god's eye)", family: "objects", summary: "Overhead perpendicular look-down with slow rotation and rise.", defaultSet: "studio", defaultLens: 40, defaultSubjects: PROP_HERO, thumbAt: 0.4 },
+  { id: "macro-slider", label: "Macro slider", family: "objects", summary: "Tight low lateral glide across a product silhouette.", defaultSet: "studio", defaultLens: 85, defaultSubjects: PROP_HERO, thumbAt: 0.3 },
+  { id: "wipe-reveal", label: "Wipe reveal", family: "objects", summary: "Slides out from behind a foreground wall/pillar to reveal the subject.", defaultSet: "corridor", defaultLens: 40, defaultSubjects: SOLO, thumbAt: 0.72 },
 
   // Famous & scenes
-  { id: "bay-360", label: "360° hero spin", family: "famous", summary: "Low-angle full 360° hero orbit around two figures.", defaultSet: "street", defaultLens: 28, defaultSubjects: PAIR },
-  { id: "trunk-shot", label: "Trunk shot", family: "famous", summary: "Extreme low-angle look-up from ground level as two figures lean in.", defaultSet: "alley", defaultLens: 24, defaultSubjects: PAIR },
+  { id: "bay-360", label: "360° hero spin", family: "famous", summary: "Low-angle full 360° hero orbit around two figures.", defaultSet: "street", defaultLens: 28, defaultSubjects: PAIR, thumbAt: 0.14, seamlessLoop: true },
+  { id: "trunk-shot", label: "Trunk shot", family: "famous", summary: "Extreme low-angle look-up from ground level as two figures lean in.", defaultSet: "alley", defaultLens: 24, defaultSubjects: PAIR, thumbAt: 0.5 },
 ];
 
 export const PREVIS_BY_ID = new Map(PREVIS_MOVES.map((m) => [m.id, m]));
+
+/** Normalized progress (0..1) for a preset's resting thumbnail frame. */
+export function previsThumbAt(preset: PrevisPreset | string): number {
+  const p = typeof preset === "string" ? PREVIS_BY_ID.get(preset) : preset;
+  return p?.thumbAt ?? 0.42;
+}
 
 /** Vertical field of view (degrees) for a full-frame 35mm focal length (24mm sensor height). */
 export function lensToFov(mm = 35): number {

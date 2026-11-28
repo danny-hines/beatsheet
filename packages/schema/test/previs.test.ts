@@ -13,6 +13,7 @@ import {
   PREVIS_MOVES,
   previsCameraAt,
   previsSubjectAt,
+  previsThumbAt,
   ProjectFile,
   rampProgress,
   resolveTimeline,
@@ -78,6 +79,16 @@ describe("previs camera-move presets", () => {
     expect(previsSubjectAt(s, 0)).toEqual({ x: -1, z: 2 });
     expect(previsSubjectAt(s, 0.5)).toEqual({ x: 0, z: 0 });
     expect(previsSubjectAt(s, 1)).toEqual({ x: 1, z: -2 });
+  });
+
+  it("provides a valid resting thumbnail progress for every preset", () => {
+    for (const preset of PREVIS_MOVES) {
+      const u = previsThumbAt(preset);
+      expect(u).toBeGreaterThanOrEqual(0);
+      expect(u).toBeLessThanOrEqual(1);
+    }
+    expect(previsThumbAt("wipe-reveal")).toBeGreaterThan(0.5);
+    expect(previsThumbAt("unknown-id")).toBeCloseTo(0.42, 2);
   });
 });
 
