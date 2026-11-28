@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { MakeAsk, MakeJob } from "@beatsheet/engine";
 import { aspectOf, blockoutDuration, cameraOfTake, CATALOG, castOf, commercialWords, removeShotTake, resolveTimeline, showTake, type Asset, type Choices, type Fit, type FitOk, type MakeOp, type Quality, type Shot } from "@beatsheet/schema";
+import { useDismissedJobs } from "../dismissedJobs";
 import { hideBroken, posterUrl, proxyUrl, round2 } from "../lib";
 import { unknownCastMentions } from "../mentions";
 import { actions, useProject, useStore } from "../store";
@@ -99,24 +100,33 @@ export function useMake(match: (j: MakeJob) => boolean, key: string) {
       setSending(false);
     }
   };
+  const { isDismissed, dismiss } = useDismissedJobs(projectId);
   const hourAgo = new Date(Date.now() - 3600_000).toISOString();
-  const failed = jobs.filter((j) => j.status === "failed" && j.updatedAt >= hourAgo).at(-1);
+  const failed = jobs.filter((j) => j.status === "failed" && j.updatedAt >= hourAgo && !isDismissed(j)).at(-1);
   // A failed take the service had made is fetched again for nothing; one it never made is asked for again.
   const retry = async (job: MakeJob) => {
     await fetch(`/api/projects/${projectId}/jobs/retry`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids: [job.id] }) });
     await refresh();
   };
-  return { going, make, sending, error, failed, retry };
+  return { going, make, sending, error, failed, retry, dismiss };
 }
 
-/** A failed take or sheet: why, and trying it again (free when the service had made it). */
-export function Failed({ job, what, retry }: { job: MakeJob; what: string; retry: (j: MakeJob) => void }) {
+/** A failed take or sheet: why, trying it again (free when the service had made it), and dismissing it. */
+export function Failed({ job, what, retry, dismiss }: { job: MakeJob; what: string; retry: (j: MakeJob) => void; dismiss?: (j: MakeJob) => void }) {
   return (
     <p className="warn small">
       {what} didn't come: {job.error}{" "}
       <button className="link small" onClick={() => retry(job)} title={job.charged ? "It was made; fetch it again, at no cost" : "Ask for it again; it costs again"}>
         Try again{job.charged ? "" : ` · ${money(job.usd)}`}
       </button>
+      {dismiss && (
+        <>
+          {" · "}
+          <button className="link small" onClick={() => dismiss(job)} title="Dismiss this error">
+            Dismiss
+          </button>
+        </>
+      )}
     </p>
   );
 }
@@ -251,7 +261,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
             : {}
         : { camera: "none" }
       : {};
-  const { going, make, sending, error, failed, retry } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
+  const { going, make, sending, error, failed, retry, dismiss } = useMake((j) => j.shot === shot.id && (!j.cut || j.cut === cutId), `${shot.id}:${cutId}`);
   const { choices, problem, absent } = useChoices({ op, shot: shot.id, cut: cutId, count, seconds: length, start, end: op === "video" ? (end ?? "none") : undefined, quality: op === "video" ? quality : undefined, ...drive, ...lipsync, ...camera });
   // Another take comes from the model that made the one showing (or the last of its kind), until another is picked.
   const model = picked ?? pickOfTake(choices, [showing, ...[...shown].reverse()].find((a) => a?.kind === op));
@@ -634,7 +644,7 @@ export function Takes({ shot, seconds, strip = true, onCamera }: { shot: Shot; s
         {strip && going.length > 0 && <span className="dim small">{going.length} on the way</span>}
       </div>
       {(error || problem) && <p className="warn small">{error || problem}</p>}
-      {failed && !error && <Failed job={failed} what="A take" retry={(j) => void retry(j)} />}
+      {failed && !error && <Failed job={failed} what="A take" retry={(j) => void retry(j)} dismiss={dismiss} />}
     </div>
   );
 }

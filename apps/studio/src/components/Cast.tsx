@@ -337,7 +337,7 @@ function CastPanel({ id }: { id: string }) {
   const looks = [PLAIN, ...(m?.variants ?? []).map((v) => v.id)];
   const look = lookAsked !== undefined && looks.includes(lookAsked) ? lookAsked : looks.reduce((best, l) => ((perLook.get(l) ?? 0) > (perLook.get(best) ?? 0) ? l : best), PLAIN);
   const sheet = look ? `${id}/${look}` : id;
-  const { going, make, sending, error, failed, retry } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
+  const { going, make, sending, error, failed, retry, dismiss } = useMake((j) => !!j.sheet && (j.sheet === id || j.sheet.startsWith(`${id}/`)), `sheet:${id}`);
   const { choices, problem } = useChoices({ op: "image", sheet, count, ...(m?.kind === "wardrobe" ? { sheetKind: "outfit-sheet" } : {}) });
   const activePicks = (picks ?? (choices?.auto ? [choices.auto.model] : [])).filter((x) => !!fitOf(choices, x));
   const fits = activePicks.map((x) => fitOf(choices, x)!);
@@ -698,6 +698,7 @@ function CastPanel({ id }: { id: string }) {
                     : "A sheet"
             }
             retry={(j) => void retry(j)}
+            dismiss={dismiss}
           />
         )}
         {variant && (

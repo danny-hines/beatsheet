@@ -22,6 +22,7 @@ import {
   type Quality,
   type Shot,
 } from "@beatsheet/schema";
+import { useDismissedJobs } from "../dismissedJobs";
 import { ASSET_DRAG, FIDELITY_LABEL, hideBroken, posterUrl, projectFileUrl, proxyUrl, putInShot, round2, timeAgo } from "../lib";
 import { actions, useProject, useStore, useTimeline } from "../store";
 import { BlockoutPlayer } from "./Blockout";
@@ -484,7 +485,7 @@ export function ShotPage({
   const [tweakNote, setTweakNote] = useState("");
   const [rerolling, setRerolling] = useState(false);
   const [rerollError, setRerollError] = useState("");
-  const [dismissedFailed, setDismissedFailed] = useState<string[]>([]);
+  const { isDismissed, dismiss: dismissFailed } = useDismissedJobs(projectId);
 
   // A take that's just arrived is the one to look at, and stays pinned in the tray so freshly made stills never hide themselves.
   const last = takes.at(-1)?.id;
@@ -509,7 +510,7 @@ export function ShotPage({
   const goingStills = going.filter((j) => j.op === "image");
   const hourAgo = new Date(Date.now() - 3600_000).toISOString();
   const failedJobs = shotJobs
-    .filter((j) => j.status === "failed" && j.updatedAt >= hourAgo && !dismissedFailed.includes(j.id))
+    .filter((j) => j.status === "failed" && j.updatedAt >= hourAgo && !isDismissed(j))
     .sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1));
   const list = shotsToMake(p);
   const at = list.indexOf(shot);
@@ -787,7 +788,7 @@ export function ShotPage({
                     )}
                     <button
                       className="icon"
-                      onClick={() => setDismissedFailed((prev) => [...prev, j.id])}
+                      onClick={() => dismissFailed(j)}
                       title="Dismiss this error"
                       aria-label="Dismiss error"
                     >
