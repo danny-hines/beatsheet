@@ -14,5 +14,10 @@ apps/desktop/release
 # ffmpeg built from source for the app to carry (scripts/build-ffmpeg.sh), with the sources it was built from
 apps/desktop/vendor
 
+# Generated reports stay local
+reports/
 # Original research notes that name people stay on this machine
 research_notes/private/
+
+# Antigravity ACP server unpacks built-in system skills into its workspace cwd
+skills/system/
