@@ -29,6 +29,7 @@ import { BlockoutPlayer } from "./Blockout";
 import type { CreateLaunch } from "./CreatePage";
 import { GuideCompare, guideOfAsset } from "./GuideCompare";
 import { Icon } from "./Icon";
+import { MentionField } from "./MentionField";
 import { AskBlockoutDialog, formatBlockoutAgentPrompt, PrevisPresetPicker } from "./PrevisPicker";
 import { NotesFor } from "./Side";
 import { madeWith, modelLabel, money, pickOf, pickTake, removeTake } from "./Takes";
@@ -968,11 +969,11 @@ export function ShotPage({
                   />
                 </div>
                 <div className="make-row">
-                  <input
+                  <MentionField
                     className="slot-tweak-input"
                     value={tweakNote}
-                    onChange={(e) => setTweakNote(e.target.value)}
-                    placeholder='Quick tweak (e.g. "slower orbit")…'
+                    onChange={setTweakNote}
+                    placeholder='Quick tweak (e.g. "slower orbit", @cast)…'
                     onKeyDown={(e) => e.key === "Enter" && tweakNote.trim() && askAgentBlockoutTweak(tweakNote)}
                   />
                   <button className="small" disabled={!tweakNote.trim()} onClick={() => askAgentBlockoutTweak(tweakNote)}>

@@ -217,6 +217,7 @@ export function MentionField({
       }
       if (e.key === "Escape") {
         e.preventDefault();
+        e.stopPropagation();
         if (mentionKey) setDismissedKey(mentionKey);
         return;
       }

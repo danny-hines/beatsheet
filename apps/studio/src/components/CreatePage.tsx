@@ -815,11 +815,11 @@ export function CreatePage({
                         </button>
                       </div>
                       <div className="make-row">
-                        <input
+                        <MentionField
                           className="slot-tweak-input"
                           value={tweakText}
-                          onChange={(e) => setTweakText(e.target.value)}
-                          placeholder='Quick tweak (e.g. "slower camera move")…'
+                          onChange={setTweakText}
+                          placeholder='Quick tweak (e.g. "slower camera move", type @ for cast)…'
                           onKeyDown={(e) => e.key === "Enter" && tweakText.trim() && askAgentBlockoutTweak()}
                         />
                         <button className="small" disabled={!tweakText.trim()} onClick={askAgentBlockoutTweak}>

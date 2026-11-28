@@ -7,6 +7,7 @@ import { getCachedPrevisPoster, renderPrevisPoster, renderPrevisPosters, startPr
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "./Icon";
+import { MentionField } from "./MentionField";
 
 const FAMILY_LABELS: Record<PrevisFamily, string> = {
   people: "People",
@@ -395,7 +396,7 @@ export function AskBlockoutDialog({
 }) {
   const [brief, setBrief] = useState(initialBrief);
   const [presetId, setPresetId] = useState<string | undefined>(initialPreset);
-  const areaRef = useRef<HTMLTextAreaElement>(null);
+  const areaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -412,6 +413,7 @@ export function AskBlockoutDialog({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if (e.key === "Escape") {
         e.preventDefault();
         onClose();
@@ -449,14 +451,15 @@ export function AskBlockoutDialog({
         </p>
 
         <label className="blockout-brief-field">
-          <span className="small">Blockout description & camera notes</span>
-          <textarea
-            ref={areaRef}
+          <span className="small">Blockout description & camera notes <span className="dim">(type @ for cast & sets)</span></span>
+          <MentionField
+            multiline
+            inputRef={areaRef}
             className="blockout-brief-textarea"
             rows={5}
             value={brief}
-            onChange={(e) => setBrief(e.target.value)}
-            placeholder='e.g. "Start tight on Maya’s hands opening the box, then smoothly pull back and orbit left to reveal the whole room."'
+            onChange={setBrief}
+            placeholder='e.g. "Start tight on @maya opening the box, then smoothly pull back and orbit left to reveal the whole room."'
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                 e.preventDefault();
