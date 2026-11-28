@@ -6,8 +6,9 @@
  *   finishes. Output comes back as a signed URL (`urls[0]`) or authenticated content endpoint (`/videos/{id}/content`),
  *   with exact `usage.cost` replacing the catalog's estimate.
  *
- * OpenRouter has no separate file-upload endpoint: local pictures, clips and audio go inline as base64 data URLs in
- * `frame_images` or `input_references`. The key is read inside the engine and never passes through the agent.
+ * OpenRouter has no video/audio upload endpoint: local pictures go inline as base64 data URLs in `frame_images` or
+ * `input_references`, while `video_url` and `audio_url` require public HTTPS URLs (staged temporarily via a connected
+ * provider's CDN in `make.ts`). The key is read inside the engine and never passes through the agent.
  *
  * What to know about it:
  * - There is no `Idempotency-Key` on `POST /api/v1/videos`: a submit that timed out waiting for an answer isn't retried
@@ -88,7 +89,7 @@ const TYPES: Record<string, string> = {
 };
 const typeOf = (file: string) => TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
 
-/** Encodes a local picture, clip or audio file as a base64 data URL for OpenRouter's inline inputs. */
+/** Encodes a local picture as a base64 data URL for OpenRouter's inline image inputs. */
 export const openrouterDataUrl = (file: string) => `data:${typeOf(file)};base64,${readFileSync(file).toString("base64")}`;
 
 /** Exact cost in USD from OpenRouter's `usage` object when present. */

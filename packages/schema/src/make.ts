@@ -41,6 +41,10 @@ export type PackedRef =
   | { kind: "asset"; asset: string; role?: CastRefRole; label?: string }
   | { kind: "composite"; face: string; outfit: string; mode: "portrait-outfit" | "face360-outfit"; role: "composite"; label?: string };
 
+/** Services whose ephemeral upload endpoint returns a public HTTPS URL usable by providers without file uploads (OpenRouter). */
+export const HTTPS_VIDEO_HOSTS = ["fal", "higgsfield", "tein"] as const;
+export const HTTPS_AUDIO_HOSTS = ["fal", "higgsfield"] as const;
+
 /** One place a model runs, and what it costs there. */
 export type ModelRoute = {
   /** The service, by its id in the engine's services list: "fal". */
@@ -65,6 +69,12 @@ export type ModelRoute = {
   lengths?: number[] | { min: number; max: number };
   /** What it takes here, when that's less than the model takes elsewhere: no end frame, fewer references, tighter or no audio references. */
   takes?: RouteTakes;
+  /**
+   * Services that can temporarily stage local video/audio to a public HTTPS URL when this route doesn't accept inline
+   * uploads or data URLs for them (OpenRouter). Checked in `fitModel` whenever the request carries a reference video
+   * (`camera` clip/video blockout) or audio (`audioRefs` / `speech`).
+   */
+  stageMedia?: { video?: readonly string[]; audio?: readonly string[] };
   /** Optional per-route override for how decoupled character face + outfit ingredients are packaged. */
   castPack?: CastPackStrategy;
   /** Roughly how long one take takes here, when that isn't the model's usual. */
@@ -649,10 +659,26 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const routes = timed.filter((x): x is { r: ModelRoute; seconds?: number } => !("why" in x));
   if (!routes.length) return no((timed[0] as { why: Why }).why);
 
+  const needsVideo = shape === "camera";
+  const needsAudio = !!audioRefs?.length || !!req.speech;
+  const hostLabel = (id: string) => services[id]?.label ?? ({ fal: "fal", higgsfield: "Higgsfield", tein: "Tein", runway: "Runway" }[id] ?? id);
+  const stagingBlock = (r: ModelRoute): { hosts: string[]; kind: "video" | "audio" | "both" } | undefined => {
+    const vHosts = needsVideo && r.stageMedia?.video?.length ? r.stageMedia.video : undefined;
+    const aHosts = needsAudio && r.stageMedia?.audio?.length ? r.stageMedia.audio : undefined;
+    const needV = !!vHosts && !vHosts.some((h) => services[h]?.state === "ready");
+    const needA = !!aHosts && !aHosts.some((h) => services[h]?.state === "ready");
+    if (!needV && !needA) return undefined;
+    if (needV && needA) {
+      const both = vHosts!.filter((h) => aHosts!.includes(h));
+      return { hosts: both.length ? both : [...new Set([...vHosts!, ...aHosts!])], kind: "both" };
+    }
+    return needV ? { hosts: [...vHosts!], kind: "video" } : { hosts: [...aHosts!], kind: "audio" };
+  };
+
   const unusable = (r: ModelRoute) => state(r).endpoints?.[r.endpoints[shape]!];
   const rank = (via: string) => (OWN_HARDWARE.includes(via) ? 0 : preferred && via === preferred ? 1 : 2);
   const ready = routes
-    .filter(({ r }) => state(r).state === "ready" && !unusable(r))
+    .filter(({ r }) => state(r).state === "ready" && !unusable(r) && !stagingBlock(r))
     .map(({ r, seconds }) => ({ r, seconds, usd: costOn(r, req.op, seconds, count, req.quality, followed), balance: (state(r) as { balanceUsd?: number }).balanceUsd }))
     .sort((a, b) => rank(a.r.via) - rank(b.r.via) || (a.usd ?? Infinity) - (b.usd ?? Infinity));
   const affordable = ready.filter((x) => x.balance === undefined || x.usd === undefined || x.usd <= x.balance);
@@ -688,9 +714,37 @@ export function fitModel(model: CatalogModel, req: MakeRequest, services: Record
   const blocked = routes.filter(({ r }) => state(r).state === "ready" && unusable(r));
   const install = blocked.find(({ r }) => unusable(r)!.kind === "install");
   if (install) return no({ kind: "install", reason: unusable(install.r)!.reason, service: install.r.via });
+  // Connected, but this route needs another connected provider's CDN to host a public HTTPS URL for video or audio.
+  const missing = routes.filter(({ r }) => state(r).state === "missing");
+  const stageBlocked = routes
+    .filter(({ r }) => state(r).state === "ready" && !unusable(r))
+    .map(({ r }) => ({ r, block: stagingBlock(r) }))
+    .filter((x): x is { r: ModelRoute; block: { hosts: string[]; kind: "video" | "audio" | "both" } } => !!x.block);
+  if (stageBlocked.length) {
+    const first = stageBlocked[0]!;
+    const b = first.block;
+    const where = state(first.r).label;
+    const direct = [...new Set(missing.map(({ r }) => r.via).filter((id) => !b.hosts.includes(id)))];
+    if (!direct.length && b.hosts.every((h) => services[h]?.state === "failing")) {
+      const s = services[b.hosts[0]!] as { label: string; detail: string };
+      const what = b.kind === "video" ? "reference video" : b.kind === "audio" ? "audio" : "reference video and audio";
+      return no({ kind: "failing", reason: `${where} stages ${what} via ${s.label}, which is failing: ${s.detail}`, service: b.hosts[0]! });
+    }
+    const need = b.kind === "video" ? "an HTTPS URL for reference video" : b.kind === "audio" ? "an HTTPS URL for audio" : "HTTPS URLs for reference video and audio";
+    const it = b.kind === "both" ? "them" : "it";
+    const alts = [
+      ...(direct.length ? [`${list(direct.map(hostLabel))} to run directly`] : []),
+      ...(b.kind === "video" && isCameraBlockout(req.camera) ? ["switch to 16-frame sheet mode"] : []),
+    ];
+    const tail = alts.length ? (direct.length ? `, or ${alts.join(", or ")}` : ` (or ${alts[0]})`) : "";
+    return no({
+      kind: "connect",
+      reason: `${where} needs ${need}: connect ${list(b.hosts.map(hostLabel))} to stage ${it}${tail}`,
+      services: [...b.hosts, ...direct],
+    });
+  }
   // Said with why, when the routes that refuse real people were ruled out.
   const runs = asked.length > there.length ? "With real people in it, runs only on" : "Runs on";
-  const missing = routes.filter(({ r }) => state(r).state === "missing");
   if (missing.length) {
     // One that isn't connected may say why this computer couldn't run it either, so the person connects another.
     const hints = [...new Set(missing.flatMap(({ r }) => unusable(r)?.reason ?? []))];

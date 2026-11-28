@@ -31,6 +31,8 @@ import {
   FIDELITY,
   fitModel,
   hasTimelineAudioRef,
+  HTTPS_AUDIO_HOSTS,
+  HTTPS_VIDEO_HOSTS,
   isCameraBlockout,
   isCameraSheet,
   missingFromFrames,
@@ -2039,10 +2041,61 @@ async function stepHiggsfield(projectId: string, job: MakeJob, key: string) {
   await finish(projectId, job, { url: s.url });
 }
 
+type OpenRouterStageHost = { host: "fal" | "higgsfield" | "tein"; key: string };
+
+/** Connected providers whose ephemeral upload API returns a public HTTPS URL usable by OpenRouter. */
+async function openRouterMediaHosts(kind: "video" | "audio"): Promise<OpenRouterStageHost[]> {
+  const saved = readSettings().services;
+  const candidates = (kind === "video" ? HTTPS_VIDEO_HOSTS : HTTPS_AUDIO_HOSTS) as readonly ("fal" | "higgsfield" | "tein")[];
+  const out: OpenRouterStageHost[] = [];
+  for (const host of candidates) {
+    if (!saved[host]) continue;
+    const key = await getSecret(host);
+    if (key) out.push({ host, key });
+  }
+  return out;
+}
+
+function missingOpenRouterHostError(kind: "video" | "audio", blockout?: boolean): FalError {
+  if (kind === "video") {
+    return new FalError(
+      `OpenRouter needs an HTTPS URL for reference video: connect fal, Higgsfield or Tein in Settings → Media services so beatsheet can stage the clip${blockout ? " (or switch the blockout to 16-frame sheet mode)" : ""}.`,
+      true,
+    );
+  }
+  return new FalError("OpenRouter needs an HTTPS URL for audio: connect fal or Higgsfield in Settings → Media services so beatsheet can stage it.", true);
+}
+
+/**
+ * Stages a local video or audio file to a temporary public HTTPS URL via a connected provider's CDN (fal, Higgsfield,
+ * or Tein for video), falling through to the next connected host if one upload fails.
+ */
+async function stageOpenRouterMedia(kind: "video" | "audio", file: string, hosts?: OpenRouterStageHost[], blockout?: boolean): Promise<string> {
+  const available = hosts ?? (await openRouterMediaHosts(kind));
+  if (!available.length) throw missingOpenRouterHostError(kind, blockout);
+  let lastErr: unknown;
+  let allFinal = true;
+  for (const { host, key } of available) {
+    // Skip Tein on fallback if the clip was encoded above Tein's 5.5 MB upload limit.
+    if (host === "tein" && lastErr && statSync(file).size > CAMERA_BYTES.tein!.most) continue;
+    try {
+      const url = host === "fal" ? await falUpload(key, file) : host === "higgsfield" ? await higgsfieldUpload(key, file) : await teinUpload(key, file);
+      if (!/^https?:\/\//i.test(url)) throw new FalError(`${host} returned a non-HTTP upload URL`, true);
+      return url;
+    } catch (err) {
+      lastErr = err;
+      if (!(err instanceof FalError) || !err.final) allFinal = false;
+    }
+  }
+  const detail = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  throw new FalError(`Couldn't stage ${kind === "video" ? "reference video" : "audio"} for OpenRouter (${detail})`, allFinal);
+}
+
 /**
  * A job on OpenRouter (openrouter.ts): stills answer synchronously in one request (saved immediately like direct.ts),
- * while video starts an async job followed until completion. Local inputs go inline as base64 data URLs, and
- * OpenRouter's exact `usage.cost` replaces the catalog estimate.
+ * while video starts an async job followed until completion. Local pictures go inline as base64 data URLs, while
+ * reference video (`video_url`) and audio (`audio_url`) require public HTTPS URLs and are staged temporarily via a
+ * connected provider's CDN (fal, Higgsfield, or Tein for video). OpenRouter's exact `usage.cost` replaces the estimate.
  */
 async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
   if (job.op === "image") {
@@ -2091,14 +2144,28 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
       return a;
     };
     const encode = (id: string) => openrouterDataUrl(assetPath(project, dir, picture(id)));
+    const needsVideoStage = !!r.camera && !isCameraSheet(r.camera);
+    const needsAudioStage = !!r.audioRefs?.length || !!r.speech;
+    // Check that an HTTPS staging host is available before spending time rendering a blockout or mixing audio.
+    const videoHosts = needsVideoStage ? await openRouterMediaHosts("video") : undefined;
+    if (needsVideoStage && !videoHosts!.length) throw missingOpenRouterHostError("video", isCameraBlockout(r.camera));
+    const audioHosts = needsAudioStage ? await openRouterMediaHosts("audio") : undefined;
+    if (needsAudioStage && !audioHosts!.length) throw missingOpenRouterHostError("audio");
+    const videoLimit =
+      needsVideoStage && !videoHosts!.some((h) => h.host === "fal" || h.host === "higgsfield")
+        ? { most: CAMERA_BYTES.tein!.most, said: "Tein (staging for OpenRouter) carries" }
+        : undefined;
     // Give wide/tall-only models (Gemini Omni) the board's orientation even when aspect was left to the start frame.
     const first = r.start ? picture(r.start) : undefined;
     const format = project.formats[0]!;
     const boardAspect = first && (first.width && first.height ? aspectOf(first.width, first.height) : aspectOf(format.width, format.height));
     // Standard video models drop references when a start frame is present (frame_images takes precedence on OpenRouter).
     const baseRefs = r.start ? undefined : await prepareJobRefs(project, dir, r, (file) => openrouterDataUrl(file));
-    const cam = await cameraArgs(projectId, project, dir, job, (f) => openrouterDataUrl(f), baseRefs);
-    const aud = await audioRefArgs(project, dir, job, (f) => openrouterDataUrl(f), ".mp3");
+    const camUpload = needsVideoStage
+      ? (f: string) => stageOpenRouterMedia("video", f, videoHosts, isCameraBlockout(r.camera))
+      : (f: string) => openrouterDataUrl(f);
+    const cam = await cameraArgs(projectId, project, dir, job, camUpload, baseRefs, videoLimit);
+    const aud = await audioRefArgs(project, dir, job, (f) => stageOpenRouterMedia("audio", f, audioHosts), ".mp3");
     const body = openrouterVideoInput(job.shape, job.endpoint, {
       prompt: cam.prompt,
       quality: job.quality,
@@ -2108,7 +2175,7 @@ async function stepOpenRouter(projectId: string, job: MakeJob, key: string) {
       start: r.start && encode(r.start),
       end: r.end && encode(r.end),
       refs: cam.refs,
-      audio: r.speech && openrouterDataUrl(await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.mp3`))),
+      audio: r.speech && (await stageOpenRouterMedia("audio", await speechSound(project, dir, job, join(dir, ".cache", "speech", `${job.id}.mp3`)), audioHosts)),
       audioRefs: aud.audioRefs,
       muteAudio: aud.muteAudio,
       camera: cam.camera,
@@ -2141,8 +2208,8 @@ const CAMERA_BYTES: Record<string, { most: number; said: string }> = {
   runway: { most: 200 * 1024 * 1024, said: "Runway takes" },
   // Higgsfield's pages give no limit for a reference video; this is the most its other video inputs are said to take.
   higgsfield: { most: 200 * 1024 * 1024, said: "beatsheet sends Higgsfield" },
-  // OpenRouter takes inline base64 data URLs in JSON; keep clips compact to stay under its request size limit.
-  openrouter: { most: 5.5 * 1024 * 1024, said: "beatsheet sends OpenRouter" },
+  // OpenRouter takes a public HTTPS URL staged through another provider (BytePlus Seedance caps reference video at 50 MB).
+  openrouter: { most: 50 * 1024 * 1024, said: "OpenRouter takes" },
 };
 /** The fewest pixels Seedance takes in a reference video, and the frame rates it takes. */
 const CAMERA_PIXELS = 407_696;
@@ -2188,6 +2255,7 @@ async function cameraArgs(
   job: MakeJob,
   upload: (file: string) => Promise<string> | string,
   refs: string[] | undefined,
+  limit?: { most: number; said: string },
 ): Promise<{ prompt: string; refs: string[] | undefined; camera: { url: string; blockout: boolean; kind?: CameraKind } | undefined }> {
   const r = job.request;
   const basePrompt = r.sent ?? r.prompt;
@@ -2196,7 +2264,7 @@ async function cameraArgs(
     const sheetUrl = await upload(await blockoutSheet(projectId, dir, job));
     return { prompt: `${basePrompt}${SHEET_LINE}`, refs: [sheetUrl, ...(refs ?? [])], camera: undefined };
   }
-  const clipUrl = await upload(await cameraClip(projectId, project, dir, job));
+  const clipUrl = await upload(await cameraClip(projectId, project, dir, job, limit));
   return { prompt: basePrompt, refs, camera: { url: clipUrl, blockout: isCameraBlockout(r.camera), ...(r.cameraKind ? { kind: r.cameraKind } : {}) } };
 }
 
@@ -2205,7 +2273,7 @@ async function cameraArgs(
  * or legacy cut) is rendered first, transcoded to what Seedance takes (H.264 MP4, 24–60 fps, silent, within size
  * limits), and saved as a content-addressed snapshot in `made/blockouts/<hash>.mp4` with temp cache files cleaned up.
  */
-async function cameraClip(projectId: string, project: Project, dir: string, job: MakeJob): Promise<string> {
+async function cameraClip(projectId: string, project: Project, dir: string, job: MakeJob, limit?: { most: number; said: string }): Promise<string> {
   const c = job.request.camera!;
   const work = join(dir, ".cache", "camera");
   mkdirSync(work, { recursive: true });
@@ -2250,7 +2318,7 @@ async function cameraClip(projectId: string, project: Project, dir: string, job:
   const size = cameraSize(info.width, info.height);
   const fps = Math.min(CAMERA_FPS.max, Math.max(CAMERA_FPS.min, Math.round(info.fps ?? 30)));
   const file = join(work, `${job.id}.mp4`);
-  const { most, said } = CAMERA_BYTES[job.route] ?? CAMERA_BYTES.tein!;
+  const { most, said } = limit ?? CAMERA_BYTES[job.route] ?? CAMERA_BYTES.tein!;
   try {
     for (const crf of [20, 28, 34]) {
       await exec("ffmpeg", ["-v", "error", "-y", "-ss", from.toFixed(3), "-t", (to - from).toFixed(3), "-i", src, "-an", "-vf", `scale=${size.width}:${size.height}:flags=lanczos,fps=${fps}`, "-c:v", "libx264", "-crf", String(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart", file]);

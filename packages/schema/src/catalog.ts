@@ -24,7 +24,7 @@
  * MAI-Image-2.7, FLUX 3 Image and Seedream 5.5), priced at upstream list rates. None has made a take for real yet.
  * OpenRouter returns the exact charge in `usage.cost`, which the take records in place of the estimate here.
  */
-import type { CatalogModel } from "./make.ts";
+import { HTTPS_AUDIO_HOSTS, HTTPS_VIDEO_HOSTS, type CatalogModel } from "./make.ts";
 
 export const CATALOG: CatalogModel[] = [
   {
@@ -648,7 +648,8 @@ export const CATALOG: CatalogModel[] = [
       },
       // OpenRouter: BytePlus token rates ($0.0000107/token at 480p, $0.0000117 at 1080p; with video input, $0.0000064
       // at 480p and $0.000007 at 1080p — half of fal's rates). Whether it draws real people there isn't said, so it's
-      // taken not to. The take records OpenRouter's usage.cost.
+      // taken not to. OpenRouter requires public HTTPS URLs for video_url and audio_url references, so beatsheet stages
+      // local clips/audio temporarily via a connected fal, Higgsfield or Tein account. The take records usage.cost.
       {
         via: "openrouter",
         shape: "openrouter-seedance-2.5",
@@ -660,6 +661,7 @@ export const CATALOG: CatalogModel[] = [
         },
         price: { perSecond: 0.1103, finalPerSecond: 0.582, camera: { perSecond: 0.066, finalPerSecond: 0.3482 } },
         takes: { audio: { max: 3, minSeconds: 2, maxSeconds: 15, maxTotalSeconds: 15 } },
+        stageMedia: { video: HTTPS_VIDEO_HOSTS, audio: HTTPS_AUDIO_HOSTS },
       },
     ],
   },
@@ -677,7 +679,7 @@ export const CATALOG: CatalogModel[] = [
     refusesRealPeople: true,
     wait: 120,
     // OpenRouter: bytedance/seedance-2.5-flash ($0.000007/token at 480p, $0.0000043 with video input — about 65% of
-    // Seedance 2.5's 480p rate). The take records OpenRouter's usage.cost.
+    // Seedance 2.5's 480p rate). Reference video/audio require public HTTPS URLs (staged via fal, Higgsfield or Tein).
     routes: [
       {
         via: "openrouter",
@@ -689,6 +691,7 @@ export const CATALOG: CatalogModel[] = [
           camera: "bytedance/seedance-2.5-flash",
         },
         price: { perSecond: 0.0721, camera: { perSecond: 0.0443 } },
+        stageMedia: { video: HTTPS_VIDEO_HOSTS, audio: HTTPS_AUDIO_HOSTS },
       },
     ],
   },
@@ -706,7 +709,7 @@ export const CATALOG: CatalogModel[] = [
     refusesRealPeople: true,
     wait: 90,
     // OpenRouter: bytedance/seedance-2.0-mini ($0.0000035/token at 480p, $0.0000021 with video input — half of
-    // Seedance 2.5 Flash). The take records OpenRouter's usage.cost.
+    // Seedance 2.5 Flash). Reference video/audio require public HTTPS URLs (staged via fal, Higgsfield or Tein).
     routes: [
       {
         via: "openrouter",
@@ -718,6 +721,7 @@ export const CATALOG: CatalogModel[] = [
           camera: "bytedance/seedance-2.0-mini",
         },
         price: { perSecond: 0.0361, camera: { perSecond: 0.0216 } },
+        stageMedia: { video: HTTPS_VIDEO_HOSTS, audio: HTTPS_AUDIO_HOSTS },
       },
     ],
   },
@@ -1010,7 +1014,8 @@ export const CATALOG: CatalogModel[] = [
     aspects: ["any"],
     wait: 120,
     // OpenRouter: heygen/heygen-avatar-6-turbo ($0.05/s at 1080p, $0.0875/s at 2K; duration follows the supplied audio).
-    routes: [{ via: "openrouter", shape: "openrouter-heygen-avatar", endpoints: { talk: "heygen/heygen-avatar-6-turbo" }, price: { perSecond: 0.05 } }],
+    // OpenRouter requires an HTTPS URL for audio_url, staged via fal or Higgsfield.
+    routes: [{ via: "openrouter", shape: "openrouter-heygen-avatar", endpoints: { talk: "heygen/heygen-avatar-6-turbo" }, price: { perSecond: 0.05 }, stageMedia: { audio: HTTPS_AUDIO_HOSTS } }],
   },
   {
     id: "heygen-avatar-6",
@@ -1024,7 +1029,8 @@ export const CATALOG: CatalogModel[] = [
     aspects: ["any"],
     wait: 180,
     // OpenRouter: heygen/heygen-avatar-6 ($0.10/s at 1080p, $0.145/s at 2K; duration follows the supplied audio).
-    routes: [{ via: "openrouter", shape: "openrouter-heygen-avatar", endpoints: { talk: "heygen/heygen-avatar-6" }, price: { perSecond: 0.1 } }],
+    // OpenRouter requires an HTTPS URL for audio_url, staged via fal or Higgsfield.
+    routes: [{ via: "openrouter", shape: "openrouter-heygen-avatar", endpoints: { talk: "heygen/heygen-avatar-6" }, price: { perSecond: 0.1 }, stageMedia: { audio: HTTPS_AUDIO_HOSTS } }],
   },
   {
     id: "sync-3",

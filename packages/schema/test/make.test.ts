@@ -1305,7 +1305,11 @@ describe("keeping a clip's camera", () => {
 
 describe("OpenRouter catalog routes and curated models", () => {
   const openrouter = { openrouter: { label: "OpenRouter", state: "ready" } } satisfies Record<string, ServiceState>;
+  const openrouterWithFal: Record<string, ServiceState> = { ...openrouter, fal: { label: "fal", state: "ready" } };
+  const openrouterWithTein: Record<string, ServiceState> = { ...openrouter, tein: { label: "Tein", state: "ready" } };
+  const openrouterWithRunway: Record<string, ServiceState> = { ...openrouter, runway: { label: "Runway", state: "ready" } };
   const camera = { cut: "blockout", format: "vertical", from: 0, to: 7 };
+  const cameraSheet = { cut: "blockout", format: "vertical", from: 0, to: 7, mode: "sheet" as const };
 
   it("offers hosted stills including FLUX 3 Image Klein and Seedream 5.5, and enforces Nano Banana's 3-ref cap", () => {
     const klein = CATALOG.find((m) => m.id === "flux3-klein")!;
@@ -1340,18 +1344,67 @@ describe("OpenRouter catalog routes and curated models", () => {
     });
   });
 
-  it("prices Seedance 2.5 and Seedance 2.5 Flash at BytePlus token rates, including camera blockouts, and refuses real people", () => {
+  it("prices Seedance 2.5 and Seedance 2.5 Flash at BytePlus token rates, gates reference video/audio on HTTPS staging hosts, and refuses real people", () => {
     const seedance = CATALOG.find((m) => m.id === "seedance-2.5")!;
     const flash = CATALOG.find((m) => m.id === "seedance-2.5-flash")!;
     const ask = { op: "video" as const, prompt: "x", camera, seconds: 7, aspect: "9:16" };
-    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, openrouter);
+
+    // Without fal/Higgsfield/Tein to stage an HTTPS video URL, OpenRouter explains the requirement (while 16-frame sheet still works).
+    expect(fitModel(seedance, { ...ask, refs: ["board"] }, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield", "tein", "runway"], reason: expect.stringMatching(/HTTPS URL for reference video.*16-frame sheet/) },
+    });
+    expect(fitModel(seedance, { ...ask, via: "openrouter" }, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield", "tein"], reason: expect.stringContaining("16-frame sheet") },
+    });
+    expect(fitModel(flash, { ...ask, refs: ["board"] }, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield", "tein"], reason: expect.stringContaining("HTTPS URL for reference video") },
+    });
+    // 16-frame contact sheet sends an inline JPEG image, so it runs on OpenRouter alone.
+    expect(fitModel(flash, { op: "video", prompt: "x", camera: cameraSheet, refs: ["board"], seconds: 7, aspect: "9:16" }, openrouter)).toMatchObject({
+      ok: true,
+      route: "openrouter",
+      endpoint: "bytedance/seedance-2.5-flash",
+      seconds: 7,
+    });
+    // Runway returns runway:// (not HTTPS), so Seedance 2.5 falls back to Runway directly when paired with OpenRouter.
+    expect(fitModel(seedance, { ...ask, refs: ["board"] }, openrouterWithRunway)).toMatchObject({ ok: true, route: "runway", endpoint: "seedance2_5" });
+    expect(fitModel(seedance, { ...ask, refs: ["board"], via: "openrouter" }, openrouterWithRunway)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield", "tein"] },
+    });
+
+    // With a connected HTTPS staging host (fal or Tein), OpenRouter wins at BytePlus token rates.
+    const rough = fitModel(seedance, { ...ask, refs: ["board"] }, openrouterWithFal);
     expect(rough).toMatchObject({ ok: true, route: "openrouter", endpoint: "bytedance/seedance-2.5", seconds: 7 });
     expect(rough.ok && rough.usd).toBeCloseTo(14 * 0.066, 3);
-    const final = fitModel(seedance, { ...ask, quality: "final" }, openrouter);
+    const final = fitModel(seedance, { ...ask, quality: "final" }, openrouterWithFal);
     expect(final.ok && final.usd).toBeCloseTo(14 * 0.3482, 3);
-    const flashRough = fitModel(flash, { ...ask, refs: ["board"] }, openrouter);
+    const flashRough = fitModel(flash, { ...ask, refs: ["board"] }, openrouterWithTein);
     expect(flashRough).toMatchObject({ ok: true, route: "openrouter", endpoint: "bytedance/seedance-2.5-flash", seconds: 7 });
     expect(flashRough.ok && flashRough.usd).toBeCloseTo(14 * 0.0443, 3);
+
+    // Tein only stages video (not audio), so audioRefs on OpenRouter still require fal or Higgsfield.
+    const music5 = { kind: "music" as const, from: 0, to: 5 };
+    expect(fitModel(flash, { op: "video", prompt: "x", audioRefs: [music5], seconds: 5 }, openrouterWithTein)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield"], reason: expect.stringContaining("HTTPS URL for audio") },
+    });
+    expect(fitModel(flash, { ...ask, audioRefs: [music5] }, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield"], reason: expect.stringContaining("reference video and audio") },
+    });
+    // When every video staging host is failing, surface failing rather than connect.
+    const allHostsFailing: Record<string, ServiceState> = {
+      ...openrouter,
+      fal: { label: "fal", state: "failing", detail: "bad key" },
+      higgsfield: { label: "Higgsfield", state: "failing", detail: "down" },
+      tein: { label: "Tein", state: "failing", detail: "down" },
+    };
+    expect(fitModel(flash, ask, allHostsFailing)).toMatchObject({ ok: false, why: { kind: "failing", service: "fal" } });
+
     expect(fitModel(seedance, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "connect", services: ["tein"] } });
     expect(fitModel(flash, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit" } });
   });
@@ -1367,8 +1420,17 @@ describe("OpenRouter catalog routes and curated models", () => {
 
     const speech = { lines: ["l1"], from: 0, to: 5 };
     const talking = { op: "video" as const, prompt: "smiles and gestures", start: "board", speech, seconds: 5, realPeople: ["Danny"] };
-    expect(chooseModels(CATALOG, { ...talking, quality: "rough" }, openrouter).auto).toMatchObject({ model: "heygen-avatar-6-turbo", route: "openrouter", seconds: 6, usd: 0.3 });
-    expect(chooseModels(CATALOG, { ...talking, quality: "final" }, openrouter).auto).toMatchObject({ model: "heygen-avatar-6", route: "openrouter", seconds: 6, usd: 0.6 });
+    // HeyGen Avatar 6 needs fal or Higgsfield to stage the MP3 audio URL for OpenRouter.
+    expect(fitModel(CATALOG.find((m) => m.id === "heygen-avatar-6")!, talking, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield"] },
+    });
+    expect(fitModel(CATALOG.find((m) => m.id === "heygen-avatar-6")!, talking, openrouterWithTein)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield"] },
+    });
+    expect(chooseModels(CATALOG, { ...talking, quality: "rough" }, openrouterWithFal, [], "openrouter").auto).toMatchObject({ model: "heygen-avatar-6-turbo", route: "openrouter", seconds: 6, usd: 0.3 });
+    expect(chooseModels(CATALOG, { ...talking, quality: "final" }, openrouterWithFal, [], "openrouter").auto).toMatchObject({ model: "heygen-avatar-6", route: "openrouter", seconds: 6, usd: 0.6 });
   });
 
   it("supports Grok 1s clips, HappyHorse 1.1, Seedance 2.0 Mini, MiniMax H3 Image, MAI-Image-2.7 and FLUX 3 Image", () => {
@@ -1383,7 +1445,11 @@ describe("OpenRouter catalog routes and curated models", () => {
     expect(fitModel(hh, { op: "video", prompt: "x", start: "a", end: "b", seconds: 5 }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit", fix: "drop-end" } });
 
     const s20 = CATALOG.find((m) => m.id === "seedance-2.0-mini")!;
-    const miniCam = fitModel(s20, { op: "video", prompt: "x", camera, seconds: 7, aspect: "9:16" }, openrouter);
+    expect(fitModel(s20, { op: "video", prompt: "x", camera, seconds: 7, aspect: "9:16" }, openrouter)).toMatchObject({
+      ok: false,
+      why: { kind: "connect", services: ["fal", "higgsfield", "tein"] },
+    });
+    const miniCam = fitModel(s20, { op: "video", prompt: "x", camera, seconds: 7, aspect: "9:16" }, openrouterWithFal);
     expect(miniCam).toMatchObject({ ok: true, route: "openrouter", endpoint: "bytedance/seedance-2.0-mini", seconds: 7 });
     expect(miniCam.ok && miniCam.usd).toBeCloseTo(14 * 0.0216, 3);
     expect(fitModel(s20, { op: "video", prompt: "x", seconds: 5, realPeople: ["Mara"] }, openrouter)).toMatchObject({ ok: false, why: { kind: "fit" } });

@@ -95,6 +95,7 @@ let openrouter: {
   authedDownloads: number;
 };
 let refuse: string | undefined;
+let failFalUpload = false;
 let server: Server;
 let base = "";
 const polls = new Map<string, number>();
@@ -275,6 +276,15 @@ beforeAll(async () => {
           const input = JSON.parse(body) as Record<string, unknown>;
           if (String(input.prompt ?? "").includes("broke")) return send(402, { error: { code: 402, message: "Insufficient credits" } });
           if (String(input.prompt ?? "").includes("huge")) return send(413, { error: { code: 413, message: "Request payload too large" } });
+          // Mirror OpenRouter's live URL validator: video_url and audio_url must be HTTP(S) URLs, not data: URIs.
+          const refs = (input.input_references as Record<string, unknown>[] | undefined) ?? [];
+          for (const [i, item] of refs.entries()) {
+            const field = item.type === "video_url" ? "video_url" : item.type === "audio_url" ? "audio_url" : undefined;
+            const u = field ? (item[field] as { url?: unknown } | undefined)?.url : undefined;
+            if (field && (typeof u !== "string" || !/^https?:\/\//i.test(u))) {
+              return send(400, { error: { code: 400, message: `Invalid reference URL: input_references[${i}].${field}.url: Only HTTPS URLs are allowed` } });
+            }
+          }
           openrouter.videos.push(input);
           const id = `gen-vid-${openrouter.videos.length}`;
           const prompt = String(input.prompt ?? "");
@@ -308,6 +318,7 @@ beforeAll(async () => {
       }
       if (req.headers.authorization !== "Key test-key" && !url.startsWith("/out/") && !url.startsWith("/upload/")) return send(401, { detail: "no" });
       if (url.startsWith("/rest/storage/upload/initiate")) {
+        if (failFalUpload) return send(401, { detail: "fal key rejected" });
         seen.uploads++;
         return send(200, { upload_url: `${base}/upload/${seen.uploads}`, file_url: `${base}/out/uploaded-${seen.uploads}.jpg` });
       }
@@ -366,6 +377,7 @@ beforeEach(() => {
   higgsfield = { submits: [], keys: [], uploads: [], stored: 0, estimates: [], jobs: new Map(), made: new Map(), cancelled: [] };
   openrouter = { images: [], videos: [], jobs: new Map(), authedDownloads: 0 };
   refuse = undefined;
+  failFalUpload = false;
   plans.ready = [];
   plans.asks = [];
   settings.services = {};
@@ -1935,7 +1947,7 @@ describe("OpenRouter as a provider", () => {
     expect(job(billed.jobs[0]!.id)).toMatchObject({ status: "failed", charged: true, usd: 0.44 });
   });
 
-  it("lip-syncs a board with HeyGen Avatar 6 on OpenRouter using compact MP3 speech data URL", async () => {
+  it("lip-syncs a board with HeyGen Avatar 6 on OpenRouter using a staged HTTPS audio URL", async () => {
     connect();
     make.startMake(PROJECT, { op: "image", shot: "s2", model: "flux3-klein", via: "openrouter" });
     await make.driveJobs(PROJECT);
@@ -1949,9 +1961,11 @@ describe("OpenRouter as a provider", () => {
       p.shots.find((s) => s.id === "s2")!.start = { kind: "line", line: "boast" };
     });
 
+    const beforeUploads = seen.uploads;
     const talk = make.startMake(PROJECT, { op: "video", shot: "s2", start: "board", speech: { lines: ["boast"] }, prompt: "Smirks and speaks calmly", model: "heygen-avatar-6" });
     expect(talk.fit).toMatchObject({ model: "heygen-avatar-6", route: "openrouter", endpoint: "heygen/heygen-avatar-6", seconds: 4.2 });
     await make.driveJobs(PROJECT);
+    expect(seen.uploads).toBe(beforeUploads + 1);
     const sent = openrouter.videos.at(-1)!;
     expect(sent).toEqual({
       model: "heygen/heygen-avatar-6",
@@ -1959,10 +1973,112 @@ describe("OpenRouter as a provider", () => {
       resolution: "1080p",
       input_references: [
         { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
-        { type: "audio_url", audio_url: { url: expect.stringMatching(/^data:audio\/mpeg;base64,/) } },
+        { type: "audio_url", audio_url: { url: `${base}/out/uploaded-${beforeUploads + 1}.jpg` } },
       ],
     });
     expect(job(talk.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter", charged: true, usd: 0.4412 });
+  });
+
+  it("stages Seedance reference video and audio via fal/Higgsfield/Tein CDNs for OpenRouter, falls back across hosts, and keeps 16-frame sheet inline", async () => {
+    const dir = join(process.env.BEATSHEET_PROJECTS!, PROJECT);
+    const clip = join(dir, "guide.mp4");
+    const song = join(dir, "theme.wav");
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=540x960:r=25:d=5", "-pix_fmt", "yuv420p", clip]);
+    execFileSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=6", "-c:a", "pcm_s16le", song]);
+    store.updateProject(PROJECT, (p) => {
+      p.assets.push(
+        { id: "guide-clip", kind: "video", path: "guide.mp4", label: "Guide", width: 540, height: 960, duration: 5 },
+        { id: "theme", kind: "audio", path: "theme.wav", label: "Theme", duration: 6 },
+      );
+      p.shots.find((s) => s.id === "s2")!.blockout = {
+        beats: [{ id: "b1", duration: 4, component: "kit:Previs", props: { move: "push-in" } }],
+      };
+    });
+    make.setRenderStretch(async (_id, { out }) => {
+      writeFileSync(out, readFileSync(clip));
+    });
+    make.setRenderBlockoutStills(async (_id, { times, dir: outDir }) => {
+      const files: string[] = [];
+      for (let i = 0; i < times.length; i++) {
+        const f = join(outDir, `still-${String(i + 1).padStart(3, "0")}.jpg`);
+        await sharp({ create: { width: 32, height: 32, channels: 3, background: { r: 100, g: 110, b: 120 } } }).jpeg().toFile(f);
+        files.push(f);
+      }
+      return files;
+    });
+
+    // 1. fal + OpenRouter connected: stages reference video via fal CDN while keeping image_url inline as a data URL.
+    connect();
+    const beforeFal = seen.uploads;
+    const viaFal = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "Cat struts down the alley", refs: ["cat-photo"], camera: "blockout", model: "seedance-2.5", via: "openrouter" });
+    expect(viaFal.fit).toMatchObject({ model: "seedance-2.5", route: "openrouter", endpoint: "bytedance/seedance-2.5" });
+    await make.driveJobs(PROJECT);
+    expect(seen.uploads).toBe(beforeFal + 1);
+    expect(openrouter.videos.at(-1)).toMatchObject({
+      model: "bytedance/seedance-2.5",
+      input_references: [
+        { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
+        { type: "video_url", video_url: { url: `${base}/out/uploaded-${beforeFal + 1}.jpg` } },
+      ],
+    });
+    expect(job(viaFal.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter" });
+
+    // 2. When fal upload fails and Higgsfield is also connected, automatically falls back to Higgsfield CDN for video & audio.
+    settings.services = { openrouter: { addedAt: "2026-11-26" }, higgsfield: { addedAt: "2026-11-26" } };
+    failFalUpload = true;
+    const fallbackJob = make.startMake(PROJECT, {
+      op: "video",
+      shot: "s2",
+      prompt: "Cat leaps on the beat",
+      refs: ["cat-photo"],
+      camera: { asset: "guide-clip", from: 0, to: 4 },
+      audioRefs: [{ kind: "asset", asset: "theme", from: 0, to: 4, role: "music" }],
+      model: "seedance-2.0-mini",
+      via: "openrouter",
+    });
+    await make.driveJobs(PROJECT);
+    expect(higgsfield.uploads).toEqual(["video/mp4", "audio/mpeg"]);
+    expect(openrouter.videos.at(-1)).toMatchObject({
+      model: "bytedance/seedance-2.0-mini",
+      input_references: [
+        { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
+        { type: "video_url", video_url: { url: expect.stringMatching(/hf-upload-\d+\.mp4$/) } },
+        { type: "audio_url", audio_url: { url: expect.stringMatching(/hf-upload-\d+\.mp3$/) } },
+      ],
+    });
+    expect(job(fallbackJob.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter" });
+    failFalUpload = false;
+
+    // 3. Only OpenRouter + Tein connected: stages reference video via Tein CDN.
+    settings.services = { fal: undefined as never, openrouter: { addedAt: "2026-11-26" }, tein: { addedAt: "2026-11-26" } };
+    const viaTein = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "Tein-staged blockout", refs: ["cat-photo"], camera: "blockout", model: "seedance-2.5-flash", via: "openrouter" });
+    await make.driveJobs(PROJECT);
+    expect(tein.uploads).toBe(1);
+    expect(openrouter.videos.at(-1)).toMatchObject({
+      model: "bytedance/seedance-2.5-flash",
+      input_references: [
+        { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
+        { type: "video_url", video_url: { url: `${base}/out/tein-upload-1.jpg` } },
+      ],
+    });
+    expect(job(viaTein.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter" });
+
+    // 4. Only OpenRouter connected: video blockout is refused cleanly, while 16-frame sheet runs inline with zero staging uploads.
+    settings.services = { fal: undefined as never, openrouter: { addedAt: "2026-11-26" } };
+    expect(() => make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "No staging host", refs: ["cat-photo"], camera: "blockout", model: "seedance-2.5-flash" })).toThrow(/HTTPS URL for reference video/);
+
+    const uploadsBeforeSheet = seen.uploads + higgsfield.uploads.length + tein.uploads;
+    const sheetTake = make.startMake(PROJECT, { op: "video", shot: "s2", prompt: "Sheet on OpenRouter alone", refs: ["cat-photo"], camera: { blockout: true, mode: "sheet" }, model: "seedance-2.5-flash" });
+    await make.driveJobs(PROJECT);
+    expect(seen.uploads + higgsfield.uploads.length + tein.uploads).toBe(uploadsBeforeSheet);
+    expect(openrouter.videos.at(-1)).toMatchObject({
+      model: "bytedance/seedance-2.5-flash",
+      input_references: [
+        { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
+        { type: "image_url", image_url: { url: expect.stringMatching(/^data:image\/jpeg;base64,/) } },
+      ],
+    });
+    expect(job(sheetTake.jobs[0]!.id)).toMatchObject({ status: "done", route: "openrouter" });
   });
 
   it("maps OpenRouter error codes cleanly and builds every still and video input shape", async () => {
